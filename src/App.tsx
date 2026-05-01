@@ -5,10 +5,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import CreateAccount from './pages/auth/CreateAccount';
 import Login from './pages/auth/Login';
-import Dashboard from './pages/dashboard/Dashboard';
-import ClassroomResources from './pages/classroom/ClassroomResources';
-import ClassroomQuizzes from './pages/classroom/ClassroomQuizzes';
-import ClassroomStudents from './pages/classroom/ClassroomStudents';
+import Dashboard from './pages/educator/Dashboard';
+import ClassroomResources from './pages/educator/classroom/ClassroomResources';
+import ClassroomQuizzes from './pages/educator/classroom/ClassroomQuizzes';
+import ClassroomStudents from './pages/educator/classroom/ClassroomStudents';
 import MainLayout from './components/layout/MainLayout';
 import StudentLayout from './components/layout/StudentLayout';
 import StudentDashboard from './pages/student/StudentDashboard';
