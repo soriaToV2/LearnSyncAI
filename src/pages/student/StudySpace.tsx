@@ -10,34 +10,57 @@ export default function StudySpace() {
   const [activeTab, setActiveTab] = useState<'flashcards' | 'resources'>('flashcards');
   const [showQR, setShowQR] = useState(false);
   const [courseConnected, setCourseConnected] = useState(false);
-  const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedSetContent, setSelectedSetContent] = useState<number | null>(null);
   const [isCreateDeckModalOpen, setIsCreateDeckModalOpen] = useState(false);
   const [newDeckTitle, setNewDeckTitle] = useState('');
+  const availableResources = ['Synaptic_Pathways_Ch4.pdf', 'Lecture_03_Action_Potentials.pptx', 'Study_Guide_Midterm.docx'];
   
   const [flashcardSets, setFlashcardSets] = useState([
     {
       id: 1,
       title: "Ch 4. Synaptic Transmission",
-      cardCount: 12,
+      description: "Key concepts from chapter 4 covering neurotransmitter release and synaptic function.",
+      cardCount: 3,
       cards: [
         {
           id: 1,
           front: "What initiates the release of neurotransmitters?",
           back: "An influx of Calcium ions (Ca2+) into the presynaptic terminal, triggered by an action potential."
+        },
+        {
+          id: 10,
+          front: "What is the synaptic cleft?",
+          back: "The tiny gap between the presynaptic and postsynaptic neurons where neurotransmitters are released."
+        },
+        {
+          id: 11,
+          front: "What are vesicles in the context of synaptic transmission?",
+          back: "Small membrane-bound sacs that store neurotransmitters and release them via exocytosis."
         }
       ]
     },
     {
       id: 2,
       title: "Midterm Review Terms",
-      cardCount: 45,
+      description: "Essential definitions and concepts to review before the midterm examination.",
+      cardCount: 3,
       cards: [
         {
           id: 2,
           front: "What is primary function of the myelin sheath?",
           back: "To increase the speed at which electrical impulses travel along the axon."
+        },
+        {
+          id: 20,
+          front: "What is an action potential?",
+          back: "A rapid, temporary change in membrane potential that travels along the axon of a neuron."
+        },
+        {
+          id: 21,
+          front: "Define 'resting membrane potential'.",
+          back: "The electrical potential difference across the neuronal membrane when the neuron is not firing, typically around -70mV."
         }
       ]
     }
@@ -150,6 +173,8 @@ export default function StudySpace() {
             setIsCreateDeckModalOpen={setIsCreateDeckModalOpen}
             setActiveTab={setActiveTab}
             handleGenerateFlashcards={handleGenerateFlashcards}
+            setFlashcardSets={setFlashcardSets}
+            availableResources={availableResources}
           />
         )}
 
@@ -157,9 +182,9 @@ export default function StudySpace() {
         {activeTab === 'resources' && (
           <ResourcesTab
             courseConnected={courseConnected}
-            selectedDoc={selectedDoc}
+            selectedDocs={selectedDocs}
             handleConnectCourse={handleConnectCourse}
-            setSelectedDoc={setSelectedDoc}
+            setSelectedDocs={setSelectedDocs}
             setActiveTab={setActiveTab}
             setIsGenerating={setIsGenerating}
             setSelectedSetContent={setSelectedSetContent}
