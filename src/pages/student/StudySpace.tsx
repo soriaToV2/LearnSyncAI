@@ -10,7 +10,7 @@ export default function StudySpace() {
   const [activeTab, setActiveTab] = useState<'flashcards' | 'resources'>('flashcards');
   const [showQR, setShowQR] = useState(false);
   const [courseConnected, setCourseConnected] = useState(false);
-  const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedSetContent, setSelectedSetContent] = useState<number | null>(null);
   const [isCreateDeckModalOpen, setIsCreateDeckModalOpen] = useState(false);
@@ -182,9 +182,9 @@ export default function StudySpace() {
         {activeTab === 'resources' && (
           <ResourcesTab
             courseConnected={courseConnected}
-            selectedDoc={selectedDoc}
+            selectedDocs={selectedDocs}
             handleConnectCourse={handleConnectCourse}
-            setSelectedDoc={setSelectedDoc}
+            setSelectedDocs={setSelectedDocs}
             setActiveTab={setActiveTab}
             setIsGenerating={setIsGenerating}
             setSelectedSetContent={setSelectedSetContent}

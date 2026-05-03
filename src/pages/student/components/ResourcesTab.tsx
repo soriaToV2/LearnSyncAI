@@ -1,40 +1,102 @@
-import React from 'react';
-import { Link as LinkIcon, FileText, BookOpen, Sparkles } from 'lucide-react';
-
-interface Flashcard {
-  id: number;
-  front: string;
-  back: string;
-}
+import React, { useState, useRef, useEffect } from 'react';
+import { Link as LinkIcon, FileText, CheckCircle2, MessageSquare, Send, Sparkles, User, BrainCircuit, Loader2 } from 'lucide-react';
+import { GoogleGenAI } from '@google/genai';
 
 interface FlashcardSet {
   id: number;
   title: string;
   cardCount: number;
-  cards: Flashcard[];
+  cards: any[];
 }
 
 interface ResourcesTabProps {
   courseConnected: boolean;
-  selectedDoc: string | null;
+  selectedDocs: string[];
   handleConnectCourse: () => void;
-  setSelectedDoc: (doc: string | null) => void;
+  setSelectedDocs: React.Dispatch<React.SetStateAction<string[]>>;
   setActiveTab: (tab: 'flashcards' | 'resources') => void;
   setIsGenerating: (isGenerating: boolean) => void;
   setSelectedSetContent: (id: number | null) => void;
   setFlashcardSets: React.Dispatch<React.SetStateAction<FlashcardSet[]>>;
 }
 
+interface Message {
+  id: string;
+  role: 'user' | 'model';
+  content: string;
+}
+
 export default function ResourcesTab({
   courseConnected,
-  selectedDoc,
+  selectedDocs,
   handleConnectCourse,
-  setSelectedDoc,
+  setSelectedDocs,
   setActiveTab,
   setIsGenerating,
   setSelectedSetContent,
   setFlashcardSets
 }: ResourcesTabProps) {
+  const [messages, setMessages] = useState<Message[]>([
+    { id: '1', role: 'model', content: "Hello! I'm your EduSpace AI assistant. Select documents from the left to include them in our context, then ask me anything or tell me to summarize them!" }
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const toggleDocument = (doc: string) => {
+    setSelectedDocs(prev => 
+      prev.includes(doc) 
+        ? prev.filter(d => d !== doc)
+        : [...prev, doc]
+    );
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+
+    const userMessage = input.trim();
+    setInput('');
+    setMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', content: userMessage }]);
+    setIsLoading(true);
+
+    try {
+      // Setup context message implicitly
+      const contextPrefix = selectedDocs.length > 0 
+        ? `[Context: The user has selected the following resources: ${selectedDocs.join(', ')}.] ` 
+        : '';
+        
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `${contextPrefix}${userMessage}`,
+      });
+
+      setMessages(prev => [...prev, { 
+        id: Date.now().toString(), 
+        role: 'model', 
+        content: response.text || "I couldn't generate a response." 
+      }]);
+    } catch (error) {
+      console.error("AI Generation Error", error);
+      setMessages(prev => [...prev, { 
+        id: Date.now().toString(), 
+        role: 'model', 
+        content: "Sorry, I ran into an error connecting to the AI service. Please check your API key or try again." 
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="animate-in fade-in duration-300 h-full flex flex-col">
       {!courseConnected ? (
@@ -56,97 +118,156 @@ export default function ResourcesTab({
       ) : (
         <div className="flex h-[calc(100vh-140px)] gap-6">
           
-          {/* File List */}
+          {/* File Selection Sidebar */}
           <div className="w-1/3 bg-surface-container-lowest border border-white/5 rounded-2xl p-4 flex flex-col">
-            <div className="px-2 py-3 border-b border-white/5 flex justify-between items-center mb-4">
-              <span className="font-display font-medium text-white text-lg">Course Materials</span>
-              <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30 uppercase tracking-widest font-semibold flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div> Connected
-              </span>
+            <div className="px-2 py-3 mb-4 space-y-1">
+              <div className="flex justify-between items-center">
+                <span className="font-display font-medium text-white text-lg">Course Materials</span>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30 uppercase tracking-widest font-semibold flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div> Connected
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-sans">Select files to include in AI context</p>
             </div>
             
             <div className="flex-1 overflow-y-auto pr-2 space-y-2">
-              {['Synaptic_Pathways_Ch4.pdf', 'Lecture_03_Action_Potentials.pptx', 'Study_Guide_Midterm.docx'].map(doc => (
-                <button 
-                  key={doc}
-                  onClick={() => setSelectedDoc(doc)}
-                  className={`w-full flex items-center gap-3 p-4 rounded-xl border transition-all text-left group ${
-                    selectedDoc === doc 
-                      ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/30' 
-                      : 'bg-surface-container border-white/5 hover:border-white/20'
-                  }`}
-                >
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                    selectedDoc === doc ? 'bg-primary-fixed-dim/20 text-primary-fixed-dim' : 'bg-surface-container-high text-slate-400 group-hover:text-white'
-                  }`}>
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  <div className="overflow-hidden">
-                    <p className={`font-sans text-sm font-medium truncate ${selectedDoc === doc ? 'text-primary-fixed' : 'text-white'}`}>
-                      {doc}
-                    </p>
-                    <p className="font-sans text-xs text-slate-500 truncate mt-1">Found in Biology 301</p>
-                  </div>
-                </button>
-              ))}
+              {['Synaptic_Pathways_Ch4.pdf', 'Lecture_03_Action_Potentials.pptx', 'Study_Guide_Midterm.docx'].map(doc => {
+                const isSelected = selectedDocs.includes(doc);
+                return (
+                  <button 
+                    key={doc}
+                    onClick={() => toggleDocument(doc)}
+                    className={`w-full flex items-center gap-3 p-4 rounded-xl border transition-all text-left relative overflow-hidden ${
+                      isSelected 
+                        ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/30' 
+                        : 'bg-surface-container border-white/5 hover:border-white/20'
+                    }`}
+                  >
+                    {isSelected && (
+                      <div className="absolute top-0 right-0 w-full h-full border-2 border-primary-fixed-dim rounded-xl pointer-events-none opacity-50"></div>
+                    )}
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                      isSelected ? 'bg-primary-fixed-dim/20 text-primary-fixed-dim' : 'bg-surface-container-high text-slate-400'
+                    }`}>
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div className="overflow-hidden flex-1">
+                      <p className={`font-sans text-sm font-medium truncate ${isSelected ? 'text-primary-fixed' : 'text-white'}`}>
+                        {doc}
+                      </p>
+                      <p className="font-sans text-xs text-slate-500 truncate mt-1">Found in Biology 301</p>
+                    </div>
+                    {isSelected && (
+                      <CheckCircle2 className="w-5 h-5 text-primary-fixed-dim shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Document Viewer */}
+          {/* AI Chat Interface */}
           <div className="flex-1 bg-surface-container-lowest border border-white/5 rounded-2xl flex flex-col relative overflow-hidden">
-            {!selectedDoc ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-8 text-center">
-                <BookOpen className="w-16 h-16 mb-4 opacity-20" />
-                <p className="font-display text-lg">Select a document to view</p>
-                <p className="font-sans text-sm text-slate-400 max-w-sm mt-2">After selecting a document, you can analyze its contents and generate flashcards.</p>
-              </div>
-            ) : (
-              <>
-                <div className="px-6 py-4 flex items-center justify-between border-b border-white/5 bg-surface-container/30">
-                   <div className="flex items-center gap-4">
-                     <FileText className="w-6 h-6 text-primary-fixed-dim" />
-                     <p className="font-display text-lg text-white truncate font-medium">{selectedDoc}</p>
-                   </div>
-                   <button 
-                     onClick={() => {
-                       setActiveTab('flashcards');
-                       setIsGenerating(true);
-                       setTimeout(() => {
-                         const newId = Date.now();
-                         setSelectedSetContent(newId);
-                         setFlashcardSets(prev => [
-                           ...prev,
-                           {
-                             id: newId,
-                             title: `Generated from ${selectedDoc}`,
-                             cardCount: 1,
-                             cards: [
-                               { id: Date.now(), front: "What is EPSP?", back: "Excitatory Postsynaptic Potential." }
-                             ]
-                           }
-                         ]);
-                         setIsGenerating(false);
-                       }, 1500);
-                     }}
-                     className="px-4 py-2 bg-primary-fixed-dim/20 text-primary-fixed hover:bg-primary-fixed-dim hover:text-on-primary-fixed rounded-lg text-xs uppercase tracking-widest font-semibold transition-colors flex items-center gap-2"
-                   >
-                     <Sparkles className="w-3.5 h-3.5" /> Generate Cards from this Doc
-                   </button>
-                </div>
-                <div className="flex-1 p-10 overflow-y-auto font-sans leading-relaxed text-base bg-gradient-to-b from-white/5 to-transparent text-slate-300">
-                  <div className="max-w-2xl mx-auto space-y-6">
-                    <h2 className="text-3xl font-display font-bold text-white mb-6">4.1 Synaptic Transmission Overview</h2>
-                    <p>
-                      Synaptic transmission is the biological process by which a neuron communicates with a target cell across a synapse. Chemical synaptic transmission involves the release of a neurotransmitter from the pre-synaptic neuron...
-                    </p>
-                    <p>
-                      Upon the arrival of an action potential at the presynaptic terminal, voltage-gated calcium channels open, allowing an influx of Ca2+ ions. This calcium entry signals synaptic vesicles to fuse with the presynaptic membrane, emptying their neurotransmitter contents into the synaptic cleft.
-                    </p>
-                    <p className="opacity-50 italic mt-12">[Document rendering active...]</p>
+            {/* Header */}
+            <div className="px-6 py-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between border-b border-white/5 bg-surface-container/30 shrink-0">
+               <div className="flex items-center gap-3">
+                 <div className="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center shadow-[0_0_15px_rgba(0,218,243,0.2)]">
+                   <BrainCircuit className="w-5 h-5" />
+                 </div>
+                 <div>
+                   <h3 className="font-display text-white font-medium">EduSpace Copilot</h3>
+                   <p className="font-sans text-xs text-primary-fixed-dim">
+                     {selectedDocs.length} document{selectedDocs.length !== 1 ? 's' : ''} connected
+                   </p>
+                 </div>
+               </div>
+               {selectedDocs.length > 0 && (
+                 <button 
+                   onClick={() => {
+                     setActiveTab('flashcards');
+                     setIsGenerating(true);
+                     setTimeout(() => {
+                       const newId = Date.now();
+                       setSelectedSetContent(newId);
+                       setFlashcardSets(prev => [
+                         ...prev,
+                         {
+                           id: newId,
+                           title: `Generated from ${selectedDocs.length} file(s)`,
+                           cardCount: 1,
+                           cards: [
+                             { id: Date.now(), front: "What is EPSP?", back: "Excitatory Postsynaptic Potential." }
+                           ]
+                         }
+                       ]);
+                       setIsGenerating(false);
+                     }, 1500);
+                   }}
+                   className="px-4 py-2 bg-primary-fixed-dim/20 text-primary-fixed hover:bg-primary-fixed-dim hover:text-on-primary-fixed rounded-lg text-xs uppercase tracking-widest font-semibold transition-colors flex items-center gap-2"
+                 >
+                   <Sparkles className="w-3.5 h-3.5" /> Generate Flashcards
+                 </button>
+               )}
+            </div>
+
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-gradient-to-b from-white/[0.01] to-transparent bg-fixed">
+              {messages.map((message) => (
+                <div 
+                  key={message.id} 
+                  className={`flex gap-4 max-w-[85%] ${message.role === 'user' ? 'ml-auto flex-row-reverse' : ''}`}
+                >
+                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex shrink-0 items-center justify-center ${message.role === 'user' ? 'bg-surface-container-high border border-white/10' : 'bg-primary-container/80 text-on-primary-container shadow-lg shadow-primary-container/20'}`}>
+                    {message.role === 'user' ? <User className="w-4 h-4 sm:w-5 sm:h-5 text-slate-300" /> : <BrainCircuit className="w-4 h-4 sm:w-5 sm:h-5" />}
+                  </div>
+                  <div className={`p-4 rounded-2xl ${
+                    message.role === 'user' 
+                      ? 'bg-surface-container-high border border-white/5 text-white' 
+                      : 'bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 text-slate-200'
+                  }`}>
+                    <p className="font-sans text-sm sm:text-base leading-relaxed whitespace-pre-wrap">{message.content}</p>
                   </div>
                 </div>
-              </>
-            )}
+              ))}
+              {isLoading && (
+                <div className="flex gap-4 max-w-[85%]">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-primary-container/80 text-on-primary-container flex items-center justify-center">
+                    <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                  </div>
+                  <div className="p-4 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 text-slate-300 flex items-center">
+                    <span className="flex gap-1 items-center">
+                      <span className="w-1.5 h-1.5 bg-primary-fixed-dim rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                      <span className="w-1.5 h-1.5 bg-primary-fixed-dim rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                      <span className="w-1.5 h-1.5 bg-primary-fixed-dim rounded-full animate-bounce"></span>
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input Area */}
+            <div className="p-4 bg-surface-container/50 border-t border-white/5 backdrop-blur-md">
+              <form onSubmit={handleSendMessage} className="relative">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder={selectedDocs.length > 0 ? "Ask a question about the selected files..." : "Select files first, or chat with me generally..."}
+                  className="w-full bg-surface-container-high border border-white/10 rounded-full pl-6 pr-14 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 focus:border-primary-fixed-dim transition-all shadow-inner"
+                />
+                <button 
+                  type="submit"
+                  disabled={!input.trim() || isLoading}
+                  className="absolute right-2 top-2 p-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-full hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(0,218,243,0.2)]"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </form>
+              <p className="text-center text-[10px] text-slate-500 mt-3 font-sans tracking-wide">
+                EduSpace AI Copilot can make mistakes. Consider verifying important information.
+              </p>
+            </div>
           </div>
         </div>
       )}
