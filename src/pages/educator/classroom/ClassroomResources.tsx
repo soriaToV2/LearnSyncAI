@@ -1,6 +1,7 @@
 import ClassroomLayout from '../../../components/layout/ClassroomLayout';
 import { CloudUpload, FileText, PlayCircle, Box, MoreVertical } from 'lucide-react';
 
+
 export default function ClassroomResources() {
   return (
     <ClassroomLayout>

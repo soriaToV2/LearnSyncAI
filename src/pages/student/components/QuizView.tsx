@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { ArrowLeft, ArrowRight, Check, X as XIcon, Trophy, RotateCcw, ChevronRight } from 'lucide-react';
 import type { QuizConfig, QuestionType } from './QuizSetupModal';
 
+
 interface Flashcard { id: number; front: string; back: string; }
 
 interface QuizViewProps {

@@ -5,6 +5,7 @@ import CreateFlashcardsModal from './CreateFlashcardsModal';
 import QuizSetupModal, { type QuizConfig } from './QuizSetupModal';
 import QuizView from './QuizView';
 
+
 interface Flashcard {
   id: number;
   front: string;

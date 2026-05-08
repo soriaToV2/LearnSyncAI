@@ -2,6 +2,8 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { Home, Layers, Globe, User, BrainCircuit, LogOut } from 'lucide-react';
 import clsx from 'clsx';
 
+
+
 export default function StudentLayout() {
   const location = useLocation();
 

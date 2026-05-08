@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { BrainCircuit } from 'lucide-react';
 
+
 export default function CreateAccount() {
   return (
     <div className="min-h-screen flex flex-col relative">

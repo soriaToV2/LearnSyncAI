@@ -5,12 +5,13 @@ import Modal from '../../components/ui/Modal';
 import FlashcardsTab from './components/FlashcardsTab';
 import ResourcesTab from './components/ResourcesTab';
 
+
 export default function StudySpace() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'flashcards' | 'resources'>('flashcards');
   const [showQR, setShowQR] = useState(false);
   const [courseConnected, setCourseConnected] = useState(false);
-  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
+  const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedSetContent, setSelectedSetContent] = useState<number | null>(null);
   const [isCreateDeckModalOpen, setIsCreateDeckModalOpen] = useState(false);
@@ -182,9 +183,9 @@ export default function StudySpace() {
         {activeTab === 'resources' && (
           <ResourcesTab
             courseConnected={courseConnected}
-            selectedDocs={selectedDocs}
+            selectedDoc={selectedDoc}
             handleConnectCourse={handleConnectCourse}
-            setSelectedDocs={setSelectedDocs}
+            setSelectedDoc={setSelectedDoc}
             setActiveTab={setActiveTab}
             setIsGenerating={setIsGenerating}
             setSelectedSetContent={setSelectedSetContent}

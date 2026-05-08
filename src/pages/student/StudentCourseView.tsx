@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Bell, Search, ChevronRight, Building, CheckCircle2, ShieldCheck, Box, PlayCircle, FileText, ArrowRight, Zap } from 'lucide-react';
 
+
 export default function StudentCourseView() {
   const { courseId } = useParams();
   const [activeTab, setActiveTab] = useState<'resources' | 'quizzes'>('resources');

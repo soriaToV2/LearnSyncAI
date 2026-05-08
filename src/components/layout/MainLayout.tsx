@@ -2,6 +2,7 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { BookOpen, Users, BrainCircuit, LayoutDashboard, Settings, Bell, HelpCircle, LogOut } from 'lucide-react';
 import clsx from 'clsx';
 
+
 export default function MainLayout() {
   const location = useLocation();
 

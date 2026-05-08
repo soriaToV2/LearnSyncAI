@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, RotateCcw, Trophy, ArrowLeft, Check, X as XIcon } from 'lucide-react';
 
+
 interface Flashcard {
   id: number;
   front: string;

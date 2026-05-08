@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, GripVertical, Layers, BookOpen } from 'lucide-react';
 import Modal from '../../../components/ui/Modal';
 
+
 interface CardEntry {
   id: number;
   front: string;

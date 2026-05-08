@@ -10,6 +10,7 @@ interface ModalProps {
   maxWidth?: string;
 }
 
+
 export default function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-md' }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
 

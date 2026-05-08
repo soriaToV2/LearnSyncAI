@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Layers, Plus, Folder, ArrowRight, Clock, Star, Box, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+
 export default function StudySpacesList() {
   const navigate = useNavigate();
   

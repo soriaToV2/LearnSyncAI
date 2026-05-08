@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Bell, MapPin, Building, Users, Star, Award, Search, BrainCircuit, Box } from 'lucide-react';
 
+
 export default function StudentProfile() {
   const [activeTab, setActiveTab] = useState<'achievements' | 'spaces'>('achievements');
 

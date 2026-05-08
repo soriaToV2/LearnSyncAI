@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { AlertTriangle, Clock, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+
 export default function LockdownExam() {
   const [timeLeft, setTimeLeft] = useState(5400); // 90 mins in seconds
   const [tabSwitchDetected, setTabSwitchDetected] = useState(false);

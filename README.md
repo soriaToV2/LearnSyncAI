@@ -1,5 +1,4 @@
 EduSpace: Collaborative Social Learning Platform (Frontend Prototype)
-
 📖 Project Overview
 
 EduSpace is a next-generation Learning Management System (LMS) that bridges the gap between formal academic instruction and personalized, independent studying. Moving beyond traditional siloed platforms, EduSpace utilizes a Hybrid Multi-Tenant Architecture, transforming course completion into verifiable social achievements and empowering students with AI-driven study tools.

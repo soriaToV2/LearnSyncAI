@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell, Search, Globe, Building, ArrowRight, ShieldCheck, Sigma, Code2, BrainCircuit } from 'lucide-react';
 
+
 export default function StudentDashboard() {
   const [activeTab, setActiveTab] = useState<'enrolled' | 'internal' | 'global'>('enrolled');
 
