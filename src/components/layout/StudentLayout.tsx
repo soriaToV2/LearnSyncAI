@@ -53,6 +53,19 @@ export default function StudentLayout() {
           </NavLink>
 
           <NavLink 
+            to="/student/community"
+            className={({ isActive }) => clsx(
+              "flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95",
+              isActive
+                ? "text-primary-fixed-dim bg-primary-fixed-dim/10 border-r-2 border-primary-fixed-dim font-semibold" 
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            )}
+          >
+            <Globe className="w-5 h-5" />
+            Community
+          </NavLink>
+
+          <NavLink 
             to="/student/profile/me"
             className={({ isActive }) => clsx(
               "flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95",

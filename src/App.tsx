@@ -17,6 +17,7 @@ import StudentProfile from './pages/student/StudentProfile';
 import StudySpacesList from './pages/student/StudySpacesList';
 import StudySpace from './pages/student/StudySpace';
 import LockdownExam from './pages/student/LockdownExam';
+import StudentCommunity from './pages/student/StudentCommunity';
 
 export default function App() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/student/profile/:studentId" element={<StudentProfile />} />
           <Route path="/student/spaces" element={<StudySpacesList />} />
           <Route path="/student/space/:spaceId" element={<StudySpace />} />
+          <Route path="/student/community" element={<StudentCommunity />} />
         </Route>
         
         {/* Exam without standard layout */}

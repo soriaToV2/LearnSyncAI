@@ -13,7 +13,7 @@ interface DocNote {
   id: string;
   selectedText: string;
   noteText: string;
-  aiResponse?: string;
+  aiChat?: { role: 'user' | 'ai'; content: string }[];
   isAiLoading?: boolean;
   rects: HighlightRect[];
   top: number;
@@ -146,6 +146,7 @@ export default function ResourcesTab({
       id: Date.now().toString(),
       selectedText: selectionPos.text,
       noteText: '',
+      aiChat: type === 'ai' ? [] : undefined,
       rects: selectionPos.rects,
       top: selectionPos.rects[0].top,
       left: selectionPos.rects[0].left,
@@ -163,7 +164,12 @@ export default function ResourcesTab({
   const submitAiPrompt = (id: string, text: string) => {
     updateDocNotes(prev => prev.map(n => {
       if (n.id === id) {
-        return { ...n, noteText: text, isEditing: false, isAiLoading: true };
+        return { 
+          ...n, 
+          aiChat: [...(n.aiChat || []), { role: 'user', content: text }],
+          isEditing: false, 
+          isAiLoading: true 
+        };
       }
       return n;
     }));
@@ -171,10 +177,23 @@ export default function ResourcesTab({
     setTimeout(() => {
       updateDocNotes(prev => prev.map(n => {
         if (n.id === id) {
+          let aiRes = '';
+          const query = text.toLowerCase();
+          
+          if (query.includes('explain') || query.includes('what is')) {
+            aiRes = `"${n.selectedText}" refers to the process where electrical or chemical signals are transmitted across the synaptic cleft. Would you like me to relate this to action potentials?`;
+          } else if (query.includes('summarize')) {
+            aiRes = `In the context of this document, "${n.selectedText}" is a key principle detailing how neurons communicate in circuits.`;
+          } else if (query.includes('example')) {
+            aiRes = `An example of this is when a motor neuron commands a muscle cell to contract via the neuromuscular junction.`;
+          } else {
+             aiRes = `You asked: "${text}". Based on "${n.selectedText}", this involves the fundamental mechanisms of neurotransmitter release and receptor binding. Let me know if you need more details!`;
+          }
+
           return { 
             ...n, 
             isAiLoading: false, 
-            aiResponse: `Regarding your query about "${n.selectedText}", here is some context from the AI: The term relates to fundamental principles that you are currently studying. (This is a quick summary based on your document context, you can interact further below if needed).` 
+            aiChat: [...(n.aiChat || []), { role: 'ai', content: aiRes }]
           };
         }
         return n;
@@ -598,20 +617,44 @@ export default function ResourcesTab({
                              {note.type === 'ai' ? <Sparkles className="w-4 h-4 text-primary-fixed-dim shrink-0" /> : <MessageSquare className="w-4 h-4 text-primary-fixed-dim shrink-0" />}
                              <p className="font-sans text-[11px] font-semibold text-white/80 line-clamp-2 italic leading-relaxed">"{note.selectedText}"</p>
                           </div>
-                          <div className="p-4">
+                          <div className="p-4 flex flex-col gap-3 max-h-[350px] overflow-y-auto no-scrollbar">
+                            {note.type === 'ai' && note.aiChat && note.aiChat.map((msg, i) => (
+                                <div key={i} className={`p-3 rounded-lg border ${
+                                  msg.role === 'user' 
+                                    ? 'bg-surface-container-high border-white/10 text-white' 
+                                    : 'bg-primary-fixed-dim/10 border-primary-fixed-dim/20 text-white'
+                                } text-sm relative shrink-0`}>
+                                  <div className={`flex items-center gap-2 mb-1.5 ${msg.role === 'user' ? 'opacity-50' : 'text-primary-fixed-dim'}`}>
+                                    {msg.role === 'user' ? <User className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
+                                    <span className="text-xs">{msg.role === 'user' ? 'You' : 'AI Assistant'}</span>
+                                  </div>
+                                  <p className="leading-relaxed text-sm whitespace-pre-wrap">{msg.content}</p>
+                                </div>
+                            ))}
+
+                            {note.isAiLoading && note.type === 'ai' && (
+                                <div className="p-3 bg-primary-fixed-dim/10 rounded-lg flex items-center gap-2 shrink-0">
+                                  <Bot className="w-4 h-4 text-primary-fixed-dim animate-pulse" />
+                                  <span className="text-sm text-primary-fixed-dim animate-pulse">Thinking...</span>
+                                </div>
+                            )}
+
                             {note.isEditing ? (
                               <textarea
                                 autoFocus
-                                className="w-full bg-background border border-white/10 rounded-lg p-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 min-h-[90px] resize-y font-sans shadow-inner"
+                                className="w-full bg-background border border-white/10 rounded-lg p-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 min-h-[90px] resize-y font-sans shadow-inner shrink-0"
                                 placeholder={note.type === 'ai' ? "Ask AI about this phrase..." : "Type your note here..."}
-                                defaultValue={note.noteText}
+                                defaultValue={note.type !== 'ai' ? note.noteText : ''}
                                 onKeyDown={(e) => {
                                   if (e.key === 'Enter' && !e.shiftKey) {
                                     e.preventDefault();
-                                    if (note.type === 'ai') {
-                                      submitAiPrompt(note.id, e.currentTarget.value);
-                                    } else {
-                                      saveNote(note.id, e.currentTarget.value);
+                                    if (e.currentTarget.value.trim()) {
+                                        if (note.type === 'ai') {
+                                          submitAiPrompt(note.id, e.currentTarget.value);
+                                        } else {
+                                          saveNote(note.id, e.currentTarget.value);
+                                        }
+                                        e.currentTarget.value = '';
                                     }
                                   }
                                 }}
@@ -619,30 +662,8 @@ export default function ResourcesTab({
                                   if (note.type !== 'ai') saveNote(note.id, e.currentTarget.value);
                                 }}
                               />
-                            ) : note.type === 'ai' ? (
-                              <div className="relative group cursor-pointer flex flex-col gap-3">
-                                <div className="bg-surface-container-high p-3 rounded-lg border border-white/10 text-white text-sm">
-                                  <div className="flex items-center gap-2 mb-1.5 opacity-50">
-                                    <User className="w-3 h-3" /> <span className="text-xs">You</span>
-                                  </div>
-                                  {note.noteText}
-                                </div>
-                                {note.isAiLoading ? (
-                                  <div className="p-3 bg-primary-fixed-dim/10 rounded-lg flex items-center gap-2">
-                                    <Bot className="w-4 h-4 text-primary-fixed-dim animate-pulse" />
-                                    <span className="text-sm text-primary-fixed-dim animate-pulse">Thinking...</span>
-                                  </div>
-                                ) : (
-                                  <div className="bg-primary-fixed-dim/10 p-3 rounded-lg border border-primary-fixed-dim/20 text-white text-sm relative">
-                                    <div className="flex items-center gap-2 mb-1.5 text-primary-fixed-dim">
-                                      <Sparkles className="w-3 h-3" /> <span className="text-xs">AI Assistant</span>
-                                    </div>
-                                    <p className="leading-relaxed text-sm whitespace-pre-wrap">{note.aiResponse}</p>
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="relative group cursor-pointer" onClick={() => editNote(note.id)}>
+                            ) : note.type !== 'ai' && (
+                              <div className="relative group cursor-pointer shrink-0" onClick={() => editNote(note.id)}>
                                 <p className="font-sans text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">{note.noteText}</p>
                                 <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 p-1.5 bg-surface-container rounded-lg backdrop-blur transition-opacity shadow-lg border border-white/10">
                                   <Edit3 className="w-4 h-4 text-slate-400" />
@@ -660,7 +681,7 @@ export default function ResourcesTab({
                           {!note.isEditing && note.type === 'ai' && !note.isAiLoading && (
                             <div className="px-4 py-2 border-t border-white/5 flex justify-between items-center bg-surface-container/50">
                                <button onClick={() => editNote(note.id)} className="text-[10px] text-slate-400 hover:text-white uppercase tracking-widest font-semibold flex items-center gap-1.5 transition-colors">
-                                 <Edit3 className="w-3 h-3" /> Follow up
+                                 <MessageSquare className="w-3 h-3" /> Follow up
                                </button>
                                <button onClick={() => deleteNote(note.id)} className="text-[10px] text-red-400/80 hover:text-red-400 uppercase tracking-widest font-semibold flex items-center gap-1.5 transition-colors">
                                  <Trash2 className="w-3 h-3" /> Delete
