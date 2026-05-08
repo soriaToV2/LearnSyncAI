@@ -5,11 +5,16 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import CreateAccount from './pages/auth/CreateAccount';
 import Login from './pages/auth/Login';
-import Dashboard from './pages/educator/Dashboard';
-import ClassroomResources from './pages/educator/classroom/ClassroomResources';
-import ClassroomQuizzes from './pages/educator/classroom/ClassroomQuizzes';
-import ClassroomStudents from './pages/educator/classroom/ClassroomStudents';
+
+// Educator
 import MainLayout from './components/layout/MainLayout';
+import Dashboard from './pages/educator/Dashboard';
+import CoursesList from './pages/educator/CoursesList';
+import CourseResources from './pages/educator/course/CourseResources';
+import CourseAssessments from './pages/educator/course/CourseAssessments';
+import CourseStudents from './pages/educator/course/CourseStudents';
+
+// Student
 import StudentLayout from './components/layout/StudentLayout';
 import StudentDashboard from './pages/student/StudentDashboard';
 import StudentCourseView from './pages/student/StudentCourseView';
@@ -32,10 +37,14 @@ export default function App() {
         
         {/* Educator Routes */}
         <Route element={<MainLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/class/:classId/resources" element={<ClassroomResources />} />
-          <Route path="/class/:classId/quizzes" element={<ClassroomQuizzes />} />
-          <Route path="/class/:classId/students" element={<ClassroomStudents />} />
+          <Route path="/educator/dashboard" element={<Dashboard />} />
+          <Route path="/educator/courses" element={<CoursesList />} />
+          <Route path="/educator/course/:courseId/resources" element={<CourseResources />} />
+          <Route path="/educator/course/:courseId/assessments" element={<CourseAssessments />} />
+          <Route path="/educator/course/:courseId/students" element={<CourseStudents />} />
+          {/* Legacy redirects */}
+          <Route path="/dashboard" element={<Navigate to="/educator/dashboard" replace />} />
+          <Route path="/class/:classId/*" element={<Navigate to="/educator/courses" replace />} />
         </Route>
 
         {/* Student Routes */}

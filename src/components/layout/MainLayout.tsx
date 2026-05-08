@@ -1,14 +1,10 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { BookOpen, Users, BrainCircuit, LayoutDashboard, Settings, Bell, HelpCircle, LogOut } from 'lucide-react';
+import { BookOpen, BrainCircuit, LayoutDashboard, LogOut } from 'lucide-react';
 import clsx from 'clsx';
-
 
 export default function MainLayout() {
   const location = useLocation();
-
-  const getClassActivePaths = () => {
-    return location.pathname.includes('/class/');
-  }
+  const isCourseActive = location.pathname.includes('/educator/course/');
 
   return (
     <div className="flex min-h-screen bg-background text-on-background font-sans antialiased selection:bg-primary-container/30">
@@ -27,10 +23,10 @@ export default function MainLayout() {
 
         <div className="flex-1 flex flex-col gap-2 font-display text-sm tracking-wide">
           <NavLink 
-            to="/dashboard"
+            to="/educator/dashboard"
             className={({ isActive }) => clsx(
               "flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95",
-              isActive && !getClassActivePaths()
+              isActive && !isCourseActive
                 ? "text-primary-fixed-dim bg-primary-fixed-dim/10 border-r-2 border-primary-fixed-dim font-semibold" 
                 : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             )}
@@ -39,16 +35,16 @@ export default function MainLayout() {
             Dashboard
           </NavLink>
           <NavLink 
-            to="/class/bio-301/resources"
+            to="/educator/courses"
             className={({ isActive }) => clsx(
               "flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95",
-              getClassActivePaths()
+              (isActive || isCourseActive)
                 ? "text-primary-fixed-dim bg-primary-fixed-dim/10 border-r-2 border-primary-fixed-dim font-semibold" 
                 : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             )}
           >
             <BookOpen className="w-5 h-5" />
-            Classes
+            Courses
           </NavLink>
         </div>
 
