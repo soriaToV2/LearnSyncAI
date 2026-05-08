@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Home, Layers, Globe, User, BrainCircuit, LogOut } from 'lucide-react';
+import { Home, Layers, Globe, User, BrainCircuit, LogOut, Compass } from 'lucide-react';
 import clsx from 'clsx';
 
 
@@ -50,6 +50,19 @@ export default function StudentLayout() {
           >
             <Layers className="w-5 h-5" />
             My Spaces
+          </NavLink>
+
+          <NavLink 
+            to="/student/catalog"
+            className={({ isActive }) => clsx(
+              "flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95",
+              isActive
+                ? "text-primary-fixed-dim bg-primary-fixed-dim/10 border-r-2 border-primary-fixed-dim font-semibold" 
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            )}
+          >
+            <Compass className="w-5 h-5" />
+            Courses
           </NavLink>
 
           <NavLink 

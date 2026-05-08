@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, MapPin, Building, Users, Star, Award, Search, BrainCircuit, Book, Box, UserPlus, UserCheck } from 'lucide-react';
+import { MapPin, Building, Users, Star, Award, BrainCircuit, Book, Box, UserPlus, UserCheck } from 'lucide-react';
 import { useParams, Link } from 'react-router-dom';
 import { MOCK_STUDENTS } from '../../data/mockStudents';
 
@@ -49,20 +49,7 @@ export default function StudentProfile() {
 
   return (
     <>
-      <header className="sticky top-0 w-full border-b border-white/10 bg-[#020617]/50 backdrop-blur-md shadow-none flex justify-end items-center h-16 px-8 z-40">
-        <div className="flex items-center gap-4 text-slate-400">
-          <button className="hover:text-primary-fixed-dim transition-colors">
-            <Bell className="w-5 h-5" />
-          </button>
-          <div className="w-8 h-8 rounded-full overflow-hidden border border-white/10 ml-2">
-            <img 
-              src={MOCK_STUDENTS.find(s => s.id === 'me')?.avatar} 
-              alt="My Profile Avatar" 
-              className="w-full h-full object-cover" 
-            />
-          </div>
-        </div>
-      </header>
+
 
       <main className="p-10 max-w-5xl mx-auto w-full">
         {/* Profile Header Area */}

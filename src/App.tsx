@@ -18,6 +18,9 @@ import StudySpacesList from './pages/student/StudySpacesList';
 import StudySpace from './pages/student/StudySpace';
 import LockdownExam from './pages/student/LockdownExam';
 import StudentCommunity from './pages/student/StudentCommunity';
+import CourseCatalog from './pages/student/CourseCatalog';
+import StudentDashboardV1 from './pages/student/StudentDashboardV1';
+import StudentDashboardV2 from './pages/student/StudentDashboardV2';
 
 export default function App() {
   return (
@@ -38,11 +41,14 @@ export default function App() {
         {/* Student Routes */}
         <Route element={<StudentLayout />}>
           <Route path="/student/dashboard" element={<StudentDashboard />} />
+          <Route path="/student/dashboard/v1" element={<StudentDashboardV1 />} />
+          <Route path="/student/dashboard/v2" element={<StudentDashboardV2 />} />
           <Route path="/student/course/:courseId" element={<StudentCourseView />} />
           <Route path="/student/profile/:studentId" element={<StudentProfile />} />
           <Route path="/student/spaces" element={<StudySpacesList />} />
           <Route path="/student/space/:spaceId" element={<StudySpace />} />
           <Route path="/student/community" element={<StudentCommunity />} />
+          <Route path="/student/catalog" element={<CourseCatalog />} />
         </Route>
         
         {/* Exam without standard layout */}

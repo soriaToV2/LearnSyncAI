@@ -1,198 +1,218 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Bell, Search, Globe, Building, ArrowRight, ShieldCheck, Sigma, Code2, BrainCircuit } from 'lucide-react';
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  Compass, BrainCircuit, Sigma, Code2,
+  ArrowUpRight, Calendar, Clock, BookOpen, Zap,
+  CheckCircle2, Circle, Trophy, Target,
+} from 'lucide-react';
 
+const courses = [
+  {
+    id: 'bio-301', title: 'Advanced Neurobiology', prof: 'Prof. Elias Vance',
+    progress: 45, color: '#22d3ee', icon: BrainCircuit, uni: 'MIT',
+    dueLabel: 'Essay due', dueDate: 'May 12',
+    modules: 12, completed: 5,
+  },
+  {
+    id: 'phys-401', title: 'Quantum Mechanics II', prof: 'Prof. Sarah Chen',
+    progress: 80, color: '#818cf8', icon: Sigma, uni: 'Stanford',
+    dueLabel: 'Problem set', dueDate: 'May 15',
+    modules: 10, completed: 8,
+  },
+  {
+    id: 'cs-202', title: 'Algorithms & DS', prof: 'Prof. Alan Turing',
+    progress: 15, color: '#34d399', icon: Code2, uni: 'MIT',
+    dueLabel: 'Quiz', dueDate: 'May 20',
+    modules: 15, completed: 2,
+  },
+];
+
+const agenda = [
+  { title: 'Midterm Exam — Neurobiology', date: 'Mon, May 12', type: 'exam', done: false },
+  { title: 'Problem Set 6 — Quantum', date: 'Thu, May 15', type: 'assignment', done: false },
+  { title: 'Quiz — Algorithms', date: 'Tue, May 20', type: 'quiz', done: false },
+  { title: 'Essay Draft — Neurobiology', date: 'Fri, May 10', type: 'assignment', done: true },
+];
+
+const typeColors: Record<string, string> = {
+  exam: 'text-rose-400 bg-rose-400/10 border-rose-400/20',
+  assignment: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
+  quiz: 'text-indigo-400 bg-indigo-400/10 border-indigo-400/20',
+};
 
 export default function StudentDashboard() {
-  const [activeTab, setActiveTab] = useState<'enrolled' | 'internal' | 'global'>('enrolled');
+  const navigate = useNavigate();
+  const [checkedItems, setCheckedItems] = useState<Record<number, boolean>>({ 3: true });
 
   return (
     <>
-      {/* TopAppBar */}
-      <header className="sticky top-0 w-full border-b border-white/10 bg-[#020617]/50 backdrop-blur-md shadow-none flex justify-between items-center h-16 px-8 z-40">
-        <div className="flex-1 max-w-md">
-          <div className="relative flex items-center focus-within:ring-1 focus-within:ring-primary-fixed-dim/50 rounded-full bg-surface-container/50 px-4 py-2 border border-white/5">
-            <Search className="text-on-surface-variant w-5 h-5 mr-2" />
-            <input 
-              type="text" 
-              placeholder="Search courses, universities..." 
-              className="bg-transparent border-none focus:ring-0 text-on-surface font-sans text-sm w-full placeholder:text-on-surface-variant/50 outline-none" 
-            />
+      <main className="flex-1 overflow-y-auto">
+        {/* Full-width greeting banner */}
+        <div className="relative bg-[#080f1e] border-b border-white/5 px-10 py-8 overflow-hidden">
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute top-0 right-0 w-[500px] h-full opacity-30"
+              style={{ background: 'linear-gradient(to left, #818cf820, transparent)' }} />
+            {/* Grid lines */}
+            <div className="absolute inset-0 opacity-[0.04]"
+              style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+          </div>
+          <div className="relative z-10 max-w-6xl mx-auto flex items-center justify-between">
+            <div>
+              <p className="font-mono text-xs text-slate-500 mb-2 tracking-widest uppercase">// student.portal · v2.6.1</p>
+              <h1 className="font-display text-5xl font-black text-white tracking-tighter mb-1">
+                Sarah <span className="font-light text-slate-400">Kim</span>
+              </h1>
+              <p className="font-sans text-sm text-slate-400">MIT · Computer Science · Sophomore</p>
+            </div>
+            <div className="hidden md:flex items-center gap-10">
+              {[
+                { icon: Trophy, val: '12', label: 'Badges', color: '#f59e0b' },
+                { icon: Target, val: '94%', label: 'Avg Score', color: '#34d399' },
+                { icon: Zap, val: '7', label: 'Day Streak', color: '#818cf8' },
+              ].map(s => {
+                const Icon = s.icon;
+                return (
+                  <div key={s.label} className="text-center">
+                    <div className="flex justify-center mb-1"><Icon className="w-5 h-5" style={{ color: s.color }} /></div>
+                    <p className="font-display text-3xl font-black text-white">{s.val}</p>
+                    <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">{s.label}</p>
+                  </div>
+                );
+              })}
+              <Link to="/student/catalog"
+                className="flex items-center gap-2 px-5 py-3 rounded-xl border border-white/10 bg-white/[0.03] text-white font-display text-sm font-semibold hover:bg-white/[0.07] transition-all active:scale-95 ml-4">
+                <Compass className="w-4 h-4" /> Explore
+              </Link>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-4 text-slate-400">
-            <button className="hover:text-primary-fixed-dim transition-colors">
-              <Bell className="w-5 h-5" />
-            </button>
-            <div className="w-8 h-8 rounded-full overflow-hidden border border-white/10 ml-2">
-              <img 
-                src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=150" 
-                alt="Student Profile Avatar" 
-                className="w-full h-full object-cover" 
-              />
+        <div className="max-w-6xl mx-auto px-10 py-8">
+          <div className="grid grid-cols-12 gap-8">
+
+            {/* COURSE CARDS — 7 cols */}
+            <div className="col-span-12 lg:col-span-7">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="font-display text-lg font-bold text-on-surface">Active Courses</h2>
+                <Link to="/student/catalog" className="font-sans text-xs text-slate-500 hover:text-white flex items-center gap-1 transition-colors">
+                  Browse more <ArrowUpRight className="w-3 h-3" />
+                </Link>
+              </div>
+              <div className="flex flex-col gap-4">
+                {courses.map(c => {
+                  const Icon = c.icon;
+                  return (
+                    <div key={c.id} className="group rounded-2xl border border-white/5 bg-white/[0.02] overflow-hidden hover:border-white/10 transition-all duration-200">
+                      {/* Color top strip */}
+                      <div className="h-1 w-full" style={{ backgroundColor: c.color }} />
+                      <div className="p-5">
+                        <div className="flex items-start gap-4">
+                          <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border border-white/10"
+                            style={{ backgroundColor: `${c.color}12`, color: c.color }}>
+                            <Icon className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <h3 className="font-display text-base font-bold text-on-surface group-hover:text-white transition-colors">{c.title}</h3>
+                                <p className="font-sans text-xs text-slate-500">{c.prof} · {c.uni}</p>
+                              </div>
+                              <Link to={`/student/course/${c.id}`}
+                                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all">
+                                <ArrowUpRight className="w-4 h-4" />
+                              </Link>
+                            </div>
+                            <div className="mt-4 grid grid-cols-3 gap-3">
+                              <div className="bg-white/5 rounded-xl p-3">
+                                <p className="font-display text-lg font-bold text-white">{c.progress}%</p>
+                                <p className="font-sans text-[9px] text-slate-500 uppercase tracking-wider mt-0.5">Progress</p>
+                              </div>
+                              <div className="bg-white/5 rounded-xl p-3">
+                                <p className="font-display text-lg font-bold" style={{ color: c.color }}>{c.completed}/{c.modules}</p>
+                                <p className="font-sans text-[9px] text-slate-500 uppercase tracking-wider mt-0.5">Modules</p>
+                              </div>
+                              <div className="bg-white/5 rounded-xl p-3">
+                                <p className="font-display text-sm font-bold text-amber-400">{c.dueDate}</p>
+                                <p className="font-sans text-[9px] text-slate-500 uppercase tracking-wider mt-0.5">{c.dueLabel}</p>
+                              </div>
+                            </div>
+                            <div className="mt-3 w-full bg-white/5 rounded-full h-1">
+                              <div className="h-1 rounded-full" style={{ width: `${c.progress}%`, backgroundColor: c.color }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN — 5 cols */}
+            <div className="col-span-12 lg:col-span-5 flex flex-col gap-6">
+
+              {/* Agenda / To-do */}
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Calendar className="w-4 h-4 text-slate-400" />
+                  <h3 className="font-display text-base font-bold text-on-surface">Upcoming</h3>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {agenda.map((item, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setCheckedItems(prev => ({ ...prev, [i]: !prev[i] }))}
+                      className={`flex items-start gap-3 p-3 rounded-xl text-left transition-all hover:bg-white/5 ${checkedItems[i] ? 'opacity-40' : ''}`}
+                    >
+                      {checkedItems[i]
+                        ? <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                        : <Circle className="w-4 h-4 text-slate-600 mt-0.5 shrink-0" />
+                      }
+                      <div className="flex-1 min-w-0">
+                        <p className={`font-sans text-sm text-slate-200 leading-snug ${checkedItems[i] ? 'line-through' : ''}`}>{item.title}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Clock className="w-3 h-3 text-slate-600" />
+                          <span className="font-sans text-[10px] text-slate-500">{item.date}</span>
+                          <span className={`font-sans text-[9px] px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider ${typeColors[item.type]}`}>{item.type}</span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Study Hours This Week */}
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-slate-400" />
+                    <h3 className="font-display text-base font-bold text-on-surface">Study Hours</h3>
+                  </div>
+                  <span className="font-mono text-xs text-emerald-400 font-semibold">+12h this week</span>
+                </div>
+                <div className="flex items-end gap-2 h-20 mt-2">
+                  {[
+                    { day: 'M', h: 2 }, { day: 'T', h: 4.5 }, { day: 'W', h: 3 },
+                    { day: 'T', h: 5 }, { day: 'F', h: 1.5 }, { day: 'S', h: 0 }, { day: 'S', h: 2 },
+                  ].map((d, i) => (
+                    <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                      <div className="w-full flex flex-col justify-end" style={{ height: '64px' }}>
+                        <div
+                          className="w-full rounded-md transition-all"
+                          style={{
+                            height: `${(d.h / 5) * 100}%`,
+                            background: d.h > 0 ? 'linear-gradient(to top, #22d3ee80, #818cf840)' : undefined,
+                            backgroundColor: d.h === 0 ? 'rgba(255,255,255,0.03)' : undefined,
+                          }}
+                        />
+                      </div>
+                      <span className="font-sans text-[9px] text-slate-600 uppercase">{d.day}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-1 p-10 max-w-7xl mx-auto w-full">
-        {/* Welcome Banner */}
-        <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6 bg-surface-container rounded-2xl p-8 border border-white/5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-primary-fixed-dim/10 rounded-full blur-[80px] -mr-20 -mt-20 pointer-events-none"></div>
-          
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="px-3 py-1 rounded-full bg-secondary-container/20 text-secondary-container border border-secondary-container/30 font-sans font-semibold text-[12px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <Building className="w-3.5 h-3.5" />
-                MIT Student
-              </span>
-            </div>
-            <h2 className="font-display text-4xl font-semibold text-on-surface mb-2">Welcome back, Sarah.</h2>
-            <p className="font-sans text-base text-on-surface-variant">Your cognitive research environment is updated and ready.</p>
-          </div>
-          
-          <div className="relative z-10 flex gap-4">
-             <div className="text-center px-6 border-r border-white/10">
-               <p className="font-display text-3xl font-semibold text-primary-fixed-dim">3</p>
-               <p className="font-sans text-xs text-on-surface-variant mt-1 uppercase tracking-wider">Active Courses</p>
-             </div>
-             <div className="text-center px-4">
-               <p className="font-display text-3xl font-semibold text-secondary-container">12</p>
-               <p className="font-sans text-xs text-on-surface-variant mt-1 uppercase tracking-wider">Badges Earned</p>
-             </div>
-          </div>
-        </div>
-
-        {/* Navigation Tabs */}
-        <div className="border-b border-white/10 mb-8 flex gap-8">
-          <button 
-            className={`pb-3 font-display text-[15px] transition-colors border-b-2 ${activeTab === 'enrolled' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant border-transparent hover:text-on-surface'}`}
-            onClick={() => setActiveTab('enrolled')}
-          >
-            My Enrolled Courses
-          </button>
-          <button 
-            className={`pb-3 font-display text-[15px] transition-colors border-b-2 ${activeTab === 'internal' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant border-transparent hover:text-on-surface'}`}
-            onClick={() => setActiveTab('internal')}
-          >
-            Internal Courses
-          </button>
-          <button 
-            className={`pb-3 font-display text-[15px] transition-colors border-b-2 ${activeTab === 'global' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant border-transparent hover:text-on-surface'}`}
-            onClick={() => setActiveTab('global')}
-          >
-            Global Network
-          </button>
-        </div>
-
-        {/* Tab Content */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          
-          {/* Card 1 */}
-          <Link to="/student/course/bio-301" className="block glass-card rounded-xl p-6 relative overflow-hidden group hover:border-primary-fixed-dim/40 transition-colors duration-300">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-primary-fixed-dim/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none group-hover:bg-primary-fixed-dim/20 transition-colors"></div>
-            
-            <div className="relative z-10 flex justify-between items-start mb-4">
-              <span className="px-2.5 py-1 rounded-md bg-secondary-container/10 text-secondary-container border border-secondary-container/20 font-sans font-semibold text-[10px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <Building className="w-3 h-3" />
-                MIT
-              </span>
-              <span className="px-2.5 py-1 rounded-md bg-surface-bright border border-white/5 text-on-surface-variant font-sans font-semibold text-[10px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                Internal
-              </span>
-            </div>
-
-            <div className="relative z-10">
-              <div className="w-12 h-12 rounded-lg bg-primary-fixed-dim/10 flex items-center justify-center mb-4 border border-primary-fixed-dim/20 text-primary-fixed-dim">
-                <BrainCircuit className="w-6 h-6" />
-              </div>
-              <h3 className="font-display text-xl font-medium text-on-surface mb-1 group-hover:text-primary-fixed-dim transition-colors">Advanced Neurobiology</h3>
-              <p className="font-sans text-sm text-on-surface-variant mb-6">Prof. Elias Vance</p>
-              
-              <div className="w-full bg-surface-container-high rounded-full h-1.5 mb-2">
-                <div className="bg-primary-fixed-dim h-1.5 rounded-full" style={{ width: '45%' }}></div>
-              </div>
-              <div className="flex justify-between text-[11px] font-sans text-on-surface-variant uppercase tracking-wider font-semibold">
-                <span>45% Complete</span>
-                <span className="flex items-center gap-1 group-hover:text-primary-fixed-dim transition-colors">
-                  Continue <ArrowRight className="w-3 h-3" />
-                </span>
-              </div>
-            </div>
-          </Link>
-
-          {/* Card 2 */}
-          <Link to="/student/course/phys-401" className="block glass-card rounded-xl p-6 relative overflow-hidden group hover:border-indigo-400/40 transition-colors duration-300">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none group-hover:bg-indigo-500/20 transition-colors"></div>
-            
-            <div className="relative z-10 flex justify-between items-start mb-4">
-              <span className="px-2.5 py-1 rounded-md bg-white/5 text-slate-300 border border-white/10 font-sans font-semibold text-[10px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <Building className="w-3 h-3" />
-                Stanford
-              </span>
-              <span className="px-2.5 py-1 rounded-md bg-primary-container/10 border border-primary-container/20 text-primary-container font-sans font-semibold text-[10px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <Globe className="w-3 h-3" />
-                Global
-              </span>
-            </div>
-
-            <div className="relative z-10">
-              <div className="w-12 h-12 rounded-lg bg-indigo-400/10 flex items-center justify-center mb-4 border border-indigo-400/20 text-indigo-400">
-                <Sigma className="w-6 h-6" />
-              </div>
-              <h3 className="font-display text-xl font-medium text-on-surface mb-1 group-hover:text-indigo-400 transition-colors">Quantum Mechanics II</h3>
-              <p className="font-sans text-sm text-on-surface-variant mb-6">Prof. Sarah Chen</p>
-              
-              <div className="w-full bg-surface-container-high rounded-full h-1.5 mb-2">
-                <div className="bg-indigo-400 h-1.5 rounded-full" style={{ width: '80%' }}></div>
-              </div>
-              <div className="flex justify-between text-[11px] font-sans text-on-surface-variant uppercase tracking-wider font-semibold">
-                <span>80% Complete</span>
-                <span className="flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
-                  Continue <ArrowRight className="w-3 h-3" />
-                </span>
-              </div>
-            </div>
-          </Link>
-
-          {/* Card 3 */}
-          <Link to="/student/course/cs-202" className="block glass-card rounded-xl p-6 relative overflow-hidden group hover:border-emerald-400/40 transition-colors duration-300">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none group-hover:bg-emerald-500/20 transition-colors"></div>
-            
-            <div className="relative z-10 flex justify-between items-start mb-4">
-              <span className="px-2.5 py-1 rounded-md bg-secondary-container/10 text-secondary-container border border-secondary-container/20 font-sans font-semibold text-[10px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <Building className="w-3 h-3" />
-                MIT
-              </span>
-              <span className="px-2.5 py-1 rounded-md bg-surface-bright border border-white/5 text-on-surface-variant font-sans font-semibold text-[10px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                Internal
-              </span>
-            </div>
-
-            <div className="relative z-10">
-              <div className="w-12 h-12 rounded-lg bg-emerald-400/10 flex items-center justify-center mb-4 border border-emerald-400/20 text-emerald-400">
-                <Code2 className="w-6 h-6" />
-              </div>
-              <h3 className="font-display text-xl font-medium text-on-surface mb-1 group-hover:text-emerald-400 transition-colors">Algorithms & Data Structures</h3>
-              <p className="font-sans text-sm text-on-surface-variant mb-6">Prof. Alan Turing</p>
-              
-              <div className="w-full bg-surface-container-high rounded-full h-1.5 mb-2">
-                <div className="bg-emerald-400 h-1.5 rounded-full" style={{ width: '15%' }}></div>
-              </div>
-              <div className="flex justify-between text-[11px] font-sans text-on-surface-variant uppercase tracking-wider font-semibold">
-                <span>15% Complete</span>
-                <span className="flex items-center gap-1 group-hover:text-emerald-400 transition-colors">
-                  Continue <ArrowRight className="w-3 h-3" />
-                </span>
-              </div>
-            </div>
-          </Link>
-
         </div>
       </main>
     </>

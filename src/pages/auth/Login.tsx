@@ -14,9 +14,9 @@ export default function Login() {
     e.preventDefault();
     
     // Hardcoded accounts for testing
-    if (email === 'admin' && password === 'admin') {
+    if (email === 'admin' && password === 'admin@12') {
       navigate('/dashboard');
-    } else if (email === 'student' && password === 'student') {
+    } else if (email === 'student' && password === 'student@12') {
       navigate('/student/dashboard');
     } else {
       setError('Invalid credentials. Try: admin@eduspace.edu OR student@eduspace.edu (password: password)');
