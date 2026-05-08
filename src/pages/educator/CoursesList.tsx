@@ -4,7 +4,7 @@ import {
   BrainCircuit, Sigma, Code2, Plus, Users, ArrowUpRight,
   Globe, Lock, Search, Filter, Clock,
 } from 'lucide-react';
-import { EDUCATOR_COURSES } from '../../data/mockEducatorData';
+import { EDUCATOR_COURSES, addCourse } from '../../data/mockEducatorData';
 import CreateCourseModal from './course/components/CreateCourseModal';
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = { BrainCircuit, Sigma, Code2 };
@@ -13,16 +13,17 @@ export default function CoursesList() {
   const [filter, setFilter] = useState<'all' | 'active' | 'archived' | 'draft'>('all');
   const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [courses, setCourses] = useState([...EDUCATOR_COURSES]);
 
-  const filtered = EDUCATOR_COURSES
+  const filtered = courses
     .filter(c => filter === 'all' || c.status === filter)
     .filter(c => c.title.toLowerCase().includes(search.toLowerCase()));
 
   const counts = {
-    all: EDUCATOR_COURSES.length,
-    active: EDUCATOR_COURSES.filter(c => c.status === 'active').length,
-    archived: EDUCATOR_COURSES.filter(c => c.status === 'archived').length,
-    draft: EDUCATOR_COURSES.filter(c => c.status === 'draft').length,
+    all: courses.length,
+    active: courses.filter(c => c.status === 'active').length,
+    archived: courses.filter(c => c.status === 'archived').length,
+    draft: courses.filter(c => c.status === 'draft').length,
   };
 
   return (
@@ -126,7 +127,10 @@ export default function CoursesList() {
         </div>
       )}
 
-      <CreateCourseModal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} />
+      <CreateCourseModal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} onCreate={(data) => {
+        addCourse(data);
+        setCourses([...EDUCATOR_COURSES]);
+      }} />
     </main>
   );
 }

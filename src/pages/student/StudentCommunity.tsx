@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Search, UserPlus, UserCheck, MapPin, Building, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { MOCK_STUDENTS, Student } from '../../data/mockStudents';

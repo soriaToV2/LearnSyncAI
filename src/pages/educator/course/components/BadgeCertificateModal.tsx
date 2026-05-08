@@ -5,17 +5,19 @@ import { createPortal } from 'react-dom';
 interface Props {
   isOpen: boolean; onClose: () => void;
   studentName: string; courseName: string;
+  onIssueBadge: (data: any) => void;
+  onIssueCertificate: () => void;
 }
 
 const BADGE_TEMPLATES = [
-  { id: 'top-scorer', title: 'Top Scorer', desc: 'Achieved highest score', icon: Trophy, color: '#f59e0b' },
-  { id: 'perfect-attendance', title: 'Perfect Attendance', desc: 'Never missed an assessment', icon: Star, color: '#22d3ee' },
-  { id: 'most-improved', title: 'Most Improved', desc: 'Significant grade improvement', icon: Medal, color: '#34d399' },
-  { id: 'excellence', title: 'Excellence Award', desc: 'Outstanding performance', icon: Award, color: '#818cf8' },
-  { id: 'completion', title: 'Course Completion', desc: 'Completed all course requirements', icon: Shield, color: '#f472b6' },
+  { id: 'top-scorer', title: 'Top Scorer', desc: 'Achieved highest score', icon: Trophy, iconName: 'Trophy', color: '#f59e0b' },
+  { id: 'perfect-attendance', title: 'Perfect Attendance', desc: 'Never missed an assessment', icon: Star, iconName: 'Star', color: '#22d3ee' },
+  { id: 'most-improved', title: 'Most Improved', desc: 'Significant grade improvement', icon: Medal, iconName: 'Medal', color: '#34d399' },
+  { id: 'excellence', title: 'Excellence Award', desc: 'Outstanding performance', icon: Award, iconName: 'Award', color: '#818cf8' },
+  { id: 'completion', title: 'Course Completion', desc: 'Completed all course requirements', icon: Shield, iconName: 'Shield', color: '#f472b6' },
 ];
 
-export default function BadgeCertificateModal({ isOpen, onClose, studentName, courseName }: Props) {
+export default function BadgeCertificateModal({ isOpen, onClose, studentName, courseName, onIssueBadge, onIssueCertificate }: Props) {
   const [tab, setTab] = useState<'badge' | 'certificate'>('badge');
   const [selectedBadge, setSelectedBadge] = useState<string | null>(null);
   const [customTitle, setCustomTitle] = useState('');
@@ -26,10 +28,13 @@ export default function BadgeCertificateModal({ isOpen, onClose, studentName, co
 
   const handleIssue = () => {
     if (tab === 'badge') {
-      const badge = useCustom ? customTitle : BADGE_TEMPLATES.find(b => b.id === selectedBadge)?.title;
-      alert(`Badge "${badge}" issued to ${studentName}!`);
+      const template = BADGE_TEMPLATES.find(b => b.id === selectedBadge);
+      const badgeData = useCustom 
+        ? { title: customTitle, description: customDesc, icon: 'Sparkles', color: '#f59e0b' }
+        : { title: template?.title, description: template?.desc, icon: template?.iconName, color: template?.color };
+      onIssueBadge(badgeData);
     } else {
-      alert(`Certificate of Completion issued to ${studentName} for "${courseName}"!`);
+      onIssueCertificate();
     }
     onClose();
   };

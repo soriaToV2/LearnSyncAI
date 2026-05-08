@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Globe, Lock, Building, RefreshCw, Sparkles, Check } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-interface Props { isOpen: boolean; onClose: () => void; }
+interface Props { isOpen: boolean; onClose: () => void; onCreate: (data: any) => void; }
 
 const CATEGORIES = ['Computer Science', 'Biology', 'Physics', 'Mathematics', 'Chemistry', 'Engineering', 'Psychology', 'Literature', 'Other'];
 
@@ -13,7 +13,7 @@ function generateCode() {
   return code;
 }
 
-export default function CreateCourseModal({ isOpen, onClose }: Props) {
+export default function CreateCourseModal({ isOpen, onClose, onCreate }: Props) {
   const [step, setStep] = useState(0);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -28,7 +28,15 @@ export default function CreateCourseModal({ isOpen, onClose }: Props) {
   const canProceed0 = title.trim().length > 0 && category.length > 0;
 
   const handleCreate = () => {
-    alert(`Course "${title}" created!\nCode: ${courseCode}\nVisibility: ${isPublic ? 'Public' : 'Restricted'}\nUniversity: ${tiedToUni ? university : 'Independent'}`);
+    onCreate({
+      title,
+      description,
+      category,
+      tiedToUni,
+      university: tiedToUni ? university : undefined,
+      isPublic,
+      courseCode
+    });
     setStep(0); setTitle(''); setDescription(''); setCategory('');
     onClose();
   };

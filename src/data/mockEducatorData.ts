@@ -38,7 +38,7 @@ export interface EnrolledStudent {
 export interface EducatorCourse {
   id: string; title: string; description: string; iconName: string;
   color: string; university?: string; isPublic: boolean; courseCode: string;
-  studentCount: number; status: CourseStatus; createdAt: string;
+  studentCount: number; status: CourseStatus; createdAt: string; category?: string;
   resources: Resource[]; assessments: Assessment[]; students: EnrolledStudent[];
 }
 export interface ActivityItem {
@@ -178,4 +178,73 @@ export const getPendingReviewCount = () => {
   let n = 0;
   EDUCATOR_COURSES.forEach(c => c.assessments.forEach(a => { n += a.submissions.filter(s => s.status === 'needs-review').length; }));
   return n;
+};
+
+// ─── Mutations ──────────────────────────────────────────
+export const addCourse = (courseData: Partial<EducatorCourse>) => {
+  const newCourse: EducatorCourse = {
+    id: courseData.title?.toLowerCase().replace(/[^a-z0-9]+/g, '-') || `c${Date.now()}`,
+    title: courseData.title || '',
+    description: courseData.description || '',
+    category: courseData.category || '',
+    iconName: 'BrainCircuit',
+    color: '#00daf3',
+    status: 'draft',
+    studentCount: 0,
+    isPublic: courseData.isPublic ?? true,
+    courseCode: courseData.courseCode || '',
+    university: courseData.university || undefined,
+    createdAt: new Date().toISOString().split('T')[0],
+    resources: [],
+    assessments: [],
+    students: []
+  };
+  EDUCATOR_COURSES.unshift(newCourse);
+  return newCourse;
+};
+
+export const addAssessment = (courseId: string, assessmentData: Partial<Assessment>) => {
+  const course = getCourseById(courseId);
+  if (!course) return null;
+  const newAssessment: Assessment = {
+    id: `a${Date.now()}`,
+    title: assessmentData.title || '',
+    description: assessmentData.description || '',
+    type: assessmentData.type || 'quiz',
+    status: 'draft',
+    deadline: assessmentData.deadline || undefined,
+    duration: assessmentData.duration || 30,
+    difficulty: assessmentData.difficulty || 'medium',
+    questionCount: assessmentData.questionCount || 10,
+    isLockdown: assessmentData.isLockdown || false,
+    submissions: [],
+    questions: []
+  };
+  course.assessments.unshift(newAssessment);
+  return newAssessment;
+};
+
+export const issueBadge = (courseId: string, studentId: string, badgeData: Partial<Badge>) => {
+  const student = getCourseById(courseId)?.students.find(s => s.id === studentId);
+  if (student) {
+    student.badges.push({
+      id: `b${Date.now()}`,
+      title: badgeData.title || '',
+      description: badgeData.description || '',
+      icon: badgeData.icon || 'Award',
+      color: badgeData.color || '#f59e0b',
+      issuedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    });
+  }
+};
+
+export const gradeSubmission = (courseId: string, assessmentId: string, submissionId: string, manualScore: number) => {
+  const course = getCourseById(courseId);
+  const assessment = course?.assessments.find(a => a.id === assessmentId);
+  const submission = assessment?.submissions.find(s => s.studentId === submissionId);
+  if (submission) {
+    submission.manualScore = manualScore;
+    submission.totalScore = submission.autoScore + manualScore;
+    submission.status = 'graded';
+  }
 };

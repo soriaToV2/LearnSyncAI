@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Zap, Flame, Snowflake, Shield, List, ToggleLeft, HelpCircle, Edit3, GitMerge, AlignLeft, FileText, PenTool, Sparkles, Clock, Calendar } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-interface Props { isOpen: boolean; onClose: () => void; courseResources: string[]; }
+interface Props { isOpen: boolean; onClose: () => void; courseResources: string[]; onCreate: (data: any) => void; }
 
 type QType = 'multiple-choice' | 'true-false' | 'identification' | 'fill-in-the-blank' | 'essay' | 'matching';
 type Diff = 'easy' | 'medium' | 'hard';
@@ -22,7 +22,7 @@ const DIFFS: { id: Diff; label: string; color: string; icon: React.ReactNode }[]
 ];
 const Q_COUNTS = [5, 10, 15, 20, 25, 30, 40, 50];
 
-export default function CreateAssessmentModal({ isOpen, onClose, courseResources }: Props) {
+export default function CreateAssessmentModal({ isOpen, onClose, courseResources, onCreate }: Props) {
   const [step, setStep] = useState(0);
   const [title, setTitle] = useState('');
   const [assessType, setAssessType] = useState<'quiz' | 'exam'>('quiz');
@@ -42,11 +42,18 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
   const canProceed1 = method === 'manual' || selectedResources.length > 0;
 
   const handleCreate = () => {
-    if (method === 'manual') {
-      alert(`Assessment "${title}" created as Draft. You can now add questions manually.`);
-    } else {
-      alert(`AI is generating ${questionCount} questions from ${selectedResources.length} resource(s).\nYou can review and edit them before deploying.`);
-    }
+    onCreate({
+      title,
+      type: assessType,
+      isLockdown,
+      duration,
+      deadline,
+      method,
+      selectedResources,
+      selectedTypes,
+      difficulty,
+      questionCount
+    });
     setStep(0); setTitle(''); onClose();
   };
 
@@ -64,13 +71,13 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
           <div>
             <h2 className="font-display text-lg font-semibold text-white">Create Assessment</h2>
             <p className="font-sans text-xs text-slate-400 mt-0.5">
-              Step {step + 1} of {method === 'ai' ? 4 : 3} — {step === 0 ? 'Details' : step === 1 ? 'Generation Method' : step === 2 ? (method === 'ai' ? 'Configure AI' : 'Review') : 'Review'}
+              Step {step + 1} of {method === 'ai' ? 5 : 3} — {step === 0 ? 'Details' : step === 1 ? 'Generation Method' : step === 2 ? (method === 'ai' ? 'Configure AI' : 'Review') : step === 3 && method === 'ai' ? 'Review Config' : step === 4 ? 'Questions Preview' : 'Review'}
             </p>
           </div>
           <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <div className="flex h-1">
-          {Array.from({ length: method === 'ai' ? 4 : 3 }).map((_, i) => (
+          {Array.from({ length: method === 'ai' ? 5 : 3 }).map((_, i) => (
             <div key={i} className={`flex-1 transition-all duration-500 ${i <= step ? 'bg-primary-fixed-dim' : 'bg-white/5'}`} />
           ))}
         </div>
@@ -210,7 +217,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
             </div>
           )}
 
-          {/* Review Step */}
+          {/* Review Config Step */}
           {((step === 2 && method === 'manual') || (step === 3 && method === 'ai')) && (
             <div className="space-y-5">
               <p className="font-sans text-sm text-slate-300">Review your assessment configuration.</p>
@@ -237,9 +244,37 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                 <Sparkles className="w-5 h-5 text-primary-fixed-dim mt-0.5 shrink-0" />
                 <p className="font-sans text-xs text-slate-400 leading-relaxed">
                   {method === 'ai'
-                    ? 'Questions will be generated from your selected resources. You can review, edit, and reorder them before deploying.'
+                    ? 'Questions will be generated from your selected resources. Proceed to generate and review them.'
                     : 'The assessment will be saved as a draft. You can add questions manually from the editor.'}
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: AI Generated Questions Preview */}
+          {step === 4 && method === 'ai' && (
+            <div className="space-y-5">
+              <p className="font-sans text-sm text-slate-300">Review the AI-generated questions before saving.</p>
+              <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar">
+                {Array.from({ length: Math.min(questionCount, 3) }).map((_, i) => (
+                  <div key={i} className="bg-surface-container rounded-xl p-4 border border-white/5">
+                    <div className="flex items-start justify-between mb-3">
+                      <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">Question {i + 1}</span>
+                      <span className="font-sans text-xs text-slate-400 uppercase tracking-wider">{selectedTypes[i % selectedTypes.length] || 'Multiple Choice'}</span>
+                    </div>
+                    <p className="font-sans text-sm text-white mb-4">What is the primary function of the generated component in this context?</p>
+                    <div className="space-y-2 pl-4 border-l-2 border-white/10">
+                      <p className="font-sans text-sm text-emerald-400 flex items-center gap-2"><Check className="w-3.5 h-3.5" /> Option A (Correct)</p>
+                      <p className="font-sans text-sm text-slate-400 pl-5">Option B</p>
+                      <p className="font-sans text-sm text-slate-400 pl-5">Option C</p>
+                    </div>
+                  </div>
+                ))}
+                {questionCount > 3 && (
+                  <div className="text-center py-3 border border-dashed border-white/10 rounded-xl">
+                    <p className="font-sans text-xs text-slate-500 italic">+ {questionCount - 3} more questions generated...</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -250,16 +285,16 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors">
             <ChevronLeft className="w-4 h-4" /> {step === 0 ? 'Cancel' : 'Back'}
           </button>
-          {((method === 'manual' && step < 2) || (method === 'ai' && step < 3)) ? (
+          {((method === 'manual' && step < 2) || (method === 'ai' && step < 4)) ? (
             <button onClick={() => setStep(s => s + 1)}
               disabled={(step === 0 && !canProceed0) || (step === 1 && !canProceed1)}
               className="flex items-center gap-2 px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-              Next <ChevronRight className="w-4 h-4" />
+              {method === 'ai' && step === 3 ? <><Sparkles className="w-4 h-4" /> Generate</> : <>Next <ChevronRight className="w-4 h-4" /></>}
             </button>
           ) : (
             <button onClick={handleCreate}
               className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all">
-              <Sparkles className="w-4 h-4" /> {method === 'ai' ? 'Generate & Review' : 'Save as Draft'}
+              <Sparkles className="w-4 h-4" /> {method === 'ai' ? 'Save' : 'Save as Draft'}
             </button>
           )}
         </div>

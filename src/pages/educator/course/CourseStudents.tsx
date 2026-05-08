@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Filter, UserMinus, Award, ChevronDown, ChevronUp, Eye, TrendingUp, TrendingDown } from 'lucide-react';
 import CourseLayout from '../../../components/layout/CourseLayout';
-import { getCourseById } from '../../../data/mockEducatorData';
+import { getCourseById, issueBadge, type EnrolledStudent } from '../../../data/mockEducatorData';
 import BadgeCertificateModal from './components/BadgeCertificateModal';
 
 const statusBadge: Record<string, { bg: string; text: string }> = {
@@ -18,7 +18,8 @@ export default function CourseStudents() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [badgeStudent, setBadgeStudent] = useState<string | null>(null);
 
-  const students = course?.students.filter(s => tab === 'all' || s.status === tab) || [];
+  const [localStudents, setLocalStudents] = useState<EnrolledStudent[]>([...(course?.students || [])]);
+  const students = localStudents.filter(s => tab === 'all' || s.status === tab) || [];
 
   return (
     <CourseLayout>
@@ -145,6 +146,16 @@ export default function CourseStudents() {
         onClose={() => setBadgeStudent(null)}
         studentName={course?.students.find(s => s.id === badgeStudent)?.name || ''}
         courseName={course?.title || ''}
+        onIssueBadge={(data) => {
+          if (courseId && badgeStudent) {
+            issueBadge(courseId, badgeStudent, data);
+            setLocalStudents([...(course?.students || [])]);
+          }
+        }}
+        onIssueCertificate={() => {
+          // Placeholder for certificate logic
+          console.log(`Issued certificate to ${badgeStudent} for ${courseId}`);
+        }}
       />
     </CourseLayout>
   );

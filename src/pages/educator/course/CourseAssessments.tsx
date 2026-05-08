@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { PlusCircle, Calendar, ListOrdered, Rocket, Edit3, MoreVertical, Lock, Clock, Shield, FileCheck, Eye } from 'lucide-react';
 import CourseLayout from '../../../components/layout/CourseLayout';
-import { getCourseById, type Assessment } from '../../../data/mockEducatorData';
+import { getCourseById, addAssessment, gradeSubmission, type Assessment } from '../../../data/mockEducatorData';
 import CreateAssessmentModal from './components/CreateAssessmentModal';
 import GradeStudentModal from './components/GradeStudentModal';
 
@@ -21,7 +21,8 @@ export default function CourseAssessments() {
   const [showCreate, setShowCreate] = useState(false);
   const [gradingSubmission, setGradingSubmission] = useState<{ assessment: Assessment; submissionIdx: number } | null>(null);
 
-  const assessments = course?.assessments.filter(a => filter === 'all' || a.status === filter) || [];
+  const [localAssessments, setLocalAssessments] = useState<Assessment[]>([...(course?.assessments || [])]);
+  const assessments = localAssessments.filter(a => filter === 'all' || a.status === filter) || [];
 
   return (
     <CourseLayout>
@@ -133,13 +134,24 @@ export default function CourseAssessments() {
         </div>
       )}
 
-      <CreateAssessmentModal isOpen={showCreate} onClose={() => setShowCreate(false)} courseResources={course?.resources.map(r => r.name) || []} />
+      <CreateAssessmentModal isOpen={showCreate} onClose={() => setShowCreate(false)} courseResources={course?.resources.map(r => r.name) || []} onCreate={(data) => {
+        if (courseId) {
+          addAssessment(courseId, data);
+          setLocalAssessments([...(course?.assessments || [])]);
+        }
+      }} />
       {gradingSubmission && (
         <GradeStudentModal
           isOpen={true}
           onClose={() => setGradingSubmission(null)}
           assessment={gradingSubmission.assessment}
           submission={gradingSubmission.assessment.submissions[gradingSubmission.submissionIdx]}
+          onSubmit={(submissionId, manualScore) => {
+            if (courseId) {
+              gradeSubmission(courseId, gradingSubmission.assessment.id, submissionId, manualScore);
+              setLocalAssessments([...(course?.assessments || [])]);
+            }
+          }}
         />
       )}
     </CourseLayout>

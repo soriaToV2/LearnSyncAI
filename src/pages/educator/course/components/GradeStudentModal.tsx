@@ -6,9 +6,10 @@ import type { Assessment, Submission } from '../../../../data/mockEducatorData';
 interface Props {
   isOpen: boolean; onClose: () => void;
   assessment: Assessment; submission: Submission;
+  onSubmit: (submissionId: string, manualScore: number) => void;
 }
 
-export default function GradeStudentModal({ isOpen, onClose, assessment, submission }: Props) {
+export default function GradeStudentModal({ isOpen, onClose, assessment, submission, onSubmit }: Props) {
   const essayQuestions = assessment.questions.filter(q => q.type === 'essay');
   const autoQuestions = assessment.questions.filter(q => q.type !== 'essay');
 
@@ -21,7 +22,7 @@ export default function GradeStudentModal({ isOpen, onClose, assessment, submiss
   const finalTotal = submission.autoScore + manualTotal;
 
   const handleSubmit = () => {
-    alert(`Grades submitted for ${submission.studentName}!\nAuto: ${submission.autoScore}\nManual: ${manualTotal}\nTotal: ${finalTotal}/${submission.maxScore}`);
+    onSubmit(submission.studentId, manualTotal);
     onClose();
   };
 
