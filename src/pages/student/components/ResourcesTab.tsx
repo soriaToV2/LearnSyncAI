@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Link as LinkIcon, FileText, BookOpen, Sparkles, MessageSquare, Send, CheckSquare, Square, X, Bot, User, FileImage, FileCode, FileSpreadsheet, Download, FileAudio, FileVideo, Highlighter, Trash2, Edit3 } from 'lucide-react';
+import Modal from '../../../components/ui/Modal';
 
 interface HighlightRect {
   top: number;
@@ -81,6 +82,22 @@ export default function ResourcesTab({
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
+  const [selectedCourseToConnect, setSelectedCourseToConnect] = useState<string | null>(null);
+
+  const enrolledCourses = [
+    { id: 'c1', name: 'Biology 301' },
+    { id: 'c2', name: 'Physics 201' },
+    { id: 'c3', name: 'World History' }
+  ];
+
+  const handleConfirmConnect = () => {
+    if (selectedCourseToConnect) {
+      handleConnectCourse();
+      setIsCourseModalOpen(false);
+    }
+  };
 
   const [allDocNotes, setAllDocNotes] = useState<Record<string, DocNote[]>>(() => {
     try {
@@ -285,10 +302,10 @@ export default function ResourcesTab({
             Connect this workspace to your enrolled course to instantly synchronize syllabi, documents, and presentation slides.
           </p>
           <button 
-            onClick={handleConnectCourse}
+            onClick={() => setIsCourseModalOpen(true)}
             className="px-8 py-4 bg-primary-fixed-dim hover:bg-primary-container text-on-primary-fixed rounded-xl font-sans font-bold text-sm uppercase tracking-wider transition-all shadow-lg shadow-primary-fixed-dim/20 hover:scale-105 active:scale-95"
           >
-            Connect to Biology 301
+            Connect to your Enrolled Course
           </button>
         </div>
       ) : (
@@ -749,11 +766,66 @@ export default function ResourcesTab({
               </div>
             </div>
           </div>
-        </div>,
-        document.body
+        </div>
+        , document.body
       )}
+
+      {/* Course Selection Modal */}
+      <Modal
+        isOpen={isCourseModalOpen}
+        onClose={() => {
+          setIsCourseModalOpen(false);
+          setSelectedCourseToConnect(null);
+        }}
+        title="Select Course to Connect"
+      >
+        <div className="flex flex-col gap-6">
+          <p className="font-sans text-sm text-slate-400">
+            Choose an enrolled course to synchronize its resources with this study space.
+          </p>
+          <div className="space-y-3">
+            {enrolledCourses.map(course => (
+              <label 
+                key={course.id} 
+                className={`flex items-center p-4 border rounded-xl cursor-pointer transition-colors ${selectedCourseToConnect === course.id ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim' : 'bg-surface-container border-white/10 hover:bg-white/5'}`}
+              >
+                <input 
+                  type="radio" 
+                  name="courseSelection" 
+                  value={course.id} 
+                  checked={selectedCourseToConnect === course.id}
+                  onChange={() => setSelectedCourseToConnect(course.id)}
+                  className="hidden"
+                />
+                <div className={`w-5 h-5 rounded-full border flex items-center justify-center mr-4 ${selectedCourseToConnect === course.id ? 'border-primary-fixed-dim' : 'border-slate-500'}`}>
+                  {selectedCourseToConnect === course.id && <div className="w-2.5 h-2.5 rounded-full bg-primary-fixed-dim" />}
+                </div>
+                <span className="font-display font-medium text-white">{course.name}</span>
+              </label>
+            ))}
+          </div>
+          
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              onClick={() => {
+                setIsCourseModalOpen(false);
+                setSelectedCourseToConnect(null);
+              }}
+              className="px-5 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmConnect}
+              disabled={!selectedCourseToConnect}
+              className="px-5 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Connect
+            </button>
+          </div>
+        </div>
+      </Modal>
 
     </div>
   );
 }
-
