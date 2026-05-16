@@ -1,0 +1,447 @@
+import React, { useState, useRef } from 'react';
+import { X, Check, List, ToggleLeft, HelpCircle, Edit3, GitMerge, AlignLeft, PenTool, Plus, Trash2, Save, Sparkles } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import type { Question, QuestionType } from '../../../../data/mockEducatorData';
+
+// ─── Types (mirrors CreateAssessmentModal's GenQuestion) ──────────────────────
+type QType = QuestionType;
+
+interface GenQuestion {
+  id: string;
+  text: string;
+  type: QType;
+  options: string[];
+  correct: number;        // index into options[]
+  answerText: string;     // for identification / fill-in-the-blank
+  matchingPairs: { left: string; right: string }[];
+  editing: boolean;
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const Q_TYPES: { id: QType; label: string; icon: React.ReactNode }[] = [
+  { id: 'multiple-choice',  label: 'Multiple Choice',   icon: <List      className="w-4 h-4" /> },
+  { id: 'true-false',       label: 'True / False',      icon: <ToggleLeft className="w-4 h-4" /> },
+  { id: 'identification',   label: 'Identification',    icon: <HelpCircle className="w-4 h-4" /> },
+  { id: 'fill-in-the-blank',label: 'Fill in the Blank', icon: <PenTool   className="w-4 h-4" /> },
+  { id: 'matching',         label: 'Matching',          icon: <GitMerge  className="w-4 h-4" /> },
+  { id: 'essay',            label: 'Essay',             icon: <AlignLeft className="w-4 h-4" /> },
+];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Convert a stored Question → editable GenQuestion */
+function toGen(q: Question): GenQuestion {
+  let options: string[] = [];
+  let correct = 0;
+  let answerText = '';
+  let matchingPairs: { left: string; right: string }[] = [{ left: '', right: '' }];
+
+  if (q.type === 'multiple-choice') {
+    options = q.options ?? ['Option A', 'Option B', 'Option C', 'Option D'];
+    const ca = typeof q.correctAnswer === 'string' ? q.correctAnswer : '';
+    correct = Math.max(0, options.indexOf(ca));
+  } else if (q.type === 'true-false') {
+    options = ['True', 'False'];
+    const ca = typeof q.correctAnswer === 'string' ? q.correctAnswer.toLowerCase() : 'true';
+    correct = ca === 'true' ? 0 : 1;
+  } else if (q.type === 'identification' || q.type === 'fill-in-the-blank') {
+    answerText = typeof q.correctAnswer === 'string' ? q.correctAnswer : '';
+  } else if (q.type === 'matching') {
+    matchingPairs = Array.isArray(q.correctAnswer)
+      ? q.correctAnswer.map((a) => {
+          const [left = '', right = ''] = a.split(' → ');
+          return { left, right };
+        })
+      : [{ left: '', right: '' }];
+  }
+
+  return {
+    id: q.id,
+    text: q.question,
+    type: q.type,
+    options,
+    correct,
+    answerText,
+    matchingPairs,
+    editing: false,
+  };
+}
+
+/** Convert a GenQuestion back → storable Question */
+function fromGen(g: GenQuestion): Question {
+  let correctAnswer: string | string[] = '';
+  let options: string[] | undefined;
+
+  if (g.type === 'multiple-choice') {
+    options = g.options;
+    correctAnswer = g.options[g.correct] ?? '';
+  } else if (g.type === 'true-false') {
+    options = ['True', 'False'];
+    correctAnswer = g.correct === 0 ? 'true' : 'false';
+  } else if (g.type === 'identification' || g.type === 'fill-in-the-blank') {
+    correctAnswer = g.answerText;
+  } else if (g.type === 'matching') {
+    correctAnswer = g.matchingPairs.map((p) => `${p.left} → ${p.right}`);
+  }
+
+  return {
+    id: g.id,
+    type: g.type,
+    question: g.text,
+    options,
+    correctAnswer,
+    points: 2, // default; not tracked in GenQuestion to keep parity with CreateAssessmentModal
+  };
+}
+
+/** Create a blank GenQuestion ready for editing */
+function makeBlank(count: number): GenQuestion {
+  return {
+    id: `q-${Date.now()}-${count}`,
+    text: '',
+    type: 'multiple-choice',
+    options: ['Option A', 'Option B', 'Option C', 'Option D'],
+    correct: 0,
+    answerText: '',
+    matchingPairs: [{ left: '', right: '' }],
+    editing: true,
+  };
+}
+
+// ─── Props ────────────────────────────────────────────────────────────────────
+interface Props {
+  isOpen: boolean;
+  onClose: () => void;
+  assessmentTitle: string;
+  questions: Question[];
+  onSave: (questions: Question[], saveMode: 'draft' | 'ready') => void;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle, questions, onSave }: Props) {
+  const [qs, setQs] = useState<GenQuestion[]>(() => questions.map(toGen));
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  if (!isOpen) return null;
+
+  // ── Helpers ──
+  const updateQ = (id: string, patch: Partial<GenQuestion>) =>
+    setQs((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+
+  const deleteQ = (id: string) => setQs((prev) => prev.filter((q) => q.id !== id));
+
+  const addQuestion = () => {
+    setQs((prev) => [...prev, makeBlank(prev.length)]);
+    setTimeout(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      }
+    }, 100);
+  };
+
+  const handleSave = (saveMode: 'draft' | 'ready') => {
+    onSave(qs.map(fromGen), saveMode);
+    onClose();
+  };
+
+  // ── Render ──
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+      <div className="absolute inset-0" onClick={onClose} />
+      <div className="relative w-full max-w-2xl bg-surface-container-high rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-white">Manage Questions</h2>
+            <p className="font-sans text-xs text-slate-400 mt-0.5 truncate max-w-xs">{assessmentTitle}</p>
+          </div>
+          <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* ── Scrollable body (same structure as CreateAssessmentModal step 4) ── */}
+        <div ref={scrollRef} className="p-6 overflow-y-auto flex-1 no-scrollbar scroll-smooth relative">
+          <div className="space-y-4">
+
+            {/* Sticky sub-header — identical to step 4 */}
+            <div className="sticky top-[-24px] z-20 bg-surface-container-high py-4 -mx-6 px-6 border-b border-white/10 flex items-center justify-between mb-2 shadow-sm">
+              <div>
+                <p className="font-sans text-sm text-slate-300 font-medium">Review &amp; Edit Questions</p>
+                <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">{qs.length} total questions</p>
+              </div>
+              <button
+                onClick={addQuestion}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim text-xs font-bold hover:bg-primary-fixed-dim/20 transition-all active:scale-95 shadow-lg shadow-primary-fixed-dim/5"
+              >
+                <Plus className="w-4 h-4" /> Add Question
+              </button>
+            </div>
+
+            {/* Empty state */}
+            {qs.length === 0 && (
+              <div className="text-center py-14 border-2 border-dashed border-white/10 rounded-2xl">
+                <p className="text-slate-500 font-sans text-sm">No questions yet.</p>
+                <p className="text-slate-600 font-sans text-xs mt-1">Click "Add Question" to get started.</p>
+              </div>
+            )}
+
+            {/* Question cards — pixel-faithful to step 4 */}
+            <div className="space-y-3 pb-6">
+              {qs.map((q, idx) => (
+                <div key={q.id} className="bg-surface-container rounded-xl border border-white/5 overflow-hidden">
+
+                  {q.editing ? (
+                    /* ── Edit mode ── */
+                    <div className="p-4 space-y-3">
+                      {/* Row: Q-badge + type select */}
+                      <div className="flex items-center justify-between">
+                        <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">
+                          Q{idx + 1}
+                        </span>
+                        <select
+                          value={q.type}
+                          onChange={(e) => {
+                            const t = e.target.value as QType;
+                            updateQ(q.id, {
+                              type: t,
+                              options:
+                                t === 'true-false'      ? ['True', 'False'] :
+                                t === 'multiple-choice' ? ['Option A', 'Option B', 'Option C', 'Option D'] :
+                                [],
+                              correct: 0,
+                              answerText: '',
+                              matchingPairs: [{ left: '', right: '' }],
+                            });
+                          }}
+                          className="bg-surface-container-high border border-white/10 rounded-lg px-2 py-1 text-xs text-white font-sans outline-none"
+                        >
+                          {Q_TYPES.map((qt) => <option key={qt.id} value={qt.id}>{qt.label}</option>)}
+                        </select>
+                      </div>
+
+                      {/* Question textarea */}
+                      <textarea
+                        value={q.text}
+                        onChange={(e) => updateQ(q.id, { text: e.target.value })}
+                        placeholder="Enter question text…"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40 resize-none min-h-[60px]"
+                      />
+
+                      {/* Multiple-choice / True-False options */}
+                      {(q.type === 'multiple-choice' || q.type === 'true-false') && (
+                        <div className="space-y-2">
+                          {q.type === 'multiple-choice' && (
+                            <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">
+                              Options &amp; Correct Answer
+                            </p>
+                          )}
+                          {q.type === 'true-false' && (
+                            <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">
+                              Select Correct Answer
+                            </p>
+                          )}
+                          {q.options.map((opt, oi) => (
+                            <div key={oi} className="flex items-center gap-2">
+                              <button
+                                onClick={() => updateQ(q.id, { correct: oi })}
+                                className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                                  q.correct === oi ? 'border-emerald-400 bg-emerald-400' : 'border-white/20'
+                                }`}
+                              >
+                                {q.correct === oi && <Check className="w-3 h-3 text-black" />}
+                              </button>
+                              {q.type === 'multiple-choice' ? (
+                                <input
+                                  value={opt}
+                                  onChange={(e) => {
+                                    const opts = [...q.options];
+                                    opts[oi] = e.target.value;
+                                    updateQ(q.id, { options: opts });
+                                  }}
+                                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40"
+                                />
+                              ) : (
+                                <span className="text-sm text-white font-sans">{opt}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Identification / Fill-in-the-blank */}
+                      {(q.type === 'identification' || q.type === 'fill-in-the-blank') && (
+                        <div className="space-y-1.5">
+                          <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">
+                            Correct Answer
+                          </p>
+                          <input
+                            value={q.answerText}
+                            onChange={(e) => updateQ(q.id, { answerText: e.target.value })}
+                            placeholder="Type the exact correct answer..."
+                            className="w-full bg-white/5 border border-emerald-400/50 rounded-lg px-3 py-2 text-sm text-emerald-100 font-sans outline-none focus:ring-1 focus:ring-emerald-400/50"
+                          />
+                        </div>
+                      )}
+
+                      {/* Matching */}
+                      {q.type === 'matching' && (
+                        <div className="space-y-2">
+                          <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">
+                            Matching Pairs
+                          </p>
+                          {q.matchingPairs.map((pair, pi) => (
+                            <div key={pi} className="flex items-center gap-2">
+                              <input
+                                value={pair.left}
+                                onChange={(e) => {
+                                  const pairs = [...q.matchingPairs];
+                                  pairs[pi] = { ...pairs[pi], left: e.target.value };
+                                  updateQ(q.id, { matchingPairs: pairs });
+                                }}
+                                placeholder="Term"
+                                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40"
+                              />
+                              <span className="text-slate-500">-</span>
+                              <input
+                                value={pair.right}
+                                onChange={(e) => {
+                                  const pairs = [...q.matchingPairs];
+                                  pairs[pi] = { ...pairs[pi], right: e.target.value };
+                                  updateQ(q.id, { matchingPairs: pairs });
+                                }}
+                                placeholder="Definition"
+                                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40"
+                              />
+                              <button
+                                onClick={() => {
+                                  const pairs = q.matchingPairs.filter((_, i) => i !== pi);
+                                  updateQ(q.id, { matchingPairs: pairs });
+                                }}
+                                className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            onClick={() => updateQ(q.id, { matchingPairs: [...q.matchingPairs, { left: '', right: '' }] })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 text-slate-300 text-xs font-semibold hover:bg-white/10 transition-colors w-full justify-center mt-2"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add Pair
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Essay */}
+                      {q.type === 'essay' && (
+                        <div className="p-3 bg-white/5 rounded-lg border border-white/5">
+                          <p className="text-xs text-slate-400 font-sans italic">
+                            Essay questions will be manually graded by the educator.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Done button (only) — same as step 4; delete is via hover in view mode */}
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button
+                          onClick={() => updateQ(q.id, { editing: false })}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary-fixed-dim text-on-primary-fixed hover:bg-primary-container transition-colors flex items-center gap-1"
+                        >
+                          <Check className="w-3.5 h-3.5" /> Done
+                        </button>
+                      </div>
+                    </div>
+
+                  ) : (
+                    /* ── View mode ── */
+                    <div className="p-4 flex items-start gap-3 group">
+                      <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded shrink-0 mt-0.5">
+                        Q{idx + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-sans text-sm text-white leading-relaxed">
+                          {q.text || <span className="text-slate-500 italic">No question text</span>}
+                        </p>
+
+                        {/* Answer preview */}
+                        <div className="mt-2 text-xs font-sans">
+                          {(q.type === 'multiple-choice' || q.type === 'true-false') && (
+                            <span className="text-emerald-400 font-medium">
+                              Answer: {q.options[q.correct]}
+                            </span>
+                          )}
+                          {(q.type === 'identification' || q.type === 'fill-in-the-blank') && (
+                            <span className="text-emerald-400 font-medium">
+                              Answer: {q.answerText || 'Not set'}
+                            </span>
+                          )}
+                          {q.type === 'matching' && (
+                            <span className="text-emerald-400 font-medium">
+                              {q.matchingPairs.length} pairs
+                            </span>
+                          )}
+                          {q.type === 'essay' && (
+                            <span className="text-slate-400 italic">Manual Grading</span>
+                          )}
+                        </div>
+
+                        <span className="font-sans text-[10px] text-slate-500 uppercase tracking-wider mt-2 block">
+                          {q.type}
+                        </span>
+                      </div>
+
+                      {/* Hover-revealed edit + delete — same as step 4 */}
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <button
+                          onClick={() => updateQ(q.id, { editing: true })}
+                          className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                          title="Edit"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => deleteQ(q.id)}
+                          className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Footer ── */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-white/10 shrink-0">
+          <button
+            onClick={onClose}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors"
+          >
+            Cancel
+          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => handleSave('draft')}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-sans text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all"
+            >
+              <Save className="w-4 h-4" /> Save as Draft
+            </button>
+            <button
+              onClick={() => handleSave('ready')}
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all hover:opacity-90"
+            >
+              <Sparkles className="w-4 h-4" /> Save &amp; Mark Ready
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}

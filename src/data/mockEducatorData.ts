@@ -248,3 +248,18 @@ export const gradeSubmission = (courseId: string, assessmentId: string, submissi
     submission.status = 'graded';
   }
 };
+
+export const updateAssessmentStatus = (courseId: string, assessmentId: string, status: AssessmentStatus) => {
+  const course = getCourseById(courseId);
+  const assessment = course?.assessments.find(a => a.id === assessmentId);
+  if (assessment) assessment.status = status;
+};
+
+export const updateAssessmentQuestions = (courseId: string, assessmentId: string, questions: Question[]) => {
+  const course = getCourseById(courseId);
+  const assessment = course?.assessments.find(a => a.id === assessmentId);
+  if (assessment) {
+    assessment.questions = questions;
+    assessment.questionCount = questions.length;
+  }
+};
