@@ -89,14 +89,33 @@ export default function CourseAssessments() {
 
   const [localAssessments, setLocalAssessments] = useState<Assessment[]>([...(course?.assessments || [])]);
 
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    assessmentId: string;
+    newStatus: AssessmentStatus;
+    title: string;
+  } | null>(null);
+
   const refresh = () => setLocalAssessments([...(course?.assessments || [])]);
 
   const filtered = localAssessments.filter(a => filter === 'all' || a.status === filter);
 
-  const handleStatusChange = (assessmentId: string, status: AssessmentStatus) => {
-    if (!courseId) return;
-    updateAssessmentStatus(courseId, assessmentId, status);
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const requestStatusChange = (assessmentId: string, status: AssessmentStatus, title: string) => {
+    setConfirmDialog({ assessmentId, newStatus: status, title });
+  };
+
+  const executeStatusChange = () => {
+    if (!courseId || !confirmDialog) return;
+    updateAssessmentStatus(courseId, confirmDialog.assessmentId, confirmDialog.newStatus);
     refresh();
+    const stLabel = STATUS_CONFIG[confirmDialog.newStatus].label;
+    showToast(`Assessment "${confirmDialog.title}" status successfully updated to ${stLabel}.`);
+    setConfirmDialog(null);
   };
 
   const handleQuestionsSave = (assessmentId: string, questions: Question[]) => {
@@ -108,11 +127,48 @@ export default function CourseAssessments() {
   const advanceStatus = (a: Assessment) => {
     const idx = STATUS_FLOW.indexOf(a.status);
     const next: AssessmentStatus = a.status === 'closed' ? 'ready' : STATUS_FLOW[Math.min(idx + 1, STATUS_FLOW.length - 1)];
-    handleStatusChange(a.id, next);
+    requestStatusChange(a.id, next, a.title);
   };
 
   return (
     <CourseLayout>
+      {/* ── Toast Notification ── */}
+      {toastMessage && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4">
+          <div className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-4 py-3 rounded-xl flex items-center gap-3 shadow-lg backdrop-blur-md">
+            <CheckCircle2 className="w-5 h-5" />
+            <span className="font-sans font-medium text-sm">{toastMessage}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirmation Modal ── */}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setConfirmDialog(null)} />
+          <div className="relative w-full max-w-md bg-surface-container-high rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col p-6 animate-in zoom-in-95 duration-200">
+            <h3 className="font-display text-lg font-semibold text-white mb-2">Change Assessment Status?</h3>
+            <p className="font-sans text-sm text-slate-300 mb-6 leading-relaxed">
+              Are you sure you want to change the status of <strong>"{confirmDialog.title}"</strong> to <span className="font-semibold text-primary-fixed-dim uppercase tracking-wider">{STATUS_CONFIG[confirmDialog.newStatus].label}</span>?
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button 
+                onClick={() => setConfirmDialog(null)}
+                className="px-4 py-2 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={executeStatusChange}
+                className="px-5 py-2 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all active:scale-95"
+              >
+                Confirm Update
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Toolbar ── */}
       <div className="mb-6 flex items-center justify-between flex-wrap gap-4">
         <div className="flex gap-2 flex-wrap">
@@ -149,7 +205,7 @@ export default function CourseAssessments() {
                 <div className="flex justify-between items-start mb-4 relative z-10">
                   <StatusDropdown
                     current={a.status}
-                    onChange={(s) => handleStatusChange(a.id, s)}
+                    onChange={(s) => requestStatusChange(a.id, s, a.title)}
                   />
                   <div className="flex items-center gap-2">
                     {a.isLockdown && (
@@ -262,6 +318,7 @@ export default function CourseAssessments() {
           if (courseId) {
             addAssessment(courseId, data);
             refresh();
+            showToast('Assessment created successfully!');
           }
         }}
       />
@@ -289,7 +346,13 @@ export default function CourseAssessments() {
           questions={managingAssessment.questions}
           onSave={(questions, saveMode) => {
             handleQuestionsSave(managingAssessment.id, questions);
-            if (saveMode === 'ready') handleStatusChange(managingAssessment.id, 'ready');
+            if (saveMode === 'ready') {
+              updateAssessmentStatus(courseId!, managingAssessment.id, 'ready');
+              showToast('Questions saved and assessment marked as Ready!');
+            } else {
+              showToast('Questions saved successfully!');
+            }
+            refresh();
             setManagingAssessment(null);
           }}
         />
