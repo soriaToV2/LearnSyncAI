@@ -13,6 +13,7 @@ import CoursesList from './pages/educator/CoursesList';
 import CourseResources from './pages/educator/course/CourseResources';
 import CourseAssessments from './pages/educator/course/CourseAssessments';
 import CourseStudents from './pages/educator/course/CourseStudents';
+import CourseAnnouncements from './pages/educator/course/CourseAnnouncements';
 
 // Student
 import StudentLayout from './components/layout/StudentLayout';
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/educator/course/:courseId/resources" element={<CourseResources />} />
           <Route path="/educator/course/:courseId/assessments" element={<CourseAssessments />} />
           <Route path="/educator/course/:courseId/students" element={<CourseStudents />} />
+          <Route path="/educator/course/:courseId/announcements" element={<CourseAnnouncements />} />
           {/* Legacy redirects */}
           <Route path="/dashboard" element={<Navigate to="/educator/dashboard" replace />} />
           <Route path="/class/:classId/*" element={<Navigate to="/educator/courses" replace />} />

@@ -97,6 +97,15 @@ export default function CourseLayout({ children }: { children: React.ReactNode }
           >
             Students
           </NavLink>
+          <NavLink
+            to={`/educator/course/${courseId}/announcements`}
+            className={({ isActive }) => clsx(
+              "px-6 py-4 font-display text-[15px] whitespace-nowrap transition-colors border-b-2",
+              isActive ? "text-primary-fixed-dim border-primary-fixed-dim bg-primary-fixed-dim/5 rounded-t-lg" : "text-on-surface-variant hover:text-on-surface border-transparent"
+            )}
+          >
+            Announcements
+          </NavLink>
         </div>
 
         {children}

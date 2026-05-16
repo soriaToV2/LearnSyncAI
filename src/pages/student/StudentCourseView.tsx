@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Bell, Search, ChevronRight, Building, CheckCircle2, ShieldCheck, Box, PlayCircle, FileText, ArrowRight, Zap } from 'lucide-react';
+import { Bell, Search, ChevronRight, Building, CheckCircle2, ShieldCheck, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock } from 'lucide-react';
 
 
 export default function StudentCourseView() {
   const { courseId } = useParams();
-  const [activeTab, setActiveTab] = useState<'resources' | 'quizzes'>('resources');
+  const [activeTab, setActiveTab] = useState<'resources' | 'quizzes' | 'announcements'>('resources');
 
   const courseTitle = courseId === 'bio-301' ? 'Advanced Neurobiology' : 'Course Overview';
   const educator = 'Prof. Elias Vance';
@@ -52,13 +52,6 @@ export default function StudentCourseView() {
               Educator: <span className="text-on-surface">{educator}</span>
             </p>
           </div>
-          
-          <div>
-            <Link to={`/student/space/${courseId}`} className="shrink-0 px-6 py-3 bg-primary-fixed-dim text-on-primary-fixed rounded-lg font-display text-base font-semibold hover:bg-primary-container transition-all duration-300 flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(0,218,243,0.25)] border border-primary-fixed-dim/30 active:scale-95 group">
-              <Zap className="w-5 h-5 group-hover:scale-110 transition-transform" />
-              Link to Study Space
-            </Link>
-          </div>
         </div>
 
         {/* Tabs */}
@@ -74,6 +67,12 @@ export default function StudentCourseView() {
             className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 ${activeTab === 'quizzes' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
           >
             Quizzes & Exams
+          </button>
+          <button 
+            onClick={() => setActiveTab('announcements')}
+            className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 ${activeTab === 'announcements' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+          >
+            Announcements
           </button>
         </div>
 
@@ -170,6 +169,54 @@ export default function StudentCourseView() {
               </div>
             </article>
 
+          </div>
+        )}
+
+        {activeTab === 'announcements' && (
+          <div className="space-y-6 max-w-3xl">
+            {/* Announcement 1 */}
+            <article className="glass-card rounded-xl p-6 relative overflow-hidden border border-white/5 hover:border-white/10 transition-colors">
+              <div className="flex gap-4">
+                <div className="w-12 h-12 rounded-full bg-primary-fixed-dim/20 flex items-center justify-center shrink-0">
+                  <Megaphone className="w-6 h-6 text-primary-fixed-dim" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-3 mb-1">
+                    <h3 className="font-display text-lg font-semibold text-on-surface">Midterm Exam Details</h3>
+                    <span className="flex items-center gap-1 text-[11px] text-slate-400 font-sans">
+                      <Clock className="w-3 h-3" /> 2 days ago
+                    </span>
+                  </div>
+                  <p className="font-sans text-sm text-on-surface-variant leading-relaxed">
+                    Hello class, just a reminder that our midterm exam is scheduled for next Tuesday. Please ensure you have reviewed chapters 1 through 4. The exam will utilize Lockdown Mode, so make sure your system is ready.
+                  </p>
+                </div>
+              </div>
+            </article>
+
+            {/* Announcement 2 */}
+            <article className="glass-card rounded-xl p-6 relative overflow-hidden border border-white/5 hover:border-white/10 transition-colors">
+              <div className="flex gap-4">
+                <div className="w-12 h-12 rounded-full bg-surface-variant flex items-center justify-center shrink-0">
+                  <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=150" alt="Educator" className="w-full h-full object-cover rounded-full" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-3 mb-1">
+                    <h3 className="font-display text-lg font-semibold text-on-surface">New Reading Material Uploaded</h3>
+                    <span className="flex items-center gap-1 text-[11px] text-slate-400 font-sans">
+                      <Clock className="w-3 h-3" /> Last week
+                    </span>
+                  </div>
+                  <p className="font-sans text-sm text-on-surface-variant leading-relaxed mb-3">
+                    I've uploaded the new interactive AR model for the human brain. Please take a look at it before our next lecture as we will be using it for our discussion on neuroplasticity.
+                  </p>
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-container-high border border-white/5 text-sm font-sans text-on-surface cursor-pointer hover:bg-white/5 transition-colors">
+                    <Box className="w-4 h-4 text-primary-fixed-dim" />
+                    Human Brain Model.gltf
+                  </div>
+                </div>
+              </div>
+            </article>
           </div>
         )}
       </main>

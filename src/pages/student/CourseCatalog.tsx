@@ -507,7 +507,7 @@ export default function CourseCatalog() {
                 </button>
               )}
             </div>
-            
+
             <button
               onClick={() => setShowFilters((v) => !v)}
               className={clsx(
@@ -599,18 +599,18 @@ export default function CourseCatalog() {
             >
               <X className="w-4 h-4" />
             </button>
-            
+
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-lg bg-primary-fixed-dim/10 flex items-center justify-center border border-primary-fixed-dim/20 text-primary-fixed-dim">
                 <Key className="w-5 h-5" />
               </div>
               <h2 className="font-display text-xl font-bold text-on-surface">Join Private Course</h2>
             </div>
-            
+
             <p className="font-sans text-sm text-slate-400 mb-6 leading-relaxed">
               Enter the access code provided by your professor to enroll in a restricted university course.
             </p>
-            
+
             <input
               type="text"
               placeholder="e.g. CS202-FALL26"
@@ -619,7 +619,7 @@ export default function CourseCatalog() {
               className="w-full bg-surface-container-high border border-white/10 rounded-xl px-4 py-3 font-sans text-on-surface placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 mb-2 uppercase"
             />
             {joinError && <p className="text-rose-400 text-xs font-sans mb-4">{joinError}</p>}
-            
+
             <div className="mt-6 flex gap-3">
               <button
                 onClick={() => { setShowJoinModal(false); setJoinError(''); setJoinCode(''); }}

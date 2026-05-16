@@ -1,7 +1,135 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Link as LinkIcon, FileText, BookOpen, Sparkles, MessageSquare, Send, CheckSquare, Square, X, Bot, User, FileImage, FileCode, FileSpreadsheet, Download, FileAudio, FileVideo, Highlighter, Trash2, Edit3 } from 'lucide-react';
+import { Link as LinkIcon, FileText, BookOpen, Sparkles, MessageSquare, Send, CheckSquare, Square, X, Bot, User, FileImage, Download, Highlighter, Trash2, Edit3 } from 'lucide-react';
 import Modal from '../../../components/ui/Modal';
+
+// ─── Simulated Document Content ─────────────────────────────────────────────
+// Realistic sample text used in the viewer so annotation features work without
+// any external library dependencies or fetch calls.
+
+const SIM_CONTENT: Record<string, { title: string; pages: { label: string; body: string }[] }> = {
+  'pdf': {
+    title: '',
+    pages: [
+      {
+        label: 'Introduction',
+        body: `Information and Communication Technology (ICT) has become an essential pillar of modern society. From healthcare and education to commerce and governance, digital systems permeate every facet of daily life. With this pervasive integration comes a growing set of ethical responsibilities for the professionals who design, implement, and maintain these systems.
+
+The scope of IT professional responsibility extends well beyond technical competence. Practitioners must navigate complex issues involving data privacy, equitable access, cybersecurity, intellectual property, and the societal impact of algorithmic decision-making. These challenges require not only technical skill but also moral judgment, legal literacy, and a commitment to the public good.
+
+This document explores the evolving landscape of IT professional responsibilities in the modern era, drawing on established codes of conduct, emerging regulatory frameworks, and real-world case studies. It argues that the next generation of IT professionals must adopt a holistic view of their role—one that places ethical practice alongside technical excellence.`,
+      },
+      {
+        label: 'Core Responsibilities',
+        body: `1. Data Privacy and Protection
+
+IT professionals routinely handle sensitive personal and organizational data. A core responsibility is to ensure this data is collected lawfully, stored securely, and used only for stated purposes. Key principles include:
+  • Minimizing data collection to what is strictly necessary
+  • Implementing strong encryption and access controls
+  • Complying with regulations such as the GDPR, PDPA, and CCPA
+  • Promptly disclosing breaches to affected parties
+
+2. Security Engineering
+
+Systems must be designed with security as a foundational concern, not an afterthought. Professionals should conduct threat modeling, perform regular vulnerability assessments, and apply secure coding practices throughout the software development lifecycle (SDLC).
+
+3. Transparency and Accountability
+
+Developing AI and automated decision systems creates obligations around explainability. When algorithms affect hiring, credit scoring, or medical diagnoses, professionals must ensure stakeholders can understand and contest outcomes. Documentation, audit trails, and independent reviews are essential safeguards.`,
+      },
+      {
+        label: 'Emerging Challenges',
+        body: `The rapid pace of technological change continuously introduces new ethical frontiers:
+
+Artificial Intelligence and Bias — Machine learning models trained on historical data can perpetuate or amplify existing societal biases. IT professionals must rigorously test models for disparate impact and implement corrective measures before deployment.
+
+Environmental Impact — Large-scale data centers consume significant energy. Professionals have a responsibility to design efficient systems, advocate for renewable energy sources, and measure carbon footprints transparently.
+
+Digital Inclusion — As essential services migrate online, the digital divide becomes an equity issue. Developers must consider accessibility standards (WCAG), support low-bandwidth environments, and design for diverse user populations.
+
+Intellectual Property — Open-source usage, software patents, and licensing compliance require vigilance. Professionals must respect the IP rights of others and contribute fairly to open communities they benefit from.`,
+      },
+      {
+        label: 'Conclusion',
+        body: `The responsibilities of IT professionals have never been greater. Society's dependence on digital infrastructure means that the decisions made by software engineers, system architects, and data scientists carry real-world consequences for millions of people.
+
+Meeting these responsibilities requires a commitment to continuous learning, active participation in professional communities, and a willingness to speak up when ethical concerns arise—even when doing so is professionally uncomfortable.
+
+Code of ethics from organizations such as the ACM, IEEE, and ISACA provide valuable frameworks, but ultimately the burden falls on individual professionals to internalize these principles and apply them with integrity in every project they undertake.
+
+The future of technology is being written today. IT professionals have the opportunity—and the obligation—to ensure that future is equitable, secure, and worthy of public trust.`,
+      },
+    ],
+  },
+  'pptx': {
+    title: '',
+    pages: [
+      {
+        label: 'Slide 1 — Title',
+        body: 'Errors, Failures, and Risks in IT Systems\n\nUnderstanding how and why digital systems fail — and how to prevent, detect, and respond to failures responsibly.\n\nDepartment of Information Technology · Academic Year 2025–2026',
+      },
+      {
+        label: 'Slide 2 — Key Definitions',
+        body: 'ERRORS vs. FAILURES vs. RISKS\n\n▸ Error — A human mistake that introduces a defect into a system (e.g., off-by-one bug, incorrect assumption in a requirement).\n\n▸ Failure — When a system deviates from its specified behavior during operation. A failure is usually caused by one or more latent errors.\n\n▸ Risk — The probability that a threat will exploit a vulnerability, multiplied by the impact of that exploitation. Risk = Likelihood × Impact.',
+      },
+      {
+        label: 'Slide 3 — Taxonomy of Errors',
+        body: 'Classification of Software Errors:\n\n1. Syntactic Errors — Violations of language grammar; caught by compilers or linters.\n2. Semantic Errors — Code is syntactically correct but produces unintended behavior.\n3. Logic Errors — Flawed algorithm or decision-making leads to wrong outputs.\n4. Runtime Errors — Faults that manifest only during execution (e.g., null pointer, stack overflow).\n5. Specification Errors — Misunderstanding of requirements causes the system to solve the wrong problem.',
+      },
+      {
+        label: 'Slide 4 — Failure Modes',
+        body: 'Common Failure Modes:\n\n• Hardware Failure — Physical degradation of storage, network, or compute components.\n• Software Fault — Bugs that were not caught during testing.\n• Human Error — Misconfiguration, accidental deletion, phishing victim.\n• Environmental Failure — Power outages, natural disasters disrupting infrastructure.\n• Dependency Failure — Third-party service or library becomes unavailable.\n\nKey Insight: Most catastrophic failures involve a chain of smaller failures amplified by inadequate safeguards.',
+      },
+      {
+        label: 'Slide 5 — Risk Management',
+        body: 'The Risk Management Process:\n\n1. Identify — Enumerate all potential threats and vulnerabilities.\n2. Assess — Evaluate likelihood and impact for each risk.\n3. Prioritize — Focus resources on high-risk items first.\n4. Mitigate — Apply controls: redundancy, monitoring, patching, training.\n5. Monitor — Continuously observe system state and adjust controls.\n6. Review — After incidents, conduct post-mortems to update the risk register.',
+      },
+    ],
+  },
+  'default': {
+    title: '',
+    pages: [
+      {
+        label: 'Overview',
+        body: `This document covers fundamental concepts in computer science and information technology. Topics include system design principles, data structures, algorithmic complexity, and software engineering best practices.
+
+Through careful study of these foundations, students will develop the analytical skills necessary to solve complex technical problems and design robust, scalable systems. The material progresses from theoretical foundations to practical applications, emphasizing both depth of understanding and breadth of knowledge.`,
+      },
+      {
+        label: 'Core Concepts',
+        body: `Data Structures and Algorithms form the backbone of efficient software. A thorough understanding of arrays, linked lists, trees, graphs, hash tables, and heaps—along with their associated algorithms—is essential for any practitioner.
+
+Time and Space Complexity analysis using Big-O notation allows engineers to reason about the scalability of their solutions. An algorithm that runs in O(n log n) time is fundamentally more scalable than one running in O(n²), which becomes critical when working with large datasets.
+
+Design Patterns provide reusable solutions to common architectural problems. Familiarity with creational, structural, and behavioral patterns enables developers to communicate solutions clearly and avoid reinventing the wheel.`,
+      },
+      {
+        label: 'Systems and Architecture',
+        body: `Modern software systems are rarely monolithic. Distributed systems, microservices, and cloud-native architectures require a deep understanding of network protocols, consistency models, and fault tolerance strategies.
+
+The CAP Theorem states that a distributed system can guarantee only two of three properties simultaneously: Consistency, Availability, and Partition Tolerance. System architects must make deliberate trade-offs based on the requirements of each application domain.
+
+Databases — both relational and NoSQL — are central to nearly every application. Understanding ACID properties, transaction isolation levels, indexing strategies, and query optimization is crucial for building performant, reliable data-driven applications.`,
+      },
+    ],
+  },
+};
+
+function getSimContent(docName: string) {
+  if (docName.endsWith('.pptx')) {
+    const c = { ...SIM_CONTENT['pptx'] };
+    c.title = docName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+    return c;
+  }
+  if (docName.endsWith('.pdf')) {
+    const c = { ...SIM_CONTENT['pdf'] };
+    c.title = docName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+    return c;
+  }
+  const c = { ...SIM_CONTENT['default'] };
+  c.title = docName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+  return c;
+}
 
 interface HighlightRect {
   top: number;
@@ -50,11 +178,12 @@ interface ResourcesTabProps {
 }
 
 const docsList = [
-  { name: 'Synaptic_Pathways_Ch4.pdf', type: 'pdf', date: 'Oct 12, 2026' },
-  { name: 'Lecture_03_Action_Potentials.pptx', type: 'pptx', date: 'Oct 15, 2026' },
-  { name: 'Study_Guide_Midterm.docx', type: 'docx', date: 'Oct 20, 2026' },
-  { name: 'Lab_Protocol_Week3.pdf', type: 'pdf', date: 'Oct 22, 2026' },
-  { name: 'Neuro_Diagrams_Annotations.png', type: 'image', date: 'Oct 25, 2026' },
+  { name: 'Activity-2-The-Frozen-Identity.pdf', type: 'pdf', date: 'May 16, 2026' },
+  { name: 'Blue and Purple Modern Future Technology Presentation.pdf', type: 'pdf', date: 'May 16, 2026' },
+  { name: 'Chapter 7 - XPath-Syntax and Node_Principles.pdf', type: 'pdf', date: 'May 16, 2026' },
+  { name: 'ERRORS-FAILURES-AND-RISKS.pptx', type: 'pptx', date: 'May 16, 2026' },
+  { name: 'Future_Responsibilities_IT_Professionals_Enhanced.pptx', type: 'pptx', date: 'May 16, 2026' },
+  { name: 'future_responsibilities_of_it_professionals.pdf', type: 'pdf', date: 'May 16, 2026' },
 ];
 
 const getFileIcon = (type: string) => {
@@ -66,6 +195,393 @@ const getFileIcon = (type: string) => {
     default: return { icon: FileText, color: 'text-slate-400', bg: 'bg-white/10' };
   }
 };
+
+// ─── DocViewer: Simulated Document Viewer with Annotation Support ────────────
+interface DocViewerProps {
+  selectedDoc: string;
+  docNotes: DocNote[];
+  updateDocNotes: (updater: (prev: DocNote[]) => DocNote[]) => void;
+  openDoc: (doc: string | null) => void;
+  setActiveTab: (tab: 'flashcards' | 'resources') => void;
+  setIsGenerating: (v: boolean) => void;
+  setSelectedSetContent: (id: number | null) => void;
+  setFlashcardSets: React.Dispatch<React.SetStateAction<FlashcardSet[]>>;
+  submitAiPrompt: (id: string, text: string) => void;
+  saveNote: (id: string, text: string) => void;
+  editNote: (id: string) => void;
+  deleteNote: (id: string) => void;
+  toggleNoteExpanded: (id: string) => void;
+}
+
+function DocViewer({
+  selectedDoc,
+  docNotes,
+  updateDocNotes,
+  openDoc,
+  submitAiPrompt,
+  saveNote,
+  editNote,
+  deleteNote,
+  toggleNoteExpanded,
+}: DocViewerProps) {
+  // Simulated content — no fetch/extraction needed
+  const simContent = getSimContent(selectedDoc);
+
+  const [selectionPos, setSelectionPos] = useState<{
+    top: number; left: number; width: number; text: string; rects: HighlightRect[];
+  } | null>(null);
+
+  const fileExt = selectedDoc.split('.').pop()?.toUpperCase() ?? 'FILE';
+  const isPptx = selectedDoc.endsWith('.pptx');
+
+  const handleSelection = () => {
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (sel && sel.toString().trim().length > 0 && !sel.isCollapsed) {
+        const range = sel.getRangeAt(0);
+        const container = document.getElementById('doc-content-wrapper');
+        if (container) {
+          const containerRect = container.getBoundingClientRect();
+          const rects = Array.from(range.getClientRects());
+          const relativeRects = rects.map(rect => ({
+            top: rect.top - containerRect.top,
+            left: rect.left - containerRect.left,
+            width: rect.width,
+            height: rect.height,
+          }));
+          if (relativeRects.length > 0) {
+            setSelectionPos({
+              top: relativeRects[0].top - 52,
+              left: relativeRects[0].left + relativeRects[0].width / 2 - 90,
+              width: relativeRects[0].width,
+              rects: relativeRects,
+              text: sel.toString().trim(),
+            });
+          }
+        }
+      } else {
+        setSelectionPos(null);
+      }
+    }, 10);
+  };
+
+  const addDocNote = (type: 'highlight' | 'note' | 'ai', color: string) => {
+    if (!selectionPos) return;
+    const newNote: DocNote = {
+      id: Date.now().toString(),
+      selectedText: selectionPos.text,
+      noteText: '',
+      aiChat: type === 'ai' ? [] : undefined,
+      rects: selectionPos.rects,
+      top: selectionPos.rects[0].top,
+      left: selectionPos.rects[0].left,
+      color,
+      isEditing: type === 'note' || type === 'ai',
+      type,
+      expanded: type === 'note' || type === 'ai',
+    };
+    updateDocNotes(prev => [...prev, newNote]);
+    setSelectionPos(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+
+
+  return (
+    <div className="fixed inset-0 z-[100] flex flex-col bg-background/95 backdrop-blur-md animate-in fade-in duration-200">
+      {/* Top Bar */}
+      <div className="shrink-0 px-6 py-4 flex items-center justify-between border-b border-white/10 bg-surface-container/50">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className={`w-12 h-12 rounded-xl border flex items-center justify-center shadow-sm ${
+            isPptx ? 'bg-orange-500/20 border-orange-500/30 text-orange-400' : 'bg-red-500/20 border-red-500/30 text-red-400'
+          }`}>
+            <FileText className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="font-sans text-sm text-slate-400 font-medium mb-0.5">Course Document · {fileExt}</p>
+            <p className="font-display text-xl text-white truncate font-semibold leading-none">{simContent.title}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 border border-white/10 p-1.5 rounded-xl bg-surface-container-high/50">
+          <span className="px-3 py-1.5 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg font-bold uppercase tracking-wider flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            Select text to annotate
+          </span>
+          <a
+            href={`/assets/${selectedDoc}`}
+            download
+            className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+            title="Download original file"
+          >
+            <Download className="w-5 h-5" />
+          </a>
+          <div className="w-px h-5 bg-white/20" />
+          <button
+            onClick={() => openDoc(null)}
+            className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+            title="Close Viewer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto p-6 md:p-12 flex justify-center items-start w-full">
+          {/* The white "paper" document */}
+          <div
+            className="w-full max-w-4xl bg-[#f8f9fa] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] rounded-lg z-10 animate-in slide-in-from-bottom-8 duration-500 relative h-fit mb-20"
+            onClick={e => e.stopPropagation()}
+          >
+            <div
+              className="p-10 md:p-16 font-serif leading-relaxed text-slate-900 selection:bg-blue-200/60 selection:text-slate-900 scroll-smooth"
+              onMouseUp={handleSelection}
+            >
+              <div id="doc-content-wrapper" className="max-w-full mx-auto relative">
+
+                {/* ── Highlight & Note Overlays (rendered on top of text) ── */}
+                {docNotes.map(note => (
+                  <React.Fragment key={note.id}>
+                    {note.rects.map((rect, i) => (
+                      <div
+                        key={`${note.id}-rect-${i}`}
+                        className={`absolute rounded-[2px] cursor-pointer pointer-events-auto mix-blend-multiply transition-colors hover:brightness-95 ${
+                          note.type === 'note'
+                            ? 'bg-blue-300/50 border-b-2 border-blue-500'
+                            : note.type === 'ai'
+                            ? 'bg-violet-300/40 border-b-2 border-violet-500'
+                            : note.color
+                        }`}
+                        style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleNoteExpanded(note.id);
+                        }}
+                      />
+                    ))}
+
+                    {/* Inline note/AI popup */}
+                    {note.type !== 'highlight' && (note.expanded || note.isEditing) && note.rects.length > 0 && (
+                      <div
+                        className="absolute z-40 w-80 bg-surface-container-highest border border-white/10 rounded-xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                        style={{
+                          top: Math.max(20, note.rects[0].top - 20),
+                          left: Math.min(note.rects[0].left + note.rects[0].width + 16, 600),
+                        }}
+                        onClick={e => e.stopPropagation()}
+                        onMouseUp={e => e.stopPropagation()}
+                        onMouseDown={e => e.stopPropagation()}
+                      >
+                        <div className="px-4 py-3 border-b border-white/10 bg-primary-fixed-dim/10 flex items-center gap-2">
+                          {note.type === 'ai'
+                            ? <Sparkles className="w-4 h-4 text-primary-fixed-dim shrink-0" />
+                            : <MessageSquare className="w-4 h-4 text-blue-400 shrink-0" />}
+                          <p className="font-sans text-[11px] font-semibold text-white/80 line-clamp-2 italic leading-relaxed">
+                            &ldquo;{note.selectedText}&rdquo;
+                          </p>
+                          <button
+                            onClick={() => deleteNote(note.id)}
+                            className="ml-auto p-1 rounded hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-colors shrink-0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="p-4 flex flex-col gap-3 max-h-[350px] overflow-y-auto">
+                          {/* AI chat messages */}
+                          {note.type === 'ai' && note.aiChat?.map((msg, i) => (
+                            <div key={i} className={`p-3 rounded-lg border text-sm ${
+                              msg.role === 'user'
+                                ? 'bg-surface-container-high border-white/10 text-white'
+                                : 'bg-primary-fixed-dim/10 border-primary-fixed-dim/20 text-white'
+                            }`}>
+                              <div className={`flex items-center gap-2 mb-1.5 text-[11px] font-bold uppercase tracking-wider ${msg.role === 'user' ? 'text-slate-500' : 'text-primary-fixed-dim'}`}>
+                                {msg.role === 'user' ? <User className="w-3 h-3" /> : <Bot className="w-3 h-3" />}
+                                {msg.role === 'user' ? 'You' : 'AI Assistant'}
+                              </div>
+                              <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                            </div>
+                          ))}
+                          {note.isAiLoading && (
+                            <div className="p-3 bg-primary-fixed-dim/10 rounded-lg flex items-center gap-2">
+                              <Bot className="w-4 h-4 text-primary-fixed-dim animate-pulse" />
+                              <span className="text-sm text-primary-fixed-dim animate-pulse">Thinking...</span>
+                            </div>
+                          )}
+
+                          {/* Note text */}
+                          {note.type === 'note' && !note.isEditing && note.noteText && (
+                            <div className="relative group cursor-pointer" onClick={() => editNote(note.id)}>
+                              <p className="font-sans text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">{note.noteText}</p>
+                              <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 p-1.5 bg-surface-container rounded-lg border border-white/10 transition-opacity">
+                                <Edit3 className="w-3.5 h-3.5 text-slate-400" />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Note edit textarea */}
+                          {note.type === 'note' && note.isEditing && (
+                            <NoteEditor
+                              initialValue={note.noteText}
+                              onSave={text => saveNote(note.id, text)}
+                              onCancel={() => saveNote(note.id, note.noteText)}
+                            />
+                          )}
+
+                          {/* AI ask input */}
+                          {note.type === 'ai' && !note.isAiLoading && (
+                            <AiInput onSubmit={text => submitAiPrompt(note.id, text)} />
+                          )}
+                        </div>
+
+                        {!note.isEditing && note.type === 'note' && (
+                          <div className="px-4 py-2 border-t border-white/5 flex justify-between bg-surface-container/50">
+                            <button onClick={() => editNote(note.id)} className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1 font-bold uppercase tracking-widest transition-colors">
+                              <Edit3 className="w-3 h-3" /> Edit
+                            </button>
+                            <button onClick={() => deleteNote(note.id)} className="text-[10px] text-red-400/80 hover:text-red-400 flex items-center gap-1 font-bold uppercase tracking-widest transition-colors">
+                              <Trash2 className="w-3 h-3" /> Delete
+                            </button>
+                          </div>
+                        )}
+                        {!note.isEditing && note.type === 'ai' && !note.isAiLoading && (
+                          <div className="px-4 py-2 border-t border-white/5 flex justify-between bg-surface-container/50">
+                            <button onClick={() => toggleNoteExpanded(note.id)} className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1 font-bold uppercase tracking-widest transition-colors">
+                              <MessageSquare className="w-3 h-3" /> Follow up
+                            </button>
+                            <button onClick={() => deleteNote(note.id)} className="text-[10px] text-red-400/80 hover:text-red-400 flex items-center gap-1 font-bold uppercase tracking-widest transition-colors">
+                              <Trash2 className="w-3 h-3" /> Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </React.Fragment>
+                ))}
+
+                {/* ── Floating Selection Toolbar ── */}
+                {selectionPos && (
+                  <div
+                    className="absolute z-50 flex items-center bg-surface-container-highest border border-white/10 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.9)] overflow-hidden animate-in zoom-in-95 duration-150"
+                    style={{ top: selectionPos.top, left: selectionPos.left }}
+                    onMouseUp={e => e.stopPropagation()}
+                    onMouseDown={e => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={() => addDocNote('highlight', 'bg-yellow-400/60')}
+                      className="p-3 hover:bg-white/10 text-yellow-500 transition-colors"
+                      title="Highlight Yellow"
+                    >
+                      <Highlighter className="w-[18px] h-[18px]" />
+                    </button>
+                    <button
+                      onClick={() => addDocNote('highlight', 'bg-emerald-400/60')}
+                      className="p-3 hover:bg-white/10 text-emerald-500 transition-colors"
+                      title="Highlight Green"
+                    >
+                      <Highlighter className="w-[18px] h-[18px]" />
+                    </button>
+                    <div className="w-px h-6 bg-white/10" />
+                    <button
+                      onClick={() => addDocNote('note', 'bg-blue-400/30')}
+                      className="px-4 py-2.5 hover:bg-white/10 text-blue-400 font-sans text-xs font-bold flex items-center gap-2 transition-colors"
+                      title="Add Note"
+                    >
+                      <MessageSquare className="w-4 h-4" /> Note
+                    </button>
+                    <div className="w-px h-6 bg-white/10" />
+                    <button
+                      onClick={() => addDocNote('ai', 'bg-violet-400/30')}
+                      className="px-4 py-2.5 hover:bg-white/10 text-primary-fixed-dim font-sans text-xs font-bold flex items-center gap-2 transition-colors"
+                      title="Ask AI"
+                    >
+                      <Sparkles className="w-4 h-4" /> Ask AI
+                    </button>
+                  </div>
+                )}
+
+                {/* ── Document Title Header ── */}
+                <header className="border-b border-slate-300 pb-8 mb-10">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className={`px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider ${
+                      isPptx ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600'
+                    }`}>{fileExt}</span>
+                    <span className="text-xs text-slate-400 font-sans">{simContent.pages.length} {isPptx ? 'slides' : 'pages'}</span>
+                  </div>
+                  <h1 className="text-3xl md:text-4xl font-bold text-slate-900 tracking-tight mb-2 leading-tight">
+                    {simContent.title}
+                  </h1>
+                  <p className="text-slate-500 font-sans text-sm">
+                    Select any passage to <span className="text-yellow-600 font-semibold">highlight</span>, add a <span className="text-blue-600 font-semibold">note</span>, or <span className="text-violet-600 font-semibold">ask AI</span>.
+                  </p>
+                </header>
+
+                {/* ── Simulated page/slide sections ── */}
+                {simContent.pages.map((page, idx) => (
+                  <section key={idx} className="mb-10 pb-10 border-b border-slate-200 last:border-0">
+                    <div className="flex items-center gap-3 mb-4">
+                      <span className={`text-[10px] font-sans uppercase tracking-widest font-semibold ${
+                        isPptx ? 'text-orange-500' : 'text-slate-400'
+                      }`}>{page.label}</span>
+                      {isPptx && <div className="flex-1 h-px bg-orange-100" />}
+                    </div>
+                    <p className="text-[15px] leading-[1.9] text-slate-800 whitespace-pre-wrap font-serif">
+                      {page.body}
+                    </p>
+                  </section>
+                ))}
+              </div>
+            </div>
+          </div>
+      </div>
+    </div>
+  );
+}
+
+// Small helper components to avoid closure issues in the popup
+function NoteEditor({ initialValue, onSave, onCancel }: { initialValue: string; onSave: (text: string) => void; onCancel: () => void }) {
+  const [value, setValue] = useState(initialValue);
+  return (
+    <div className="space-y-2">
+      <textarea
+        autoFocus
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        placeholder="Type your note here..."
+        className="w-full bg-background border border-white/10 rounded-lg p-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 min-h-[90px] resize-y font-sans"
+      />
+      <div className="flex gap-2">
+        <button onClick={() => onSave(value)} className="flex-1 py-1.5 bg-blue-500/20 border border-blue-500/30 text-blue-400 text-xs font-bold rounded-lg hover:bg-blue-500/30 transition-all">Save Note</button>
+        <button onClick={onCancel} className="px-3 py-1.5 bg-white/5 border border-white/10 text-slate-400 text-xs font-bold rounded-lg hover:bg-white/10 transition-all">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function AiInput({ onSubmit }: { onSubmit: (text: string) => void }) {
+  const [value, setValue] = useState('');
+  return (
+    <div className="flex gap-2">
+      <input
+        type="text"
+        autoFocus
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && value.trim()) { onSubmit(value); setValue(''); } }}
+        placeholder="Ask AI about this selection..."
+        className="flex-1 bg-background border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 font-sans"
+      />
+      <button
+        onClick={() => { if (value.trim()) { onSubmit(value); setValue(''); } }}
+        disabled={!value.trim()}
+        className="p-2 bg-primary-fixed-dim text-on-primary-fixed rounded-lg disabled:opacity-40 hover:bg-primary-container transition-colors"
+      >
+        <Send className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
 
 export default function ResourcesTab({
   courseConnected,
@@ -122,61 +638,6 @@ export default function ResourcesTab({
     }));
   };
 
-  const [selectionPos, setSelectionPos] = useState<{top: number, left: number, width: number, text: string, rects: HighlightRect[]} | null>(null);
-
-  const handleSelection = () => {
-    setTimeout(() => {
-      const sel = window.getSelection();
-      if (sel && sel.toString().trim().length > 0 && !sel.isCollapsed) {
-        const range = sel.getRangeAt(0);
-        const container = document.getElementById('doc-content-wrapper');
-        if (container) {
-          const containerRect = container.getBoundingClientRect();
-          const rects = Array.from(range.getClientRects());
-          const relativeRects = rects.map(rect => ({
-            top: rect.top - containerRect.top,
-            left: rect.left - containerRect.left,
-            width: rect.width,
-            height: rect.height
-          }));
-          
-          if (relativeRects.length > 0) {
-            setSelectionPos({
-              top: relativeRects[0].top - 48,
-              left: relativeRects[0].left + (relativeRects[0].width / 2) - 80, 
-              width: relativeRects[0].width,
-              rects: relativeRects,
-              text: sel.toString().trim()
-            });
-          }
-        }
-      } else {
-        setSelectionPos(null);
-      }
-    }, 10);
-  };
-
-  const addDocNote = (type: 'highlight' | 'note' | 'ai', color: string) => {
-    if (!selectionPos) return;
-    
-    const newNote: DocNote = {
-      id: Date.now().toString(),
-      selectedText: selectionPos.text,
-      noteText: '',
-      aiChat: type === 'ai' ? [] : undefined,
-      rects: selectionPos.rects,
-      top: selectionPos.rects[0].top,
-      left: selectionPos.rects[0].left,
-      color,
-      isEditing: type === 'note' || type === 'ai',
-      type,
-      expanded: type === 'note' || type === 'ai'
-    };
-    
-    updateDocNotes(prev => [...prev, newNote]);
-    setSelectionPos(null);
-    window.getSelection()?.removeAllRanges();
-  };
 
   const submitAiPrompt = (id: string, text: string) => {
     updateDocNotes(prev => prev.map(n => {
@@ -241,7 +702,6 @@ export default function ResourcesTab({
 
   const openDoc = (docName: string | null) => {
     setSelectedDoc(docName);
-    setSelectionPos(null);
   };
 
   useEffect(() => {
@@ -517,256 +977,23 @@ export default function ResourcesTab({
         </div>
       )}
 
-      {/* Floating Document Viewer */}
+      {/* Floating Document Viewer — Split Panel */}
       {selectedDoc && createPortal(
-        <div className="fixed inset-0 z-[100] flex flex-col bg-background/95 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="shrink-0 px-6 py-4 flex items-center justify-between border-b border-white/10 bg-surface-container/50">
-            <div className="flex items-center gap-4 min-w-0">
-               <div className="w-12 h-12 rounded-xl bg-surface-container border border-white/10 flex items-center justify-center text-primary-fixed-dim shadow-sm">
-                 <FileText className="w-6 h-6" />
-               </div>
-               <div>
-                  <p className="font-sans text-sm text-slate-400 font-medium mb-0.5">Document Preview</p>
-                  <p className="font-display text-xl text-white truncate font-semibold leading-none">{selectedDoc}</p>
-               </div>
-            </div>
-            <div className="flex items-center gap-5 border border-white/10 p-1.5 rounded-xl bg-surface-container-high/50">
-              <button 
-                onClick={() => {
-                  openDoc(null);
-                  setActiveTab('flashcards');
-                  setIsGenerating(true);
-                  setTimeout(() => {
-                    const newId = Date.now();
-                    setSelectedSetContent(newId);
-                    setFlashcardSets(prev => [
-                      ...prev,
-                      {
-                        id: newId,
-                        title: `Generated from ${selectedDoc}`,
-                        cardCount: 1,
-                        cards: [
-                          { id: Date.now(), front: "What is EPSP?", back: "Excitatory Postsynaptic Potential." }
-                        ]
-                      }
-                    ]);
-                    setIsGenerating(false);
-                  }, 1500);
-                }}
-                className="shrink-0 px-4 py-2.5 bg-primary-fixed-dim/20 text-primary-fixed hover:bg-primary-fixed-dim hover:text-on-primary-fixed rounded-lg text-xs uppercase tracking-widest font-bold transition-all flex items-center gap-2"
-              >
-                <Sparkles className="w-4 h-4" /> Auto-Generate Cards
-              </button>
-              <button 
-                className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors tooltip-target"
-                title="Download"
-              >
-                <Download className="w-5 h-5" />
-              </button>
-              <div className="w-px h-5 bg-white/20 mx-1"></div>
-              <button 
-                onClick={() => openDoc(null)}
-                className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
-                title="Close Viewer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-6 md:p-12 flex justify-center w-full relative">
-            <div 
-              className="absolute inset-0 z-0" 
-              onClick={() => openDoc(null)} 
-            />
-            
-            {/* The Document "Paper" */}
-            <div 
-              className="w-full max-w-5xl bg-[#f8f9fa] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] rounded-lg flex flex-col z-10 animate-in slide-in-from-bottom-8 duration-500 min-h-full relative overflow-visible"
-              onClick={(e) => e.stopPropagation()}
-            >
-              
-              <div 
-                className="flex-1 p-12 md:p-24 overflow-y-auto font-serif leading-relaxed text-slate-900 selection:bg-blue-200/50 selection:text-slate-900 pb-48 scroll-smooth"
-                onMouseUp={handleSelection}
-              >
-                <div id="doc-content-wrapper" className="max-w-4xl mx-auto space-y-8 relative">
-                  
-                  {/* Highlight and Note Overlays */}
-                  {docNotes.map(note => (
-                    <React.Fragment key={note.id}>
-                      {note.rects.map((rect, i) => (
-                        <div
-                          key={`${note.id}-rect-${i}`}
-                          className={`absolute rounded-[2px] mix-blend-multiply transition-colors ${
-                            note.type === 'note' 
-                              ? 'bg-blue-300/40 border-b-2 border-blue-400 cursor-pointer hover:bg-blue-300/60' 
-                              : note.type === 'ai'
-                              ? 'bg-primary-fixed-dim/20 border-b-2 border-primary-fixed-dim cursor-pointer hover:bg-primary-fixed-dim/40'
-                              : note.color
-                          }`}
-                          style={{
-                            top: rect.top,
-                            left: rect.left,
-                            width: rect.width,
-                            height: rect.height,
-                            pointerEvents: note.type === 'note' || note.type === 'ai' ? 'auto' : 'none'
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (note.type === 'note' || note.type === 'ai') toggleNoteExpanded(note.id);
-                          }}
-                        />
-                      ))}
-                      
-                      {note.type !== 'highlight' && (note.expanded || note.isEditing) && (
-                        <div 
-                          className="absolute z-40 w-72 bg-surface-container-highest border border-white/10 rounded-xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-                          style={{ 
-                            top: Math.max(20, note.rects[0].top - 20), 
-                            left: Math.min(note.rects[0].left + note.rects[0].width + 16, 700) 
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          onMouseUp={e => e.stopPropagation()}
-                          onMouseDown={e => e.stopPropagation()}
-                        >
-                          <div className="px-4 py-3 border-b border-white/10 bg-primary-fixed-dim/10 flex items-center gap-2">
-                             {note.type === 'ai' ? <Sparkles className="w-4 h-4 text-primary-fixed-dim shrink-0" /> : <MessageSquare className="w-4 h-4 text-primary-fixed-dim shrink-0" />}
-                             <p className="font-sans text-[11px] font-semibold text-white/80 line-clamp-2 italic leading-relaxed">"{note.selectedText}"</p>
-                          </div>
-                          <div className="p-4 flex flex-col gap-3 max-h-[350px] overflow-y-auto no-scrollbar">
-                            {note.type === 'ai' && note.aiChat && note.aiChat.map((msg, i) => (
-                                <div key={i} className={`p-3 rounded-lg border ${
-                                  msg.role === 'user' 
-                                    ? 'bg-surface-container-high border-white/10 text-white' 
-                                    : 'bg-primary-fixed-dim/10 border-primary-fixed-dim/20 text-white'
-                                } text-sm relative shrink-0`}>
-                                  <div className={`flex items-center gap-2 mb-1.5 ${msg.role === 'user' ? 'opacity-50' : 'text-primary-fixed-dim'}`}>
-                                    {msg.role === 'user' ? <User className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
-                                    <span className="text-xs">{msg.role === 'user' ? 'You' : 'AI Assistant'}</span>
-                                  </div>
-                                  <p className="leading-relaxed text-sm whitespace-pre-wrap">{msg.content}</p>
-                                </div>
-                            ))}
-
-                            {note.isAiLoading && note.type === 'ai' && (
-                                <div className="p-3 bg-primary-fixed-dim/10 rounded-lg flex items-center gap-2 shrink-0">
-                                  <Bot className="w-4 h-4 text-primary-fixed-dim animate-pulse" />
-                                  <span className="text-sm text-primary-fixed-dim animate-pulse">Thinking...</span>
-                                </div>
-                            )}
-
-                            {note.isEditing ? (
-                              <textarea
-                                autoFocus
-                                className="w-full bg-background border border-white/10 rounded-lg p-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 min-h-[90px] resize-y font-sans shadow-inner shrink-0"
-                                placeholder={note.type === 'ai' ? "Ask AI about this phrase..." : "Type your note here..."}
-                                defaultValue={note.type !== 'ai' ? note.noteText : ''}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    if (e.currentTarget.value.trim()) {
-                                        if (note.type === 'ai') {
-                                          submitAiPrompt(note.id, e.currentTarget.value);
-                                        } else {
-                                          saveNote(note.id, e.currentTarget.value);
-                                        }
-                                        e.currentTarget.value = '';
-                                    }
-                                  }
-                                }}
-                                onBlur={(e) => {
-                                  if (note.type !== 'ai') saveNote(note.id, e.currentTarget.value);
-                                }}
-                              />
-                            ) : note.type !== 'ai' && (
-                              <div className="relative group cursor-pointer shrink-0" onClick={() => editNote(note.id)}>
-                                <p className="font-sans text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">{note.noteText}</p>
-                                <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 p-1.5 bg-surface-container rounded-lg backdrop-blur transition-opacity shadow-lg border border-white/10">
-                                  <Edit3 className="w-4 h-4 text-slate-400" />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          {!note.isEditing && note.type !== 'ai' && (
-                            <div className="px-4 py-2 border-t border-white/5 flex justify-end bg-surface-container/50">
-                               <button onClick={() => deleteNote(note.id)} className="text-[10px] text-red-400/80 hover:text-red-400 uppercase tracking-widest font-semibold flex items-center gap-1.5 transition-colors">
-                                 <Trash2 className="w-3 h-3" /> Delete Note
-                               </button>
-                            </div>
-                          )}
-                          {!note.isEditing && note.type === 'ai' && !note.isAiLoading && (
-                            <div className="px-4 py-2 border-t border-white/5 flex justify-between items-center bg-surface-container/50">
-                               <button onClick={() => editNote(note.id)} className="text-[10px] text-slate-400 hover:text-white uppercase tracking-widest font-semibold flex items-center gap-1.5 transition-colors">
-                                 <MessageSquare className="w-3 h-3" /> Follow up
-                               </button>
-                               <button onClick={() => deleteNote(note.id)} className="text-[10px] text-red-400/80 hover:text-red-400 uppercase tracking-widest font-semibold flex items-center gap-1.5 transition-colors">
-                                 <Trash2 className="w-3 h-3" /> Delete
-                               </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </React.Fragment>
-                  ))}
-
-                  {/* Selection Toolbar */}
-                  {selectionPos && (
-                    <div 
-                      className="absolute z-50 flex items-center bg-surface-container-highest border border-white/10 rounded-lg shadow-[0_10px_40px_-10px_rgba(0,0,0,0.8)] overflow-hidden transform transition-all animate-in zoom-in-95 duration-200"
-                      style={{ top: selectionPos.top, left: selectionPos.left }}
-                      onMouseUp={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
-                    >
-                      <button onClick={() => addDocNote('highlight', 'bg-yellow-400/50')} className="p-3 hover:bg-white/10 text-yellow-500 transition-colors tooltip-target" title="Highlight Yellow">
-                        <Highlighter className="w-[18px] h-[18px]" />
-                      </button>
-                      <button onClick={() => addDocNote('highlight', 'bg-emerald-400/50')} className="p-3 hover:bg-white/10 text-emerald-500 transition-colors tooltip-target" title="Highlight Green">
-                        <Highlighter className="w-[18px] h-[18px]" />
-                      </button>
-                      <div className="w-px h-6 bg-white/10 mx-1"></div>
-                      <button onClick={() => addDocNote('note', 'border-blue-500/50')} className="px-4 py-2.5 hover:bg-white/10 text-primary-fixed-dim transition-colors tooltip-target font-sans text-xs font-bold flex items-center gap-2" title="Add Note">
-                        <MessageSquare className="w-4 h-4" /> Add Note
-                      </button>
-                      <div className="w-px h-6 bg-white/10 mx-1"></div>
-                      <button onClick={() => addDocNote('ai', 'border-primary-fixed-dim/50')} className="px-4 py-2.5 hover:bg-white/10 text-primary-fixed-dim transition-colors tooltip-target font-sans text-xs font-bold flex items-center gap-2" title="Ask AI">
-                        <Sparkles className="w-4 h-4" /> Ask AI
-                      </button>
-                    </div>
-                  )}
-
-                  <header className="border-b border-slate-300 pb-8 mb-12">
-                    <h1 className="text-4xl md:text-5xl font-bold text-slate-900 tracking-tight mb-4">{selectedDoc.split('.')[0].replace(/_/g, ' ')}</h1>
-                    <p className="text-slate-500 font-sans text-sm uppercase tracking-widest">Biology 301 • Fall 2026</p>
-                  </header>
-                  
-                  <h2 className="text-2xl font-bold text-slate-800">4.1 Synaptic Transmission Overview</h2>
-                  <p className="text-lg text-slate-700">
-                    Synaptic transmission is the biological process by which a neuron communicates with a target cell across a synapse. Chemical synaptic transmission involves the release of a neurotransmitter from the pre-synaptic neuron...
-                  </p>
-                  <p className="text-lg text-slate-700">
-                    Upon the arrival of an action potential at the presynaptic terminal, voltage-gated calcium channels open, allowing an influx of Ca2+ ions. This calcium entry signals synaptic vesicles to fuse with the presynaptic membrane, emptying their neurotransmitter contents into the synaptic cleft.
-                  </p>
-                  
-                  <div className="my-12 py-12 border-y border-slate-200">
-                     <p className="text-center italic text-slate-400 font-sans text-sm">Figure 1: Synaptic cleft diagram (Image missing in preview)</p>
-                  </div>
-
-                  <h3 className="text-2xl font-bold text-slate-800">4.2 Neurotransmitters</h3>
-                  <p className="text-lg text-slate-700">
-                    Neurotransmitters are endogenous chemicals that enable neurotransmission. It is a type of chemical messenger which transmits signals across a chemical synapse, such as a neuromuscular junction, from one neuron to another "target" neuron, muscle cell, or gland cell.
-                  </p>
-                  
-                  <div className="mt-20 p-8 rounded bg-slate-100 border border-slate-200 flex items-center justify-center">
-                    <p className="text-slate-500 italic font-sans text-sm text-center">
-                      End of simulated preview.<br/>In a real environment, this would render the actual PDF, DOCX, or PPTX file contents.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DocViewer
+          selectedDoc={selectedDoc}
+          docNotes={docNotes}
+          updateDocNotes={updateDocNotes}
+          openDoc={openDoc}
+          setActiveTab={setActiveTab}
+          setIsGenerating={setIsGenerating}
+          setSelectedSetContent={setSelectedSetContent}
+          setFlashcardSets={setFlashcardSets}
+          submitAiPrompt={submitAiPrompt}
+          saveNote={saveNote}
+          editNote={editNote}
+          deleteNote={deleteNote}
+          toggleNoteExpanded={toggleNoteExpanded}
+        />
         , document.body
       )}
 

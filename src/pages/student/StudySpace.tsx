@@ -72,30 +72,7 @@ export default function StudySpace() {
     setCourseConnected(true);
   };
 
-  const handleGenerateFlashcards = () => {
-    setIsGenerating(true);
-    setTimeout(() => {
-      setFlashcardSets(prevSets => {
-        const newSets = [...prevSets];
-        const targetSetIndex = newSets.findIndex(s => s.id === selectedSetContent);
-        if (targetSetIndex >= 0) {
-          const updatedSet = { ...newSets[targetSetIndex] };
-          updatedSet.cards = [
-            ...updatedSet.cards,
-            {
-              id: Date.now(),
-              front: "What are Nodes of Ranvier?",
-              back: "Periodic gaps in the myelin sheath where the action potential is regenerated."
-            }
-          ];
-          updatedSet.cardCount = updatedSet.cards.length;
-          newSets[targetSetIndex] = updatedSet;
-        }
-        return newSets;
-      });
-      setIsGenerating(false);
-    }, 1500);
-  };
+
 
   const handleCreateDeck = (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,7 +150,7 @@ export default function StudySpace() {
             setSelectedSetContent={setSelectedSetContent}
             setIsCreateDeckModalOpen={setIsCreateDeckModalOpen}
             setActiveTab={setActiveTab}
-            handleGenerateFlashcards={handleGenerateFlashcards}
+
             setFlashcardSets={setFlashcardSets}
             availableResources={availableResources}
           />

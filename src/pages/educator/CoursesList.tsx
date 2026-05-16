@@ -53,7 +53,7 @@ export default function CoursesList() {
               className={`px-4 py-1.5 rounded-full font-sans font-semibold text-[11px] uppercase tracking-wider transition-colors border ${filter === f
                 ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim border-primary-fixed-dim/30'
                 : 'text-slate-400 border-white/10 hover:text-white hover:border-white/20'
-              }`}>
+                }`}>
               {f} {counts[f] > 0 && <span className="ml-1 opacity-60">({counts[f]})</span>}
             </button>
           ))}

@@ -211,14 +211,14 @@ export const addAssessment = (courseId: string, assessmentData: Partial<Assessme
     title: assessmentData.title || '',
     description: assessmentData.description || '',
     type: assessmentData.type || 'quiz',
-    status: 'draft',
+    status: assessmentData.status || 'draft',
     deadline: assessmentData.deadline || undefined,
     duration: assessmentData.duration || 30,
     difficulty: assessmentData.difficulty || 'medium',
     questionCount: assessmentData.questionCount || 10,
     isLockdown: assessmentData.isLockdown || false,
     submissions: [],
-    questions: []
+    questions: assessmentData.questions || []
   };
   course.assessments.unshift(newAssessment);
   return newAssessment;

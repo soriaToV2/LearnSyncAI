@@ -28,7 +28,7 @@ interface FlashcardsTabProps {
   setSelectedSetContent: (id: number | null) => void;
   setIsCreateDeckModalOpen: (isOpen: boolean) => void;
   setActiveTab: (tab: 'flashcards' | 'resources') => void;
-  handleGenerateFlashcards: () => void;
+
   setFlashcardSets: React.Dispatch<React.SetStateAction<FlashcardSet[]>>;
   availableResources?: string[];
 }
@@ -41,7 +41,7 @@ export default function FlashcardsTab({
   setSelectedSetContent,
   setIsCreateDeckModalOpen,
   setActiveTab,
-  handleGenerateFlashcards,
+
   setFlashcardSets,
   availableResources = [],
 }: FlashcardsTabProps) {
@@ -252,14 +252,7 @@ export default function FlashcardsTab({
                 <ClipboardList className="w-4 h-4" />
                 Take a Quiz
               </button>
-              <button 
-                disabled={!courseConnected || isGenerating}
-                onClick={handleGenerateFlashcards}
-                className="px-5 py-2.5 bg-surface-container border border-primary-fixed-dim/30 text-primary-fixed hover:bg-surface-container-high rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(0,218,243,0.1)] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                {isGenerating ? 'Generating...' : 'Auto-Generate (AI)'}
-              </button>
+
             </div>
           </div>
 
