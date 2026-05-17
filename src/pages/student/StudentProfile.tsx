@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MapPin, Building, Users, Star, Award, BrainCircuit, Book, Box, UserPlus, UserCheck } from 'lucide-react';
+import { MapPin, Building, Users, Star, Award, BrainCircuit, Book, Box, UserPlus, UserCheck, Globe } from 'lucide-react';
 import { useParams, Link } from 'react-router-dom';
 import { MOCK_STUDENTS } from '../../data/mockStudents';
 
@@ -128,6 +128,11 @@ export default function StudentProfile() {
             className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'spaces' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
           >
              <Box className="w-4 h-4" /> Public Study Spaces
+             {student.spaces.filter(s => s.isPublic).length > 0 && (
+               <span className="ml-1 px-2 py-0.5 rounded-full bg-primary-fixed-dim/10 text-primary-fixed-dim font-sans text-[11px] font-bold border border-primary-fixed-dim/20">
+                 {student.spaces.filter(s => s.isPublic).length}
+               </span>
+             )}
           </button>
         </div>
 
@@ -158,29 +163,44 @@ export default function StudentProfile() {
           </div>
         )}
 
-        {activeTab === 'spaces' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {student.spaces.map(space => (
-              <div key={space.id} className="glass-card p-6 rounded-xl border border-white/10 hover:border-primary-fixed-dim/40 transition-colors group cursor-pointer">
-                <div className="flex justify-between items-start mb-4">
-                  <h3 className="font-display text-xl font-medium text-on-surface group-hover:text-primary-fixed-dim transition-colors">{space.title}</h3>
-                  {space.isTopRated && <span className="bg-primary-fixed-dim/20 text-primary-fixed-dim px-2 py-1 rounded text-xs font-bold uppercase tracking-wider">Top Rated</span>}
+        {activeTab === 'spaces' && (() => {
+          const publicSpaces = student.spaces.filter(s => s.isPublic);
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {publicSpaces.map(space => (
+                <div key={space.id} className="glass-card p-6 rounded-xl border border-white/10 hover:border-primary-fixed-dim/40 transition-colors group cursor-pointer">
+                  <div className="flex justify-between items-start mb-4">
+                    <h3 className="font-display text-xl font-medium text-on-surface group-hover:text-primary-fixed-dim transition-colors">{space.title}</h3>
+                    <div className="flex items-center gap-2">
+                      {space.isTopRated && <span className="bg-primary-fixed-dim/20 text-primary-fixed-dim px-2 py-1 rounded text-xs font-bold uppercase tracking-wider">Top Rated</span>}
+                      <span className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-400/10 border border-emerald-400/20 text-emerald-400 text-[10px] font-bold uppercase tracking-wider">
+                        <Globe className="w-3 h-3" /> Public
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-on-surface-variant text-sm mb-6">{space.description}</p>
+                  <div className="flex items-center gap-4 text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                    <span className="flex items-center gap-1.5"><Users className="w-4 h-4"/> {space.studiedCount.toLocaleString()} Studied</span>
+                  </div>
                 </div>
-                <p className="text-on-surface-variant text-sm mb-6">{space.description}</p>
-                <div className="flex items-center gap-4 text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                  <span className="flex items-center gap-1.5"><Users className="w-4 h-4"/> {space.studiedCount.toLocaleString()} Studied</span>
+              ))}
+
+              {publicSpaces.length === 0 && (
+                <div className="col-span-full py-14 text-center border-2 border-dashed border-white/10 rounded-2xl">
+                  <Box className="w-8 h-8 text-slate-500 mx-auto mb-3" />
+                  <p className="text-white font-display text-lg font-medium mb-1">
+                    {isMe ? 'No public spaces yet' : 'No shared spaces'}
+                  </p>
+                  <p className="text-slate-400 font-sans text-sm max-w-xs mx-auto">
+                    {isMe
+                      ? 'Go to your Study Space and click "Publicize Space" to share your flashcard decks with followers.'
+                      : `${student.name.split(' ')[0]} hasn't made any study spaces public yet.`}
+                  </p>
                 </div>
-              </div>
-            ))}
-            
-            {student.spaces.length === 0 && (
-              <div className="col-span-full py-12 text-center border-2 border-dashed border-white/10 rounded-2xl">
-                 <Box className="w-8 h-8 text-slate-500 mx-auto mb-3" />
-                 <p className="text-slate-400 font-sans">No public study spaces published yet.</p>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          );
+        })()}
       </main>
     </>
   );

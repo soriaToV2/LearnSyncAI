@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Plus, Layers, ChevronLeft, RefreshCw, Play, Edit3, Trash2, BookOpen, ClipboardList } from 'lucide-react';
+import { Sparkles, Plus, Layers, ChevronLeft, RefreshCw, Play, Edit3, Trash2, BookOpen, ClipboardList, Globe, Lock } from 'lucide-react';
 import FlashcardStudyView from './FlashcardStudyView';
 import CreateFlashcardsModal from './CreateFlashcardsModal';
 import QuizSetupModal, { type QuizConfig } from './QuizSetupModal';
@@ -18,6 +18,7 @@ interface FlashcardSet {
   description?: string;
   cardCount: number;
   cards: Flashcard[];
+  isPublic: boolean;
 }
 
 interface FlashcardsTabProps {
@@ -28,9 +29,10 @@ interface FlashcardsTabProps {
   setSelectedSetContent: (id: number | null) => void;
   setIsCreateDeckModalOpen: (isOpen: boolean) => void;
   setActiveTab: (tab: 'flashcards' | 'resources') => void;
-
   setFlashcardSets: React.Dispatch<React.SetStateAction<FlashcardSet[]>>;
   availableResources?: string[];
+  spaceIsPublic: boolean;
+  onToggleDeckVisibility: (deckId: number) => void;
 }
 
 export default function FlashcardsTab({
@@ -41,9 +43,10 @@ export default function FlashcardsTab({
   setSelectedSetContent,
   setIsCreateDeckModalOpen,
   setActiveTab,
-
   setFlashcardSets,
   availableResources = [],
+  spaceIsPublic,
+  onToggleDeckVisibility,
 }: FlashcardsTabProps) {
   const [isStudying, setIsStudying] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -196,19 +199,50 @@ export default function FlashcardsTab({
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {flashcardSets.map(set => (
-              <div 
+              <div
                 key={set.id}
-                onClick={() => setSelectedSetContent(set.id)}
-                className="bg-surface-container-lowest rounded-2xl border border-white/5 p-6 cursor-pointer hover:-translate-y-1 transition-all duration-300 group hover:border-primary-fixed-dim/30 hover:shadow-lg hover:shadow-primary-fixed-dim/5"
+                className="bg-surface-container-lowest rounded-2xl border border-white/5 p-6 hover:-translate-y-1 transition-all duration-300 group hover:border-primary-fixed-dim/30 hover:shadow-lg hover:shadow-primary-fixed-dim/5 flex flex-col"
               >
-                <div className="w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center mb-6 group-hover:bg-primary-fixed-dim/20 group-hover:border-primary-fixed-dim/30 transition-colors">
-                  <Layers className="w-6 h-6 text-slate-400 group-hover:text-primary-fixed-dim transition-colors" />
+                {/* Deck icon + visibility badge row */}
+                <div className="flex items-start justify-between mb-6">
+                  <div
+                    onClick={() => setSelectedSetContent(set.id)}
+                    className="w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center group-hover:bg-primary-fixed-dim/20 group-hover:border-primary-fixed-dim/30 transition-colors cursor-pointer"
+                  >
+                    <Layers className="w-6 h-6 text-slate-400 group-hover:text-primary-fixed-dim transition-colors" />
+                  </div>
+
+                  {/* Per-deck visibility toggle */}
+                  <button
+                    onClick={e => { e.stopPropagation(); onToggleDeckVisibility(set.id); }}
+                    title={set.isPublic ? 'Click to make this deck private' : 'Click to share this deck publicly'}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border font-sans text-[10px] font-bold uppercase tracking-wider transition-all active:scale-95 ${
+                      set.isPublic
+                        ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400 hover:bg-emerald-400/20'
+                        : 'bg-white/5 border-white/10 text-slate-500 hover:border-white/20 hover:text-slate-300'
+                    } ${!spaceIsPublic ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    disabled={!spaceIsPublic}
+                  >
+                    {set.isPublic
+                      ? <><Globe className="w-3 h-3" /> Public</>
+                      : <><Lock className="w-3 h-3" /> Private</>}
+                  </button>
                 </div>
-                <h3 className="font-display text-xl font-medium text-white mb-2 group-hover:text-primary-fixed-dim transition-colors">{set.title}</h3>
-                {set.description && (
-                  <p className="font-sans text-xs text-slate-500 mb-2 line-clamp-2">{set.description}</p>
+
+                <div onClick={() => setSelectedSetContent(set.id)} className="flex-1 cursor-pointer">
+                  <h3 className="font-display text-xl font-medium text-white mb-2 group-hover:text-primary-fixed-dim transition-colors">{set.title}</h3>
+                  {set.description && (
+                    <p className="font-sans text-xs text-slate-500 mb-2 line-clamp-2">{set.description}</p>
+                  )}
+                  <p className="font-sans text-sm text-slate-400">{set.cardCount} Cards</p>
+                </div>
+
+                {/* Disabled hint when space is private */}
+                {!spaceIsPublic && (
+                  <p className="font-sans text-[10px] text-slate-600 mt-3 flex items-center gap-1">
+                    <Lock className="w-3 h-3" /> Publicize the space first to share individual decks
+                  </p>
                 )}
-                <p className="font-sans text-sm text-slate-400">{set.cardCount} Cards</p>
               </div>
             ))}
           </div>

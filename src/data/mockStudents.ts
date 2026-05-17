@@ -23,6 +23,7 @@ export interface Student {
     description: string;
     studiedCount: number;
     isTopRated: boolean;
+    isPublic: boolean;
   }[];
 }
 
@@ -44,8 +45,8 @@ export const MOCK_STUDENTS: Student[] = [
       { id: "3", title: "Bioethics 101", organization: "MIT", iconType: "Star", colorType: "emerald" },
     ],
     spaces: [
-      { id: "s1", title: "Synaptic Transmitters Decks", description: "45 flashcards focused on neurotransmitter release mechanisms.", studiedCount: 1200, isTopRated: true },
-      { id: "s2", title: "Neuroanatomy Midterm Prep", description: "Comprehensive review of brain structures and pathways.", studiedCount: 840, isTopRated: false },
+      { id: "s1", title: "Synaptic Transmitters Decks", description: "45 flashcards focused on neurotransmitter release mechanisms.", studiedCount: 1200, isTopRated: true, isPublic: true },
+      { id: "s2", title: "Neuroanatomy Midterm Prep", description: "Comprehensive review of brain structures and pathways.", studiedCount: 840, isTopRated: false, isPublic: false },
     ]
   },
   {
@@ -64,7 +65,7 @@ export const MOCK_STUDENTS: Student[] = [
       { id: "5", title: "Algorithms Master", organization: "Codecademy", iconType: "Award", colorType: "indigo" },
     ],
     spaces: [
-      { id: "s3", title: "Data Structures Fast-Track", description: "Trees, Graphs, and Hash Maps in detailed visual guides.", studiedCount: 3400, isTopRated: true },
+      { id: "s3", title: "Data Structures Fast-Track", description: "Trees, Graphs, and Hash Maps in detailed visual guides.", studiedCount: 3400, isTopRated: true, isPublic: true },
     ]
   },
   {
@@ -82,7 +83,7 @@ export const MOCK_STUDENTS: Student[] = [
       { id: "6", title: "Organic Chemistry", organization: "UC Berkeley", iconType: "Star", colorType: "emerald" },
     ],
     spaces: [
-      { id: "s4", title: "O-Chem Reactions Viewer", description: "Interactive molecules and standard reactions.", studiedCount: 156, isTopRated: false },
+      { id: "s4", title: "O-Chem Reactions Viewer", description: "Interactive molecules and standard reactions.", studiedCount: 156, isTopRated: false, isPublic: false },
     ]
   },
   {
@@ -101,7 +102,7 @@ export const MOCK_STUDENTS: Student[] = [
       { id: "8", title: "Debate Champion", organization: "National Forensics", iconType: "Award", colorType: "indigo" },
     ],
     spaces: [
-      { id: "s5", title: "Law Case Briefs", description: "Summarized cases for 1L Constitutional Law.", studiedCount: 890, isTopRated: true },
+      { id: "s5", title: "Law Case Briefs", description: "Summarized cases for 1L Constitutional Law.", studiedCount: 890, isTopRated: true, isPublic: true },
     ]
   }
 ];
