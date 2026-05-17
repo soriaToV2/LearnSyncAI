@@ -34,6 +34,7 @@ export interface EnrolledStudent {
   id: string; name: string; avatar: string; email: string; joinedAt: string;
   assessmentScores: { assessmentId: string; score: number; total: number }[];
   averageGrade: number; status: StudentStatus; badges: Badge[];
+  hasCertificate?: boolean; certificateIssuedAt?: string;
 }
 export interface EducatorCourse {
   id: string; title: string; description: string; iconName: string;
@@ -238,7 +239,7 @@ export const issueBadge = (courseId: string, studentId: string, badgeData: Parti
   }
 };
 
-export const gradeSubmission = (courseId: string, assessmentId: string, submissionId: string, manualScore: number) => {
+export const gradeSubmission = (courseId: string, assessmentId: string, submissionId: string, manualScore: number, feedback?: string) => {
   const course = getCourseById(courseId);
   const assessment = course?.assessments.find(a => a.id === assessmentId);
   const submission = assessment?.submissions.find(s => s.studentId === submissionId);
@@ -246,6 +247,7 @@ export const gradeSubmission = (courseId: string, assessmentId: string, submissi
     submission.manualScore = manualScore;
     submission.totalScore = submission.autoScore + manualScore;
     submission.status = 'graded';
+    if (feedback) submission.feedback = feedback;
   }
 };
 
@@ -261,5 +263,13 @@ export const updateAssessmentQuestions = (courseId: string, assessmentId: string
   if (assessment) {
     assessment.questions = questions;
     assessment.questionCount = questions.length;
+  }
+};
+
+export const issueCertificate = (courseId: string, studentId: string) => {
+  const student = getCourseById(courseId)?.students.find(s => s.id === studentId);
+  if (student) {
+    student.hasCertificate = true;
+    student.certificateIssuedAt = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   }
 };
