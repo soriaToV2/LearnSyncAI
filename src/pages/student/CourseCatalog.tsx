@@ -432,6 +432,10 @@ export default function CourseCatalog() {
   const enrolledCount = courses.filter((c) => c.isEnrolled).length;
   const globalCount = courses.filter((c) => c.type === 'independent').length;
 
+  const enrolledCourses = filtered.filter((c) => c.isEnrolled);
+  const independentCourses = filtered.filter((c) => !c.isEnrolled && c.type === 'independent');
+  const universityCourses = filtered.filter((c) => !c.isEnrolled && c.type.startsWith('university'));
+
   return (
     <>
       {/* Page Content */}
@@ -562,12 +566,48 @@ export default function CourseCatalog() {
 
           {/* Grid */}
           {filtered.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {filtered.map((course) => (
-                <div key={course.id}>
-                  <CourseCard course={course} onClick={setSelectedCourse} />
+            <div className="space-y-12">
+              {enrolledCourses.length > 0 && (
+                <div>
+                  <h2 className="font-display text-2xl font-bold text-on-surface mb-6 flex items-center gap-2">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                    Enrolled Courses
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {enrolledCourses.map((course) => (
+                      <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
+                    ))}
+                  </div>
                 </div>
-              ))}
+              )}
+
+              {universityCourses.length > 0 && (
+                <div>
+                  <h2 className="font-display text-2xl font-bold text-on-surface mb-6 flex items-center gap-2">
+                    <Building className="w-6 h-6 text-primary-fixed-dim" />
+                    University Courses
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {universityCourses.map((course) => (
+                      <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {independentCourses.length > 0 && (
+                <div>
+                  <h2 className="font-display text-2xl font-bold text-on-surface mb-6 flex items-center gap-2">
+                    <Globe className="w-6 h-6 text-violet-400" />
+                    Independent Courses
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {independentCourses.map((course) => (
+                      <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-24 text-center">

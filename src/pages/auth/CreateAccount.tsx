@@ -1,149 +1,230 @@
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BrainCircuit } from 'lucide-react';
-
+import { BrainCircuit, Mail, Lock, User, Sparkles, Building, ArrowRight, Github } from 'lucide-react';
 
 export default function CreateAccount() {
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setTimeout(() => setIsLoading(false), 800);
+  };
+
   return (
-    <div className="min-h-screen flex flex-col relative">
-      {/* Ambient Background / Neural Motif */}
-      <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff08_1px,transparent_1px),linear-gradient(to_bottom,#ffffff08_1px,transparent_1px)] bg-[size:48px_48px]"></div>
-        <div className="absolute top-[-25%] right-[-10%] w-[800px] h-[800px] bg-primary/10 rounded-full blur-[120px] mix-blend-screen scale-x-150"></div>
-        <div className="absolute bottom-[-25%] left-[-10%] w-[600px] h-[600px] bg-secondary-container/15 rounded-full blur-[100px] mix-blend-screen scale-x-150"></div>
+    <div className="min-h-screen bg-[#020617] text-slate-200 flex flex-col relative overflow-hidden font-sans">
+      
+      {/* Ambient Background FX */}
+      <div className="fixed inset-0 pointer-events-none z-0">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(218,226,253,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(218,226,253,0.03)_1px,transparent_1px)] bg-[size:4rem_4rem]"></div>
+        <div className="absolute top-[-10%] right-[-10%] w-[60vw] h-[60vw] max-w-[800px] max-h-[800px] bg-primary-fixed-dim/15 rounded-full blur-[120px] mix-blend-screen animate-pulse duration-1000"></div>
+        <div className="absolute bottom-[-10%] left-[-10%] w-[50vw] h-[50vw] max-w-[700px] max-h-[700px] bg-emerald-500/10 rounded-full blur-[150px] mix-blend-screen"></div>
       </div>
 
-      <main className="flex-grow flex items-center justify-center p-6 sm:p-10 w-full max-w-7xl mx-auto relative z-10">
+      <main className="flex-grow flex items-center justify-center p-4 w-full max-w-[1000px] mx-auto relative z-10 min-h-screen">
+        
         {/* Glassmorphic Central Card */}
-        <div className="w-full max-w-[1020px] bg-surface-container-high/60 backdrop-blur-xl rounded-[1rem] border border-white/10 shadow-[0_16px_48px_-12px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col md:flex-row">
+        <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-[90vh]">
           
-          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-primary/50 to-transparent"></div>
-
-          {/* Left Half: Brand & Social */}
-          <div className="w-full md:w-1/2 p-8 sm:p-12 flex flex-col justify-center border-b md:border-b-0 md:border-r border-white/10 bg-surface-container-highest/30">
-            <div className="flex flex-col items-center mb-10 text-center">
-              <div className="w-16 h-16 rounded-xl bg-surface-container-highest/80 border border-white/10 flex items-center justify-center mb-6 shadow-inner">
-                <BrainCircuit className="text-primary w-8 h-8" />
+          {/* Left Half: Brand & Value Prop */}
+          <div className="w-full lg:w-5/12 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 lg:p-10 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
+            <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2564&auto=format&fit=crop')] bg-cover bg-center opacity-10 mix-blend-luminosity"></div>
+            
+            <div className="relative z-10 flex flex-col items-center lg:items-start text-center lg:text-left">
+              <div className="w-16 h-16 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
+                <BrainCircuit className="w-8 h-8 text-primary-fixed-dim" />
               </div>
-              <h1 className="font-display text-3xl font-semibold text-primary mb-2">EduSpace</h1>
-              <p className="font-sans text-sm text-on-surface-variant">Initialize your cognitive research environment.</p>
+              <h1 className="font-display text-4xl lg:text-5xl font-bold text-white mb-4 leading-tight">Join the <span className="text-primary-fixed-dim">Future</span></h1>
+              <p className="font-sans text-slate-400 leading-relaxed max-w-md">
+                Initialize your cognitive research environment. Connect with peers, manage your courses, and access cutting-edge educational tools.
+              </p>
             </div>
 
-            <div className="flex items-center gap-4 my-6 w-full max-w-[320px] mx-auto">
-              <div className="h-[1px] flex-1 bg-outline-variant/30"></div>
-              <span className="font-sans font-semibold text-[10px] text-on-surface-variant uppercase tracking-[0.1em]">or</span>
-              <div className="h-[1px] flex-1 bg-outline-variant/30"></div>
-            </div>
-
-            <div className="flex flex-col gap-3 w-full max-w-[320px] mx-auto">
-              <button 
-                type="button"
-                className="w-full flex items-center justify-center gap-3 bg-surface-container-low/40 border border-outline-variant/50 hover:bg-surface-container-high/80 text-on-surface font-sans font-semibold text-[12px] tracking-[0.1em] uppercase py-4 px-6 rounded-md transition-all duration-300 active:scale-[0.98] group"
-              >
-                <svg className="w-5 h-5 opacity-70 group-hover:opacity-100 transition-opacity" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"></path>
-                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"></path>
-                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"></path>
-                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"></path>
-                </svg>
-                Continue with Google
-              </button>
-              
-              <button 
-                type="button"
-                className="w-full flex items-center justify-center gap-3 bg-surface-container-low/40 border border-outline-variant/50 hover:bg-surface-container-high/80 text-on-surface font-sans font-semibold text-[12px] tracking-[0.1em] uppercase py-4 px-6 rounded-md transition-all duration-300 active:scale-[0.98] group"
-              >
-                <svg className="w-5 h-5 fill-[#1877F2] opacity-70 group-hover:opacity-100 transition-opacity" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"></path>
-                </svg>
-                Continue with Facebook
-              </button>
+            <div className="relative z-10 hidden lg:block space-y-4 mt-10">
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 backdrop-blur-md">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5 text-emerald-400" />
+                </div>
+                <div>
+                  <p className="font-display font-semibold text-slate-200 text-sm">Global Network</p>
+                  <p className="font-sans text-xs text-slate-400">Connect with students worldwide</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 backdrop-blur-md">
+                <div className="w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
+                  <Building className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <p className="font-display font-semibold text-slate-200 text-sm">University Sync</p>
+                  <p className="font-sans text-xs text-slate-400">Direct integration with your campus</p>
+                </div>
+              </div>
             </div>
           </div>
 
           {/* Right Half: Form */}
-          <div className="w-full md:w-1/2 p-8 sm:p-12 flex flex-col justify-center">
-            <div className="bg-surface-container-highest/20 backdrop-blur-md rounded-2xl border border-white/5 p-6 sm:p-8 shadow-inner">
-              <form className="flex flex-col gap-6">
-                
-                {/* Role Selection */}
-                <div className="flex flex-col gap-2 mb-2">
-                  <span className="font-sans font-semibold text-[12px] tracking-[0.1em] text-on-surface-variant uppercase">Select Designation</span>
-                  <div className="flex gap-3 w-full">
-                    <label className="flex-1 cursor-pointer group">
-                      <input type="radio" name="role" value="student" className="peer sr-only" defaultChecked />
-                      <div className="h-full rounded-xl border border-outline-variant py-3 px-4 flex flex-col items-center gap-2 font-sans font-semibold text-[12px] tracking-[0.1em] text-on-surface-variant peer-checked:bg-primary-container/10 peer-checked:border-primary peer-checked:text-primary transition-all duration-200 hover:border-primary/50">
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2.12-1.15V17h2V8.45L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/></svg>
-                        Student
-                      </div>
-                    </label>
-                    <label className="flex-1 cursor-pointer group">
-                      <input type="radio" name="role" value="educator" className="peer sr-only" />
-                      <div className="h-full rounded-xl border border-outline-variant py-3 px-4 flex flex-col items-center gap-2 font-sans font-semibold text-[12px] tracking-[0.1em] text-on-surface-variant peer-checked:bg-primary-container/10 peer-checked:border-primary peer-checked:text-primary transition-all duration-200 hover:border-primary/50">
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M21 3H3v18h18V3zm-2 16H5V5h14v14zm-4-6h-4v4h-2v-4H5v-2h4V7h2v4h4v2z"/></svg>
-                        Educator
-                      </div>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Fields */}
-                <div className="flex flex-col gap-6 mt-2">
-                  <div className="flex flex-col relative group">
-                    <input type="text" id="fullname" required placeholder=" " 
-                      className="peer w-full bg-surface-container-lowest/40 border-0 border-b-2 border-outline-variant focus:border-primary text-on-surface text-base pt-5 pb-2 px-0 focus:ring-0 transition-colors" />
-                    <label htmlFor="fullname" 
-                      className="absolute left-0 top-3 text-sm text-on-surface-variant transition-all duration-200 peer-focus:-top-2 peer-focus:text-xs peer-focus:text-primary peer-focus:font-semibold peer-focus:tracking-[0.1em] peer-[:not(:placeholder-shown)]:-top-2 peer-[:not(:placeholder-shown)]:text-xs peer-[:not(:placeholder-shown)]:font-semibold peer-[:not(:placeholder-shown)]:tracking-[0.1em] pointer-events-none uppercase">
-                      Full Name
-                    </label>
-                  </div>
-
-                  <div className="flex flex-col relative group">
-                    <input type="email" id="email" required placeholder=" " 
-                      className="peer w-full bg-surface-container-lowest/40 border-0 border-b-2 border-outline-variant focus:border-primary text-on-surface text-base pt-5 pb-2 px-0 focus:ring-0 transition-colors" />
-                    <label htmlFor="email" 
-                      className="absolute left-0 top-3 text-sm text-on-surface-variant transition-all duration-200 peer-focus:-top-2 peer-focus:text-xs peer-focus:text-primary peer-focus:font-semibold peer-focus:tracking-[0.1em] peer-[:not(:placeholder-shown)]:-top-2 peer-[:not(:placeholder-shown)]:text-xs peer-[:not(:placeholder-shown)]:font-semibold peer-[:not(:placeholder-shown)]:tracking-[0.1em] pointer-events-none uppercase">
-                      Email Address
-                    </label>
-                  </div>
-
-                  <div className="flex flex-col relative group">
-                    <input type="password" id="password" required placeholder=" " 
-                      className="peer w-full bg-surface-container-lowest/40 border-0 border-b-2 border-outline-variant focus:border-primary text-on-surface text-base pt-5 pb-2 px-0 focus:ring-0 transition-colors" />
-                    <label htmlFor="password" 
-                      className="absolute left-0 top-3 text-sm text-on-surface-variant transition-all duration-200 peer-focus:-top-2 peer-focus:text-xs peer-focus:text-primary peer-focus:font-semibold peer-focus:tracking-[0.1em] peer-[:not(:placeholder-shown)]:-top-2 peer-[:not(:placeholder-shown)]:text-xs peer-[:not(:placeholder-shown)]:font-semibold peer-[:not(:placeholder-shown)]:tracking-[0.1em] pointer-events-none uppercase">
-                      Secure Password
-                    </label>
-                  </div>
-                </div>
-
-                <Link to="/login" className="mt-4 w-full text-center bg-primary text-on-primary font-sans font-semibold text-[12px] tracking-[0.1em] uppercase py-4 px-6 rounded-md shadow-[0_0_15px_rgba(0,229,255,0.3)] hover:shadow-[0_0_25px_rgba(0,229,255,0.5)] hover:bg-primary-container transition-all duration-300 active:scale-[0.98]">
-                  Create Account
-                </Link>
-              </form>
+          <div className="w-full lg:w-7/12 p-6 lg:p-10 flex flex-col justify-center bg-surface-container-lowest/50 relative overflow-y-auto no-scrollbar">
+            
+            <div className="mb-6 text-center lg:text-left">
+              <h2 className="font-display text-2xl font-bold text-white mb-1">Create Account</h2>
+              <p className="font-sans text-sm text-slate-400">Select your designation and enter your details.</p>
             </div>
+            
+            <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+              
+              {/* Role Selection */}
+              <div className="flex gap-3 w-full">
+                <label className="flex-1 cursor-pointer group">
+                  <input type="radio" name="role" value="student" className="peer sr-only" defaultChecked />
+                  <div className="h-full rounded-2xl border-2 border-white/10 bg-surface-container/30 py-3 px-3 flex items-center justify-center gap-2 font-display font-semibold text-sm text-slate-400 peer-checked:bg-primary-fixed-dim/10 peer-checked:border-primary-fixed-dim peer-checked:text-primary-fixed-dim transition-all duration-300 hover:border-white/20 hover:bg-white/5 peer-checked:shadow-[0_0_20px_rgba(0,218,243,0.1)]">
+                    <User className="w-5 h-5" />
+                    Student
+                  </div>
+                </label>
+                <label className="flex-1 cursor-pointer group">
+                  <input type="radio" name="role" value="educator" className="peer sr-only" />
+                  <div className="h-full rounded-2xl border-2 border-white/10 bg-surface-container/30 py-3 px-3 flex items-center justify-center gap-2 font-display font-semibold text-sm text-slate-400 peer-checked:bg-indigo-500/10 peer-checked:border-indigo-500 peer-checked:text-indigo-400 transition-all duration-300 hover:border-white/20 hover:bg-white/5 peer-checked:shadow-[0_0_20px_rgba(99,102,241,0.1)]">
+                    <BrainCircuit className="w-5 h-5" />
+                    Educator
+                  </div>
+                </label>
+              </div>
 
-            <div className="mt-8 text-center">
-              <p className="font-sans text-sm text-on-surface-variant">
+              {/* Fields */}
+              <div className="space-y-4">
+                {/* Advanced Input for Full Name */}
+                <div className="relative group">
+                  <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
+                  <div className="relative flex items-stretch bg-[#020617]/60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
+                    <div className="pl-4 pr-3 py-3 flex items-center justify-center text-slate-500 group-focus-within:text-primary-fixed-dim transition-colors">
+                      <User className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
+                    </div>
+                    <div className="relative flex-1 flex flex-col justify-center">
+                      <input 
+                        type="text" 
+                        id="fullname" 
+                        required 
+                        placeholder=" "
+                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10" 
+                      />
+                      <label 
+                        htmlFor="fullname" 
+                        className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
+                        peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
+                        peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
+                      >
+                        Full Name
+                      </label>
+                      <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Advanced Input for Email */}
+                <div className="relative group">
+                  <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
+                  <div className="relative flex items-stretch bg-[#020617]/60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
+                    <div className="pl-4 pr-3 py-3 flex items-center justify-center text-slate-500 group-focus-within:text-primary-fixed-dim transition-colors">
+                      <Mail className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
+                    </div>
+                    <div className="relative flex-1 flex flex-col justify-center">
+                      <input 
+                        type="email" 
+                        id="email" 
+                        required 
+                        placeholder=" "
+                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10" 
+                      />
+                      <label 
+                        htmlFor="email" 
+                        className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
+                        peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
+                        peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
+                      >
+                        Email Address
+                      </label>
+                      <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Advanced Input for Password */}
+                <div className="relative group">
+                  <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
+                  <div className="relative flex items-stretch bg-[#020617]/60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
+                    <div className="pl-4 pr-3 py-3 flex items-center justify-center text-slate-500 group-focus-within:text-primary-fixed-dim transition-colors">
+                      <Lock className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
+                    </div>
+                    <div className="relative flex-1 flex flex-col justify-center">
+                      <input 
+                        type="password" 
+                        id="password" 
+                        required 
+                        placeholder=" "
+                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10" 
+                      />
+                      <label 
+                        htmlFor="password" 
+                        className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
+                        peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
+                        peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
+                      >
+                        Secure Password
+                      </label>
+                      <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                type="submit"
+                disabled={isLoading}
+                className="mt-2 w-full bg-gradient-to-r from-primary-fixed-dim to-primary-fixed text-on-primary-fixed font-display text-base font-bold py-3 px-6 rounded-xl hover:shadow-[0_0_30px_rgba(0,218,243,0.3)] transition-all duration-300 active:scale-[0.98] flex justify-center items-center gap-2 group disabled:opacity-70 disabled:pointer-events-none"
+              >
+                {isLoading ? (
+                  <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
+                ) : (
+                  <>
+                    <span>Initialize Account</span>
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                  </>
+                )}
+              </button>
+
+              <div className="relative flex items-center">
+                <div className="flex-grow border-t border-white/10"></div>
+                <span className="flex-shrink-0 mx-4 text-slate-500 font-sans text-xs uppercase tracking-widest">Or continue with</span>
+                <div className="flex-grow border-t border-white/10"></div>
+              </div>
+
+              <div className="flex gap-3">
+                <button type="button" className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white font-sans text-xs transition-colors active:scale-95">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"></path>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"></path>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"></path>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"></path>
+                  </svg>
+                  Google
+                </button>
+                <button type="button" className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white font-sans text-xs transition-colors active:scale-95">
+                  <Github className="w-4 h-4" />
+                  GitHub
+                </button>
+              </div>
+
+            </form>
+
+            <div className="mt-6 text-center">
+              <p className="font-sans text-sm text-slate-400">
                 Already an affiliate? 
-                <Link to="/login" className="text-primary hover:text-primary-fixed transition-colors underline underline-offset-4 decoration-primary/30 hover:decoration-primary font-medium ml-1">Login</Link>
+                <Link to="/login" className="text-primary-fixed-dim hover:text-white transition-colors font-semibold ml-1">Login</Link>
               </p>
             </div>
           </div>
         </div>
       </main>
-
-      <footer className="w-full mt-auto relative z-10 bg-[#020617]/80 backdrop-blur-md font-display text-sm tracking-wide border-t border-white/10 p-6 sm:px-8">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center w-full">
-          <div className="text-primary-fixed-dim font-bold mb-4 md:mb-0">
-            © 2024 EduSpace Research. All rights reserved.
-          </div>
-          <div className="flex gap-6">
-            <a href="#" className="text-slate-500 hover:text-primary-fixed-dim transition-colors">Privacy Policy</a>
-            <a href="#" className="text-slate-500 hover:text-primary-fixed-dim transition-colors">Terms of Service</a>
-            <a href="#" className="text-slate-500 hover:text-primary-fixed-dim transition-colors">System Status</a>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
