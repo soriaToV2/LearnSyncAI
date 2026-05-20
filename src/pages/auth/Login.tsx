@@ -106,7 +106,7 @@ export default function Login() {
                 </div>
                 <div className="relative flex-1 flex flex-col justify-center">
                   <input 
-                    type="email" 
+                    type="text" 
                     id="email" 
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -120,7 +120,7 @@ export default function Login() {
                     peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
                     peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
                   >
-                    Email Address
+                    Email or Username
                   </label>
                   <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
                 </div>
