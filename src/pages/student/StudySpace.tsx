@@ -112,7 +112,7 @@ export default function StudySpace() {
       )}
 
       {/* ── Header ── */}
-      <header className="shrink-0 pt-4 px-6 border-b border-white/10 bg-[#020617]/50 backdrop-blur-md flex flex-col z-40">
+      <header className="shrink-0 pt-4 px-6 border-b border-white/10 bg-page-50 backdrop-blur-md flex flex-col z-40">
         <div className="flex items-center justify-between pb-4">
           <div className="flex items-center gap-4">
             <Link to="/student/spaces" className="p-2 -ml-2 text-slate-400 hover:text-white transition-colors rounded-full hover:bg-white/5">

@@ -14,19 +14,19 @@ import CourseResources from './pages/educator/course/CourseResources';
 import CourseAssessments from './pages/educator/course/CourseAssessments';
 import CourseStudents from './pages/educator/course/CourseStudents';
 import CourseAnnouncements from './pages/educator/course/CourseAnnouncements';
+import EducatorSettings from './pages/educator/EducatorSettings';
 
 // Student
 import StudentLayout from './components/layout/StudentLayout';
 import StudentDashboard from './pages/student/StudentDashboard';
 import StudentCourseView from './pages/student/StudentCourseView';
 import StudentProfile from './pages/student/StudentProfile';
+import Settings from './pages/student/Settings';
 import StudySpacesList from './pages/student/StudySpacesList';
 import StudySpace from './pages/student/StudySpace';
 import LockdownExam from './pages/student/LockdownExam';
 import StudentCommunity from './pages/student/StudentCommunity';
 import CourseCatalog from './pages/student/CourseCatalog';
-import StudentDashboardV1 from './pages/student/StudentDashboardV1';
-import StudentDashboardV2 from './pages/student/StudentDashboardV2';
 
 export default function App() {
   return (
@@ -35,7 +35,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/register" element={<CreateAccount />} />
         <Route path="/login" element={<Login />} />
-        
+
         {/* Educator Routes */}
         <Route element={<MainLayout />}>
           <Route path="/educator/dashboard" element={<Dashboard />} />
@@ -44,6 +44,7 @@ export default function App() {
           <Route path="/educator/course/:courseId/assessments" element={<CourseAssessments />} />
           <Route path="/educator/course/:courseId/students" element={<CourseStudents />} />
           <Route path="/educator/course/:courseId/announcements" element={<CourseAnnouncements />} />
+          <Route path="/educator/settings" element={<EducatorSettings />} />
           {/* Legacy redirects */}
           <Route path="/dashboard" element={<Navigate to="/educator/dashboard" replace />} />
           <Route path="/class/:classId/*" element={<Navigate to="/educator/courses" replace />} />
@@ -52,16 +53,15 @@ export default function App() {
         {/* Student Routes */}
         <Route element={<StudentLayout />}>
           <Route path="/student/dashboard" element={<StudentDashboard />} />
-          <Route path="/student/dashboard/v1" element={<StudentDashboardV1 />} />
-          <Route path="/student/dashboard/v2" element={<StudentDashboardV2 />} />
           <Route path="/student/course/:courseId" element={<StudentCourseView />} />
           <Route path="/student/profile/:studentId" element={<StudentProfile />} />
+          <Route path="/student/settings" element={<Settings />} />
           <Route path="/student/spaces" element={<StudySpacesList />} />
           <Route path="/student/space/:spaceId" element={<StudySpace />} />
           <Route path="/student/community" element={<StudentCommunity />} />
           <Route path="/student/catalog" element={<CourseCatalog />} />
         </Route>
-        
+
         {/* Exam without standard layout */}
         <Route path="/student/exam/:examId" element={<LockdownExam />} />
       </Routes>

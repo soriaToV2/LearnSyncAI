@@ -162,8 +162,10 @@ interface Flashcard {
 interface FlashcardSet {
   id: number;
   title: string;
+  description?: string;
   cardCount: number;
   cards: Flashcard[];
+  isPublic: boolean;
 }
 
 interface ResourcesTabProps {

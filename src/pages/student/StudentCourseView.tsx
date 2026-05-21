@@ -12,7 +12,7 @@ export default function StudentCourseView() {
 
   return (
     <>
-      <header className="sticky top-0 w-full border-b border-white/10 bg-[#020617]/50 backdrop-blur-md shadow-none flex justify-between items-center h-16 px-8 z-40">
+      <header className="sticky top-0 w-full border-b border-white/10 bg-page-50 backdrop-blur-md shadow-none flex justify-between items-center h-16 px-8 z-40">
         <div className="flex items-center gap-4 text-slate-400 font-sans text-[13px]">
           <span className="hover:text-primary-fixed-dim cursor-pointer transition-colors">Dashboard</span>
           <ChevronRight className="w-4 h-4" />

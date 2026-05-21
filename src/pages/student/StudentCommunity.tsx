@@ -56,7 +56,7 @@ export default function StudentCommunity() {
 
   return (
     <div className="flex flex-col min-h-screen">
-      <header className="sticky top-0 w-full border-b border-white/10 bg-[#020617]/80 backdrop-blur-md shadow-sm z-40 px-8 py-5 flex flex-col gap-6">
+      <header className="sticky top-0 w-full border-b border-white/10 bg-page-80 backdrop-blur-md shadow-sm z-40 px-8 py-5 flex flex-col gap-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-display font-bold text-on-background">Community</h1>

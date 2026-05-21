@@ -105,6 +105,7 @@ export default function FlashcardsTab({
             front: c.front,
             back: c.back,
           })),
+          isPublic: false,
         },
       ]);
     }
