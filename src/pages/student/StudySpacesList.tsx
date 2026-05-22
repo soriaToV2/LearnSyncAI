@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react';
-import { Layers, Plus, Folder, ArrowRight, Clock, Star, Box, Sparkles, X } from 'lucide-react';
+import { Layers, Plus, Folder, ArrowRight, Clock, Star, Sparkles, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 
@@ -13,7 +13,6 @@ export default function StudySpacesList() {
       courseInfo: 'Biology 301',
       lastModified: '2 hours ago',
       flashcardsCount: 42,
-      hasAR: true,
       color: 'from-emerald-500/20 to-teal-500/20',
       borderColor: 'border-emerald-500/30'
     },
@@ -23,7 +22,6 @@ export default function StudySpacesList() {
       courseInfo: 'World History',
       lastModified: '1 day ago',
       flashcardsCount: 156,
-      hasAR: false,
       color: 'from-purple-500/20 to-fuchsia-500/20',
       borderColor: 'border-purple-500/30'
     },
@@ -33,7 +31,6 @@ export default function StudySpacesList() {
       courseInfo: 'Physics 201',
       lastModified: '3 days ago',
       flashcardsCount: 24,
-      hasAR: true,
       color: 'from-amber-500/20 to-orange-500/20',
       borderColor: 'border-amber-500/30'
     }
@@ -76,7 +73,7 @@ export default function StudySpacesList() {
               <h1 className="font-display text-3xl font-semibold text-on-surface">My Study Spaces</h1>
             </div>
             <p className="font-sans text-on-surface-variant max-w-2xl text-sm">
-              Create dedicated workspaces for your courses to organize flashcards, notes, and interactive 3D holograms.
+              Create dedicated workspaces for your courses to organize flashcards, notes, and study resources.
             </p>
           </div>
         </header>
@@ -106,12 +103,6 @@ export default function StudySpacesList() {
                 <div className="w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center">
                   <Folder className="w-6 h-6 text-slate-300" />
                 </div>
-                {space.hasAR && (
-                  <div className="px-3 py-1 rounded-full bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-widest text-primary-fixed">
-                    <Box className="w-3 h-3" />
-                    AR Ready
-                  </div>
-                )}
               </div>
 
               <h2 className="font-display text-xl font-medium text-white mb-2">{space.title}</h2>

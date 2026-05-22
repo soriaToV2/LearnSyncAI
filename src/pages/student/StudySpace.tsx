@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronLeft, Box, X, QrCode, Plus, BookOpen, Layers, Globe, Lock, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, X, Plus, BookOpen, Layers, Globe, Lock, Eye, EyeOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Modal from '../../components/ui/Modal';
 import FlashcardsTab from './components/FlashcardsTab';
@@ -17,7 +17,6 @@ interface FlashcardSet {
 
 export default function StudySpace() {
   const [activeTab, setActiveTab] = useState<'flashcards' | 'resources'>('flashcards');
-  const [showQR, setShowQR] = useState(false);
   const [courseConnected, setCourseConnected] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -149,14 +148,6 @@ export default function StudySpace() {
                 ? <><EyeOff className="w-4 h-4" /> Make Private</>
                 : <><Globe className="w-4 h-4" /> Publicize Space</>}
             </button>
-
-            <button
-              onClick={() => setShowQR(true)}
-              className="px-5 py-2.5 bg-gradient-to-r from-primary-container to-primary text-on-primary-container rounded-lg font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 shadow-[0_0_15px_rgba(0,229,255,0.3)] hover:shadow-[0_0_25px_rgba(0,229,255,0.5)] transition-all"
-            >
-              <Box className="w-4 h-4" />
-              Initialize Web-AR Hologram
-            </button>
           </div>
         </div>
 
@@ -235,28 +226,6 @@ export default function StudySpace() {
         )}
       </main>
 
-      {/* AR Modal */}
-      {showQR && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-xl">
-          <div className="bg-surface-container-high rounded-3xl border border-primary-fixed-dim/30 p-10 max-w-sm w-full relative shadow-[0_20px_50px_rgba(0,0,0,0.5),0_0_100px_rgba(0,218,243,0.15)] flex flex-col items-center text-center animate-in zoom-in-95 duration-200">
-            <button onClick={() => setShowQR(false)} className="absolute top-6 right-6 text-slate-400 hover:text-white transition-colors bg-surface-container p-2 rounded-full">
-              <X className="w-5 h-5" />
-            </button>
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-fixed-dim/30 to-primary/10 flex items-center justify-center mb-6 border border-primary-fixed-dim/20 shadow-inner">
-              <Box className="w-10 h-10 text-primary-fixed-dim drop-shadow-[0_0_10px_rgba(0,218,243,0.8)]" />
-            </div>
-            <h2 className="font-display text-3xl font-semibold text-on-surface mb-2">AR Web Session</h2>
-            <p className="font-sans text-sm text-on-surface-variant mb-8">Scan to beam the 3D model to your mobile device instantly.</p>
-            <div className="bg-white p-4 rounded-2xl mb-6 shadow-xl">
-              <QrCode className="w-48 h-48 text-slate-900" />
-            </div>
-            <div className="flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest text-primary-fixed-dim">
-              <div className="w-2 h-2 rounded-full bg-primary-fixed-dim animate-ping" />
-              Link actively listening
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Create Deck Modal */}
       <Modal isOpen={isCreateDeckModalOpen} onClose={() => { setIsCreateDeckModalOpen(false); setNewDeckTitle(''); }} title="Create New Deck">
