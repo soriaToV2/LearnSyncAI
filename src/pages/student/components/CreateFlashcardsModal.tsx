@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, GripVertical, Layers, BookOpen } from 'lucide-react';
+import { Plus, Trash2, GripVertical, Layers, BookOpen, Sparkles, Bot } from 'lucide-react';
 import Modal from '../../../components/ui/Modal';
 
 
@@ -18,15 +18,29 @@ interface CreateFlashcardsModalProps {
     description: string;
     cards: { id: number; front: string; back: string }[];
   } | null;
+  courseConnected?: boolean;
+  availableResources?: string[];
 }
 
-export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initialData }: CreateFlashcardsModalProps) {
+export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initialData, courseConnected, availableResources }: CreateFlashcardsModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [cards, setCards] = useState<CardEntry[]>([
     { id: Date.now(), front: '', back: '' },
+    { id: Date.now(), front: '', back: '' },
     { id: Date.now() + 1, front: '', back: '' },
   ]);
+  const [showAiConfig, setShowAiConfig] = useState(false);
+  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setShowAiConfig(false);
+      setSelectedDocs([]);
+      setIsGenerating(false);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen && initialData) {
@@ -49,6 +63,27 @@ export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initial
 
   const addCard = () => {
     setCards(prev => [...prev, { id: Date.now(), front: '', back: '' }]);
+  };
+
+  const handleGenerateAI = () => {
+    setIsGenerating(true);
+    setTimeout(() => {
+      setCards(prev => {
+        const existing = prev.filter(c => c.front.trim() || c.back.trim());
+        return [
+          ...existing,
+          { id: Date.now(), front: 'What is the primary role of an IT professional?', back: 'To design, implement, and maintain digital systems while navigating complex ethical responsibilities involving data privacy, cybersecurity, and societal impact.' },
+          { id: Date.now() + 1, front: 'What is the difference between an Error and a Failure?', back: 'An error is a human mistake that introduces a defect, while a failure is when a system deviates from its specified behavior during operation.' },
+          { id: Date.now() + 2, front: 'What is the formula for Risk?', back: 'Risk = Likelihood × Impact.' }
+        ];
+      });
+      if (!title.trim()) setTitle('Generated Flashcards');
+      if (!description.trim()) setDescription(`Flashcards generated from ${selectedDocs.length} document(s).`);
+      
+      setIsGenerating(false);
+      setShowAiConfig(false);
+      setSelectedDocs([]);
+    }, 2000);
   };
 
   const removeCard = (id: number) => {
@@ -85,17 +120,90 @@ export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initial
       <form onSubmit={handleSubmit} className="flex flex-col gap-6 max-h-[70vh] overflow-y-auto pr-1 no-scrollbar">
         {/* Header Section */}
         <div className="space-y-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center">
-              <Layers className="w-5 h-5 text-primary-fixed-dim" />
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center">
+                <Layers className="w-5 h-5 text-primary-fixed-dim" />
+              </div>
+              <div>
+                <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">
+                  {isEditing ? 'Editing Set' : 'New Set'}
+                </p>
+                <p className="font-sans text-xs text-slate-500">Fill in the details for your flashcard set</p>
+              </div>
             </div>
-            <div>
-              <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">
-                {isEditing ? 'Editing Set' : 'New Set'}
-              </p>
-              <p className="font-sans text-xs text-slate-500">Fill in the details for your flashcard set</p>
-            </div>
+            
+            <button
+              type="button"
+              onClick={() => setShowAiConfig(!showAiConfig)}
+              className={`px-3 py-1.5 rounded-lg font-sans text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all border ${
+                showAiConfig
+                  ? 'bg-primary-fixed-dim/20 border-primary-fixed-dim text-primary-fixed'
+                  : 'bg-surface-container-high border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              AI Auto-Generate
+            </button>
           </div>
+
+          {/* AI Generator Config Panel */}
+          {showAiConfig && (
+            <div className="p-4 bg-surface-container-high/50 border border-primary-fixed-dim/30 rounded-xl animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="flex items-center gap-2 mb-3">
+                <Bot className="w-4 h-4 text-primary-fixed-dim" />
+                <h4 className="font-display font-medium text-white text-sm">Generate from Resources</h4>
+              </div>
+              
+              {!courseConnected ? (
+                <div className="p-3 bg-surface-container border border-white/10 rounded-lg text-center">
+                  <p className="font-sans text-sm text-slate-400 mb-2">You need to connect your space to an enrolled course first to access course materials.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="font-sans text-xs text-slate-400">Select documents to base the flashcards on:</p>
+                  <div className="max-h-32 overflow-y-auto space-y-1.5 no-scrollbar bg-surface-container/50 p-2 rounded-lg border border-white/5">
+                    {availableResources && availableResources.length > 0 ? (
+                      availableResources.map(doc => (
+                        <label key={doc} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
+                          <input 
+                            type="checkbox"
+                            checked={selectedDocs.includes(doc)}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedDocs(prev => [...prev, doc]);
+                              else setSelectedDocs(prev => prev.filter(d => d !== doc));
+                            }}
+                            className="w-4 h-4 rounded border-slate-500 text-primary-fixed-dim focus:ring-primary-fixed-dim focus:ring-offset-background bg-surface-container-high shrink-0"
+                          />
+                          <span className="font-sans text-sm text-slate-300 truncate">{doc}</span>
+                        </label>
+                      ))
+                    ) : (
+                      <p className="font-sans text-xs text-slate-500 text-center py-2">No resources available.</p>
+                    )}
+                  </div>
+                  
+                  <button
+                    type="button"
+                    onClick={handleGenerateAI}
+                    disabled={selectedDocs.length === 0 || isGenerating}
+                    className="w-full py-2 bg-primary-fixed-dim text-on-primary-fixed rounded-lg font-sans text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-container transition-all"
+                  >
+                    {isGenerating ? (
+                      <span className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full border-2 border-on-primary-fixed border-t-transparent animate-spin" />
+                        Generating...
+                      </span>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" /> Generate Flashcards
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Title */}
           <div className="space-y-1.5">

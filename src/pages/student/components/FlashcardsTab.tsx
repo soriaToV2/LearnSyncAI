@@ -378,6 +378,8 @@ export default function FlashcardsTab({
               })()
             : null
         }
+        courseConnected={courseConnected}
+        availableResources={availableResources}
       />
 
       {/* Quiz Setup Modal */}
