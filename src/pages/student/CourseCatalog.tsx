@@ -382,6 +382,7 @@ function FilterSelect({ value, onChange, options, icon }: SelectProps) {
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
+type CourseTab = 'Enrolled' | 'University Courses' | 'Independent Courses';
 
 export default function CourseCatalog() {
   const [searchParams] = useSearchParams();
@@ -395,6 +396,7 @@ export default function CourseCatalog() {
   const [joinError, setJoinError] = useState('');
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [courses, setCourses] = useState<Course[]>(MOCK_COURSES);
+  const [activeTab, setActiveTab] = useState<CourseTab>('Enrolled');
 
   const handleEnroll = (id: string) => {
     setCourses((prev) =>
@@ -442,72 +444,72 @@ export default function CourseCatalog() {
       <div className="flex-1 flex flex-col">
         <main className="flex-1 p-10 max-w-7xl mx-auto w-full">
           {/* Hero */}
-          <div className="relative mb-10 rounded-2xl border border-white/5 bg-surface-container overflow-hidden p-10">
+          <div className="relative mb-6 rounded-2xl border border-white/5 bg-surface-container overflow-hidden p-6 md:p-8">
             <div className="absolute inset-0 pointer-events-none">
-              <div className="absolute top-0 right-0 w-96 h-96 bg-primary-fixed-dim/10 rounded-full blur-[100px] -mr-40 -mt-40" />
-              <div className="absolute bottom-0 left-0 w-64 h-64 bg-secondary-container/10 rounded-full blur-[80px] -ml-20 -mb-20" />
+              <div className="absolute top-0 right-0 w-72 h-72 bg-primary-fixed-dim/10 rounded-full blur-[80px] -mr-32 -mt-32" />
+              <div className="absolute bottom-0 left-0 w-48 h-48 bg-secondary-container/10 rounded-full blur-[60px] -ml-16 -mb-16" />
             </div>
-            <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between gap-8">
+            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 text-primary-fixed-dim font-sans font-semibold text-[11px] tracking-widest uppercase">
-                    <Sparkles className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 text-primary-fixed-dim font-sans font-semibold text-[10px] tracking-widest uppercase">
+                    <Sparkles className="w-3 h-3" />
                     Global Network
                   </span>
                 </div>
-                <h1 className="font-display text-4xl md:text-5xl font-bold text-on-surface mb-3 tracking-tight">
+                <h1 className="font-display text-3xl md:text-4xl font-bold text-on-surface mb-2 tracking-tight">
                   Discover Courses
                 </h1>
-                <p className="font-sans text-base text-on-surface-variant max-w-xl">
+                <p className="font-sans text-sm text-on-surface-variant max-w-xl">
                   Explore courses from top universities worldwide or from independent educators — no restrictions.
                   Enroll in anything that sparks your curiosity.
                 </p>
 
-                <div className="flex items-center gap-6 mt-8">
+                <div className="flex items-center gap-5 mt-5">
                   <div className="text-left">
-                    <p className="font-display text-2xl font-bold text-primary-fixed-dim">{courses.length}</p>
-                    <p className="font-sans text-xs text-slate-500 uppercase tracking-widest mt-0.5">Total Courses</p>
+                    <p className="font-display text-xl font-bold text-primary-fixed-dim">{courses.length}</p>
+                    <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">Total Courses</p>
                   </div>
-                  <div className="w-px h-10 bg-white/10" />
+                  <div className="w-px h-8 bg-white/10" />
                   <div className="text-left">
-                    <p className="font-display text-2xl font-bold text-emerald-400">{enrolledCount}</p>
-                    <p className="font-sans text-xs text-slate-500 uppercase tracking-widest mt-0.5">Enrolled</p>
+                    <p className="font-display text-xl font-bold text-emerald-400">{enrolledCount}</p>
+                    <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">Enrolled</p>
                   </div>
-                  <div className="w-px h-10 bg-white/10" />
+                  <div className="w-px h-8 bg-white/10" />
                   <div className="text-left">
-                    <p className="font-display text-2xl font-bold text-violet-400">{globalCount}</p>
-                    <p className="font-sans text-xs text-slate-500 uppercase tracking-widest mt-0.5">Independent</p>
+                    <p className="font-display text-xl font-bold text-violet-400">{globalCount}</p>
+                    <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">Independent</p>
                   </div>
                 </div>
               </div>
 
               <button
                 onClick={() => setShowJoinModal(true)}
-                className="group flex flex-col items-center justify-center gap-2 px-8 py-6 rounded-2xl bg-gradient-to-b from-primary-fixed-dim/20 to-primary-fixed-dim/5 border border-primary-fixed-dim/30 text-primary-fixed-dim hover:from-primary-fixed-dim/30 hover:to-primary-fixed-dim/10 transition-all duration-300 active:scale-95 shrink-0 shadow-[0_0_30px_rgba(0,218,243,0.15)] hover:shadow-[0_0_40px_rgba(0,218,243,0.25)]"
+                className="group flex flex-col items-center justify-center gap-1.5 px-6 py-4 rounded-xl bg-gradient-to-b from-primary-fixed-dim/20 to-primary-fixed-dim/5 border border-primary-fixed-dim/30 text-primary-fixed-dim hover:from-primary-fixed-dim/30 hover:to-primary-fixed-dim/10 transition-all duration-300 active:scale-95 shrink-0 shadow-[0_0_20px_rgba(0,218,243,0.1)] hover:shadow-[0_0_30px_rgba(0,218,243,0.2)]"
               >
-                <div className="w-12 h-12 rounded-full bg-primary-fixed-dim/20 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform duration-300">
-                  <Key className="w-6 h-6" />
+                <div className="w-10 h-10 rounded-full bg-primary-fixed-dim/20 flex items-center justify-center mb-0.5 group-hover:scale-110 transition-transform duration-300">
+                  <Key className="w-5 h-5" />
                 </div>
-                <span className="font-display text-base font-bold tracking-wide">Join Private Course</span>
-                <span className="font-sans text-xs text-primary-fixed-dim/70">Enter university access code</span>
+                <span className="font-display text-sm font-bold tracking-wide">Join Private Course</span>
+                <span className="font-sans text-[11px] text-primary-fixed-dim/70">Enter university access code</span>
               </button>
             </div>
           </div>
 
           {/* Controls Toolbar */}
-          <div className="flex flex-col md:flex-row gap-4 mb-6">
-            <div className="flex-1 relative flex items-center focus-within:ring-1 focus-within:ring-primary-fixed-dim/50 rounded-xl bg-surface-container px-4 py-3 border border-white/5">
-              <Search className="text-on-surface-variant w-5 h-5 mr-3 shrink-0" />
+          <div className="flex flex-col md:flex-row gap-3 mb-5">
+            <div className="flex-1 relative flex items-center focus-within:ring-1 focus-within:ring-primary-fixed-dim/50 rounded-xl bg-surface-container px-4 py-2.5 border border-white/5">
+              <Search className="text-on-surface-variant w-4 h-4 mr-2.5 shrink-0" />
               <input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search courses, instructors, universities..."
-                className="bg-transparent border-none focus:ring-0 text-on-surface font-sans text-base w-full placeholder:text-on-surface-variant/50 outline-none"
+                className="bg-transparent border-none focus:ring-0 text-on-surface font-sans text-sm w-full placeholder:text-on-surface-variant/50 outline-none"
               />
               {query && (
                 <button onClick={() => setQuery('')} className="ml-2 text-slate-500 hover:text-slate-300 transition-colors">
-                  <X className="w-5 h-5" />
+                  <X className="w-4 h-4" />
                 </button>
               )}
             </div>
@@ -515,13 +517,13 @@ export default function CourseCatalog() {
             <button
               onClick={() => setShowFilters((v) => !v)}
               className={clsx(
-                'flex items-center gap-2 px-6 py-3 rounded-xl border font-display text-sm font-semibold transition-all duration-200 shrink-0',
+                'flex items-center gap-2 px-5 py-2.5 rounded-xl border font-display text-xs font-semibold transition-all duration-200 shrink-0',
                 showFilters
                   ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/40 text-primary-fixed-dim'
                   : 'bg-surface-container border-white/10 text-slate-300 hover:text-white hover:border-white/20 hover:bg-white/5'
               )}
             >
-              <SlidersHorizontal className="w-4 h-4" />
+              <SlidersHorizontal className="w-3.5 h-3.5" />
               {showFilters ? 'Hide Filters' : 'Show Filters'}
             </button>
           </div>
@@ -556,56 +558,86 @@ export default function CourseCatalog() {
             </div>
           )}
 
-          {/* Results count */}
-          <div className="flex items-center justify-between mb-6">
-            <p className="font-sans text-sm text-slate-500">
-              {filtered.length === 0 ? 'No courses found' : `${filtered.length} course${filtered.length !== 1 ? 's' : ''} found`}
-              {query && <span className="text-primary-fixed-dim"> for &ldquo;{query}&rdquo;</span>}
-            </p>
+
+
+          {/* Sub Navigation */}
+          <div className="flex items-center gap-2 mb-8 border-b border-white/10 pb-4 overflow-x-auto no-scrollbar">
+            {(['Enrolled', 'University Courses', 'Independent Courses'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={clsx(
+                  'px-5 py-2.5 rounded-xl font-display text-sm font-semibold transition-all whitespace-nowrap',
+                  activeTab === tab
+                    ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-[0_0_15px_rgba(0,218,243,0.2)]'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/10'
+                )}
+              >
+                {tab}
+              </button>
+            ))}
           </div>
 
           {/* Grid */}
           {filtered.length > 0 ? (
             <div className="space-y-12">
-              {enrolledCourses.length > 0 && (
+              {activeTab === 'Enrolled' && (
                 <div>
                   <h2 className="font-display text-2xl font-bold text-on-surface mb-6 flex items-center gap-2">
                     <CheckCircle2 className="w-6 h-6 text-emerald-400" />
                     Enrolled Courses
                   </h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {enrolledCourses.map((course) => (
-                      <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
-                    ))}
-                  </div>
+                  {enrolledCourses.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                      {enrolledCourses.map((course) => (
+                        <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-slate-500 font-sans border-2 border-dashed border-white/5 rounded-2xl">
+                      You are not enrolled in any courses yet.
+                    </div>
+                  )}
                 </div>
               )}
 
-              {universityCourses.length > 0 && (
+              {activeTab === 'University Courses' && (
                 <div>
                   <h2 className="font-display text-2xl font-bold text-on-surface mb-6 flex items-center gap-2">
                     <Building className="w-6 h-6 text-primary-fixed-dim" />
                     University Courses
                   </h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {universityCourses.map((course) => (
-                      <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
-                    ))}
-                  </div>
+                  {universityCourses.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                      {universityCourses.map((course) => (
+                        <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-slate-500 font-sans border-2 border-dashed border-white/5 rounded-2xl">
+                      No university courses match your search.
+                    </div>
+                  )}
                 </div>
               )}
 
-              {independentCourses.length > 0 && (
+              {activeTab === 'Independent Courses' && (
                 <div>
                   <h2 className="font-display text-2xl font-bold text-on-surface mb-6 flex items-center gap-2">
                     <Globe className="w-6 h-6 text-violet-400" />
                     Independent Courses
                   </h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {independentCourses.map((course) => (
-                      <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
-                    ))}
-                  </div>
+                  {independentCourses.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                      {independentCourses.map((course) => (
+                        <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-slate-500 font-sans border-2 border-dashed border-white/5 rounded-2xl">
+                      No independent courses match your search.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
