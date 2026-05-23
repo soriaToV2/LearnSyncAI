@@ -21,6 +21,9 @@ export interface Course {
   icon: LucideIcon;
   accentColor: string; // tailwind color name for theming
   isEnrolled?: boolean;
+  hasReviewed?: boolean;
+  userRating?: number;
+  userComment?: string;
 }
 
 export const MOCK_COURSES: Course[] = [

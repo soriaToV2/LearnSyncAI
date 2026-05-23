@@ -3,7 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import {
   Search, X, SlidersHorizontal, Globe, Building, ShieldCheck,
   Users, Star, BookOpen, Clock, ChevronRight, ArrowRight,
-  CheckCircle2, Lock, Sparkles, ChevronDown, Key,
+  CheckCircle2, Lock, Sparkles, ChevronDown, Key, MessageSquare
 } from 'lucide-react';
 import clsx from 'clsx';
 import {
@@ -58,9 +58,10 @@ interface ModalProps {
   course: Course | null;
   onClose: () => void;
   onEnroll: (id: string) => void;
+  onReview: (course: Course) => void;
 }
 
-function CourseDetailsModal({ course, onClose, onEnroll }: ModalProps) {
+function CourseDetailsModal({ course, onClose, onEnroll, onReview }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -206,12 +207,21 @@ function CourseDetailsModal({ course, onClose, onEnroll }: ModalProps) {
         {/* Footer CTA */}
         <div className="shrink-0 p-6 border-t border-white/10 bg-surface-container-lowest/50">
           {course.isEnrolled ? (
-            <Link
-              to={`/student/course/${course.id}`}
-              className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-display font-semibold text-base text-on-primary-fixed bg-primary-fixed-dim hover:bg-primary-container transition-all duration-200 active:scale-95 shadow-[0_0_20px_rgba(0,218,243,0.2)]"
-            >
-              Open Course <ArrowRight className="w-4 h-4" />
-            </Link>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { onReview(course); onClose(); }}
+                className="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-display font-semibold text-base transition-all duration-200 active:scale-95 border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
+              >
+                <Star className={clsx("w-4 h-4", course.hasReviewed ? "fill-amber-400 text-amber-400" : "")} />
+                {course.hasReviewed ? 'Edit Review' : 'Leave Review'}
+              </button>
+              <Link
+                to={`/student/course/${course.id}`}
+                className="flex-[2] flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-display font-semibold text-base text-on-primary-fixed bg-primary-fixed-dim hover:bg-primary-container transition-all duration-200 active:scale-95 shadow-[0_0_20px_rgba(0,218,243,0.2)]"
+              >
+                Open Course <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
           ) : (
             <button
               onClick={() => onEnroll(course.id)}
@@ -237,9 +247,10 @@ function CourseDetailsModal({ course, onClose, onEnroll }: ModalProps) {
 interface CardProps {
   course: Course;
   onClick: (course: Course) => void;
+  onReview?: (course: Course) => void;
 }
 
-function CourseCard({ course, onClick }: CardProps) {
+function CourseCard({ course, onClick, onReview }: CardProps) {
   const Icon = course.icon;
   // We cannot use dynamic Tailwind classes, so use inline styles for accent
   const accentVar = course.accentColor.startsWith('primary')
@@ -339,13 +350,32 @@ function CourseCard({ course, onClick }: CardProps) {
         className="relative z-10 mt-4 pt-4 border-t border-white/5 flex items-center justify-between"
       >
         <span className="font-sans text-[11px] uppercase tracking-widest font-semibold text-slate-500">{course.category}</span>
-        <span
-          className="flex items-center gap-1 font-display text-xs font-semibold transition-colors"
-          style={{ color: accent }}
-        >
-          {course.isEnrolled ? 'Open Course' : 'View Details'}
-          <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-        </span>
+        {course.isEnrolled && onReview ? (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={(e) => { e.stopPropagation(); onReview(course); }}
+              className="flex items-center gap-1 font-display text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
+            >
+              <Star className={clsx("w-3.5 h-3.5", course.hasReviewed && "fill-amber-400 text-amber-400")} />
+              {course.hasReviewed ? 'Edit Review' : 'Review'}
+            </button>
+            <span
+              className="flex items-center gap-1 font-display text-xs font-semibold transition-colors"
+              style={{ color: accent }}
+            >
+              Open
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+            </span>
+          </div>
+        ) : (
+          <span
+            className="flex items-center gap-1 font-display text-xs font-semibold transition-colors"
+            style={{ color: accent }}
+          >
+            {course.isEnrolled ? 'Open Course' : 'View Details'}
+            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+          </span>
+        )}
       </div>
     </button>
   );
@@ -381,6 +411,94 @@ function FilterSelect({ value, onChange, options, icon }: SelectProps) {
   );
 }
 
+// ─── Review Modal ─────────────────────────────────────────────────────────────
+
+interface ReviewModalProps {
+  course: Course | null;
+  onClose: () => void;
+  onSubmit: (id: string, rating: number, comment: string) => void;
+}
+
+function ReviewModal({ course, onClose, onSubmit }: ReviewModalProps) {
+  const [rating, setRating] = useState(course?.userRating ?? 0);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [comment, setComment] = useState(course?.userComment ?? '');
+
+  useEffect(() => {
+    if (course) {
+      setRating(course.userRating ?? 0);
+      setComment(course.userComment ?? '');
+    }
+  }, [course]);
+
+  if (!course) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="relative w-full max-w-lg flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden p-6 shadow-2xl">
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        <h2 className="font-display text-xl font-bold text-on-surface mb-1">
+          {course.hasReviewed ? 'Edit your review' : 'Rate this course'}
+        </h2>
+        <p className="font-sans text-sm text-slate-400 mb-6">{course.title}</p>
+
+        <div className="flex justify-center mb-6 gap-2">
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              onMouseEnter={() => setHoverRating(star)}
+              onMouseLeave={() => setHoverRating(0)}
+              onClick={() => setRating(star)}
+              className="transition-transform hover:scale-110 focus:outline-none"
+            >
+              <Star
+                className={clsx(
+                  "w-10 h-10 transition-colors",
+                  (hoverRating ? star <= hoverRating : star <= rating)
+                    ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_10px_rgba(251,191,36,0.5)]"
+                    : "text-slate-600"
+                )}
+              />
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Share your thoughts about this course..."
+          className="w-full h-32 bg-surface-container-high border border-white/10 rounded-xl p-4 font-sans text-sm text-on-surface placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 resize-none mb-6"
+        />
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl border border-white/10 font-display font-semibold text-sm text-slate-300 hover:bg-white/5 transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={rating === 0}
+            onClick={() => {
+              onSubmit(course.id, rating, comment);
+              onClose();
+            }}
+            className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-display font-semibold text-sm hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+          >
+            Submit Review
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 type CourseTab = 'Enrolled' | 'University Courses' | 'Independent Courses';
 
@@ -395,6 +513,7 @@ export default function CourseCatalog() {
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState('');
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [reviewingCourse, setReviewingCourse] = useState<Course | null>(null);
   const [courses, setCourses] = useState<Course[]>(MOCK_COURSES);
   const [activeTab, setActiveTab] = useState<CourseTab>('Enrolled');
 
@@ -403,6 +522,19 @@ export default function CourseCatalog() {
       prev.map((c) => (c.id === id ? { ...c, isEnrolled: true } : c))
     );
     setSelectedCourse((prev) => (prev?.id === id ? { ...prev, isEnrolled: true } : prev));
+  };
+
+  const handleReviewSubmit = (id: string, rating: number, comment: string) => {
+    setCourses((prev) =>
+      prev.map((c) =>
+        c.id === id ? { ...c, hasReviewed: true, userRating: rating, userComment: comment } : c
+      )
+    );
+    if (selectedCourse?.id === id) {
+      setSelectedCourse((prev) =>
+        prev ? { ...prev, hasReviewed: true, userRating: rating, userComment: comment } : null
+      );
+    }
   };
 
   const filtered = useMemo(() => {
@@ -590,7 +722,7 @@ export default function CourseCatalog() {
                   {enrolledCourses.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                       {enrolledCourses.map((course) => (
-                        <CourseCard key={course.id} course={course} onClick={setSelectedCourse} />
+                        <CourseCard key={course.id} course={course} onClick={setSelectedCourse} onReview={setReviewingCourse} />
                       ))}
                     </div>
                   ) : (
@@ -724,6 +856,14 @@ export default function CourseCatalog() {
         course={selectedCourse}
         onClose={() => setSelectedCourse(null)}
         onEnroll={handleEnroll}
+        onReview={setReviewingCourse}
+      />
+
+      {/* Review Modal */}
+      <ReviewModal
+        course={reviewingCourse}
+        onClose={() => setReviewingCourse(null)}
+        onSubmit={handleReviewSubmit}
       />
     </>
   );

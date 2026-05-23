@@ -1,11 +1,173 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Bell, Search, ChevronRight, Building, CheckCircle2, ShieldCheck, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock } from 'lucide-react';
+import { Bell, Search, ChevronRight, Building, CheckCircle2, ShieldCheck, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock, Star, X } from 'lucide-react';
+import clsx from 'clsx';
 
+interface Resource {
+  id: string;
+  type: 'pdf' | 'video' | 'ar';
+  title: string;
+  meta: string;
+  hasReviewed?: boolean;
+  userRating?: number;
+  userComment?: string;
+}
+
+const INITIAL_RESOURCES: Resource[] = [
+  { id: '1', type: 'pdf', title: 'Synaptic Pathways Ch.4', meta: '2.4 MB • Required Reading' },
+  { id: '2', type: 'video', title: 'Lecture: Neuroplasticity', meta: '45 mins • Video Lecture' },
+  { id: '3', type: 'ar', title: 'Human Brain Model', meta: '.gltf Interactive' },
+];
+
+interface ReviewModalProps {
+  resource: Resource | null;
+  onClose: () => void;
+  onSubmit: (id: string, rating: number, comment: string) => void;
+}
+
+function ReviewModal({ resource, onClose, onSubmit }: ReviewModalProps) {
+  const [rating, setRating] = useState(0);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [comment, setComment] = useState('');
+
+  useEffect(() => {
+    if (resource) {
+      setRating(resource.userRating ?? 0);
+      setComment(resource.userComment ?? '');
+    }
+  }, [resource]);
+
+  if (!resource) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="relative w-full max-w-lg flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden p-6 shadow-2xl">
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        <h2 className="font-display text-xl font-bold text-on-surface mb-1">
+          {resource.hasReviewed ? 'Edit your review' : 'Review this material'}
+        </h2>
+        <p className="font-sans text-sm text-slate-400 mb-6">{resource.title}</p>
+
+        <div className="flex justify-center mb-6 gap-2">
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              onMouseEnter={() => setHoverRating(star)}
+              onMouseLeave={() => setHoverRating(0)}
+              onClick={() => setRating(star)}
+              className="transition-transform hover:scale-110 focus:outline-none"
+            >
+              <Star
+                className={clsx(
+                  "w-10 h-10 transition-colors",
+                  (hoverRating ? star <= hoverRating : star <= rating)
+                    ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_10px_rgba(251,191,36,0.5)]"
+                    : "text-slate-600"
+                )}
+              />
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Share your feedback on this material..."
+          className="w-full h-32 bg-surface-container-high border border-white/10 rounded-xl p-4 font-sans text-sm text-on-surface placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 resize-none mb-6"
+        />
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl border border-white/10 font-display font-semibold text-sm text-slate-300 hover:bg-white/5 transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={rating === 0}
+            onClick={() => {
+              onSubmit(resource.id, rating, comment);
+              onClose();
+            }}
+            className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-display font-semibold text-sm hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+          >
+            Submit Review
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResourceCard({ resource, onReview }: { resource: Resource; onReview: () => void }) {
+  const isAr = resource.type === 'ar';
+  
+  if (isAr) {
+    return (
+      <div className="bg-surface-container rounded-xl p-5 border border-primary-fixed-dim/30 hover:border-primary-fixed-dim/60 transition-colors shadow-[0_4px_20px_rgba(0,0,0,0.2),inset_0_1px_1px_rgba(0,218,243,0.1)] flex items-start gap-4 group relative overflow-hidden cursor-pointer">
+        <div className="absolute top-0 right-0 w-24 h-24 bg-primary-fixed-dim/10 rounded-full blur-2xl -mr-8 -mt-8 pointer-events-none"></div>
+        <div className="w-12 h-12 rounded-lg bg-primary-fixed-dim/20 flex items-center justify-center shrink-0 shadow-inner">
+          <Box className="text-primary-fixed-dim w-6 h-6" />
+        </div>
+        <div className="flex-1 min-w-0 relative z-10 flex flex-col justify-center h-12">
+          <div className="flex items-center justify-between mb-0.5">
+            <h4 className="font-sans text-base font-medium text-on-surface truncate group-hover:text-primary-fixed-dim transition-colors">{resource.title}</h4>
+            <button onClick={(e) => { e.stopPropagation(); onReview(); }} className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-amber-400 transition-colors">
+              <Star className={clsx("w-3 h-3", resource.hasReviewed && "fill-amber-400 text-amber-400")} />
+              <span className="text-[10px] font-sans font-semibold uppercase tracking-widest">{resource.hasReviewed ? 'Reviewed' : 'Rate'}</span>
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+             <p className="font-sans text-sm text-on-surface-variant truncate">{resource.meta}</p>
+             <span className="px-1.5 py-0.5 rounded bg-primary-fixed-dim/20 text-primary-fixed-dim font-sans font-semibold text-[9px] tracking-[0.1em]">AR-READY</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="glass-card rounded-xl p-5 border border-white/5 hover:border-white/10 transition-colors shadow-lg flex items-start gap-4 group cursor-pointer">
+      <div className="w-12 h-12 rounded-lg bg-surface-variant flex items-center justify-center shrink-0">
+        {resource.type === 'pdf' ? (
+          <FileText className="text-error w-6 h-6" />
+        ) : (
+          <PlayCircle className="text-indigo-400 w-6 h-6" />
+        )}
+      </div>
+      <div className="flex-1 min-w-0 flex flex-col justify-center h-12">
+        <div className="flex items-center justify-between mb-0.5">
+          <h4 className="font-sans text-base font-medium text-on-surface truncate group-hover:text-primary-fixed-dim transition-colors">{resource.title}</h4>
+          <button onClick={(e) => { e.stopPropagation(); onReview(); }} className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-amber-400 transition-colors">
+            <Star className={clsx("w-3 h-3", resource.hasReviewed && "fill-amber-400 text-amber-400")} />
+            <span className="text-[10px] font-sans font-semibold uppercase tracking-widest">{resource.hasReviewed ? 'Reviewed' : 'Rate'}</span>
+          </button>
+        </div>
+        <p className="font-sans text-sm text-on-surface-variant truncate">{resource.meta}</p>
+      </div>
+    </div>
+  );
+}
 
 export default function StudentCourseView() {
   const { courseId } = useParams();
   const [activeTab, setActiveTab] = useState<'resources' | 'quizzes' | 'announcements'>('resources');
+  const [resources, setResources] = useState<Resource[]>(INITIAL_RESOURCES);
+  const [reviewingResource, setReviewingResource] = useState<Resource | null>(null);
+
+  const handleReviewSubmit = (id: string, rating: number, comment: string) => {
+    setResources(prev =>
+      prev.map(r =>
+        r.id === id ? { ...r, hasReviewed: true, userRating: rating, userComment: comment } : r
+      )
+    );
+  };
 
   const courseTitle = courseId === 'bio-301' ? 'Advanced Neurobiology' : 'Course Overview';
   const educator = 'Prof. Elias Vance';
@@ -79,45 +241,13 @@ export default function StudentCourseView() {
         {/* Tab Content */}
         {activeTab === 'resources' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* File Card: PDF */}
-            <div className="glass-card rounded-xl p-5 border border-white/5 hover:border-white/10 transition-colors shadow-lg flex items-start gap-4 group">
-              <div className="w-12 h-12 rounded-lg bg-surface-variant flex items-center justify-center shrink-0">
-                <FileText className="text-error w-6 h-6" />
-              </div>
-              <div className="flex-1 min-w-0 flex flex-col justify-center h-12">
-                <h4 className="font-sans text-base font-medium text-on-surface truncate group-hover:text-primary-fixed-dim transition-colors">Synaptic Pathways Ch.4</h4>
-                <p className="font-sans text-sm text-on-surface-variant truncate">2.4 MB • Required Reading</p>
-              </div>
-            </div>
-
-            {/* File Card: Video */}
-            <div className="glass-card rounded-xl p-5 border border-white/5 hover:border-white/10 transition-colors shadow-lg flex items-start gap-4 group">
-              <div className="w-12 h-12 rounded-lg bg-surface-variant flex items-center justify-center shrink-0">
-                <PlayCircle className="text-indigo-400 w-6 h-6" />
-              </div>
-              <div className="flex-1 min-w-0 flex flex-col justify-center h-12">
-                <h4 className="font-sans text-base font-medium text-on-surface truncate group-hover:text-primary-fixed-dim transition-colors">Lecture: Neuroplasticity</h4>
-                <p className="font-sans text-sm text-on-surface-variant truncate">45 mins • Video Lecture</p>
-              </div>
-            </div>
-
-            {/* File Card: AR Ready */}
-            <div className="bg-surface-container rounded-xl p-5 border border-primary-fixed-dim/30 hover:border-primary-fixed-dim/60 transition-colors shadow-[0_4px_20px_rgba(0,0,0,0.2),inset_0_1px_1px_rgba(0,218,243,0.1)] flex items-start gap-4 group relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-primary-fixed-dim/10 rounded-full blur-2xl -mr-8 -mt-8 pointer-events-none"></div>
-              
-              <div className="w-12 h-12 rounded-lg bg-primary-fixed-dim/20 flex items-center justify-center shrink-0 shadow-inner">
-                <Box className="text-primary-fixed-dim w-6 h-6" />
-              </div>
-              <div className="flex-1 min-w-0 relative z-10 flex flex-col justify-center h-12">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <h4 className="font-sans text-base font-medium text-on-surface truncate group-hover:text-primary-fixed-dim transition-colors">Human Brain Model</h4>
-                </div>
-                <div className="flex items-center gap-2">
-                   <p className="font-sans text-sm text-on-surface-variant truncate">.gltf Interactive</p>
-                   <span className="px-1.5 py-0.5 rounded bg-primary-fixed-dim/20 text-primary-fixed-dim font-sans font-semibold text-[9px] tracking-[0.1em]">AR-READY</span>
-                </div>
-              </div>
-            </div>
+            {resources.map(resource => (
+              <ResourceCard 
+                key={resource.id} 
+                resource={resource} 
+                onReview={() => setReviewingResource(resource)} 
+              />
+            ))}
           </div>
         )}
 
@@ -220,6 +350,12 @@ export default function StudentCourseView() {
           </div>
         )}
       </main>
+
+      <ReviewModal 
+        resource={reviewingResource}
+        onClose={() => setReviewingResource(null)}
+        onSubmit={handleReviewSubmit}
+      />
     </>
   );
 }

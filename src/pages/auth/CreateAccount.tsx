@@ -102,31 +102,59 @@ export default function CreateAccount() {
 
                 {/* Fields */}
                 <div className="space-y-4">
-                  {/* Advanced Input for Full Name */}
-                  <div className="relative group">
-                    <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
-                    <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
-                      <div className="pl-4 pr-3 py-3 flex items-center justify-center text-slate-500 group-focus-within:text-primary-fixed-dim transition-colors">
-                        <User className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
+                  {/* Name Fields */}
+                  <div className="flex gap-3">
+                    {/* First Name */}
+                    <div className="relative group flex-1">
+                      <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
+                      <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
+                        <div className="pl-4 pr-2 py-3 flex items-center justify-center text-slate-500 group-focus-within:text-primary-fixed-dim transition-colors">
+                          <User className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
+                        </div>
+                        <div className="relative flex-1 flex flex-col justify-center">
+                          <input 
+                            type="text" 
+                            id="firstname" 
+                            required 
+                            placeholder=" "
+                            autoComplete="given-name"
+                            className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-3 focus:outline-none transition-all placeholder-transparent z-10" 
+                          />
+                          <label 
+                            htmlFor="firstname" 
+                            className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
+                            peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
+                            peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
+                          >
+                            First Name
+                          </label>
+                          <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
+                        </div>
                       </div>
-                      <div className="relative flex-1 flex flex-col justify-center">
-                        <input 
-                          type="text" 
-                          id="fullname" 
-                          required 
-                          placeholder=" "
-                          autoComplete="off"
-                          className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10" 
-                        />
-                        <label 
-                          htmlFor="fullname" 
-                          className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
-                          peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
-                          peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
-                        >
-                          Full Name
-                        </label>
-                        <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
+                    </div>
+                    {/* Last Name */}
+                    <div className="relative group flex-1">
+                      <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
+                      <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
+                        <div className="relative flex-1 flex flex-col justify-center">
+                          <input 
+                            type="text" 
+                            id="lastname" 
+                            required 
+                            placeholder=" "
+                            autoComplete="family-name"
+                            className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pl-4 pr-3 focus:outline-none transition-all placeholder-transparent z-10" 
+                          />
+                          <label 
+                            htmlFor="lastname" 
+                            className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
+                            peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
+                            peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
+                          >
+                            Last Name
+                          </label>
+                          <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
+                        </div>
                       </div>
                     </div>
                   </div>
