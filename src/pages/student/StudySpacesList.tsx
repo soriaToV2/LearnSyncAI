@@ -1,40 +1,63 @@
-import { useState, FormEvent } from 'react';
-import { Layers, Plus, Folder, ArrowRight, Clock, Star, Sparkles, X } from 'lucide-react';
+import { useState, useEffect, FormEvent } from 'react';
+import { Layers, Plus, Folder, ArrowRight, Clock, Star, Sparkles, X, Share2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { getSavedSpaces } from '../../data/mockPublicSpaces';
 
 
 export default function StudySpacesList() {
   const navigate = useNavigate();
 
-  const [spaces, setSpaces] = useState([
-    {
-      id: 'space-1',
-      title: 'Biology 101 Prep',
-      courseInfo: 'Biology 301',
-      lastModified: '2 hours ago',
-      flashcardsCount: 42,
-      color: 'from-emerald-500/20 to-teal-500/20',
-      borderColor: 'border-emerald-500/30'
-    },
-    {
-      id: 'space-2',
-      title: 'History Midterm Review',
-      courseInfo: 'World History',
-      lastModified: '1 day ago',
-      flashcardsCount: 156,
-      color: 'from-purple-500/20 to-fuchsia-500/20',
-      borderColor: 'border-purple-500/30'
-    },
-    {
-      id: 'space-3',
-      title: 'Physics Vectors',
-      courseInfo: 'Physics 201',
-      lastModified: '3 days ago',
-      flashcardsCount: 24,
-      color: 'from-amber-500/20 to-orange-500/20',
-      borderColor: 'border-amber-500/30'
+  const [spaces, setSpaces] = useState(() => {
+    const saved = localStorage.getItem('my_study_spaces');
+    let localSpaces = [];
+    if (saved) {
+      try {
+        localSpaces = JSON.parse(saved);
+      } catch (e) {
+        // Fallback
+      }
+    } else {
+      localSpaces = [
+        {
+          id: 'space-1',
+          title: 'Biology 101 Prep',
+          courseInfo: 'Biology 301',
+          lastModified: '2 hours ago',
+          flashcardsCount: 42,
+          color: 'from-emerald-500/20 to-teal-500/20',
+          borderColor: 'border-emerald-500/30'
+        },
+        {
+          id: 'space-2',
+          title: 'History Midterm Review',
+          courseInfo: 'World History',
+          lastModified: '1 day ago',
+          flashcardsCount: 156,
+          color: 'from-purple-500/20 to-fuchsia-500/20',
+          borderColor: 'border-purple-500/30'
+        },
+        {
+          id: 'space-3',
+          title: 'Physics Vectors',
+          courseInfo: 'Physics 201',
+          lastModified: '3 days ago',
+          flashcardsCount: 24,
+          color: 'from-amber-500/20 to-orange-500/20',
+          borderColor: 'border-amber-500/30'
+        }
+      ];
+      localStorage.setItem('my_study_spaces', JSON.stringify(localSpaces));
     }
-  ]);
+    
+    // Combine with volatile in-memory spaces
+    return [...getSavedSpaces(), ...localSpaces];
+  });
+
+  useEffect(() => {
+    // Only save user-created spaces to localStorage
+    const localSpacesOnly = spaces.filter((s: any) => !s.isImported);
+    localStorage.setItem('my_study_spaces', JSON.stringify(localSpacesOnly));
+  }, [spaces]);
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newSpaceTitle, setNewSpaceTitle] = useState('');
@@ -100,9 +123,14 @@ export default function StudySpacesList() {
               <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${space.color} blur-3xl opacity-50 group-hover:opacity-100 transition-opacity -z-10 rounded-full translate-x-1/2 -translate-y-1/2`}></div>
 
               <div className="flex justify-between items-start mb-6">
-                <div className="w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center">
-                  <Folder className="w-6 h-6 text-slate-300" />
+                <div className={`w-12 h-12 rounded-xl border border-white/5 flex items-center justify-center ${space.isImported ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim border-primary-fixed-dim/20' : 'bg-surface-container text-slate-300'}`}>
+                  <Folder className="w-6 h-6" />
                 </div>
+                {space.isImported && (
+                  <span className="flex items-center gap-1 px-2.5 py-1 rounded bg-primary-fixed-dim/15 border border-primary-fixed-dim/25 text-primary-fixed-dim text-[10px] font-sans font-bold uppercase tracking-wider shadow-sm shadow-primary-fixed-dim/5">
+                    <Share2 className="w-3 h-3 shrink-0" /> Shared by {space.authorName?.split(' ')[0]}
+                  </span>
+                )}
               </div>
 
               <h2 className="font-display text-xl font-medium text-white mb-2">{space.title}</h2>

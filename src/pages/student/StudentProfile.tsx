@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { MapPin, Building, Users, Star, Award, BrainCircuit, Book, Box, UserPlus, UserCheck, Globe } from 'lucide-react';
 import { useParams, Link } from 'react-router-dom';
 import { MOCK_STUDENTS } from '../../data/mockStudents';
+import StudySpacePreviewModal from './components/StudySpacePreviewModal';
 
 
 export default function StudentProfile() {
   const { studentId } = useParams();
   const [activeTab, setActiveTab] = useState<'achievements' | 'spaces'>('achievements');
+  const [previewSpaceId, setPreviewSpaceId] = useState<string | null>(null);
 
   // Look up student from mock data
   const student = MOCK_STUDENTS.find(s => s.id === studentId) || MOCK_STUDENTS.find(s => s.id === 'me');
@@ -168,7 +170,11 @@ export default function StudentProfile() {
           return (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {publicSpaces.map(space => (
-                <div key={space.id} className="glass-card p-6 rounded-xl border border-white/10 hover:border-primary-fixed-dim/40 transition-colors group cursor-pointer">
+                <div 
+                  key={space.id} 
+                  onClick={() => setPreviewSpaceId(space.id)}
+                  className="glass-card p-6 rounded-xl border border-white/10 hover:border-primary-fixed-dim/40 transition-colors group cursor-pointer"
+                >
                   <div className="flex justify-between items-start mb-4">
                     <h3 className="font-display text-xl font-medium text-on-surface group-hover:text-primary-fixed-dim transition-colors">{space.title}</h3>
                     <div className="flex items-center gap-2">
@@ -202,6 +208,11 @@ export default function StudentProfile() {
           );
         })()}
       </main>
+      <StudySpacePreviewModal 
+        isOpen={previewSpaceId !== null} 
+        onClose={() => setPreviewSpaceId(null)} 
+        spaceId={previewSpaceId} 
+      />
     </>
   );
 }
