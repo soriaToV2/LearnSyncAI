@@ -22,8 +22,7 @@ export default function Login() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
-    // Simulate network delay for premium feel
+
     setTimeout(() => {
       if (email === 'admin' && password === 'admin@12') {
         navigate('/dashboard');
@@ -38,7 +37,7 @@ export default function Login() {
 
   return (
     <div ref={wrapperRef} className="min-h-screen bg-page text-slate-200 flex flex-col relative overflow-hidden font-sans">
-      
+
       {/* Premium Ambient Background FX */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(218,226,253,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(218,226,253,0.03)_1px,transparent_1px)] bg-[size:4rem_4rem]"></div>
@@ -47,19 +46,19 @@ export default function Login() {
       </div>
 
       <main className="flex-grow flex items-center justify-center p-4 w-full max-w-[1000px] mx-auto relative z-10 min-h-screen">
-        
+
         {/* Glassmorphic Central Card */}
         <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-[90vh]">
-          
+
           {/* Left Side: Visual / Branding */}
           <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
             <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop')] bg-cover bg-center opacity-10 mix-blend-luminosity"></div>
-            
+
             <div className="relative z-10">
               <div className="w-14 h-14 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
                 <BrainCircuit className="w-7 h-7 text-primary-fixed-dim" />
               </div>
-              <h1 className="font-display text-4xl font-bold text-white mb-4 leading-tight">Welcome back to <span className="text-primary-fixed-dim">EduSpace</span></h1>
+              <h1 className="font-display text-4xl font-bold text-white mb-4 leading-tight">Welcome back to <span className="text-primary-fixed-dim">LearnSyncAI</span></h1>
               <p className="font-sans text-slate-400 leading-relaxed">
                 Access your personalized learning matrix, track your academic progress, and connect with global educators.
               </p>
@@ -85,14 +84,14 @@ export default function Login() {
 
           {/* Right Side: Form */}
           <div className="w-full lg:w-1/2 p-6 md:p-10 flex flex-col justify-center bg-surface-container-lowest/50 relative overflow-y-auto no-scrollbar">
-            
+
             <div className="w-full max-w-[320px] mx-auto flex flex-col justify-center">
               {/* Mobile Header (only visible on small screens) */}
               <div className="lg:hidden flex flex-col items-center mb-6 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
                   <BrainCircuit className="w-8 h-8 text-primary-fixed-dim" />
                 </div>
-                <h1 className="font-display text-3xl font-bold text-white">EduSpace</h1>
+                <h1 className="font-display text-3xl font-bold text-white">LearnSyncAI</h1>
                 <p className="font-sans text-sm text-slate-400 mt-2">Initialize your session.</p>
               </div>
 
@@ -102,14 +101,14 @@ export default function Login() {
               </div>
 
               <form className="flex flex-col gap-5" onSubmit={handleLogin}>
-                
+
                 {error && (
                   <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl text-sm flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
                     <div className="shrink-0 w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center mt-0.5">!</div>
                     <p>{error}</p>
                   </div>
                 )}
-                
+
                 {/* Advanced Input for Email */}
                 <div className="relative group">
                   <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
@@ -118,18 +117,18 @@ export default function Login() {
                       <Mail className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
                     </div>
                     <div className="relative flex-1 flex flex-col justify-center">
-                      <input 
-                        type="text" 
-                        id="email" 
+                      <input
+                        type="text"
+                        id="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        required 
+                        required
                         placeholder=" "
                         autoComplete="off"
-                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10" 
+                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10"
                       />
-                      <label 
-                        htmlFor="email" 
+                      <label
+                        htmlFor="email"
                         className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
                         peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
                         peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
@@ -149,18 +148,18 @@ export default function Login() {
                       <Lock className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
                     </div>
                     <div className="relative flex-1 flex flex-col justify-center">
-                      <input 
-                        type={showPassword ? "text" : "password"} 
-                        id="password" 
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        id="password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        required 
+                        required
                         placeholder=" "
                         autoComplete="new-password"
-                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-12 focus:outline-none transition-all placeholder-transparent z-10" 
+                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-12 focus:outline-none transition-all placeholder-transparent z-10"
                       />
-                      <label 
-                        htmlFor="password" 
+                      <label
+                        htmlFor="password"
                         className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
                         peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
                         peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
@@ -168,9 +167,9 @@ export default function Login() {
                         Password
                       </label>
                       <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
-                      
-                      <button 
-                        type="button" 
+
+                      <button
+                        type="button"
                         onClick={() => setShowPassword(!showPassword)}
                         className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-500 hover:text-white transition-colors focus:outline-none z-20"
                       >
@@ -192,7 +191,7 @@ export default function Login() {
                   <a href="#" className="font-sans text-xs text-primary-fixed-dim hover:text-primary-container transition-colors">Forgot password?</a>
                 </div>
 
-                <button 
+                <button
                   type="submit"
                   disabled={isLoading}
                   className="mt-2 w-full bg-gradient-to-r from-primary-fixed-dim to-primary-fixed text-on-primary-fixed font-display text-base font-bold py-3 px-6 rounded-xl hover:shadow-[0_0_30px_rgba(0,218,243,0.3)] transition-all duration-300 active:scale-[0.98] flex justify-center items-center gap-2 group disabled:opacity-70 disabled:pointer-events-none"

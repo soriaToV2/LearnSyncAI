@@ -322,7 +322,7 @@ export default function Settings() {
                 {/* Header */}
                 <div>
                   <h3 className="font-display text-lg font-bold text-on-surface mb-1">Visual Preferences</h3>
-                  <p className="font-sans text-xs text-slate-400">Pick a color theme to instantly apply across the entire EduSpace UI.</p>
+                  <p className="font-sans text-xs text-slate-400">Pick a color theme to instantly apply across the entire LearnSyncAI UI.</p>
                 </div>
 
                 {/* Active theme badge */}

@@ -59,7 +59,7 @@ function StudentLayoutInner() {
               className="text-xl font-bold tracking-tighter font-display"
               style={{ color: theme.accent }}
             >
-              EduSpace
+              LearnSyncAI
             </h1>
             <p className="font-semibold text-xs text-slate-400 mt-1 uppercase tracking-widest text-[10px]">
               Student Dashboard

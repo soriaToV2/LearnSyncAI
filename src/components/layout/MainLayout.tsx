@@ -44,7 +44,7 @@ function MainLayoutInner() {
             <BrainCircuit style={{ color: theme.accent }} className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tighter font-display" style={{ color: theme.accent }}>EduSpace Pro</h1>
+            <h1 className="text-xl font-bold tracking-tighter font-display" style={{ color: theme.accent }}>LearnSyncAI Pro</h1>
             <p className="font-semibold text-xs text-slate-400 mt-1 uppercase tracking-widest text-[10px]">Academic Dashboard</p>
           </div>
         </div>

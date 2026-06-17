@@ -85,9 +85,9 @@ export const THEMES: ThemeDefinition[] = [
 ];
 
 // ─── Storage Keys ──────────────────────────────────────────────────────────────
-const STUDENT_STORAGE_KEY = 'eduspace_student_theme';
-const EDUCATOR_STORAGE_KEY = 'eduspace_educator_theme';
-export const LAST_ROLE_KEY = 'eduspace_last_role';
+const STUDENT_STORAGE_KEY = 'learnsyncai_student_theme';
+const EDUCATOR_STORAGE_KEY = 'learnsyncai_educator_theme';
+export const LAST_ROLE_KEY = 'learnsyncai_last_role';
 
 // ─── CSS var application (applied to a specific element, not always root) ──────
 export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
