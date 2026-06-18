@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import { Sparkles, Plus, Layers, ChevronLeft, RefreshCw, Play, Edit3, Trash2, BookOpen, ClipboardList, Globe, Lock } from 'lucide-react';
 import FlashcardStudyView from './FlashcardStudyView';
 import CreateFlashcardsModal from './CreateFlashcardsModal';
-import QuizSetupModal, { type QuizConfig } from './QuizSetupModal';
-import QuizView from './QuizView';
 
 
 interface Flashcard {
@@ -28,7 +26,7 @@ interface FlashcardsTabProps {
   flashcardSets: FlashcardSet[];
   setSelectedSetContent: (id: number | null) => void;
   setIsCreateDeckModalOpen: (isOpen: boolean) => void;
-  setActiveTab: (tab: 'flashcards' | 'resources') => void;
+  setActiveTab: (tab: 'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources') => void;
   setFlashcardSets: React.Dispatch<React.SetStateAction<FlashcardSet[]>>;
   availableResources?: string[];
   spaceIsPublic: boolean;
@@ -52,20 +50,9 @@ export default function FlashcardsTab({
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingSetId, setEditingSetId] = useState<number | null>(null);
   const [flippedCardId, setFlippedCardId] = useState<number | null>(null);
-  const [isQuizSetupOpen, setIsQuizSetupOpen] = useState(false);
-  const [activeQuizConfig, setActiveQuizConfig] = useState<QuizConfig | null>(null);
 
   const toggleFlip = (cardId: number) => {
     setFlippedCardId(prev => (prev === cardId ? null : cardId));
-  };
-
-  const handleStartQuiz = (config: QuizConfig) => {
-    setActiveQuizConfig(config);
-    setIsQuizSetupOpen(false);
-  };
-
-  const handleExitQuiz = () => {
-    setActiveQuizConfig(null);
   };
 
   const selectedSet = flashcardSets.find(s => s.id === selectedSetContent) || null;
@@ -130,19 +117,6 @@ export default function FlashcardsTab({
     }
     setIsCreateModalOpen(true);
   };
-
-  // Quiz mode
-  if (activeQuizConfig) {
-    return (
-      <div className="animate-in fade-in duration-300">
-        <QuizView
-          config={activeQuizConfig}
-          flashcardSets={flashcardSets}
-          onExit={handleExitQuiz}
-        />
-      </div>
-    );
-  }
 
   // If in study mode, show the study view
   if (isStudying && selectedSet && selectedSet.cards.length > 0) {
@@ -280,13 +254,6 @@ export default function FlashcardsTab({
                   Study Cards
                 </button>
               )}
-              <button
-                onClick={() => setIsQuizSetupOpen(true)}
-                className="px-5 py-2.5 bg-surface-container border border-secondary-fixed-dim/40 text-secondary-fixed-dim hover:bg-surface-container-high rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(195,192,255,0.08)] hover:shadow-[0_0_20px_rgba(195,192,255,0.15)]"
-              >
-                <ClipboardList className="w-4 h-4" />
-                Take a Quiz
-              </button>
 
             </div>
           </div>
@@ -380,17 +347,6 @@ export default function FlashcardsTab({
         }
         courseConnected={courseConnected}
         availableResources={availableResources}
-      />
-
-      {/* Quiz Setup Modal */}
-      <QuizSetupModal
-        isOpen={isQuizSetupOpen}
-        onClose={() => setIsQuizSetupOpen(false)}
-        onStart={handleStartQuiz}
-        preselectedSetId={selectedSetContent}
-        flashcardSets={flashcardSets.map(s => ({ id: s.id, title: s.title, cardCount: s.cardCount }))}
-        availableResources={availableResources}
-        courseConnected={courseConnected}
       />
     </div>
   );

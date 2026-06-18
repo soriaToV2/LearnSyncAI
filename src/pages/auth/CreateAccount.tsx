@@ -22,8 +22,7 @@ export default function CreateAccount() {
 
   return (
     <div ref={wrapperRef} className="min-h-screen bg-page text-slate-200 flex flex-col relative overflow-hidden font-sans">
-      
-      {/* Ambient Background FX */}
+
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(218,226,253,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(218,226,253,0.03)_1px,transparent_1px)] bg-[size:4rem_4rem]"></div>
         <div className="absolute top-[-10%] right-[-10%] w-[60vw] h-[60vw] max-w-[800px] max-h-[800px] bg-primary-fixed-dim/15 rounded-full blur-[120px] mix-blend-screen animate-pulse duration-1000"></div>
@@ -31,21 +30,19 @@ export default function CreateAccount() {
       </div>
 
       <main className="flex-grow flex items-center justify-center p-4 w-full max-w-[1000px] mx-auto relative z-10 min-h-screen">
-        
-        {/* Glassmorphic Central Card */}
+
         <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-[90vh]">
-          
-          {/* Left Half: Brand & Value Prop */}
+
           <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 lg:p-10 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
             <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2564&auto=format&fit=crop')] bg-cover bg-center opacity-10 mix-blend-luminosity"></div>
-            
+
             <div className="relative z-10 flex flex-col items-center lg:items-start text-center lg:text-left">
               <div className="w-16 h-16 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
                 <BrainCircuit className="w-8 h-8 text-primary-fixed-dim" />
               </div>
-              <h1 className="font-display text-4xl lg:text-5xl font-bold text-white mb-4 leading-tight">Join the <span className="text-primary-fixed-dim">Future</span></h1>
+              <h1 className="font-display text-4xl lg:text-5xl font-bold text-white mb-4 leading-tight">Join <span className="text-primary-fixed-dim">LearnSync AI</span></h1>
               <p className="font-sans text-slate-400 leading-relaxed max-w-md">
-                Initialize your cognitive research environment. Connect with peers, manage your courses, and access cutting-edge educational tools.
+                Bridge the gap between standardized assessment and personalized study. Access BKT-driven adaptive pathways, procedural gamification, and secure peer collaboration.
               </p>
             </div>
 
@@ -55,8 +52,8 @@ export default function CreateAccount() {
                   <Sparkles className="w-5 h-5 text-emerald-400" />
                 </div>
                 <div>
-                  <p className="font-display font-semibold text-slate-200 text-sm">Global Network</p>
-                  <p className="font-sans text-xs text-slate-400">Connect with students worldwide</p>
+                  <p className="font-display font-semibold text-slate-200 text-sm">CollabShare Workspace</p>
+                  <p className="font-sans text-xs text-slate-400">Secure, read-only peer synchronization</p>
                 </div>
               </div>
               <div className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 backdrop-blur-md">
@@ -64,25 +61,23 @@ export default function CreateAccount() {
                   <Building className="w-5 h-5 text-indigo-400" />
                 </div>
                 <div>
-                  <p className="font-display font-semibold text-slate-200 text-sm">University Sync</p>
-                  <p className="font-sans text-xs text-slate-400">Direct integration with your campus</p>
+                  <p className="font-display font-semibold text-slate-200 text-sm">Adaptive AI Engine</p>
+                  <p className="font-sans text-xs text-slate-400">Personalized BKT routing & isomorphic exams</p>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Right Half: Form */}
           <div className="w-full lg:w-1/2 p-6 lg:p-10 flex flex-col justify-center bg-surface-container-lowest/50 relative overflow-y-auto no-scrollbar">
-            
+
             <div className="w-full max-w-[340px] mx-auto flex flex-col justify-center">
               <div className="mb-6 text-center lg:text-left">
                 <h2 className="font-display text-2xl font-bold text-white mb-1">Create Account</h2>
-                <p className="font-sans text-sm text-slate-400">Select your designation and enter your details.</p>
+                <p className="font-sans text-sm text-slate-400">Select your role to access your study space or instructor dashboard.</p>
               </div>
-              
+
               <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-                
-                {/* Role Selection */}
+
                 <div className="flex gap-3 w-full">
                   <label className="flex-1 cursor-pointer group">
                     <input type="radio" name="role" value="student" className="peer sr-only" defaultChecked />
@@ -100,11 +95,8 @@ export default function CreateAccount() {
                   </label>
                 </div>
 
-                {/* Fields */}
                 <div className="space-y-4">
-                  {/* Name Fields */}
                   <div className="flex gap-3">
-                    {/* First Name */}
                     <div className="relative group flex-1">
                       <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
                       <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
@@ -112,16 +104,16 @@ export default function CreateAccount() {
                           <User className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
                         </div>
                         <div className="relative flex-1 flex flex-col justify-center">
-                          <input 
-                            type="text" 
-                            id="firstname" 
-                            required 
+                          <input
+                            type="text"
+                            id="firstname"
+                            required
                             placeholder=" "
                             autoComplete="given-name"
-                            className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-3 focus:outline-none transition-all placeholder-transparent z-10" 
+                            className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-3 focus:outline-none transition-all placeholder-transparent z-10"
                           />
-                          <label 
-                            htmlFor="firstname" 
+                          <label
+                            htmlFor="firstname"
                             className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
                             peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
                             peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
@@ -132,21 +124,20 @@ export default function CreateAccount() {
                         </div>
                       </div>
                     </div>
-                    {/* Last Name */}
                     <div className="relative group flex-1">
                       <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
                       <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
                         <div className="relative flex-1 flex flex-col justify-center">
-                          <input 
-                            type="text" 
-                            id="lastname" 
-                            required 
+                          <input
+                            type="text"
+                            id="lastname"
+                            required
                             placeholder=" "
                             autoComplete="family-name"
-                            className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pl-4 pr-3 focus:outline-none transition-all placeholder-transparent z-10" 
+                            className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pl-4 pr-3 focus:outline-none transition-all placeholder-transparent z-10"
                           />
-                          <label 
-                            htmlFor="lastname" 
+                          <label
+                            htmlFor="lastname"
                             className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
                             peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
                             peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
@@ -159,7 +150,6 @@ export default function CreateAccount() {
                     </div>
                   </div>
 
-                  {/* Advanced Input for Email */}
                   <div className="relative group">
                     <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
                     <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
@@ -167,16 +157,16 @@ export default function CreateAccount() {
                         <Mail className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
                       </div>
                       <div className="relative flex-1 flex flex-col justify-center">
-                        <input 
-                          type="email" 
-                          id="email" 
-                          required 
+                        <input
+                          type="email"
+                          id="email"
+                          required
                           placeholder=" "
                           autoComplete="off"
-                          className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10" 
+                          className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10"
                         />
-                        <label 
-                          htmlFor="email" 
+                        <label
+                          htmlFor="email"
                           className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
                           peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
                           peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
@@ -188,7 +178,6 @@ export default function CreateAccount() {
                     </div>
                   </div>
 
-                  {/* Advanced Input for Password */}
                   <div className="relative group">
                     <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
                     <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
@@ -196,16 +185,16 @@ export default function CreateAccount() {
                         <Lock className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
                       </div>
                       <div className="relative flex-1 flex flex-col justify-center">
-                        <input 
-                          type="password" 
-                          id="password" 
-                          required 
+                        <input
+                          type="password"
+                          id="password"
+                          required
                           placeholder=" "
                           autoComplete="new-password"
-                          className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10" 
+                          className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10"
                         />
-                        <label 
-                          htmlFor="password" 
+                        <label
+                          htmlFor="password"
                           className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
                           peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
                           peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
@@ -218,7 +207,7 @@ export default function CreateAccount() {
                   </div>
                 </div>
 
-                <button 
+                <button
                   type="submit"
                   disabled={isLoading}
                   className="mt-2 w-full bg-gradient-to-r from-primary-fixed-dim to-primary-fixed text-on-primary-fixed font-display text-base font-bold py-3 px-6 rounded-xl hover:shadow-[0_0_30px_rgba(0,218,243,0.3)] transition-all duration-300 active:scale-[0.98] flex justify-center items-center gap-2 group disabled:opacity-70 disabled:pointer-events-none"
@@ -249,17 +238,13 @@ export default function CreateAccount() {
                     </svg>
                     Google
                   </button>
-                  <button type="button" className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white font-sans text-xs transition-colors active:scale-95">
-                    <Github className="w-4 h-4" />
-                    GitHub
-                  </button>
                 </div>
 
               </form>
 
               <div className="mt-6 text-center">
                 <p className="font-sans text-sm text-slate-400">
-                  Already have an account? 
+                  Already have an account?
                   <Link to="/login" className="text-primary-fixed-dim hover:text-white transition-colors font-semibold ml-1">Login</Link>
                 </p>
               </div>

@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Zap, Flame, Snowflake, Shield, List, ToggleLeft, HelpCircle, Edit3, GitMerge, AlignLeft, FileText, PenTool, Sparkles, Plus, Trash2, Save } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import Dropdown from '../../../../components/ui/Dropdown';
 
 interface Props { isOpen: boolean; onClose: () => void; courseResources: string[]; onCreate: (data: any) => void; }
 type QType = 'multiple-choice' | 'true-false' | 'identification' | 'fill-in-the-blank' | 'essay' | 'matching';
@@ -310,10 +311,12 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                       <div className="p-4 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">Q{idx + 1}</span>
-                          <select value={q.type} onChange={e => updateQ(q.id, { type: e.target.value as QType })}
-                            className="bg-surface-container-high border border-white/10 rounded-lg px-2 py-1 text-xs text-white font-sans outline-none">
-                            {Q_TYPES.map(qt => <option key={qt.id} value={qt.id}>{qt.label}</option>)}
-                          </select>
+                          <Dropdown
+                            value={q.type}
+                            onChange={val => updateQ(q.id, { type: val as QType })}
+                            options={Q_TYPES.map(qt => ({ label: qt.label, value: qt.id }))}
+                            className="w-44 text-left"
+                          />
                         </div>
                         <textarea value={q.text} onChange={e => updateQ(q.id, { text: e.target.value })}
                           placeholder="Enter question text…"

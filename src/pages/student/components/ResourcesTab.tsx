@@ -771,10 +771,10 @@ export default function ResourcesTab({
           </button>
         </div>
       ) : (
-        <div className="flex h-[calc(100vh-140px)] gap-6 relative">
+        <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-140px)] gap-6 relative">
           
           {/* File Space */}
-          <div className="flex-1 bg-surface-container-lowest border border-white/5 rounded-2xl p-6 flex flex-col min-w-0">
+          <div className="h-[450px] lg:h-auto flex-1 bg-surface-container-lowest border border-white/5 rounded-2xl p-6 flex flex-col min-w-0">
             <div className="flex justify-between items-center mb-8">
               <div>
                 <h2 className="font-display font-bold text-white text-3xl mb-1.5 flex items-center gap-3">
@@ -850,7 +850,7 @@ export default function ResourcesTab({
           </div>
 
           {/* AI Chat Panel - permanently visible */}
-          <div className="w-[380px] xl:w-[420px] shrink-0 bg-surface-container-lowest border border-primary-fixed-dim/20 rounded-2xl flex flex-col relative overflow-hidden shadow-2xl">
+          <div className="w-full lg:w-[380px] xl:w-[420px] h-[550px] lg:h-auto shrink-0 bg-surface-container-lowest border border-primary-fixed-dim/20 rounded-2xl flex flex-col relative overflow-hidden shadow-2xl">
             {/* Header */}
             <div className="shrink-0 px-5 py-4 border-b border-white/10 flex flex-col gap-1 bg-gradient-to-r from-primary-fixed-dim/10 to-transparent">
               <div className="flex items-center gap-3 mb-1">

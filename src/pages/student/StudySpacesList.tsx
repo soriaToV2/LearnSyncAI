@@ -1,11 +1,13 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { Layers, Plus, Folder, ArrowRight, Clock, Star, Sparkles, X, Share2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getSavedSpaces } from '../../data/mockPublicSpaces';
+import { getSavedSpaces, MOCK_PUBLIC_SPACES, saveSpaceToMemory } from '../../data/mockPublicSpaces';
 
 
 export default function StudySpacesList() {
   const navigate = useNavigate();
+
+  const [cloneToast, setCloneToast] = useState<string | null>(null);
 
   const [spaces, setSpaces] = useState(() => {
     const saved = localStorage.getItem('my_study_spaces');
@@ -59,6 +61,43 @@ export default function StudySpacesList() {
     localStorage.setItem('my_study_spaces', JSON.stringify(localSpacesOnly));
   }, [spaces]);
 
+  // Intercept 'clone' query parameter for URL sharing
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const cloneId = params.get('clone');
+    if (cloneId) {
+      const publicSpace = MOCK_PUBLIC_SPACES[cloneId];
+      if (publicSpace) {
+        const exists = spaces.some((s: any) => s.id === `space-${cloneId}`);
+        if (!exists) {
+          const newClonedSpace = {
+            id: `space-${cloneId}`,
+            title: publicSpace.title,
+            courseInfo: publicSpace.university,
+            lastModified: 'Just now',
+            flashcardsCount: publicSpace.flashcardsCount,
+            color: publicSpace.color,
+            borderColor: publicSpace.borderColor,
+            isImported: true,
+            authorName: publicSpace.authorName,
+            flashcards: publicSpace.flashcards,
+            resources: publicSpace.resources
+          };
+          setSpaces((prev: any) => [newClonedSpace, ...prev]);
+          saveSpaceToMemory(newClonedSpace);
+          setCloneToast(`Successfully cloned "${publicSpace.title}" by ${publicSpace.authorName}!`);
+          setTimeout(() => setCloneToast(null), 4500);
+        } else {
+          setCloneToast(`"${publicSpace.title}" is already in your Study Spaces.`);
+          setTimeout(() => setCloneToast(null), 4500);
+        }
+      }
+      // Clean up URL query parameters without page refresh
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+    }
+  }, []);
+
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newSpaceTitle, setNewSpaceTitle] = useState('');
   const [newSpaceCourse, setNewSpaceCourse] = useState('');
@@ -86,6 +125,18 @@ export default function StudySpacesList() {
 
   return (
     <div className="flex-1 w-full bg-background p-6 md:p-12 overflow-y-auto relative">
+      {/* Clone success notification toast */}
+      {cloneToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[70] animate-in fade-in slide-in-from-top-3 duration-200">
+          <div className="flex items-center gap-3 bg-surface-container-high border border-teal-500/35 px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-md">
+            <Sparkles className="w-4 h-4 text-teal-400" />
+            <span className="font-sans text-sm text-white font-medium">
+              {cloneToast}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-6xl mx-auto">
         <header className="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-6">
           <div>
@@ -93,10 +144,10 @@ export default function StudySpacesList() {
               <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/20 flex items-center justify-center border border-primary-fixed-dim/30">
                 <Layers className="text-primary-fixed-dim w-5 h-5" />
               </div>
-              <h1 className="font-display text-3xl font-semibold text-on-surface">My Study Spaces</h1>
+              <h1 className="font-display text-3xl font-semibold text-on-surface">Study Spaces</h1>
             </div>
             <p className="font-sans text-on-surface-variant max-w-2xl text-sm">
-              Create dedicated workspaces for your courses to organize flashcards, notes, and study resources.
+              Your private, self-paced workspaces featuring cognitive AI study tools and secure peer synchronization.
             </p>
           </div>
         </header>
@@ -105,7 +156,7 @@ export default function StudySpacesList() {
           {/* Empty Create Card */}
           <div 
             onClick={() => setIsCreateModalOpen(true)}
-            className="bg-surface-container-lowest/30 border-2 border-dashed border-white/10 rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary-fixed-dim/50 hover:bg-primary-fixed-dim/5 transition-all min-h-[280px]"
+            className="bg-surface-container-lowest/30 border-2 border-dashed border-white/10 rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary-fixed-dim/50 hover:bg-primary-fixed-dim/5 transition-all min-h-[220px]"
           >
             <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-4">
               <Plus className="w-8 h-8 text-slate-400" />
@@ -118,7 +169,7 @@ export default function StudySpacesList() {
             <div
               key={space.id}
               onClick={() => navigate(`/student/space/${space.id}`)}
-              className={`bg-surface-container-lowest rounded-2xl border ${space.borderColor} p-6 cursor-pointer hover:-translate-y-1 transition-transform duration-300 relative overflow-hidden group hover:shadow-xl hover:shadow-primary-fixed-dim/5`}
+              className={`bg-surface-container-lowest rounded-2xl border ${space.borderColor} p-6 cursor-pointer hover:-translate-y-1 transition-transform duration-300 relative overflow-hidden group hover:shadow-xl hover:shadow-primary-fixed-dim/5 flex flex-col justify-between min-h-[220px]`}
             >
               <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${space.color} blur-3xl opacity-50 group-hover:opacity-100 transition-opacity -z-10 rounded-full translate-x-1/2 -translate-y-1/2`}></div>
 
@@ -126,15 +177,19 @@ export default function StudySpacesList() {
                 <div className={`w-12 h-12 rounded-xl border border-white/5 flex items-center justify-center ${space.isImported ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim border-primary-fixed-dim/20' : 'bg-surface-container text-slate-300'}`}>
                   <Folder className="w-6 h-6" />
                 </div>
-                {space.isImported && (
-                  <span className="flex items-center gap-1 px-2.5 py-1 rounded bg-primary-fixed-dim/15 border border-primary-fixed-dim/25 text-primary-fixed-dim text-[10px] font-sans font-bold uppercase tracking-wider shadow-sm shadow-primary-fixed-dim/5">
-                    <Share2 className="w-3 h-3 shrink-0" /> Shared by {space.authorName?.split(' ')[0]}
+                {space.isImported ? (
+                  <span className="flex items-center gap-1 px-2.5 py-1 rounded bg-teal-500/10 border border-teal-500/25 text-teal-400 text-[10px] font-sans font-bold uppercase tracking-wider shadow-sm shadow-teal-500/5">
+                    <Share2 className="w-3 h-3 shrink-0" /> Cloned from {space.authorName}
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-500/10 border border-white/5 text-slate-400 text-[10px] font-sans font-bold uppercase tracking-wider">
+                    Created by you
                   </span>
                 )}
               </div>
 
               <h2 className="font-display text-xl font-medium text-white mb-2">{space.title}</h2>
-              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mb-8 font-sans">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mb-2 font-sans">
                 <span className="flex items-center gap-1">
                   <Star className="w-3.5 h-3.5" /> {space.courseInfo}
                 </span>
@@ -144,14 +199,6 @@ export default function StudySpacesList() {
                 </span>
               </div>
 
-              <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
-                <div className="flex text-xs font-semibold uppercase tracking-widest text-primary-fixed-dim gap-2 items-center">
-                  <Sparkles className="w-4 h-4" /> {space.flashcardsCount} Cards
-                </div>
-                <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-primary-fixed-dim/20 transition-colors">
-                  <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-primary-fixed-dim transition-colors" />
-                </div>
-              </div>
             </div>
           ))}
         </div>

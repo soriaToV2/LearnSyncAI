@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Bell, Search, ChevronRight, Building, CheckCircle2, ShieldCheck, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock, Star, X } from 'lucide-react';
+import { Bell, ChevronRight, CheckCircle2, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock, Star, X, ClipboardList, HelpCircle, Award, AlertCircle, Lock } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Resource {
@@ -17,6 +17,104 @@ const INITIAL_RESOURCES: Resource[] = [
   { id: '1', type: 'pdf', title: 'Synaptic Pathways Ch.4', meta: '2.4 MB • Required Reading' },
   { id: '2', type: 'video', title: 'Lecture: Neuroplasticity', meta: '45 mins • Video Lecture' },
   { id: '3', type: 'ar', title: 'Human Brain Model', meta: '.gltf Interactive' },
+];
+
+interface QuizQuestion {
+  id: number;
+  type: 'multiple-choice' | 'essay';
+  questionText: string;
+  options?: string[];
+  correctAnswer?: string;
+  studentAnswer?: string;
+  points: number;
+  maxPoints: number;
+  feedback?: string;
+}
+
+interface Assessment {
+  id: string;
+  title: string;
+  description: string;
+  status: 'Pending' | 'Completed';
+  score?: string;
+  date?: string;
+  openDate: string;
+  questions: QuizQuestion[];
+}
+
+const INITIAL_ASSESSMENTS: Assessment[] = [
+  {
+    id: 'midterm-1',
+    title: 'Midterm: Neural Firing',
+    description: 'Covers chapters 1-4. Complete this assessment to verify your understanding of nerve impulse generation and propagation.',
+    status: 'Pending',
+    openDate: '2026-06-18T08:00:00', // Open (simulate past date/time)
+    questions: [
+      {
+        id: 1,
+        type: 'multiple-choice',
+        questionText: 'Which of the following ions is primarily responsible for the depolarization phase of an action potential?',
+        options: ['Potassium (K+)', 'Sodium (Na+)', 'Calcium (Ca2+)', 'Chloride (Cl-)'],
+        correctAnswer: 'Sodium (Na+)',
+        points: 0,
+        maxPoints: 5,
+      },
+      {
+        id: 2,
+        type: 'essay',
+        questionText: 'Describe the role of myelin sheaths in neuronal conduction. What consequences arise when myelin is degraded, as seen in Multiple Sclerosis?',
+        points: 0,
+        maxPoints: 10,
+      }
+    ]
+  },
+  {
+    id: 'quiz-2-locked',
+    title: 'Quiz 2: Synaptic Transmission',
+    description: 'Covers neurotransmitter release mechanisms, receptor channels, and postsynaptic potentials.',
+    status: 'Pending',
+    openDate: '2026-06-25T09:00:00', // Future date (locked)
+    questions: [
+      {
+        id: 1,
+        type: 'multiple-choice',
+        questionText: 'Which neurotransmitter is primarily active at the neuromuscular junction?',
+        options: ['Dopamine', 'Serotonin', 'Acetylcholine', 'Glutamate'],
+        correctAnswer: 'Acetylcholine',
+        points: 0,
+        maxPoints: 5,
+      }
+    ]
+  },
+  {
+    id: 'quiz-1',
+    title: 'Quiz 1: Fundamentals',
+    description: 'Covers neuroanatomy basics, structural subdivisions of the nervous system, and cranial nerves.',
+    status: 'Completed',
+    score: '93%',
+    date: 'Oct 1, 2023',
+    openDate: '2023-09-30T08:00:00',
+    questions: [
+      {
+        id: 1,
+        type: 'multiple-choice',
+        questionText: 'Which brain region is chiefly associated with the coordination of voluntary movement and motor learning?',
+        options: ['Cerebellum', 'Hippocampus', 'Amygdala', 'Occipital Lobe'],
+        correctAnswer: 'Cerebellum',
+        studentAnswer: 'Cerebellum',
+        points: 5,
+        maxPoints: 5,
+      },
+      {
+        id: 2,
+        type: 'essay',
+        questionText: 'Contrast the functions of the sympathetic and parasympathetic nervous systems.',
+        studentAnswer: 'The sympathetic nervous system prepares the body for fight-or-flight responses by increasing heart rate, dilating airways, and inhibiting digestion. The parasympathetic nervous system governs rest-and-digest, conserving energy and reducing heart rate.',
+        points: 9,
+        maxPoints: 10,
+      }
+    ]
+  }
 ];
 
 interface ReviewModalProps {
@@ -40,7 +138,7 @@ function ReviewModal({ resource, onClose, onSubmit }: ReviewModalProps) {
   if (!resource) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="relative w-full max-w-lg flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden p-6 shadow-2xl">
         <button
           onClick={onClose}
@@ -105,7 +203,235 @@ function ReviewModal({ resource, onClose, onSubmit }: ReviewModalProps) {
   );
 }
 
-function ResourceCard({ resource, onReview }: { resource: Resource; onReview: () => void }) {
+// ─── Quiz Taking Modal ─────────────────────────────────────────────────────────
+interface QuizTakingModalProps {
+  assessment: Assessment | null;
+  onClose: () => void;
+  onSubmit: (id: string, answers: Record<number, string>) => void;
+}
+
+function QuizTakingModal({ assessment, onClose, onSubmit }: QuizTakingModalProps) {
+  const [answers, setAnswers] = useState<Record<number, string>>({});
+  
+  useEffect(() => {
+    if (assessment) {
+      setAnswers({});
+    }
+  }, [assessment]);
+
+  if (!assessment) return null;
+
+  const isFormValid = assessment.questions.every(q => {
+    const val = answers[q.id];
+    return val && val.trim().length > 0;
+  });
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-slate-950 overflow-hidden flex flex-col animate-in fade-in duration-200">
+      {/* Centered container for standard reading width */}
+      <div className="w-full max-w-4xl mx-auto flex-1 flex flex-col h-full border-x border-white/5 bg-surface-container overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-surface-container-high/40">
+          <div>
+            <span className="font-sans text-[10px] font-bold text-primary-fixed-dim uppercase tracking-widest">Active Assessment</span>
+            <h2 className="font-display text-2xl font-bold text-white mt-0.5">{assessment.title}</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-10 h-10 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all active:scale-95"
+            title="Exit quiz"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Scrollable Questions list */}
+        <div className="flex-1 overflow-y-auto p-8 space-y-10 no-scrollbar">
+          {assessment.questions.map((q, idx) => (
+            <div key={q.id} className="space-y-5">
+              <div className="flex items-start gap-4">
+                <span className="w-8 h-8 rounded-full bg-primary-fixed-dim/20 border border-primary-fixed-dim/30 flex items-center justify-center font-display text-sm font-bold text-primary-fixed shrink-0">
+                  {idx + 1}
+                </span>
+                <p className="font-sans text-lg text-white font-medium leading-relaxed pt-0.5">
+                  {q.questionText}
+                </p>
+              </div>
+
+              {q.type === 'multiple-choice' && q.options && (
+                <div className="pl-12 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {q.options.map((option) => (
+                    <label
+                      key={option}
+                      className={clsx(
+                        "flex items-center p-4 rounded-xl border transition-all cursor-pointer select-none",
+                        answers[q.id] === option
+                          ? "bg-primary-fixed-dim/10 border-primary-fixed-dim text-white shadow-[0_0_20px_rgba(0,218,243,0.08)]"
+                          : "bg-surface-container-lowest border-white/5 text-slate-350 hover:bg-surface-container-high/50 hover:border-white/10"
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name={`q-${q.id}`}
+                        checked={answers[q.id] === option}
+                        onChange={() => setAnswers(prev => ({ ...prev, [q.id]: option }))}
+                        className="w-4 h-4 text-primary-fixed-dim border-white/20 bg-transparent focus:ring-primary-fixed-dim/50 focus:ring-offset-background"
+                      />
+                      <span className="ml-3 font-sans text-sm font-medium">{option}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {q.type === 'essay' && (
+                <div className="pl-12">
+                  <textarea
+                    rows={6}
+                    value={answers[q.id] || ''}
+                    onChange={(e) => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
+                    placeholder="Type your essay explanation here..."
+                    className="w-full bg-surface-container-lowest border border-white/10 focus:border-primary-fixed-dim/50 rounded-xl p-4 text-white font-sans text-sm resize-none outline-none transition-colors placeholder:text-slate-650"
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-white/10 bg-surface-container-lowest/30 flex justify-between items-center">
+          <p className="font-sans text-xs text-slate-500">
+            {isFormValid ? 'All questions answered' : 'Please complete all questions before submitting'}
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="px-5 py-2.5 rounded-xl border border-white/10 font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-all"
+            >
+              Exit
+            </button>
+            <button
+              disabled={!isFormValid}
+              onClick={() => onSubmit(assessment.id, answers)}
+              className="px-6 py-2.5 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans font-bold text-sm hover:bg-primary-container transition-all disabled:opacity-50 disabled:pointer-events-none active:scale-95 shadow-lg shadow-primary-fixed-dim/10"
+            >
+              Submit Quiz
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Quiz Results Modal ────────────────────────────────────────────────────────
+interface QuizResultsModalProps {
+  assessment: Assessment | null;
+  onClose: () => void;
+}
+
+function QuizResultsModal({ assessment, onClose }: QuizResultsModalProps) {
+  if (!assessment) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-surface-container-high/40">
+          <div>
+            <span className="font-sans text-[10px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
+              <Award className="w-3.5 h-3.5" /> Assessment Results
+            </span>
+            <h2 className="font-display text-xl font-bold text-white mt-0.5">{assessment.title}</h2>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="bg-primary-fixed-dim/15 border border-primary-fixed-dim/30 px-3.5 py-1.5 rounded-lg text-center font-display text-lg font-bold text-primary-fixed-dim">
+              Score: {assessment.score}
+            </div>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable Results */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
+          <div className="flex items-center justify-between p-4 bg-surface-container-lowest border border-white/5 rounded-xl text-sm font-sans text-slate-400">
+            <span>Status: <span className="text-emerald-400 font-semibold">Completed</span></span>
+            <span>Date Submitted: {assessment.date}</span>
+          </div>
+
+          {assessment.questions.map((q, idx) => {
+            const isCorrect = q.type === 'multiple-choice' ? q.studentAnswer === q.correctAnswer : q.points >= (q.maxPoints * 0.75);
+
+            return (
+              <div key={q.id} className="space-y-4 border-b border-white/5 pb-6 last:border-b-0 last:pb-0">
+                <div className="flex justify-between items-start gap-4">
+                  <div className="flex items-start gap-3">
+                    <span className="w-6 h-6 rounded-full bg-surface-container-high border border-white/5 flex items-center justify-center font-display text-xs font-bold text-white">
+                      {idx + 1}
+                    </span>
+                    <p className="font-sans text-base text-white font-medium leading-relaxed pt-0.5">
+                      {q.questionText}
+                    </p>
+                  </div>
+                  <span className={clsx(
+                    "px-2.5 py-1 rounded-md font-sans text-[10px] font-bold uppercase tracking-wider border shrink-0",
+                    isCorrect
+                      ? "bg-emerald-400/10 border-emerald-400/20 text-emerald-400"
+                      : "bg-amber-400/10 border-amber-400/20 text-amber-400"
+                  )}>
+                    {q.points} / {q.maxPoints} pts
+                  </span>
+                </div>
+
+                <div className="pl-9 space-y-3">
+                  {/* Answers Display */}
+                  <div className="p-4 rounded-xl bg-surface-container-lowest border border-white/5 space-y-2">
+                    <p className="font-sans text-xs text-slate-500 uppercase tracking-widest font-semibold">
+                      Your Answer:
+                    </p>
+                    <p className={clsx("font-sans text-sm", isCorrect ? "text-emerald-400" : "text-amber-400")}>
+                      {q.studentAnswer || '(No response recorded)'}
+                    </p>
+
+                    {q.type === 'multiple-choice' && !isCorrect && (
+                      <>
+                        <div className="h-px bg-white/5 my-2" />
+                        <p className="font-sans text-xs text-slate-500 uppercase tracking-widest font-semibold">
+                          Correct Answer:
+                        </p>
+                        <p className="font-sans text-sm text-emerald-400">
+                          {q.correctAnswer}
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-white/10 bg-surface-container-lowest/30 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-6 py-2.5 rounded-xl bg-surface-container-high border border-white/10 hover:bg-white/10 text-white font-sans text-sm font-semibold transition-all active:scale-95"
+          >
+            Close Results
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResourceCard({ resource, onReview }: { key?: React.Key; resource: Resource; onReview: () => void }) {
   const isAr = resource.type === 'ar';
   
   if (isAr) {
@@ -161,6 +487,11 @@ export default function StudentCourseView() {
   const [resources, setResources] = useState<Resource[]>(INITIAL_RESOURCES);
   const [reviewingResource, setReviewingResource] = useState<Resource | null>(null);
 
+  // Assessments and testing state
+  const [assessments, setAssessments] = useState<Assessment[]>(INITIAL_ASSESSMENTS);
+  const [takingQuiz, setTakingQuiz] = useState<Assessment | null>(null);
+  const [viewingResults, setViewingResults] = useState<Assessment | null>(null);
+
   const handleReviewSubmit = (id: string, rating: number, comment: string) => {
     setResources(prev =>
       prev.map(r =>
@@ -169,19 +500,73 @@ export default function StudentCourseView() {
     );
   };
 
+  const handleQuizSubmit = (quizId: string, studentAnswers: Record<number, string>) => {
+    setAssessments(prev =>
+      prev.map(quiz => {
+        if (quiz.id !== quizId) return quiz;
+
+        const updatedQuestions = quiz.questions.map(q => {
+          const ans = studentAnswers[q.id] || '';
+          let pts = 0;
+          let feedback = '';
+
+          if (q.type === 'multiple-choice') {
+            const isCorrect = ans.trim().toLowerCase() === (q.correctAnswer || '').trim().toLowerCase();
+            pts = isCorrect ? q.maxPoints : 0;
+            feedback = isCorrect ? 'Correct. Excellent understanding of membrane potential dynamics.' : `Incorrect. The correct answer was ${q.correctAnswer}.`;
+          } else {
+            // Essay question auto-grader simulation (always award decent score for realistic response)
+            const length = ans.trim().split(/\s+/).length;
+            if (length > 25) {
+              pts = 9;
+              feedback = 'Very detailed and scientifically sound explanation. Your description of saltatory conduction is correct.';
+            } else if (length > 5) {
+              pts = 7;
+              feedback = 'Partially correct. Expand on the physiological mechanism of saltatory conduction for full credit.';
+            } else {
+              pts = 3;
+              feedback = 'Response too short. Explain myelin role and demyelination consequences.';
+            }
+          }
+
+          return {
+            ...q,
+            studentAnswer: ans,
+            points: pts,
+            feedback
+          };
+        });
+
+        const totalPoints = updatedQuestions.reduce((acc, curr) => acc + curr.points, 0);
+        const maxPoints = updatedQuestions.reduce((acc, curr) => acc + curr.maxPoints, 0);
+        const scorePercentage = Math.round((totalPoints / maxPoints) * 100);
+
+        return {
+          ...quiz,
+          status: 'Completed',
+          score: `${scorePercentage}%`,
+          date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          questions: updatedQuestions
+        };
+      })
+    );
+
+    setTakingQuiz(null);
+  };
+
   const courseTitle = courseId === 'bio-301' ? 'Advanced Neurobiology' : 'Course Overview';
   const educator = 'Prof. Elias Vance';
 
   return (
     <>
-      <header className="sticky top-0 w-full border-b border-white/10 bg-page-50 backdrop-blur-md shadow-none flex justify-between items-center h-16 px-8 z-40">
+      <header className="sticky top-16 md:top-0 w-full border-b border-white/10 bg-page-50 backdrop-blur-md shadow-none flex justify-between items-center h-16 px-4 md:px-8 z-40">
         <div className="flex items-center gap-4 text-slate-400 font-sans text-[13px]">
-          <span className="hover:text-primary-fixed-dim cursor-pointer transition-colors">Dashboard</span>
+          <Link to="/student/catalog" className="hover:text-primary-fixed-dim cursor-pointer transition-colors">Courses</Link>
           <ChevronRight className="w-4 h-4" />
           <span>{courseTitle}</span>
         </div>
 
-        <div className="flex items-center gap-4 text-slate-400">
+        <div className="hidden md:flex items-center gap-4 text-slate-400">
           <button className="hover:text-primary-fixed-dim transition-colors">
             <Bell className="w-5 h-5" />
           </button>
@@ -195,20 +580,10 @@ export default function StudentCourseView() {
         </div>
       </header>
 
-      <main className="p-10 max-w-7xl mx-auto w-full">
-        {/* Course Header */}
+      <main className="p-4 md:p-10 max-w-7xl mx-auto w-full">
+        {/* Course Header - simplified Google Classroom style, no MIT or license badges */}
         <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
-            <div className="flex flex-wrap items-center gap-3 mb-3">
-              <span className="px-2.5 py-1 rounded-md bg-secondary-container/10 text-secondary-container border border-secondary-container/20 font-sans font-semibold text-[10px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <Building className="w-3 h-3" />
-                MIT
-              </span>
-              <span className="px-2.5 py-1 rounded-md bg-surface-bright border border-white/5 text-on-surface-variant font-sans font-semibold text-[10px] tracking-[0.1em] uppercase flex items-center gap-1.5">
-                <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                Internal Course
-              </span>
-            </div>
             <h1 className="font-display text-[42px] font-bold text-on-surface mb-2 tracking-tight leading-tight">{courseTitle}</h1>
             <p className="font-sans text-lg text-on-surface-variant max-w-2xl">
               Educator: <span className="text-on-surface">{educator}</span>
@@ -217,18 +592,18 @@ export default function StudentCourseView() {
         </div>
 
         {/* Tabs */}
-        <div className="border-b border-white/10 mb-8 flex overflow-x-auto no-scrollbar gap-8">
+        <div className="border-b border-white/10 mb-8 flex overflow-x-auto no-scrollbar gap-4 md:gap-8">
           <button 
             onClick={() => setActiveTab('resources')}
             className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 ${activeTab === 'resources' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
           >
-            Learning Resources
+            <span className="hidden sm:inline">Learning </span>Resources
           </button>
           <button 
             onClick={() => setActiveTab('quizzes')}
             className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 ${activeTab === 'quizzes' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
           >
-            Quizzes & Exams
+            Quizzes<span className="hidden sm:inline"> &amp; Exams</span>
           </button>
           <button 
             onClick={() => setActiveTab('announcements')}
@@ -253,58 +628,83 @@ export default function StudentCourseView() {
 
         {activeTab === 'quizzes' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Assessment Card: Pending */}
-            <article className="glass-card rounded-xl p-6 flex flex-col justify-between group hover:border-error/40 transition-all duration-300 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-error/10 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none group-hover:bg-error/20 transition-colors"></div>
-              <div>
-                <div className="flex justify-between items-start mb-4 relative z-10">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-error/10 text-error font-sans font-semibold text-[11px] border border-error/20 uppercase tracking-[0.1em]">
-                    Pending
-                  </span>
-                </div>
-                <h3 className="font-display text-[22px] font-medium text-on-surface mb-2 relative z-10">
-                  Midterm: Neural Firing
-                </h3>
-                <p className="font-sans text-sm text-on-surface-variant mb-6 line-clamp-2 relative z-10">
-                  Covers chapters 1-4. High alert: This exam utilizes Lockdown Mode. Tab switching will terminate the exam.
-                </p>
-              </div>
-              <div className="flex items-center justify-end pt-4 border-t border-white/5 mt-auto relative z-10">
-                <Link to="/student/exam/midterm-1" className="px-5 py-2.5 bg-error/10 border border-error/30 text-error hover:bg-error/20 rounded-lg font-display text-sm font-semibold transition-all duration-300 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4" />
-                  Launch Lockdown Exam
-                </Link>
-              </div>
-            </article>
+            {assessments.map((assessment) => {
+              const now = new Date();
+              const openTime = new Date(assessment.openDate);
+              const isLocked = assessment.status === 'Pending' && now < openTime;
 
-            {/* Assessment Card: Completed */}
-            <article className="glass-card rounded-xl p-6 flex flex-col justify-between relative overflow-hidden opacity-80">
-              <div>
-                <div className="flex justify-between items-start mb-4 relative z-10">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 font-sans font-semibold text-[11px] border border-emerald-500/20 uppercase tracking-[0.1em]">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Completed
-                  </span>
-                </div>
-                <h3 className="font-display text-[22px] font-medium text-on-surface mb-2 relative z-10">
-                  Quiz 1: Fundamentals
-                </h3>
-                <p className="font-sans text-sm text-on-surface-variant mb-6 relative z-10">
-                  Score: 94% • Submitted Oct 1, 2023
-                </p>
-              </div>
-              <div className="flex items-center justify-end pt-4 border-t border-white/5 mt-auto relative z-10">
-                <button className="px-5 py-2 bg-transparent text-on-surface-variant hover:text-on-surface transition-colors font-display text-sm flex items-center gap-2">
-                  View Results <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            </article>
-
+              return (
+                <article
+                  key={assessment.id}
+                  className={clsx(
+                    "glass-card rounded-xl p-6 flex flex-col justify-between relative overflow-hidden transition-all duration-300",
+                    assessment.status === 'Completed' ? 'opacity-80' : 'hover:border-primary-fixed-dim/30 hover:shadow-lg hover:shadow-primary-fixed-dim/5'
+                  )}
+                >
+                  <div>
+                    <div className="flex justify-between items-start mb-4 relative z-10">
+                      <span className={clsx(
+                        "inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-sans font-semibold text-[11px] border uppercase tracking-[0.1em]",
+                        assessment.status === 'Completed' 
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                          : isLocked
+                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            : 'bg-primary-fixed-dim/10 text-primary-fixed-dim border-primary-fixed-dim/20'
+                      )}>
+                        {assessment.status === 'Completed' ? 'Completed' : isLocked ? 'Locked' : 'Open'}
+                      </span>
+                    </div>
+                    <h3 className="font-display text-[22px] font-medium text-on-surface mb-2 relative z-10">
+                      {assessment.title}
+                    </h3>
+                    <p className="font-sans text-sm text-on-surface-variant mb-6 line-clamp-2 relative z-10">
+                      {assessment.status === 'Completed' 
+                        ? `Score: ${assessment.score} • Submitted ${assessment.date}` 
+                        : assessment.description}
+                    </p>
+                    {isLocked && (
+                      <p className="font-sans text-xs text-amber-400/80 font-medium flex items-center gap-1.5 mb-4 relative z-10">
+                        <Clock className="w-3.5 h-3.5" />
+                        Opens: {openTime.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-end pt-4 border-t border-white/5 mt-auto relative z-10">
+                    {assessment.status === 'Pending' ? (
+                      isLocked ? (
+                        <button
+                          disabled
+                          className="px-5 py-2.5 bg-white/5 border border-white/5 text-slate-500 rounded-lg font-display text-sm font-semibold flex items-center gap-2 cursor-not-allowed"
+                        >
+                          <Lock className="w-4 h-4" />
+                          Locked
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setTakingQuiz(assessment)}
+                          className="px-5 py-2.5 bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim hover:bg-primary-fixed-dim hover:text-on-primary-fixed rounded-lg font-display text-sm font-semibold transition-all duration-300 flex items-center gap-2"
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                          Start Quiz
+                        </button>
+                      )
+                    ) : (
+                      <button
+                        onClick={() => setViewingResults(assessment)}
+                        className="px-5 py-2 bg-transparent text-on-surface-variant hover:text-on-surface transition-colors font-display text-sm flex items-center gap-2"
+                      >
+                        View Results <ArrowRight className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
 
         {activeTab === 'announcements' && (
           <div className="space-y-6 max-w-3xl">
-            {/* Announcement 1 */}
             <article className="glass-card rounded-xl p-6 relative overflow-hidden border border-white/5 hover:border-white/10 transition-colors">
               <div className="flex gap-4">
                 <div className="w-12 h-12 rounded-full bg-primary-fixed-dim/20 flex items-center justify-center shrink-0">
@@ -318,13 +718,12 @@ export default function StudentCourseView() {
                     </span>
                   </div>
                   <p className="font-sans text-sm text-on-surface-variant leading-relaxed">
-                    Hello class, just a reminder that our midterm exam is scheduled for next Tuesday. Please ensure you have reviewed chapters 1 through 4. The exam will utilize Lockdown Mode, so make sure your system is ready.
+                    Hello class, just a reminder that our midterm exam is scheduled for next Tuesday. Please ensure you have reviewed chapters 1 through 4. Good luck!
                   </p>
                 </div>
               </div>
             </article>
 
-            {/* Announcement 2 */}
             <article className="glass-card rounded-xl p-6 relative overflow-hidden border border-white/5 hover:border-white/10 transition-colors">
               <div className="flex gap-4">
                 <div className="w-12 h-12 rounded-full bg-surface-variant flex items-center justify-center shrink-0">
@@ -355,6 +754,17 @@ export default function StudentCourseView() {
         resource={reviewingResource}
         onClose={() => setReviewingResource(null)}
         onSubmit={handleReviewSubmit}
+      />
+
+      <QuizTakingModal
+        assessment={takingQuiz}
+        onClose={() => setTakingQuiz(null)}
+        onSubmit={handleQuizSubmit}
+      />
+
+      <QuizResultsModal
+        assessment={viewingResults}
+        onClose={() => setViewingResults(null)}
       />
     </>
   );

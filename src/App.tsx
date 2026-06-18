@@ -25,7 +25,7 @@ import Settings from './pages/student/Settings';
 import StudySpacesList from './pages/student/StudySpacesList';
 import StudySpace from './pages/student/StudySpace';
 import LockdownExam from './pages/student/LockdownExam';
-import StudentCommunity from './pages/student/StudentCommunity';
+import PlayMeGames from './pages/student/PlayMeGames';
 import CourseCatalog from './pages/student/CourseCatalog';
 
 export default function App() {
@@ -58,7 +58,7 @@ export default function App() {
           <Route path="/student/settings" element={<Settings />} />
           <Route path="/student/spaces" element={<StudySpacesList />} />
           <Route path="/student/space/:spaceId" element={<StudySpace />} />
-          <Route path="/student/community" element={<StudentCommunity />} />
+          <Route path="/student/games" element={<PlayMeGames />} />
           <Route path="/student/catalog" element={<CourseCatalog />} />
         </Route>
 

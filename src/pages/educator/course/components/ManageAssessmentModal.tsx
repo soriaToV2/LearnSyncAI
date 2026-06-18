@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { X, Check, List, ToggleLeft, HelpCircle, Edit3, GitMerge, AlignLeft, PenTool, Plus, Trash2, Save, Sparkles } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { Question, QuestionType } from '../../../../data/mockEducatorData';
+import Dropdown from '../../../../components/ui/Dropdown';
 
 // ─── Types (mirrors CreateAssessmentModal's GenQuestion) ──────────────────────
 type QType = QuestionType;
@@ -200,10 +201,10 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                         <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">
                           Q{idx + 1}
                         </span>
-                        <select
+                        <Dropdown
                           value={q.type}
-                          onChange={(e) => {
-                            const t = e.target.value as QType;
+                          onChange={(val) => {
+                            const t = val as QType;
                             updateQ(q.id, {
                               type: t,
                               options:
@@ -215,10 +216,9 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                               matchingPairs: [{ left: '', right: '' }],
                             });
                           }}
-                          className="bg-surface-container-high border border-white/10 rounded-lg px-2 py-1 text-xs text-white font-sans outline-none"
-                        >
-                          {Q_TYPES.map((qt) => <option key={qt.id} value={qt.id}>{qt.label}</option>)}
-                        </select>
+                          options={Q_TYPES.map(qt => ({ label: qt.label, value: qt.id }))}
+                          className="w-44 text-left"
+                        />
                       </div>
 
                       {/* Question textarea */}

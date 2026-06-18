@@ -29,7 +29,7 @@ export default function Login() {
       } else if (email === 'student' && password === 'student@12') {
         navigate('/student/dashboard');
       } else {
-        setError('Invalid credentials. Try: admin OR student (password: admin@12 / student@12)');
+        setError('Invalid credentials. Use mock roles: admin (Instructor) OR student (password: admin@12 / student@12)');
         setIsLoading(false);
       }
     }, 800);
@@ -38,19 +38,16 @@ export default function Login() {
   return (
     <div ref={wrapperRef} className="min-h-screen bg-page text-slate-200 flex flex-col relative overflow-hidden font-sans">
 
-      {/* Premium Ambient Background FX */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(218,226,253,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(218,226,253,0.03)_1px,transparent_1px)] bg-[size:4rem_4rem]"></div>
-        <div className="absolute top-0 right-0 w-[50vw] h-[50vw] max-w-[800px] max-h-[800px] bg-primary-fixed-dim/20 rounded-full blur-[150px] opacity-50 mix-blend-screen animate-pulse duration-1000"></div>
-        <div className="absolute bottom-0 left-0 w-[60vw] h-[60vw] max-w-[900px] max-h-[900px] bg-indigo-500/20 rounded-full blur-[150px] opacity-40 mix-blend-screen"></div>
+        <div className="absolute top-[-10%] right-[-10%] w-[60vw] h-[60vw] max-w-[800px] max-h-[800px] bg-primary-fixed-dim/15 rounded-full blur-[120px] mix-blend-screen animate-pulse duration-1000"></div>
+        <div className="absolute bottom-[-10%] left-[-10%] w-[50vw] h-[50vw] max-w-[700px] max-h-[700px] bg-emerald-500/10 rounded-full blur-[150px] mix-blend-screen"></div>
       </div>
 
       <main className="flex-grow flex items-center justify-center p-4 w-full max-w-[1000px] mx-auto relative z-10 min-h-screen">
 
-        {/* Glassmorphic Central Card */}
         <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-[90vh]">
 
-          {/* Left Side: Visual / Branding */}
           <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
             <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop')] bg-cover bg-center opacity-10 mix-blend-luminosity"></div>
 
@@ -58,9 +55,9 @@ export default function Login() {
               <div className="w-14 h-14 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
                 <BrainCircuit className="w-7 h-7 text-primary-fixed-dim" />
               </div>
-              <h1 className="font-display text-4xl font-bold text-white mb-4 leading-tight">Welcome back to <span className="text-primary-fixed-dim">LearnSyncAI</span></h1>
+              <h1 className="font-display text-4xl font-bold text-white mb-4 leading-tight">Welcome back to <span className="text-primary-fixed-dim">LearnSync AI</span></h1>
               <p className="font-sans text-slate-400 leading-relaxed">
-                Access your personalized learning matrix, track your academic progress, and connect with global educators.
+                Access your private BKT adaptive study space, track your latent mastery vectors, and securely clone peer workspaces.
               </p>
             </div>
 
@@ -68,36 +65,34 @@ export default function Login() {
               <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 backdrop-blur-md">
                 <ShieldCheck className="w-5 h-5 text-emerald-400" />
                 <div>
-                  <p className="font-display font-semibold text-sm text-slate-200">Secure Environment</p>
-                  <p className="font-sans text-xs text-slate-400">End-to-end encrypted sessions</p>
+                  <p className="font-display font-semibold text-sm text-slate-200">Database-Level Security</p>
+                  <p className="font-sans text-xs text-slate-400">PostgreSQL Row-Level Security (RLS)</p>
                 </div>
               </div>
               <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 backdrop-blur-md">
                 <Sparkles className="w-5 h-5 text-amber-400" />
                 <div>
-                  <p className="font-display font-semibold text-sm text-slate-200">AI-Powered Insights</p>
-                  <p className="font-sans text-xs text-slate-400">Smart analytics for your growth</p>
+                  <p className="font-display font-semibold text-sm text-slate-200">Adaptive AI Tracking</p>
+                  <p className="font-sans text-xs text-slate-400">Bayesian Knowledge Tracing (BKT) routing</p>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Right Side: Form */}
           <div className="w-full lg:w-1/2 p-6 md:p-10 flex flex-col justify-center bg-surface-container-lowest/50 relative overflow-y-auto no-scrollbar">
 
             <div className="w-full max-w-[320px] mx-auto flex flex-col justify-center">
-              {/* Mobile Header (only visible on small screens) */}
               <div className="lg:hidden flex flex-col items-center mb-6 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
                   <BrainCircuit className="w-8 h-8 text-primary-fixed-dim" />
                 </div>
-                <h1 className="font-display text-3xl font-bold text-white">LearnSyncAI</h1>
-                <p className="font-sans text-sm text-slate-400 mt-2">Initialize your session.</p>
+                <h1 className="font-display text-3xl font-bold text-white">LearnSync AI</h1>
+                <p className="font-sans text-sm text-slate-400 mt-2">Authenticate tenant session.</p>
               </div>
 
               <div className="mb-6">
                 <h2 className="hidden lg:block font-display text-2xl font-bold text-white mb-1">Sign In</h2>
-                <p className="hidden lg:block font-sans text-sm text-slate-400">Enter your credentials to access your account.</p>
+                <p className="hidden lg:block font-sans text-sm text-slate-400">Authenticate via Supabase Gateway to access your assigned role.</p>
               </div>
 
               <form className="flex flex-col gap-5" onSubmit={handleLogin}>
@@ -109,7 +104,6 @@ export default function Login() {
                   </div>
                 )}
 
-                {/* Advanced Input for Email */}
                 <div className="relative group">
                   <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
                   <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
@@ -140,7 +134,6 @@ export default function Login() {
                   </div>
                 </div>
 
-                {/* Advanced Input for Password */}
                 <div className="relative group">
                   <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
                   <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
