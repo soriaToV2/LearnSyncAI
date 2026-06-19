@@ -171,21 +171,62 @@ export default function CourseAssessments() {
 
       {/* Confirm dialog */}
       {confirmDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="absolute inset-0" onClick={() => setConfirmDialog(null)} />
-          <div className="relative w-full max-w-md bg-surface-container-high rounded-2xl border border-white/10 shadow-2xl p-6 animate-in zoom-in-95 duration-200">
-            <h3 className="font-display text-lg font-semibold text-white mb-2">Change Assessment Status?</h3>
-            <p className="font-sans text-sm text-slate-300 mb-6 leading-relaxed">
-              Update <strong>"{confirmDialog.title}"</strong> to{' '}
-              <span className="font-semibold text-primary-fixed-dim uppercase tracking-wider">
-                {STATUS_CONFIG[confirmDialog.newStatus].label}
-              </span>?
-            </p>
-            <div className="flex items-center justify-end gap-3">
-              <button onClick={() => setConfirmDialog(null)} className="px-4 py-2 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors">
+          
+          <div className="glass-card relative w-full max-w-sm rounded-2xl border border-white/10 p-6 space-y-6 text-center animate-in zoom-in-95 duration-200">
+            {/* Status-specific Icon */}
+            {(() => {
+              const status = confirmDialog.newStatus;
+              let IconComponent = Shield;
+              let iconColorClass = "text-primary-fixed-dim";
+              let iconBgClass = "bg-primary-fixed-dim/10 border-primary-fixed-dim/20";
+              
+              if (status === 'deployed') {
+                IconComponent = Rocket;
+                iconColorClass = "text-emerald-400";
+                iconBgClass = "bg-emerald-500/10 border-emerald-500/20";
+              } else if (status === 'ready') {
+                IconComponent = CheckCircle2;
+                iconColorClass = "text-primary-fixed-dim";
+                iconBgClass = "bg-primary-fixed-dim/10 border-primary-fixed-dim/20";
+              } else if (status === 'closed') {
+                IconComponent = XCircle;
+                iconColorClass = "text-rose-400";
+                iconBgClass = "bg-rose-500/10 border-rose-500/20";
+              } else if (status === 'draft') {
+                IconComponent = Clock;
+                iconColorClass = "text-slate-400";
+                iconBgClass = "bg-slate-500/10 border-slate-500/20";
+              }
+              
+              return (
+                <div className={`w-12 h-12 rounded-full border flex items-center justify-center mx-auto ${iconBgClass} ${iconColorClass}`}>
+                  <IconComponent className="w-5 h-5" />
+                </div>
+              );
+            })()}
+
+            <div className="space-y-2">
+              <h4 className="font-display text-lg font-bold text-white tracking-tight">Change Status?</h4>
+              <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                Are you sure you want to update <span className="text-white font-semibold">"{confirmDialog.title}"</span> to <span className="text-white font-semibold uppercase tracking-wider">{STATUS_CONFIG[confirmDialog.newStatus].label}</span>?
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDialog(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase transition-all"
+              >
                 Cancel
               </button>
-              <button onClick={executeStatusChange} className="px-5 py-2 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all active:scale-95">
+              <button
+                type="button"
+                onClick={executeStatusChange}
+                className="flex-1 px-4 py-2.5 bg-primary-fixed-dim hover:bg-primary-fixed-dim/80 text-on-primary-fixed font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-primary-fixed-dim/20"
+              >
                 Confirm
               </button>
             </div>

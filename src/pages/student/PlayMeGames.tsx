@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, Gamepad2, BrainCircuit, Zap, Award, RefreshCw, CheckCircle2, XCircle, ArrowRight, Hourglass, HelpCircle, Sparkles, TrendingUp, AlertCircle, Layers, ChevronDown, FlaskConical, Code, Brain } from 'lucide-react';
+import { Trophy, Gamepad2, BrainCircuit, Zap, Award, RefreshCw, CheckCircle2, XCircle, ArrowRight, Hourglass, HelpCircle, Sparkles, TrendingUp, AlertCircle, Layers, ChevronDown, FlaskConical, Code, Brain, FileText, Check, BookOpen } from 'lucide-react';
 import clsx from 'clsx';
 import { MOCK_COURSES, Course } from '../../data/mockCourses';
 
@@ -251,6 +251,40 @@ const getCourseDisplayInfo = (course: { id: string; title: string; category: str
   };
 };
 
+const getCourseResources = (courseId: string): string[] => {
+  const normalized = courseId.toLowerCase();
+  if (normalized.includes('bio') || normalized.includes('neuro')) {
+    return [
+      'Synaptic_Pathways_Ch4.pdf',
+      'Lecture_03_Action_Potentials.pptx',
+      'Study_Guide_Midterm.docx',
+      'Neuroanatomy_Handout.pdf'
+    ];
+  }
+  if (normalized.includes('phys') || normalized.includes('quantum')) {
+    return [
+      'Perturbation_Theory_Intro.pdf',
+      'Lecture_07_Angular_Momentum.pptx',
+      'Quantum_Field_Theory_Foundations.pdf',
+      'Spin_Calculations_Sheet.docx'
+    ];
+  }
+  if (normalized.includes('cs') || normalized.includes('algorithm')) {
+    return [
+      'Big_O_CheatSheet.pdf',
+      'Sorting_Algorithms_Visualized.pptx',
+      'Graph_Traversals_BFS_DFS.docx',
+      'Dynamic_Programming_Practice.pdf'
+    ];
+  }
+  return [
+    'Course_Syllabus_Overview.pdf',
+    'Lecture_Slides_Week1.pptx',
+    'Recommended_Readings.docx',
+    'Practice_Quiz_Questions.pdf'
+  ];
+};
+
 export default function PlayMeGames() {
   const enrolledCourses = MOCK_COURSES.filter(c => c.isEnrolled);
 
@@ -265,6 +299,19 @@ export default function PlayMeGames() {
   const [streak, setStreak] = useState(5);
   const [gameLevel, setGameLevel] = useState(4);
   const [activeGame, setActiveGame] = useState<'selection' | 'matching' | 'trivia' | 'crossword' | 'boggle'>('selection');
+
+  // Game Setup Modal states
+  const [isBuildModalOpen, setIsBuildModalOpen] = useState(false);
+  const [selectedGameType, setSelectedGameType] = useState<'matching' | 'crossword' | 'trivia' | 'boggle' | null>(null);
+  const [modalSelectedCourse, setModalSelectedCourse] = useState<string>(selectedCourse);
+  const [selectedResources, setSelectedResources] = useState<string[]>([]);
+  const [finalConnectedResources, setFinalConnectedResources] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (isBuildModalOpen && modalSelectedCourse) {
+      setSelectedResources(getCourseResources(modalSelectedCourse));
+    }
+  }, [modalSelectedCourse, isBuildModalOpen]);
 
   // AI adaptation states
   const [currentMastery, setCurrentMastery] = useState(68);
@@ -312,6 +359,39 @@ export default function PlayMeGames() {
   const [triviaFinished, setTriviaFinished] = useState(false);
   const [triviaCorrectStreak, setTriviaCorrectStreak] = useState(0);
   const [questionStartTime, setQuestionStartTime] = useState<number>(0);
+  const [triviaTimeLeft, setTriviaTimeLeft] = useState(5);
+
+  const handleTriviaTimeout = () => {
+    setTriviaSelected('TIMEOUT_EXPIRED');
+    setTriviaCorrectStreak(0);
+    setCurrentMastery(prev => Math.max(prev - 6, 10));
+    logAiAction("Time's up! Question answered incorrectly due to timeout. Trivia Blast complete.");
+
+    setTimeout(() => {
+      setTriviaFinished(true);
+      setTriviaScore(score => {
+        setTotalXp(xp => xp + (score * 100));
+        return score;
+      });
+    }, 1500);
+  };
+
+  useEffect(() => {
+    if (activeGame !== 'trivia' || triviaFinished || triviaSelected !== null) return;
+
+    const timer = setInterval(() => {
+      setTriviaTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          handleTriviaTimeout();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [activeGame, triviaFinished, triviaSelected, currentTriviaIdx, triviaQueue]);
 
   // Crossword game state
   const [crosswordAnswers, setCrosswordAnswers] = useState<Record<string, string>>({});
@@ -327,7 +407,7 @@ export default function PlayMeGames() {
   const [boggleFinished, setBoggleFinished] = useState(false);
   const [boggleMessage, setBoggleMessage] = useState<{ text: string; success: boolean } | null>(null);
 
-  const startMatchingGame = () => {
+  const startMatchingGame = (courseId = selectedCourse) => {
     setActiveGame('matching');
     setSelectedCardId(null);
     setMatchedIds([]);
@@ -335,9 +415,13 @@ export default function PlayMeGames() {
     setMatchingVictory(false);
     setMatcherClueId(null);
 
+    const targetCourse = MOCK_COURSES.find(c => c.id === courseId) || currentCourse;
+    const targetInfo = getCourseDisplayInfo(targetCourse);
+    const targetData = COURSE_DATABASE[targetInfo.gameKey];
+
     // Shuffle cards
     const cards: CardItem[] = [];
-    activeData.terms.forEach((item, idx) => {
+    targetData.terms.forEach((item, idx) => {
       const matchId = `pair-${idx}`;
       cards.push({ id: `term-${idx}`, type: 'term', text: item.term, matchId });
       cards.push({ id: `def-${idx}`, type: 'definition', text: item.definition, matchId });
@@ -348,7 +432,7 @@ export default function PlayMeGames() {
     logAiAction('Term Matcher launched. AI tracking matching mistakes to offer visual cues.');
   };
 
-  const startTriviaGame = () => {
+  const startTriviaGame = (courseId = selectedCourse) => {
     setActiveGame('trivia');
     setCurrentTriviaIdx(0);
     setTriviaSelected(null);
@@ -356,42 +440,24 @@ export default function PlayMeGames() {
     setTriviaFinished(false);
     setTriviaCorrectStreak(0);
     setQuestionStartTime(Date.now());
+    setTriviaTimeLeft(5);
 
-    // Build adaptive queue
-    const courseTrivia = activeData.trivia;
-    let initialQueue: Question[] = [];
-    if (currentMastery < 50) {
-      initialQueue = [
-        courseTrivia.find(q => q.difficulty === 'easy') || courseTrivia[0],
-        courseTrivia.find(q => q.difficulty === 'easy' && q.question !== courseTrivia[0].question) || courseTrivia[1],
-        courseTrivia.find(q => q.difficulty === 'medium') || courseTrivia[2]
-      ];
-      setAiDifficulty('Adaptive-Easy');
-      logAiAction(`BKT Mastery low (<50%). Dynamic Easy queue loaded for ${activeData.courseName}.`);
+    const targetCourse = MOCK_COURSES.find(c => c.id === courseId) || currentCourse;
+    const targetInfo = getCourseDisplayInfo(targetCourse);
+    const targetData = COURSE_DATABASE[targetInfo.gameKey];
 
-    } else if (currentMastery < 80) {
-      initialQueue = [
-        courseTrivia.find(q => q.difficulty === 'medium') || courseTrivia[2],
-        courseTrivia.find(q => q.difficulty === 'easy') || courseTrivia[0],
-        courseTrivia.find(q => q.difficulty === 'hard') || courseTrivia[4]
-      ];
-      setAiDifficulty('Adaptive-Medium');
-      logAiAction(`BKT Mastery balanced. Dynamic Medium queue loaded for ${activeData.courseName}.`);
-
-    } else {
-      initialQueue = [
-        courseTrivia.find(q => q.difficulty === 'hard') || courseTrivia[4],
-        courseTrivia.find(q => q.difficulty === 'hard' && q.question !== courseTrivia[4].question) || courseTrivia[5],
-        courseTrivia.find(q => q.difficulty === 'medium') || courseTrivia[2]
-      ];
-      setAiDifficulty('Adaptive-Hard');
-      logAiAction(`BKT Mastery high (>80%). Dynamic Hard queue loaded for ${activeData.courseName}.`);
+    // Build rapid queue of exactly 10 questions by cycling course trivia questions
+    const courseTrivia = targetData.trivia;
+    const initialQueue: Question[] = [];
+    for (let i = 0; i < 10; i++) {
+      initialQueue.push(courseTrivia[i % courseTrivia.length]);
     }
 
     setTriviaQueue(initialQueue);
+    logAiAction(`Trivia Blast launched with 10 questions. Speed Mode active (5s limit).`);
   };
 
-  const startCrosswordGame = () => {
+  const startCrosswordGame = (courseId = selectedCourse) => {
     setActiveGame('crossword');
     setCrosswordAnswers({});
     setCrosswordChecked(false);
@@ -400,7 +466,7 @@ export default function PlayMeGames() {
     logAiAction('Crossword grid loaded. Clue hints affect dynamic accuracy scores.');
   };
 
-  const startBoggleGame = () => {
+  const startBoggleGame = (courseId = selectedCourse) => {
     setActiveGame('boggle');
     setBoggleSelection([]);
     setBoggleFoundWords([]);
@@ -413,6 +479,24 @@ export default function PlayMeGames() {
     setBoggleMessage(null);
 
     logAiAction(`Boggle active. Timer set to ${dynamicTime}s based on mastery.`);
+  };
+
+  const handleBuildAndLaunchGame = () => {
+    if (selectedResources.length === 0 || !selectedGameType) return;
+
+    setSelectedCourse(modalSelectedCourse);
+    setFinalConnectedResources(selectedResources);
+    setIsBuildModalOpen(false);
+
+    if (selectedGameType === 'matching') {
+      startMatchingGame(modalSelectedCourse);
+    } else if (selectedGameType === 'crossword') {
+      startCrosswordGame(modalSelectedCourse);
+    } else if (selectedGameType === 'trivia') {
+      startTriviaGame(modalSelectedCourse);
+    } else if (selectedGameType === 'boggle') {
+      startBoggleGame(modalSelectedCourse);
+    }
   };
 
   const handleCardClick = (id: string) => {
@@ -481,39 +565,30 @@ export default function PlayMeGames() {
     } else {
       setTriviaCorrectStreak(0);
       setCurrentMastery(prev => Math.max(prev - 6, 10));
-      logAiAction(`Incorrect response. Latency: ${latency.toFixed(1)}s. Adjusting BKT weights.`);
+      logAiAction(`Incorrect response. Latency: ${latency.toFixed(1)}s. Trivia Blast complete.`);
     }
 
-    // Adjust queue on answer
     setTimeout(() => {
-      if (currentTriviaIdx < triviaQueue.length - 1) {
-        const courseTrivia = activeData.trivia;
-        if (isCorrect && latency < 3.5 && currentTriviaIdx === 0) {
-          const hardQ = courseTrivia.find(q => q.difficulty === 'hard' && !triviaQueue.includes(q));
-          if (hardQ) {
-            const newQueue = [...triviaQueue];
-            newQueue[1] = hardQ;
-            setTriviaQueue(newQueue);
-            logAiAction('AI Engine: Speed & correctness detected. Upgrading Question 2 to Hard.');
-          }
+      if (isCorrect) {
+        if (currentTriviaIdx < triviaQueue.length - 1) {
+          setCurrentTriviaIdx(prev => prev + 1);
+          setTriviaSelected(null);
+          setTriviaTimeLeft(5);
+          setQuestionStartTime(Date.now());
+        } else {
+          setTriviaFinished(true);
+          setTriviaScore(score => {
+            setTotalXp(xp => xp + (score * 100));
+            return score;
+          });
         }
-        if (!isCorrect && currentTriviaIdx === 0) {
-          const easyQ = courseTrivia.find(q => q.difficulty === 'easy' && !triviaQueue.includes(q));
-          if (easyQ) {
-            const newQueue = [...triviaQueue];
-            newQueue[1] = easyQ;
-            setTriviaQueue(newQueue);
-            logAiAction('AI Engine: Concept struggle detected. Downgrading Question 2 to Easy.');
-          }
-        }
-
-        setCurrentTriviaIdx(prev => prev + 1);
-        setTriviaSelected(null);
-        setQuestionStartTime(Date.now());
       } else {
+        // Incorrect answer ends the game immediately
         setTriviaFinished(true);
-        const gainedXp = triviaScore * 100;
-        setTotalXp(prev => prev + gainedXp);
+        setTriviaScore(score => {
+          setTotalXp(xp => xp + (score * 100));
+          return score;
+        });
       }
     }, 1500);
   };
@@ -654,124 +729,7 @@ export default function PlayMeGames() {
             </div>
           </div>
         </div>
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/5 p-4 rounded-xl border border-white/5 z-50 relative">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400 font-sans">
-            <Layers className="w-4 h-4 text-primary-fixed-dim" />
-            Active Target Syllabus:
-          </div>
-
-          <div className="relative min-w-[280px] z-50">
-            <button
-              onClick={() => setIsDropdownOpen(prev => !prev)}
-              className="w-full flex items-center justify-between gap-3 bg-surface-container border border-white/10 text-white font-sans text-sm px-4 py-2.5 rounded-xl hover:border-primary-fixed-dim focus:border-primary-fixed-dim outline-none transition-all cursor-pointer select-none"
-            >
-              <div className="flex items-center gap-2.5">
-                {React.createElement(
-                  displayInfo.icon,
-                  { className: `w-4 h-4 ${displayInfo.color}` }
-                )}
-                <span className="font-semibold text-slate-200">
-                  {currentCourse.title}
-                </span>
-              </div>
-              <ChevronDown className={clsx("w-4 h-4 text-slate-400 transition-transform duration-200", isDropdownOpen && "rotate-180")} />
-            </button>
-
-            {isDropdownOpen && (
-              <>
-                {/* Click outside overlay */}
-                <div className="fixed inset-0 z-40" onClick={() => setIsDropdownOpen(false)} />
-
-                {/* Menu items popover */}
-                <div className="absolute top-full right-0 mt-2 w-full bg-slate-900 border border-white/10 rounded-xl overflow-hidden shadow-2xl z-50 py-1.5 animate-in slide-in-from-top-2 duration-150">
-                  {enrolledCourses.map((c) => {
-                    const info = getCourseDisplayInfo(c);
-                    const isSelected = selectedCourse === c.id;
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() => {
-                          handleCourseChange(c.id);
-                          setIsDropdownOpen(false);
-                        }}
-                        className={clsx(
-                          "w-full flex items-center gap-3 px-4 py-2.5 font-sans text-sm text-left transition-all outline-none",
-                          isSelected
-                            ? "bg-primary-fixed-dim/10 text-primary-fixed-dim font-semibold"
-                            : "text-slate-350 hover:bg-white/5 hover:text-white"
-                        )}
-                      >
-                        <div className={`p-1.5 rounded-lg ${info.bg}`}>
-                          <info.icon className={`w-3.5 h-3.5 ${info.color}`} />
-                        </div>
-                        <span className="flex-1">{c.title}</span>
-                        {isSelected && (
-                          <div className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim shadow-[0_0_8px_rgba(0,218,243,0.8)]" />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
       </header>
-
-      <section className="bg-slate-950/80 border-b border-white/5 p-6 animate-in fade-in duration-300">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* Mastery index bar */}
-          <div className="bg-surface-container/30 border border-white/5 rounded-xl p-4 flex flex-col justify-between h-full">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold font-sans text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <BrainCircuit className="w-4 h-4 text-primary-fixed-dim" />
-                Adaptive Mastery Index
-              </span>
-              <span className="text-sm font-bold font-display text-primary-fixed-dim">{currentMastery}%</span>
-            </div>
-            <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden mb-3">
-              <div
-                className="bg-primary-fixed-dim h-full rounded-full transition-all duration-500 shadow-[0_0_10px_rgba(0,218,243,0.5)]"
-                style={{ width: `${currentMastery}%` }}
-              />
-            </div>
-            <p className="text-[11px] font-sans text-slate-400 leading-relaxed">
-              Calculated using Bayesian Knowledge Tracing (BKT) based on your correctness rates and response speed.
-            </p>
-          </div>
-
-          {/* AI Difficulty State */}
-          <div className="bg-surface-container/30 border border-white/5 rounded-xl p-4 flex flex-col justify-between h-full">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold font-sans text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-cyan-400" />
-                DDA Controller Status
-              </span>
-              <span className="text-sm font-bold font-display text-cyan-400">{aiDifficulty}</span>
-            </div>
-            <div className="flex items-center gap-2 mt-1 mb-2 text-xs font-semibold font-sans text-emerald-400">
-              <TrendingUp className="w-4 h-4" /> Live Scaling Mode Active
-            </div>
-            <p className="text-[11px] font-sans text-slate-400 leading-relaxed">
-              Dynamic Difficulty Adjustment (DDA) tunes timers, clue frequency, and question levels as you play.
-            </p>
-          </div>
-
-          {/* Real-time AI logs terminal ticker */}
-          <div className="bg-slate-900 border border-white/5 rounded-xl p-4 h-[7.5rem] flex flex-col justify-between">
-            <span className="text-[9px] font-sans font-bold uppercase tracking-widest text-slate-500 mb-2">AI Adaptation Engine Log</span>
-            <div className="flex-1 overflow-y-auto no-scrollbar font-mono text-[10px] text-slate-400 space-y-1">
-              {aiLogs.map((log, index) => (
-                <div key={index} className="flex gap-1.5 items-start">
-                  <span className="text-primary-fixed-dim select-none">&gt;</span>
-                  <span className="leading-normal">{log}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
 
       <main className="flex-1 p-4 md:p-8 overflow-y-auto max-w-6xl mx-auto w-full">
 
@@ -787,11 +745,15 @@ export default function PlayMeGames() {
                   </div>
                   <h3 className="font-display text-xl font-bold text-white mb-2">Term Matcher</h3>
                   <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
-                    Connect core {activeData.courseName} terms to their exact scientific definitions. Match them all with zero errors to secure maximum XP!
+                    Connect core course terms to their exact scientific definitions. Match them all with zero errors to secure maximum XP!
                   </p>
                 </div>
                 <button
-                  onClick={startMatchingGame}
+                  onClick={() => {
+                    setSelectedGameType('matching');
+                    setModalSelectedCourse(selectedCourse);
+                    setIsBuildModalOpen(true);
+                  }}
                   className="w-full py-3 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim font-display font-semibold hover:bg-primary-fixed-dim hover:text-on-primary-fixed transition-all duration-300 flex items-center justify-center gap-2 active:scale-95"
                 >
                   Play Game <ArrowRight className="w-4 h-4" />
@@ -807,11 +769,15 @@ export default function PlayMeGames() {
                   </div>
                   <h3 className="font-display text-xl font-bold text-white mb-2">Mini Crossword</h3>
                   <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
-                    Solve {activeData.courseName} cross-clues inside an interactive grid. Read the horizontal and vertical hints to identify core structures.
+                    Solve course cross-clues inside an interactive grid. Read the horizontal and vertical hints to identify core structures.
                   </p>
                 </div>
                 <button
-                  onClick={startCrosswordGame}
+                  onClick={() => {
+                    setSelectedGameType('crossword');
+                    setModalSelectedCourse(selectedCourse);
+                    setIsBuildModalOpen(true);
+                  }}
                   className="w-full py-3 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-400 font-display font-semibold hover:bg-amber-400 hover:text-black transition-all duration-300 flex items-center justify-center gap-2 active:scale-95"
                 >
                   Play Game <ArrowRight className="w-4 h-4" />
@@ -827,11 +793,15 @@ export default function PlayMeGames() {
                   </div>
                   <h3 className="font-display text-xl font-bold text-white mb-2">Trivia Blast</h3>
                   <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
-                    Test your memory under time constraints with rapid-fire questions covering {activeData.courseName} modules. Earn XP multiplier streaks!
+                    Test your memory under time constraints with rapid-fire questions covering course modules. Earn XP multiplier streaks!
                   </p>
                 </div>
                 <button
-                  onClick={startTriviaGame}
+                  onClick={() => {
+                    setSelectedGameType('trivia');
+                    setModalSelectedCourse(selectedCourse);
+                    setIsBuildModalOpen(true);
+                  }}
                   className="w-full py-3 rounded-xl bg-cyan-400/10 border border-cyan-400/30 text-cyan-400 font-display font-semibold hover:bg-cyan-400 hover:text-black transition-all duration-300 flex items-center justify-center gap-2 active:scale-95"
                 >
                   Play Game <ArrowRight className="w-4 h-4" />
@@ -847,11 +817,15 @@ export default function PlayMeGames() {
                   </div>
                   <h3 className="font-display text-xl font-bold text-white mb-2">Word Boggle</h3>
                   <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
-                    Spell {activeData.courseName} terms by linking adjacent letter blocks in any direction. Discover words before the timer runs out.
+                    Spell course terms by linking adjacent letter blocks in any direction. Discover words before the timer runs out.
                   </p>
                 </div>
                 <button
-                  onClick={startBoggleGame}
+                  onClick={() => {
+                    setSelectedGameType('boggle');
+                    setModalSelectedCourse(selectedCourse);
+                    setIsBuildModalOpen(true);
+                  }}
                   className="w-full py-3 rounded-xl bg-indigo-400/10 border border-indigo-400/30 text-indigo-400 font-display font-semibold hover:bg-indigo-450 hover:text-black transition-all duration-300 flex items-center justify-center gap-2 active:scale-95"
                 >
                   Play Game <ArrowRight className="w-4 h-4" />
@@ -871,8 +845,19 @@ export default function PlayMeGames() {
               >
                 ← Back to Games
               </button>
+              {finalConnectedResources.length > 0 && (
+                <div className="flex flex-wrap gap-2 items-center bg-primary-fixed-dim/5 border border-primary-fixed-dim/10 rounded-xl px-3 py-1.5 text-xs font-sans text-slate-400">
+                  <span className="font-semibold text-slate-350">Connected Materials:</span>
+                  {finalConnectedResources.map((res) => (
+                    <span key={res} className="px-2 py-0.5 bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 rounded text-primary-fixed-dim text-[11px] flex items-center gap-1 font-medium">
+                      <FileText className="w-3 h-3" />
+                      {res}
+                    </span>
+                  ))}
+                </div>
+              )}
               <button
-                onClick={startMatchingGame}
+                onClick={() => startMatchingGame(selectedCourse)}
                 className="flex items-center gap-1.5 px-4 py-2 text-primary-fixed-dim hover:text-white transition-all font-sans text-sm font-semibold"
               >
                 <RefreshCw className="w-4 h-4" /> Reset Grid
@@ -970,6 +955,17 @@ export default function PlayMeGames() {
               >
                 ← Back to Games
               </button>
+              {finalConnectedResources.length > 0 && (
+                <div className="flex flex-wrap gap-2 items-center bg-amber-400/5 border border-amber-400/10 rounded-xl px-3 py-1.5 text-xs font-sans text-slate-400">
+                  <span className="font-semibold text-slate-350">Connected Materials:</span>
+                  {finalConnectedResources.map((res) => (
+                    <span key={res} className="px-2 py-0.5 bg-amber-400/10 border border-amber-400/20 rounded text-amber-400 text-[11px] flex items-center gap-1 font-medium">
+                      <FileText className="w-3 h-3" />
+                      {res}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2.5">
                 <button
                   onClick={useCrosswordHint}
@@ -978,7 +974,7 @@ export default function PlayMeGames() {
                   <Sparkles className="w-3.5 h-3.5" /> AI Assist Hint
                 </button>
                 <button
-                  onClick={startCrosswordGame}
+                  onClick={() => startCrosswordGame(selectedCourse)}
                   className="flex items-center gap-1.5 px-4 py-2 text-amber-400 hover:text-white transition-all font-sans text-sm font-semibold"
                 >
                   <RefreshCw className="w-4 h-4" /> Reset Grid
@@ -1098,13 +1094,24 @@ export default function PlayMeGames() {
         {/* Trivia Blast */}
         {activeGame === 'trivia' && (
           <div className="space-y-6 max-w-2xl mx-auto animate-in zoom-in-95 duration-200">
-            <div>
+            <div className="flex flex-wrap gap-4 justify-between items-center">
               <button
                 onClick={() => setActiveGame('selection')}
                 className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 font-sans text-sm font-semibold text-slate-300 transition-all"
               >
                 ← Back to Games
               </button>
+              {finalConnectedResources.length > 0 && (
+                <div className="flex flex-wrap gap-2 items-center bg-cyan-400/5 border border-cyan-400/10 rounded-xl px-3 py-1.5 text-xs font-sans text-slate-400">
+                  <span className="font-semibold text-slate-350">Connected Materials:</span>
+                  {finalConnectedResources.map((res) => (
+                    <span key={res} className="px-2 py-0.5 bg-cyan-400/10 border border-cyan-400/20 rounded text-cyan-400 text-[11px] flex items-center gap-1 font-medium">
+                      <FileText className="w-3 h-3" />
+                      {res}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {triviaFinished ? (
@@ -1115,7 +1122,7 @@ export default function PlayMeGames() {
                 <div>
                   <h2 className="font-display text-2xl font-bold text-white">Trivia Complete!</h2>
                   <p className="font-sans text-slate-350 text-sm mt-2">
-                    You scored {triviaScore} out of {triviaQueue.length} correct in {aiDifficulty} mode.
+                    You scored {triviaScore} out of {triviaQueue.length} correct.
                   </p>
                 </div>
                 <div className="inline-block px-4 py-1.5 bg-cyan-500/20 rounded-full font-display font-semibold text-cyan-400 border border-cyan-500/35">
@@ -1129,7 +1136,7 @@ export default function PlayMeGames() {
                     Close Game
                   </button>
                   <button
-                    onClick={startTriviaGame}
+                    onClick={() => startTriviaGame(selectedCourse)}
                     className="px-6 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-white font-sans font-bold text-sm transition-all active:scale-95 shadow-lg shadow-cyan-500/10"
                   >
                     Play Again
@@ -1141,9 +1148,14 @@ export default function PlayMeGames() {
                 <div className="glass-card rounded-2xl border border-white/5 p-6 md:p-8 space-y-6">
                   <div className="flex justify-between items-center text-xs font-semibold uppercase tracking-widest text-slate-500 font-sans border-b border-white/5 pb-4">
                     <span>Question {currentTriviaIdx + 1} of {triviaQueue.length}</span>
-                    <span className="text-cyan-455 flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5 animate-spin duration-3000" />
-                      Dynamic Difficulty: {triviaQueue[currentTriviaIdx].difficulty}
+                    <span className={clsx(
+                      "flex items-center gap-1.5 font-bold px-2.5 py-1 rounded-lg border transition-all duration-300 font-sans",
+                      triviaTimeLeft <= 2
+                        ? "bg-rose-500/10 border-rose-500/30 text-rose-400 animate-pulse scale-105"
+                        : "bg-cyan-500/10 border-cyan-500/20 text-cyan-400"
+                    )}>
+                      <Hourglass className="w-3.5 h-3.5" />
+                      Time Left: {triviaTimeLeft}s
                     </span>
                   </div>
 
@@ -1200,7 +1212,17 @@ export default function PlayMeGames() {
               >
                 ← Back to Games
               </button>
-
+              {finalConnectedResources.length > 0 && (
+                <div className="flex flex-wrap gap-2 items-center bg-indigo-400/5 border border-indigo-400/10 rounded-xl px-3 py-1.5 text-xs font-sans text-slate-400">
+                  <span className="font-semibold text-slate-350">Connected Materials:</span>
+                  {finalConnectedResources.map((res) => (
+                    <span key={res} className="px-2 py-0.5 bg-indigo-400/10 border border-indigo-400/20 rounded text-indigo-400 text-[11px] flex items-center gap-1 font-medium">
+                      <FileText className="w-3 h-3" />
+                      {res}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="flex items-center gap-2 px-4 py-2 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-indigo-400 font-sans font-bold text-sm">
                 <Hourglass className="w-4 h-4" />
                 <span>Timer: {boggleTimeLeft}s</span>
@@ -1229,7 +1251,7 @@ export default function PlayMeGames() {
                     Close Game
                   </button>
                   <button
-                    onClick={startBoggleGame}
+                    onClick={() => startBoggleGame(selectedCourse)}
                     className="px-6 py-2.5 rounded-xl bg-indigo-500 text-white font-sans font-bold text-sm hover:bg-indigo-450 transition-all active:scale-95"
                   >
                     Play Again
@@ -1338,6 +1360,163 @@ export default function PlayMeGames() {
           </div>
         )}
       </main>
+
+      {/* Game Build / Resource Selection Modal */}
+      {isBuildModalOpen && selectedGameType && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop overlay */}
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={() => setIsBuildModalOpen(false)}
+          />
+
+          {/* Modal Container */}
+          <div className="relative bg-slate-900 border border-white/10 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl p-6 space-y-6 animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-xl font-display font-bold text-white flex items-center gap-2">
+                  <Gamepad2 className="w-5.5 h-5.5 text-primary-fixed-dim" />
+                  Build {selectedGameType === 'matching' ? 'Term Matcher' : selectedGameType === 'crossword' ? 'Mini Crossword' : selectedGameType === 'trivia' ? 'Trivia Blast' : 'Word Boggle'} Game
+                </h3>
+                <p className="text-xs text-slate-400 font-sans mt-1">
+                  Connect reference materials to formulate custom game content.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsBuildModalOpen(false)}
+                className="text-slate-450 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Course Selector (Single Selection) */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-sans block">
+                Target Course (Select 1)
+              </label>
+              <div className="grid grid-cols-1 gap-2.5">
+                {enrolledCourses.map((c) => {
+                  const isSelected = modalSelectedCourse === c.id;
+                  const info = getCourseDisplayInfo(c);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setModalSelectedCourse(c.id)}
+                      className={clsx(
+                        "w-full flex items-center gap-3 p-3 rounded-xl border font-sans text-left transition-all active:scale-[0.99]",
+                        isSelected
+                          ? "bg-primary-fixed-dim/10 border-primary-fixed-dim text-white shadow-[0_0_15px_rgba(0,218,243,0.15)]"
+                          : "bg-surface-container border-white/5 text-slate-350 hover:bg-white/5 hover:text-white"
+                      )}
+                    >
+                      <div className={`p-2 rounded-lg ${info.bg}`}>
+                        <info.icon className={`w-4 h-4 ${info.color}`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="block font-semibold text-sm truncate">{c.title}</span>
+                        <span className="block text-[10px] text-slate-500">{c.courseCode} • {c.instructor}</span>
+                      </div>
+                      {isSelected && (
+                        <div className="w-5 h-5 rounded-full bg-primary-fixed-dim flex items-center justify-center text-black">
+                          <Check className="w-3.5 h-3.5 font-bold" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Learning Materials Selector (Multiple Selection) */}
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-sans">
+                  Learning Materials (Select Multiple)
+                </label>
+                {getCourseResources(modalSelectedCourse).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allRes = getCourseResources(modalSelectedCourse);
+                      if (selectedResources.length === allRes.length) {
+                        setSelectedResources([]);
+                      } else {
+                        setSelectedResources(allRes);
+                      }
+                    }}
+                    className="text-[10px] font-sans font-bold text-primary-fixed-dim hover:underline"
+                  >
+                    {selectedResources.length === getCourseResources(modalSelectedCourse).length ? 'Deselect All' : 'Select All'}
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-slate-950/50 border border-white/5 rounded-xl p-3 max-h-48 overflow-y-auto space-y-2.5">
+                {getCourseResources(modalSelectedCourse).map((res) => {
+                  const isChecked = selectedResources.includes(res);
+                  return (
+                    <button
+                      key={res}
+                      type="button"
+                      onClick={() => {
+                        if (isChecked) {
+                          setSelectedResources(prev => prev.filter(r => r !== res));
+                        } else {
+                          setSelectedResources(prev => [...prev, res]);
+                        }
+                      }}
+                      className={clsx(
+                        "w-full flex items-center gap-3 p-2.5 rounded-lg border font-sans text-xs text-left transition-all",
+                        isChecked
+                          ? "bg-white/5 border-white/10 text-white"
+                          : "bg-transparent border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+                      )}
+                    >
+                      <div className={clsx(
+                        "w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0",
+                        isChecked ? "bg-primary-fixed-dim border-primary-fixed-dim text-black" : "border-white/20 bg-white/5"
+                      )}>
+                        {isChecked && <Check className="w-3.5 h-3.5 font-bold" />}
+                      </div>
+                      <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="truncate flex-1 font-medium">{res}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selectedResources.length === 0 && (
+                <div className="flex items-center gap-1.5 text-xs text-rose-450 bg-rose-500/5 border border-rose-500/10 p-2.5 rounded-xl mt-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>Please select at least one learning material to launch the game.</span>
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsBuildModalOpen(false)}
+                className="flex-1 py-3 rounded-xl border border-white/10 font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleBuildAndLaunchGame}
+                disabled={selectedResources.length === 0}
+                className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans font-bold text-sm hover:bg-primary-container transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-primary-fixed-dim/20"
+              >
+                Build & Launch Game
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

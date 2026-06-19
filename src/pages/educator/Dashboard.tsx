@@ -113,12 +113,6 @@ export default function Dashboard() {
       <div className="relative z-10 max-w-[1400px] mx-auto px-4 md:px-8 pt-8 md:pt-12 pb-16 w-full">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-2 h-2 rounded-full bg-primary-fixed-dim animate-ping shrink-0"></span>
-              <p className="font-mono text-xs text-slate-400 tracking-widest uppercase">
-                {EDUCATOR_PROFILE.university} · {EDUCATOR_PROFILE.department} · {EDUCATOR_PROFILE.semester}
-              </p>
-            </div>
             <h1 className="font-display text-4xl md:text-5xl font-extrabold text-white tracking-tight">
               Welcome back,{' '}
               <span

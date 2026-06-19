@@ -589,40 +589,44 @@ export default function AdaptiveTestTab({
               <ArrowLeft className="w-4 h-4" /> Exit Test
             </button>
 
-            <Modal
-              isOpen={showExitConfirmModal}
-              onClose={() => setShowExitConfirmModal(false)}
-              title="Exit Assessment"
-            >
-              <div className="space-y-6">
-                <div className="flex items-start gap-3.5 p-4 rounded-xl bg-red-500/10 border border-red-500/20">
-                  <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-                  <div className="font-sans text-sm text-slate-300 leading-relaxed">
-                    Are you sure you want to exit the current test? Your progress will not be saved.
+            {showExitConfirmModal && (
+              <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="glass-card w-full max-w-sm rounded-2xl border border-white/10 p-6 space-y-6 text-center animate-in fade-in zoom-in duration-200">
+                  <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <h4 className="font-display text-lg font-bold text-white tracking-tight">Exit Assessment?</h4>
+                    <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                      Are you sure you want to exit the current test? Your progress will not be saved.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowExitConfirmModal(false)}
+                      className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInQuiz(false);
+                        setQuizFinished(false);
+                        setPreviewingPastTest(null);
+                        setShowExitConfirmModal(false);
+                      }}
+                      className="flex-1 px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-rose-600/20"
+                    >
+                      Exit Test
+                    </button>
                   </div>
                 </div>
-
-                <div className="flex items-center justify-end gap-3">
-                  <button
-                    onClick={() => setShowExitConfirmModal(false)}
-                    className="px-4 py-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white font-sans text-sm font-semibold transition-all active:scale-95"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      setInQuiz(false);
-                      setQuizFinished(false);
-                      setPreviewingPastTest(null);
-                      setShowExitConfirmModal(false);
-                    }}
-                    className="px-4 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-sans text-sm font-semibold transition-all active:scale-95 shadow-lg shadow-red-500/15"
-                  >
-                    Exit Test
-                  </button>
-                </div>
               </div>
-            </Modal>
+            )}
           </>
         )}
       </div>

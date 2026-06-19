@@ -11,6 +11,7 @@ import MainLayout from './components/layout/MainLayout';
 import Dashboard from './pages/educator/Dashboard';
 import CoursesList from './pages/educator/CoursesList';
 import CourseResources from './pages/educator/course/CourseResources';
+import CourseMastery from './pages/educator/course/CourseMastery';
 import CourseAssessments from './pages/educator/course/CourseAssessments';
 import CourseStudents from './pages/educator/course/CourseStudents';
 import CourseAnnouncements from './pages/educator/course/CourseAnnouncements';
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/educator/dashboard" element={<Dashboard />} />
           <Route path="/educator/courses" element={<CoursesList />} />
           <Route path="/educator/course/:courseId/resources" element={<CourseResources />} />
+          <Route path="/educator/course/:courseId/mastery" element={<CourseMastery />} />
           <Route path="/educator/course/:courseId/assessments" element={<CourseAssessments />} />
           <Route path="/educator/course/:courseId/students" element={<CourseStudents />} />
           <Route path="/educator/course/:courseId/announcements" element={<CourseAnnouncements />} />

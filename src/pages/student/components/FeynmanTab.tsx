@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { Award, Sparkles, BookOpen, PenTool, RefreshCw, AlertCircle, CheckCircle2, MessageSquare, Heart } from 'lucide-react';
-import Dropdown from '../../../components/ui/Dropdown';
+import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
 
 interface FeynmanTabProps {
   availableResources: string[];
 }
 
 export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
-  const [selectedConcept, setSelectedConcept] = useState('Neurotransmitter Release');
+  const [selectedDocs, setSelectedDocs] = useState<string[]>(
+    availableResources.length > 0 ? [availableResources[0]] : []
+  );
   const [explanationText, setExplanationText] = useState('');
   const [audience, setAudience] = useState<'child' | 'teenager' | 'peer'>('child');
   const [isEvaluating, setIsEvaluating] = useState(false);
@@ -105,11 +107,12 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
-          <span className="font-sans text-xs font-semibold text-slate-400">Concept to Explain:</span>
-          <Dropdown
-            value={selectedConcept}
-            onChange={setSelectedConcept}
-            options={concepts}
+          <span className="font-sans text-xs font-semibold text-slate-400">Reference Materials:</span>
+          <MultiSelectDropdown
+            selectedValues={selectedDocs}
+            onChange={setSelectedDocs}
+            options={availableResources}
+            placeholder="Select resources..."
           />
         </div>
       </div>
@@ -177,7 +180,7 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
               </button>
               <button
                 onClick={handleEvaluate}
-                disabled={!explanationText.trim() || isEvaluating}
+                disabled={!explanationText.trim() || isEvaluating || selectedDocs.length === 0}
                 className="px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
               >
                 {isEvaluating ? (
@@ -219,6 +222,11 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
                 <div>
                   <h3 className="font-display text-lg font-semibold text-white">Audience Simplicity Check</h3>
                   <p className="font-sans text-xs text-slate-500 mt-1">Simulated Audience: <strong className="text-white uppercase font-bold">{audience}</strong></p>
+                  {selectedDocs.length > 0 && (
+                    <p className="font-sans text-xs text-slate-400 mt-2">
+                      Reference Materials: <strong className="text-white">{selectedDocs.join(', ')}</strong>
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-4 bg-white/5 px-4 py-2.5 rounded-xl border border-white/5 shrink-0">
                   <div className="text-right">

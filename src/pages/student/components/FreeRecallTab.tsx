@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { Brain, Sparkles, BookOpen, PenTool, RefreshCw, AlertTriangle, CheckCircle2, Lightbulb, ChevronRight } from 'lucide-react';
-import Dropdown from '../../../components/ui/Dropdown';
+import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
 
 interface FreeRecallTabProps {
   availableResources: string[];
 }
 
 export default function FreeRecallTab({ availableResources }: FreeRecallTabProps) {
-  const [selectedDoc, setSelectedDoc] = useState(availableResources[0] || 'Synaptic_Pathways_Ch4.pdf');
+  const [selectedDocs, setSelectedDocs] = useState<string[]>(
+    availableResources.length > 0 ? [availableResources[0]] : []
+  );
   const [recallText, setRecallText] = useState('');
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluationResult, setEvaluationResult] = useState<any | null>(null);
@@ -96,11 +98,12 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
-          <span className="font-sans text-xs font-semibold text-slate-400">Reference Material:</span>
-          <Dropdown
-            value={selectedDoc}
-            onChange={setSelectedDoc}
+          <span className="font-sans text-xs font-semibold text-slate-400">Reference Materials:</span>
+          <MultiSelectDropdown
+            selectedValues={selectedDocs}
+            onChange={setSelectedDocs}
             options={availableResources}
+            placeholder="Select resources..."
           />
         </div>
       </div>
@@ -136,7 +139,7 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
               </button>
               <button
                 onClick={handleEvaluate}
-                disabled={!recallText.trim() || isEvaluating}
+                disabled={!recallText.trim() || isEvaluating || selectedDocs.length === 0}
                 className="px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {isEvaluating ? (
@@ -159,7 +162,7 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
               <ul className="space-y-3 font-sans text-xs text-slate-400 leading-relaxed">
                 <li className="flex gap-2">
                   <span className="text-primary-fixed-dim font-bold">1.</span>
-                  <span>Close your notes and slides. Select your target document from the dropdown.</span>
+                  <span>Close your notes and slides. Select your target documents from the dropdown.</span>
                 </li>
                 <li className="flex gap-2">
                   <span className="text-primary-fixed-dim font-bold">2.</span>
@@ -191,6 +194,11 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
                 <div>
                   <h3 className="font-display text-lg font-semibold text-white">Semantic Match Analysis</h3>
                   <p className="font-sans text-xs text-slate-500 mt-1">Based on semantic vector similarity thresholds (`pgvector` cosine similarity)</p>
+                  {selectedDocs.length > 0 && (
+                    <p className="font-sans text-xs text-slate-400 mt-2">
+                      Reference Materials: <strong className="text-white">{selectedDocs.join(', ')}</strong>
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-4 bg-white/5 px-4 py-2.5 rounded-xl border border-white/5 shrink-0">
                   <div className="text-right">

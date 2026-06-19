@@ -107,6 +107,15 @@ export default function CourseLayout({ children }: { children: React.ReactNode }
             Learning Resources
           </NavLink>
           <NavLink
+            to={`/educator/course/${courseId}/mastery`}
+            className={({ isActive }) => clsx(
+              "px-6 py-4 font-display text-[15px] whitespace-nowrap transition-colors border-b-2",
+              isActive ? "text-primary-fixed-dim border-primary-fixed-dim bg-primary-fixed-dim/5 rounded-t-lg" : "text-on-surface-variant hover:text-on-surface border-transparent"
+            )}
+          >
+            Mastery
+          </NavLink>
+          <NavLink
             to={`/educator/course/${courseId}/assessments`}
             className={({ isActive }) => clsx(
               "px-6 py-4 font-display text-[15px] whitespace-nowrap transition-colors border-b-2",
@@ -138,39 +147,47 @@ export default function CourseLayout({ children }: { children: React.ReactNode }
         {children}
       </div>
 
-      <Modal isOpen={isArchiveOpen} onClose={() => setIsArchiveOpen(false)} title="Archive Course">
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 text-amber-400">
-            <Archive className="w-6 h-6 shrink-0" />
-            <p className="font-sans text-sm font-semibold">Confirm Archiving Module</p>
-          </div>
-          <p className="font-sans text-sm text-slate-300 leading-relaxed">
-            Are you sure you want to archive <strong className="text-white">{displayTitle}</strong>?
-            Archiving will remove this course from your active dashboard. You can still access it under the "Archived" tab in your course list.
-          </p>
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button
-              onClick={() => setIsArchiveOpen(false)}
-              className="px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                if (course) {
-                  course.status = 'archived';
-                  course.archivedAt = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                  setIsArchiveOpen(false);
-                  navigate('/educator/courses');
-                }
-              }}
-              className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-black font-sans text-sm font-bold rounded-xl transition-all shadow-lg shadow-amber-500/10"
-            >
-              Archive Course
-            </button>
+      {/* Archive Course Confirmation Modal */}
+      {isArchiveOpen && (
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="glass-card w-full max-w-sm rounded-2xl border border-white/10 p-6 space-y-6 text-center animate-in fade-in zoom-in duration-200">
+            <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
+              <Archive className="w-5 h-5" />
+            </div>
+            
+            <div className="space-y-2">
+              <h4 className="font-display text-lg font-bold text-white tracking-tight">Archive Course?</h4>
+              <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                Are you sure you want to archive <span className="text-white font-semibold">{displayTitle}</span>? Archiving will remove this course from your active dashboard.
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setIsArchiveOpen(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (course) {
+                    course.status = 'archived';
+                    course.archivedAt = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    setIsArchiveOpen(false);
+                    navigate('/educator/courses');
+                  }
+                }}
+                className="flex-1 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-amber-600/20"
+              >
+                Archive
+              </button>
+            </div>
           </div>
         </div>
-      </Modal>
+      )}
     </>
   );
 }

@@ -395,9 +395,6 @@ function QuizTakingModal({ assessment, onClose, onSubmit, courseId }: QuizTaking
                           <span className="font-sans text-[10px] font-bold text-slate-500 uppercase tracking-widest text-left">
                             {sectionLabel} • {q.maxPoints} Points
                           </span>
-                          <span className="font-mono text-[9px] text-indigo-400 font-bold bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded uppercase tracking-wider">
-                            {assignedSet}
-                          </span>
                         </div>
                         <h3 className="font-sans text-lg md:text-xl text-white font-medium leading-relaxed text-left">
                           {q.questionText}
