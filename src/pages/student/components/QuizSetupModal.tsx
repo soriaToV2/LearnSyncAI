@@ -84,7 +84,7 @@ export default function QuizSetupModal({
         : { type: 'resource', resourceNames: selectedResources };
 
     onStart({ source, questionTypes: selectedTypes, difficulty, questionCount });
-    // reset for next use
+    // Reset state
     setStep(0);
   };
 
@@ -120,7 +120,7 @@ export default function QuizSetupModal({
 
         <div className="p-6 max-h-[70vh] overflow-y-auto no-scrollbar">
 
-          {/* ── STEP 0: Source ── */}
+          {/* Step 0: Source */}
           {step === 0 && (
             <div className="space-y-6 animate-in fade-in duration-300">
               <p className="font-sans text-sm text-slate-300">Where should the quiz questions be generated from?</p>
@@ -179,7 +179,7 @@ export default function QuizSetupModal({
             </div>
           )}
 
-          {/* ── STEP 1: Question Types & Difficulty ── */}
+          {/* Step 1: Question types & difficulty */}
           {step === 1 && (
             <div className="space-y-6 animate-in fade-in duration-300">
               {/* Question Types */}
@@ -250,7 +250,7 @@ export default function QuizSetupModal({
             </div>
           )}
 
-          {/* ── STEP 2: Review ── */}
+          {/* Step 2: Review */}
           {step === 2 && (
             <div className="space-y-5 animate-in fade-in duration-300">
               <p className="font-sans text-sm text-slate-300">Review your quiz configuration before starting.</p>

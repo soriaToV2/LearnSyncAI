@@ -3,9 +3,6 @@ import { Trophy, Gamepad2, BrainCircuit, Zap, Award, RefreshCw, CheckCircle2, XC
 import clsx from 'clsx';
 import { MOCK_COURSES, Course } from '../../data/mockCourses';
 
-// ==========================================
-// COURSE SELECTION DATABASE (AI GENERATIVE & ADAPTIVE)
-// ==========================================
 interface Question {
   question: string;
   options: string[];
@@ -246,7 +243,6 @@ const getCourseDisplayInfo = (course: { id: string; title: string; category: str
       bg: 'bg-violet-500/10'
     };
   }
-  // Default CS/WebDev
   return {
     gameKey: 'webdev' as const,
     icon: Code,
@@ -258,20 +254,20 @@ const getCourseDisplayInfo = (course: { id: string; title: string; category: str
 export default function PlayMeGames() {
   const enrolledCourses = MOCK_COURSES.filter(c => c.isEnrolled);
 
-  // --- Selected course key ---
+  // Selected course
   const [selectedCourse, setSelectedCourse] = useState<string>(() => {
     return enrolledCourses[0]?.id || 'bio-301';
   });
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
-  // --- XP & Progression States ---
+  // XP & progression
   const [totalXp, setTotalXp] = useState(2450);
   const [streak, setStreak] = useState(5);
   const [gameLevel, setGameLevel] = useState(4);
   const [activeGame, setActiveGame] = useState<'selection' | 'matching' | 'trivia' | 'crossword' | 'boggle'>('selection');
 
-  // --- AI Dynamic Adaptation Engine States ---
-  const [currentMastery, setCurrentMastery] = useState(68); 
+  // AI adaptation states
+  const [currentMastery, setCurrentMastery] = useState(68);
   const [aiDifficulty, setAiDifficulty] = useState<'Adaptive-Easy' | 'Adaptive-Medium' | 'Adaptive-Hard'>('Adaptive-Medium');
   const [aiLogs, setAiLogs] = useState<string[]>([
     'AI Engine initialized: Analyzing recent student quiz response latencies...',
@@ -284,12 +280,12 @@ export default function PlayMeGames() {
   const displayInfo = getCourseDisplayInfo(currentCourse);
   const activeData = COURSE_DATABASE[displayInfo.gameKey];
 
-  // Helper to add logs to the AI ticker
+  // Helper
   const logAiAction = (msg: string) => {
     setAiLogs(prev => [msg, ...prev.slice(0, 10)]);
   };
 
-  // Switch course action
+  // Switch course
   const handleCourseChange = (courseId: string) => {
     setSelectedCourse(courseId);
     setActiveGame('selection');
@@ -300,7 +296,7 @@ export default function PlayMeGames() {
     logAiAction(`AI Tuning: Formulated dynamic crossword maps & Boggle matching dictionaries for [${targetData.courseName}].`);
   };
 
-  // --- Matching Game State ---
+  // Matching game state
   const [matchingCards, setMatchingCards] = useState<CardItem[]>([]);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [matchedIds, setMatchedIds] = useState<string[]>([]);
@@ -308,7 +304,7 @@ export default function PlayMeGames() {
   const [matchingVictory, setMatchingVictory] = useState(false);
   const [matcherClueId, setMatcherClueId] = useState<string | null>(null);
 
-  // --- Trivia Game State ---
+  // Trivia game state
   const [triviaQueue, setTriviaQueue] = useState<Question[]>([]);
   const [currentTriviaIdx, setCurrentTriviaIdx] = useState(0);
   const [triviaSelected, setTriviaSelected] = useState<string | null>(null);
@@ -317,13 +313,13 @@ export default function PlayMeGames() {
   const [triviaCorrectStreak, setTriviaCorrectStreak] = useState(0);
   const [questionStartTime, setQuestionStartTime] = useState<number>(0);
 
-  // --- Crossword Game State ---
+  // Crossword game state
   const [crosswordAnswers, setCrosswordAnswers] = useState<Record<string, string>>({});
   const [crosswordChecked, setCrosswordChecked] = useState(false);
   const [crosswordVictory, setCrosswordVictory] = useState(false);
   const [crosswordCluesUsed, setCrosswordCluesUsed] = useState(0);
 
-  // --- Boggle Game State ---
+  // Boggle game state
   const [boggleSelection, setBoggleSelection] = useState<{ r: number; c: number }[]>([]);
   const [boggleFoundWords, setBoggleFoundWords] = useState<string[]>([]);
   const [boggleTimeLeft, setBoggleTimeLeft] = useState(60);
@@ -331,9 +327,6 @@ export default function PlayMeGames() {
   const [boggleFinished, setBoggleFinished] = useState(false);
   const [boggleMessage, setBoggleMessage] = useState<{ text: string; success: boolean } | null>(null);
 
-  // ==========================================
-  // ADAPTIVE INITIALIZERS & ENGINE ACTIONS
-  // ==========================================
   const startMatchingGame = () => {
     setActiveGame('matching');
     setSelectedCardId(null);
@@ -342,7 +335,7 @@ export default function PlayMeGames() {
     setMatchingVictory(false);
     setMatcherClueId(null);
 
-    // Shuffle base cards from selected course
+    // Shuffle cards
     const cards: CardItem[] = [];
     activeData.terms.forEach((item, idx) => {
       const matchId = `pair-${idx}`;
@@ -364,7 +357,7 @@ export default function PlayMeGames() {
     setTriviaCorrectStreak(0);
     setQuestionStartTime(Date.now());
 
-    // Build adaptive queue based on current mastery and active course trivia bank
+    // Build adaptive queue
     const courseTrivia = activeData.trivia;
     let initialQueue: Question[] = [];
     if (currentMastery < 50) {
@@ -375,6 +368,7 @@ export default function PlayMeGames() {
       ];
       setAiDifficulty('Adaptive-Easy');
       logAiAction(`BKT Mastery low (<50%). Dynamic Easy queue loaded for ${activeData.courseName}.`);
+
     } else if (currentMastery < 80) {
       initialQueue = [
         courseTrivia.find(q => q.difficulty === 'medium') || courseTrivia[2],
@@ -383,6 +377,7 @@ export default function PlayMeGames() {
       ];
       setAiDifficulty('Adaptive-Medium');
       logAiAction(`BKT Mastery balanced. Dynamic Medium queue loaded for ${activeData.courseName}.`);
+
     } else {
       initialQueue = [
         courseTrivia.find(q => q.difficulty === 'hard') || courseTrivia[4],
@@ -409,8 +404,8 @@ export default function PlayMeGames() {
     setActiveGame('boggle');
     setBoggleSelection([]);
     setBoggleFoundWords([]);
-    
-    // Scale timer based on mastery
+
+    // Scale timer by mastery
     const dynamicTime = currentMastery > 80 ? 45 : currentMastery < 50 ? 80 : 60;
     setBoggleTimeLeft(dynamicTime);
     setBoggleActive(true);
@@ -420,9 +415,6 @@ export default function PlayMeGames() {
     logAiAction(`Boggle active. Timer set to ${dynamicTime}s based on mastery.`);
   };
 
-  // ==========================================
-  // GAME HANDLERS: Term Matcher (Adaptive Clues)
-  // ==========================================
   const handleCardClick = (id: string) => {
     if (matchedIds.includes(id) || failedPair) return;
 
@@ -441,7 +433,6 @@ export default function PlayMeGames() {
     const secondCard = matchingCards.find(c => c.id === id)!;
 
     if (firstCard.matchId === secondCard.matchId && firstCard.type !== secondCard.type) {
-      // Correct pair
       const newMatched = [...matchedIds, firstCard.id, secondCard.id];
       setMatchedIds(newMatched);
       setSelectedCardId(null);
@@ -455,16 +446,16 @@ export default function PlayMeGames() {
         setTotalXp(prev => prev + 400);
         logAiAction('Term Matcher cleared. Efficacy rate 100%.');
       }
+
     } else {
-      // Incorrect pair -> trigger adaptation helper: show corresponding pair
       setFailedPair([firstCard.id, secondCard.id]);
-      
+
       const partner = matchingCards.find(c => c.matchId === firstCard.matchId && c.id !== firstCard.id)!;
       setMatcherClueId(partner.id);
 
       setCurrentMastery(prev => Math.max(prev - 4, 10));
       logAiAction(`Mismatch error. AI enabled target highlighter for card partner.`);
-      
+
       setTimeout(() => {
         setFailedPair(null);
         setSelectedCardId(null);
@@ -472,9 +463,6 @@ export default function PlayMeGames() {
     }
   };
 
-  // ==========================================
-  // GAME HANDLERS: Adaptive Trivia Blast
-  // ==========================================
   const handleTriviaAnswer = (option: string) => {
     if (triviaSelected) return;
     setTriviaSelected(option);
@@ -496,7 +484,7 @@ export default function PlayMeGames() {
       logAiAction(`Incorrect response. Latency: ${latency.toFixed(1)}s. Adjusting BKT weights.`);
     }
 
-    // Dynamic adjustment of upcoming questions inside the queue based on correctness
+    // Adjust queue on answer
     setTimeout(() => {
       if (currentTriviaIdx < triviaQueue.length - 1) {
         const courseTrivia = activeData.trivia;
@@ -530,9 +518,6 @@ export default function PlayMeGames() {
     }, 1500);
   };
 
-  // ==========================================
-  // GAME HANDLERS: Crossword with AI Assistance
-  // ==========================================
   const handleCrosswordInput = (r: number, c: number, val: string) => {
     const key = `${r}-${c}`;
     setCrosswordAnswers(prev => ({
@@ -579,9 +564,6 @@ export default function PlayMeGames() {
     }
   };
 
-  // ==========================================
-  // GAME HANDLERS: Dynamic Word Boggle
-  // ==========================================
   const handleBoggleCellClick = (r: number, c: number) => {
     if (!boggleActive) return;
 
@@ -629,7 +611,7 @@ export default function PlayMeGames() {
       setBoggleFoundWords(updatedWords);
       setBoggleSelection([]);
       setBoggleMessage({ text: `Found: ${word}! (+100 XP)`, success: true });
-      
+
       setCurrentMastery(prev => Math.min(prev + 4, 100));
       logAiAction(`Vocabulary hit: ${word}. Recalibrating memory nodes.`);
     } else {
@@ -673,13 +655,12 @@ export default function PlayMeGames() {
           </div>
         </div>
 
-        {/* STUDY TARGET SELECTOR (COURSE SELECTOR) */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/5 p-4 rounded-xl border border-white/5 z-50 relative">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400 font-sans">
             <Layers className="w-4 h-4 text-primary-fixed-dim" />
             Active Target Syllabus:
           </div>
-          
+
           <div className="relative min-w-[280px] z-50">
             <button
               onClick={() => setIsDropdownOpen(prev => !prev)}
@@ -701,7 +682,7 @@ export default function PlayMeGames() {
               <>
                 {/* Click outside overlay */}
                 <div className="fixed inset-0 z-40" onClick={() => setIsDropdownOpen(false)} />
-                
+
                 {/* Menu items popover */}
                 <div className="absolute top-full right-0 mt-2 w-full bg-slate-900 border border-white/10 rounded-xl overflow-hidden shadow-2xl z-50 py-1.5 animate-in slide-in-from-top-2 duration-150">
                   {enrolledCourses.map((c) => {
@@ -738,7 +719,6 @@ export default function PlayMeGames() {
         </div>
       </header>
 
-      {/* DYNAMIC ADAPTATION HUD PANEL */}
       <section className="bg-slate-950/80 border-b border-white/5 p-6 animate-in fade-in duration-300">
         <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           {/* Mastery index bar */}
@@ -794,7 +774,7 @@ export default function PlayMeGames() {
       </section>
 
       <main className="flex-1 p-4 md:p-8 overflow-y-auto max-w-6xl mx-auto w-full">
-        {/* GAME PORTAL SELECTION VIEW */}
+
         {activeGame === 'selection' && (
           <div className="space-y-8 animate-in fade-in duration-300">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -881,7 +861,7 @@ export default function PlayMeGames() {
           </div>
         )}
 
-        {/* GAME 1: TERM MATCHING */}
+        {/* Term Matching */}
         {activeGame === 'matching' && (
           <div className="space-y-6 max-w-4xl mx-auto animate-in zoom-in-95 duration-200">
             <div className="flex flex-wrap gap-4 justify-between items-center">
@@ -980,7 +960,7 @@ export default function PlayMeGames() {
           </div>
         )}
 
-        {/* GAME 2: MINI CROSSWORD */}
+        {/* Mini Crossword */}
         {activeGame === 'crossword' && (
           <div className="space-y-6 max-w-4xl mx-auto animate-in zoom-in-95 duration-200">
             <div className="flex flex-wrap gap-4 justify-between items-center">
@@ -1115,7 +1095,7 @@ export default function PlayMeGames() {
           </div>
         )}
 
-        {/* GAME 3: TRIVIA BLAST */}
+        {/* Trivia Blast */}
         {activeGame === 'trivia' && (
           <div className="space-y-6 max-w-2xl mx-auto animate-in zoom-in-95 duration-200">
             <div>
@@ -1150,7 +1130,7 @@ export default function PlayMeGames() {
                   </button>
                   <button
                     onClick={startTriviaGame}
-                    className="px-6 py-2.5 rounded-xl bg-cyan-450 text-black font-sans font-bold text-sm hover:bg-cyan-400 transition-all active:scale-95"
+                    className="px-6 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-white font-sans font-bold text-sm transition-all active:scale-95 shadow-lg shadow-cyan-500/10"
                   >
                     Play Again
                   </button>
@@ -1210,7 +1190,7 @@ export default function PlayMeGames() {
           </div>
         )}
 
-        {/* GAME 4: WORD BOGGLE */}
+        {/* Word Boggle */}
         {activeGame === 'boggle' && (
           <div className="space-y-6 max-w-4xl mx-auto animate-in zoom-in-95 duration-200">
             <div className="flex flex-wrap gap-4 justify-between items-center">

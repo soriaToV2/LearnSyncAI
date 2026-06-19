@@ -16,9 +16,9 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
     if (!recallText.trim()) return;
     setIsEvaluating(true);
 
-    // Simulate AI semantic analysis delay
+    // Simulate AI analysis
     setTimeout(() => {
-      // Calculate a mock score based on text length and some keywords
+      // Mock keyword scoring
       const textLower = recallText.toLowerCase();
       const hasCalcium = textLower.includes('calcium') || textLower.includes('ca2+');
       const hasSynaptic = textLower.includes('synaptic') || textLower.includes('cleft');
@@ -58,7 +58,7 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
         missing.push({ concept: 'Receptor Activation', desc: 'Clarify that neurotransmitters bind to specific receptors to trigger potential changes.' });
       }
 
-      // Add small bonus for length
+      // Bonus for length
       score += Math.min(15, Math.floor(recallText.length / 50));
       score = Math.min(95, score);
 
@@ -182,7 +182,7 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
           </div>
         </div>
       ) : (
-        /* Evaluation Results View */
+        /* Results view */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             {/* Score Card */}

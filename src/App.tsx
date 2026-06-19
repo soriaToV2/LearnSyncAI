@@ -24,7 +24,6 @@ import StudentProfile from './pages/student/StudentProfile';
 import Settings from './pages/student/Settings';
 import StudySpacesList from './pages/student/StudySpacesList';
 import StudySpace from './pages/student/StudySpace';
-import LockdownExam from './pages/student/LockdownExam';
 import PlayMeGames from './pages/student/PlayMeGames';
 import CourseCatalog from './pages/student/CourseCatalog';
 
@@ -45,7 +44,6 @@ export default function App() {
           <Route path="/educator/course/:courseId/students" element={<CourseStudents />} />
           <Route path="/educator/course/:courseId/announcements" element={<CourseAnnouncements />} />
           <Route path="/educator/settings" element={<EducatorSettings />} />
-          {/* Legacy redirects */}
           <Route path="/dashboard" element={<Navigate to="/educator/dashboard" replace />} />
           <Route path="/class/:classId/*" element={<Navigate to="/educator/courses" replace />} />
         </Route>
@@ -62,8 +60,6 @@ export default function App() {
           <Route path="/student/catalog" element={<CourseCatalog />} />
         </Route>
 
-        {/* Exam without standard layout */}
-        <Route path="/student/exam/:examId" element={<LockdownExam />} />
       </Routes>
     </BrowserRouter>
   );

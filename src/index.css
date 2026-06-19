@@ -1,6 +1,5 @@
 @import "tailwindcss";
 
-
 @theme {
   --font-display: "Space Grotesk", sans-serif;
   --font-sans: "Inter", sans-serif;
@@ -56,16 +55,17 @@
   /* Dynamic theme accent — overridden at runtime */
   --theme-accent: #22d3ee;
   --theme-accent-dim: #00daf3;
-  --theme-accent-soft: rgba(34,211,238,0.1);
-  --theme-glow: rgba(34,211,238,0.25);
+  --theme-accent-soft: rgba(34, 211, 238, 0.1);
+  --theme-glow: rgba(34, 211, 238, 0.25);
 
   /* Page-level bg for components with hardcoded colors */
   --page-bg: #020617;
   --page-surface-deep: #080f1e;
 }
 
-/* ─── THEME: Cyber Cyan (default) ─────────────────────────────────────── */
-:root, [data-theme="cyan"] {
+/*  THEME: Cyber Cyan (default) */
+:root,
+[data-theme="cyan"] {
   --page-bg: #020617;
   --page-surface-deep: #080f1e;
   --color-background: #0b1326;
@@ -85,7 +85,7 @@
   --color-on-surface-variant: #bac9cc;
 }
 
-/* ─── THEME: Deep Indigo ──────────────────────────────────────────────── */
+/* THEME: Deep Indigo */
 [data-theme="indigo"] {
   --page-bg: #02040f;
   --page-surface-deep: #06091a;
@@ -106,7 +106,7 @@
   --color-on-surface-variant: #b4badc;
 }
 
-/* ─── THEME: Neon Violet ──────────────────────────────────────────────── */
+/* THEME: Neon Violet */
 [data-theme="violet"] {
   --page-bg: #050212;
   --page-surface-deep: #0d0820;
@@ -127,7 +127,7 @@
   --color-on-surface-variant: #c8b8f0;
 }
 
-/* ─── THEME: Matrix Emerald ───────────────────────────────────────────── */
+/* THEME: Matrix Emerald */
 [data-theme="emerald"] {
   --page-bg: #020d0a;
   --page-surface-deep: #051510;
@@ -148,7 +148,7 @@
   --color-on-surface-variant: #a7f3d0;
 }
 
-/* ─── THEME: Neon Rose ────────────────────────────────────────────────── */
+/* THEME: Neon Rose */
 [data-theme="rose"] {
   --page-bg: #0d0208;
   --page-surface-deep: #180510;
@@ -169,7 +169,7 @@
   --color-on-surface-variant: #fda4af;
 }
 
-/* ─── THEME: Solar Amber ──────────────────────────────────────────────── */
+/* THEME: Solar Amber */
 [data-theme="amber"] {
   --page-bg: #0d0800;
   --page-surface-deep: #1a1200;
@@ -190,30 +190,37 @@
   --color-on-surface-variant: #fde68a;
 }
 
-/* ─── THEME: Studio White ─────────────────────────────────────────────── */
+/* THEME: Studio White */
 [data-theme="white"] {
-  --page-bg: #eef2f6; /* Softer, anti-glare off-white background */
-  --page-surface-deep: #ffffff; /* Card/surface deep background is pure white */
+  --page-bg: #eef2f6;
+  /* Softer, anti-glare off-white background */
+  --page-surface-deep: #ffffff;
+  /* Card/surface deep background is pure white */
   --color-background: #eef2f6;
   --color-surface: #ffffff;
   --color-surface-dim: #f1f5f9;
   --color-surface-bright: #e2e8f0;
   --color-surface-container-lowest: #ffffff;
   --color-surface-container-low: #f8fafc;
-  --color-surface-container: #f1f5f9; /* Base container (e.g. inputs/buttons) stands out beautifully on white cards */
-  --color-surface-container-high: #f8fafc; /* Higher containers are clean bright off-white */
+  --color-surface-container: #f1f5f9;
+  /* Base container (e.g. inputs/buttons) stands out beautifully on white cards */
+  --color-surface-container-high: #f8fafc;
+  /* Higher containers are clean bright off-white */
   --color-surface-container-highest: #cbd5e1;
   --color-surface-variant: #e8edf4;
 
-  
+
   /* Primary & Fixed Overrides */
-  --color-primary: #0284c7; /* sky-600 */
-  --color-primary-fixed: #0284c7; /* sky-600 */
-  --color-primary-fixed-dim: #0369a1; /* sky-700 */
+  --color-primary: #0284c7;
+  /* sky-600 */
+  --color-primary-fixed: #0284c7;
+  /* sky-600 */
+  --color-primary-fixed-dim: #0369a1;
+  /* sky-700 */
   --color-on-primary-fixed: #ffffff;
   --color-on-primary-fixed-variant: #0284c7;
   --color-on-primary-container: #ffffff;
-  
+
   --color-surface-tint: #0284c7;
   --color-primary-container: #0284c7;
   --color-on-primary: #ffffff;
@@ -224,29 +231,41 @@
   --color-outline-variant: #cbd5e1;
 
   /* Secondary & Fixed Overrides */
-  --color-secondary: #4f46e5; /* indigo-600 */
-  --color-secondary-fixed: #4f46e5; /* indigo-600 */
-  --color-secondary-fixed-dim: #4338ca; /* indigo-700 */
+  --color-secondary: #4f46e5;
+  /* indigo-600 */
+  --color-secondary-fixed: #4f46e5;
+  /* indigo-600 */
+  --color-secondary-fixed-dim: #4338ca;
+  /* indigo-700 */
   --color-on-secondary-fixed: #ffffff;
   --color-on-secondary-fixed-variant: #4f46e5;
   --color-on-secondary-container: #ffffff;
 
   /* Tertiary & Fixed Overrides */
-  --color-tertiary: #b45309; /* amber-700 */
-  --color-tertiary-fixed: #b45309; /* amber-700 */
-  --color-tertiary-fixed-dim: #92400e; /* amber-800 */
+  --color-tertiary: #b45309;
+  /* amber-700 */
+  --color-tertiary-fixed: #b45309;
+  /* amber-700 */
+  --color-tertiary-fixed-dim: #92400e;
+  /* amber-800 */
   --color-on-tertiary-fixed: #ffffff;
   --color-on-tertiary-fixed-variant: #b45309;
   --color-on-tertiary-container: #ffffff;
 
   /* Rich high-contrast dark-slate shifting for text readability under light theme */
   --color-slate-50: #f8fafc;
-  --color-slate-100: #0f172a; /* was bright slate, now rich dark navy */
-  --color-slate-200: #0f172a; /* was bright, now rich dark navy */
-  --color-slate-300: #1e293b; /* was slate-300, now slate-800 equivalent for descriptions */
-  --color-slate-400: #334155; /* was slate-400, now slate-700 equivalent for regular texts/labels */
-  --color-slate-500: #475569; /* was slate-500, now slate-600 equivalent for metadata */
-  --color-slate-600: #64748b; /* fainter metadata / borders */
+  --color-slate-100: #0f172a;
+  /* was bright slate, now rich dark navy */
+  --color-slate-200: #0f172a;
+  /* was bright, now rich dark navy */
+  --color-slate-300: #1e293b;
+  /* was slate-300, now slate-800 equivalent for descriptions */
+  --color-slate-400: #334155;
+  /* was slate-400, now slate-700 equivalent for regular texts/labels */
+  --color-slate-500: #475569;
+  /* was slate-500, now slate-600 equivalent for metadata */
+  --color-slate-600: #64748b;
+  /* fainter metadata / borders */
   --color-slate-700: #0f172a;
   --color-slate-800: #090d16;
   --color-slate-900: #020617;
@@ -292,8 +311,10 @@
 [data-theme="white"] .bg-white\/5.shadow-xl,
 [data-theme="white"] .bg-white\/5.shadow-2xl,
 [data-theme="white"] .glass-card {
-  background-color: #ffffff !important; /* Pure white main container background */
-  border-color: rgba(15, 23, 42, 0.08) !important; /* Subtle gray border */
+  background-color: #ffffff !important;
+  /* Pure white main container background */
+  border-color: rgba(15, 23, 42, 0.08) !important;
+  /* Subtle gray border */
   box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.03), 0 8px 10px -6px rgba(15, 23, 42, 0.02) !important;
 }
 
@@ -302,9 +323,12 @@
 [data-theme="white"] .bg-white\/\[0\.02\]:not(.shadow-xl):not(.shadow-2xl),
 [data-theme="white"] .bg-white\/5:not(.shadow-xl):not(.shadow-2xl),
 [data-theme="white"] .glass-card:not(.shadow-xl):not(.shadow-2xl) {
-  background-color: #f1f5f9 !important; /* Soft, clean slate-100 tile background */
-  border-color: #e2e8f0 !important; /* Extremely thin gray border */
-  box-shadow: none !important; /* Remove shadows to prevent cluttered card-in-card look */
+  background-color: #f1f5f9 !important;
+  /* Soft, clean slate-100 tile background */
+  border-color: #e2e8f0 !important;
+  /* Extremely thin gray border */
+  box-shadow: none !important;
+  /* Remove shadows to prevent cluttered card-in-card look */
 }
 
 /* Hover effects for main outer containers */
@@ -319,7 +343,8 @@
 [data-theme="white"] .bg-white\/\[0\.01\]:not(.shadow-xl):not(.shadow-2xl):hover,
 [data-theme="white"] .bg-white\/\[0\.02\]:not(.shadow-xl):not(.shadow-2xl):hover,
 [data-theme="white"] .bg-white\/5:not(.shadow-xl):not(.shadow-2xl):hover {
-  background-color: #e2e8f0 !important; /* Darken slightly on hover */
+  background-color: #e2e8f0 !important;
+  /* Darken slightly on hover */
   border-color: #cbd5e1 !important;
 }
 
@@ -341,9 +366,11 @@
 [data-theme="white"] .border-white\/5 {
   border-color: rgba(15, 23, 42, 0.04) !important;
 }
+
 [data-theme="white"] .border-white\/10 {
   border-color: rgba(15, 23, 42, 0.08) !important;
 }
+
 [data-theme="white"] .border-white\/20 {
   border-color: rgba(15, 23, 42, 0.15) !important;
 }
@@ -352,9 +379,11 @@
 [data-theme="white"] .bg-white\/5 {
   background-color: rgba(15, 23, 42, 0.03) !important;
 }
+
 [data-theme="white"] .bg-white\/10 {
   background-color: rgba(15, 23, 42, 0.06) !important;
 }
+
 [data-theme="white"] .bg-white\/20 {
   background-color: rgba(15, 23, 42, 0.1) !important;
 }
@@ -363,6 +392,7 @@
 [data-theme="white"] .hover\:bg-white\/5:hover {
   background-color: rgba(15, 23, 42, 0.04) !important;
 }
+
 [data-theme="white"] .hover\:bg-white\/10:hover {
   background-color: rgba(15, 23, 42, 0.08) !important;
 }
@@ -371,24 +401,31 @@
 [data-theme="white"] .text-cyan-400 {
   color: #0284c7 !important;
 }
+
 [data-theme="white"] .bg-cyan-400\/10 {
   background-color: rgba(2, 132, 199, 0.08) !important;
 }
+
 [data-theme="white"] .border-cyan-400 {
   border-color: #0284c7 !important;
 }
+
 [data-theme="white"] .border-cyan-400\/20 {
   border-color: rgba(2, 132, 199, 0.2) !important;
 }
+
 [data-theme="white"] .bg-cyan-400\/5 {
   background-color: rgba(2, 132, 199, 0.04) !important;
 }
+
 [data-theme="white"] .hover\:text-cyan-400:hover {
   color: #0284c7 !important;
 }
+
 [data-theme="white"] .hover\:bg-cyan-400\/10:hover {
   background-color: rgba(2, 132, 199, 0.08) !important;
 }
+
 [data-theme="white"] .hover\:border-cyan-400\/30:hover {
   border-color: rgba(2, 132, 199, 0.3) !important;
 }
@@ -397,6 +434,7 @@
 [data-theme="white"] .shadow-xl {
   box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.04), 0 8px 10px -6px rgba(15, 23, 42, 0.03) !important;
 }
+
 [data-theme="white"] .shadow-2xl {
   box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.08) !important;
 }
@@ -503,9 +541,11 @@
   border-color: rgba(2, 132, 199, 0.4) !important;
   box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.3), 0 8px 10px -6px rgba(2, 132, 199, 0.2) !important;
 }
+
 [data-theme="white"] .relative.mb-10.bg-surface-container button.group * {
   color: #ffffff !important;
 }
+
 [data-theme="white"] .relative.mb-10.bg-surface-container button.group:hover {
   background: linear-gradient(to bottom right, #0ea5e9, #0284c7) !important;
   box-shadow: 0 15px 30px -5px rgba(2, 132, 199, 0.4), 0 8px 12px -6px rgba(2, 132, 199, 0.3) !important;
@@ -518,17 +558,19 @@
   color: #0284c7 !important;
   border: 1px solid rgba(2, 132, 199, 0.15) !important;
 }
+
 /* "Following" state button in student cards (uses text-slate-300 on bg-surface-container-high) */
 [data-theme="white"] button.bg-surface-container-high.text-slate-300 {
   color: var(--color-on-surface-variant) !important;
   border-color: rgba(15, 23, 42, 0.12) !important;
 }
+
 /* "No students found" heading */
 [data-theme="white"] h3.text-slate-300 {
   color: var(--color-on-surface) !important;
 }
 
-/* ─── White Theme: Surface & Container dark element fixes ──────────────── */
+/* White Theme: Surface & Container dark element fixes */
 
 /* surface-variant is #2d3449 (dark navy) by default — override to light */
 [data-theme="white"] .bg-surface-variant {
@@ -540,15 +582,19 @@
 [data-theme="white"] .bg-surface-container {
   background-color: var(--color-surface-container) !important;
 }
+
 [data-theme="white"] .bg-surface-container-high {
   background-color: var(--color-surface-container-high) !important;
 }
+
 [data-theme="white"] .bg-surface-container-highest {
   background-color: var(--color-surface-container-highest) !important;
 }
+
 [data-theme="white"] .bg-surface-container-low {
   background-color: var(--color-surface-container-low) !important;
 }
+
 [data-theme="white"] .bg-surface-container-lowest {
   background-color: var(--color-surface-container-lowest) !important;
 }
@@ -558,9 +604,11 @@
 [data-theme="white"] .bg-primary-fixed-dim\/20 {
   background-color: rgba(2, 132, 199, 0.1) !important;
 }
+
 [data-theme="white"] .bg-primary-fixed-dim\/10 {
   background-color: rgba(2, 132, 199, 0.06) !important;
 }
+
 [data-theme="white"] .hover\:bg-primary-fixed-dim\/5:hover {
   background-color: rgba(2, 132, 199, 0.04) !important;
 }
@@ -587,9 +635,11 @@
 [data-theme="white"] .border-primary-fixed-dim\/20 {
   border-color: rgba(2, 132, 199, 0.2) !important;
 }
+
 [data-theme="white"] .border-primary-fixed-dim\/50 {
   border-color: rgba(2, 132, 199, 0.5) !important;
 }
+
 [data-theme="white"] .hover\:border-primary-fixed-dim\/50:hover {
   border-color: rgba(2, 132, 199, 0.5) !important;
 }
@@ -598,6 +648,7 @@
 [data-theme="white"] [class*="border-dashed"] {
   border-color: rgba(15, 23, 42, 0.15) !important;
 }
+
 [data-theme="white"] [class*="border-dashed"]:hover {
   border-color: rgba(2, 132, 199, 0.4) !important;
 }
@@ -621,6 +672,7 @@
 [data-theme="white"] .hover\:bg-primary-fixed-dim\/5:hover {
   background-color: rgba(2, 132, 199, 0.05) !important;
 }
+
 [data-theme="white"] .bg-primary-fixed-dim\/5 {
   background-color: rgba(2, 132, 199, 0.05) !important;
 }
@@ -630,23 +682,12 @@
   box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.04) !important;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 /* Hover effects for nested cards */
 :root[data-theme="white"] .bg-white\/\[0\.01\]:not(.shadow-xl):not(.shadow-2xl):hover,
 :root[data-theme="white"] .bg-white\/\[0\.02\]:not(.shadow-xl):not(.shadow-2xl):hover,
 :root[data-theme="white"] .bg-white\/5:not(.shadow-xl):not(.shadow-2xl):hover {
-  background-color: #e2e8f0 !important; /* Darken slightly on hover */
+  background-color: #e2e8f0 !important;
+  /* Darken slightly on hover */
   border-color: #cbd5e1 !important;
 }
 
@@ -668,9 +709,11 @@
 :root[data-theme="white"] .border-white\/5 {
   border-color: rgba(15, 23, 42, 0.04) !important;
 }
+
 :root[data-theme="white"] .border-white\/10 {
   border-color: rgba(15, 23, 42, 0.08) !important;
 }
+
 :root[data-theme="white"] .border-white\/20 {
   border-color: rgba(15, 23, 42, 0.15) !important;
 }
@@ -679,9 +722,11 @@
 :root[data-theme="white"] .bg-white\/5 {
   background-color: rgba(15, 23, 42, 0.03) !important;
 }
+
 :root[data-theme="white"] .bg-white\/10 {
   background-color: rgba(15, 23, 42, 0.06) !important;
 }
+
 :root[data-theme="white"] .bg-white\/20 {
   background-color: rgba(15, 23, 42, 0.1) !important;
 }
@@ -690,6 +735,7 @@
 :root[data-theme="white"] .hover\:bg-white\/5:hover {
   background-color: rgba(15, 23, 42, 0.04) !important;
 }
+
 :root[data-theme="white"] .hover\:bg-white\/10:hover {
   background-color: rgba(15, 23, 42, 0.08) !important;
 }
@@ -698,24 +744,31 @@
 :root[data-theme="white"] .text-cyan-400 {
   color: #0284c7 !important;
 }
+
 :root[data-theme="white"] .bg-cyan-400\/10 {
   background-color: rgba(2, 132, 199, 0.08) !important;
 }
+
 :root[data-theme="white"] .border-cyan-400 {
   border-color: #0284c7 !important;
 }
+
 :root[data-theme="white"] .border-cyan-400\/20 {
   border-color: rgba(2, 132, 199, 0.2) !important;
 }
+
 :root[data-theme="white"] .bg-cyan-400\/5 {
   background-color: rgba(2, 132, 199, 0.04) !important;
 }
+
 :root[data-theme="white"] .hover\:text-cyan-400:hover {
   color: #0284c7 !important;
 }
+
 :root[data-theme="white"] .hover\:bg-cyan-400\/10:hover {
   background-color: rgba(2, 132, 199, 0.08) !important;
 }
+
 :root[data-theme="white"] .hover\:border-cyan-400\/30:hover {
   border-color: rgba(2, 132, 199, 0.3) !important;
 }
@@ -724,6 +777,7 @@
 :root[data-theme="white"] .shadow-xl {
   box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.04), 0 8px 10px -6px rgba(15, 23, 42, 0.03) !important;
 }
+
 :root[data-theme="white"] .shadow-2xl {
   box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.08) !important;
 }
@@ -830,9 +884,11 @@
   border-color: rgba(2, 132, 199, 0.4) !important;
   box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.3), 0 8px 10px -6px rgba(2, 132, 199, 0.2) !important;
 }
+
 :root[data-theme="white"] .relative.mb-10.bg-surface-container button.group * {
   color: #ffffff !important;
 }
+
 :root[data-theme="white"] .relative.mb-10.bg-surface-container button.group:hover {
   background: linear-gradient(to bottom right, #0ea5e9, #0284c7) !important;
   box-shadow: 0 15px 30px -5px rgba(2, 132, 199, 0.4), 0 8px 12px -6px rgba(2, 132, 199, 0.3) !important;
@@ -846,11 +902,13 @@
   color: #0284c7 !important;
   border: 1px solid rgba(2, 132, 199, 0.15) !important;
 }
+
 /* "Following" state button in student cards (uses text-slate-300 on bg-surface-container-high) */
 :root[data-theme="white"] button.bg-surface-container-high.text-slate-300 {
   color: var(--color-on-surface-variant) !important;
   border-color: rgba(15, 23, 42, 0.12) !important;
 }
+
 /* "No students found" heading */
 :root[data-theme="white"] h3.text-slate-300 {
   color: var(--color-on-surface) !important;
@@ -863,9 +921,9 @@
 
   /* Override browser autofill background */
   input:-webkit-autofill,
-  input:-webkit-autofill:hover, 
-  input:-webkit-autofill:focus, 
-  input:-webkit-autofill:active{
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:active {
     -webkit-box-shadow: 0 0 0 30px var(--page-bg) inset !important;
     -webkit-text-fill-color: var(--color-on-surface) !important;
     transition: background-color 5000s ease-in-out 0s;
@@ -876,12 +934,14 @@
   .academic-input {
     @apply bg-transparent border-0 border-b border-outline-variant rounded-none px-8 py-2 w-full transition-all duration-200 outline-none text-base placeholder:text-on-surface-variant/40;
   }
+
   .academic-input:focus {
     @apply border-b-2 border-primary-fixed-dim ring-0 shadow-none;
   }
+
   .glass-card {
     @apply bg-surface-container-high/40 border border-white/10 backdrop-blur-md;
-    background-image: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 100%);
+    background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 100%);
   }
 }
 
@@ -889,6 +949,7 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -898,24 +959,31 @@
   .bg-page {
     background-color: var(--page-bg);
   }
+
   .bg-page-80 {
     background-color: color-mix(in srgb, var(--page-bg) 80%, transparent);
   }
+
   .bg-page-60 {
     background-color: color-mix(in srgb, var(--page-bg) 60%, transparent);
   }
+
   .bg-page-50 {
     background-color: color-mix(in srgb, var(--page-bg) 50%, transparent);
   }
+
   .bg-surface-deep {
     background-color: var(--page-surface-deep);
   }
+
   .border-page {
     border-color: var(--page-bg);
   }
+
   .border-surface-deep {
     border-color: var(--page-surface-deep);
   }
+
   .text-page {
     color: var(--page-bg);
   }

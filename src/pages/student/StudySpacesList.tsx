@@ -16,7 +16,6 @@ export default function StudySpacesList() {
       try {
         localSpaces = JSON.parse(saved);
       } catch (e) {
-        // Fallback
       }
     } else {
       localSpaces = [
@@ -50,18 +49,15 @@ export default function StudySpacesList() {
       ];
       localStorage.setItem('my_study_spaces', JSON.stringify(localSpaces));
     }
-    
-    // Combine with volatile in-memory spaces
+
     return [...getSavedSpaces(), ...localSpaces];
   });
 
   useEffect(() => {
-    // Only save user-created spaces to localStorage
     const localSpacesOnly = spaces.filter((s: any) => !s.isImported);
     localStorage.setItem('my_study_spaces', JSON.stringify(localSpacesOnly));
   }, [spaces]);
 
-  // Intercept 'clone' query parameter for URL sharing
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const cloneId = params.get('clone');
@@ -92,7 +88,6 @@ export default function StudySpacesList() {
           setTimeout(() => setCloneToast(null), 4500);
         }
       }
-      // Clean up URL query parameters without page refresh
       const newUrl = window.location.pathname;
       window.history.replaceState({}, document.title, newUrl);
     }
@@ -125,7 +120,6 @@ export default function StudySpacesList() {
 
   return (
     <div className="flex-1 w-full bg-background p-6 md:p-12 overflow-y-auto relative">
-      {/* Clone success notification toast */}
       {cloneToast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[70] animate-in fade-in slide-in-from-top-3 duration-200">
           <div className="flex items-center gap-3 bg-surface-container-high border border-teal-500/35 px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-md">
@@ -154,7 +148,7 @@ export default function StudySpacesList() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Empty Create Card */}
-          <div 
+          <div
             onClick={() => setIsCreateModalOpen(true)}
             className="bg-surface-container-lowest/30 border-2 border-dashed border-white/10 rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary-fixed-dim/50 hover:bg-primary-fixed-dim/5 transition-all min-h-[220px]"
           >
@@ -164,7 +158,7 @@ export default function StudySpacesList() {
             <h3 className="font-display text-lg font-medium text-white mb-2">Create New Space</h3>
             <p className="font-sans text-sm text-slate-400 max-w-[200px]">Set up a dedicated workspace for your next exam or topic.</p>
           </div>
-          
+
           {spaces.map((space) => (
             <div
               key={space.id}
@@ -210,22 +204,22 @@ export default function StudySpacesList() {
           <div className="bg-surface-container-lowest border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
             <div className="flex items-center justify-between p-6 border-b border-white/5">
               <h2 className="font-display text-xl font-semibold text-white">Create New Space</h2>
-              <button 
+              <button
                 onClick={() => setIsCreateModalOpen(false)}
                 className="text-slate-400 hover:text-white transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             <form onSubmit={handleCreateSpace} className="p-6">
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-1">
                     Space Title
                   </label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={newSpaceTitle}
                     onChange={(e) => setNewSpaceTitle(e.target.value)}
                     placeholder="e.g. Biology 101 Prep"
@@ -233,13 +227,13 @@ export default function StudySpacesList() {
                     required
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-1">
                     Course Information
                   </label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={newSpaceCourse}
                     onChange={(e) => setNewSpaceCourse(e.target.value)}
                     placeholder="e.g. Biology 301"

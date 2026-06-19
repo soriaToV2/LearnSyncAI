@@ -16,7 +16,7 @@ interface FlashcardSet {
   description?: string;
   cardCount: number;
   cards: { id: number; front: string; back: string }[];
-  isPublic: boolean; // ← visibility toggle
+  isPublic: boolean;
 }
 
 export default function StudySpace() {
@@ -30,7 +30,6 @@ export default function StudySpace() {
   const [isCreateDeckModalOpen, setIsCreateDeckModalOpen] = useState(false);
   const [newDeckTitle, setNewDeckTitle] = useState('');
 
-  // Look up current space details (combine volatile and persistent)
   const [spaces, setSpaces] = useState(() => {
     try {
       const saved = localStorage.getItem('my_study_spaces');
@@ -43,7 +42,6 @@ export default function StudySpace() {
 
   const currentSpace = spaces.find((s: any) => s.id === spaceId);
 
-  // ── Space-level visibility ───────────────────────────────────────────────
   const [spaceIsPublic, setSpaceIsPublic] = useState(() => {
     return currentSpace ? !!currentSpace.isPublic : false;
   });
@@ -74,7 +72,7 @@ export default function StudySpace() {
         cardCount: 3,
         isPublic: true,
         cards: [
-          { id: 1,  front: 'What initiates the release of neurotransmitters?', back: 'An influx of Calcium ions (Ca2+) into the presynaptic terminal, triggered by an action potential.' },
+          { id: 1, front: 'What initiates the release of neurotransmitters?', back: 'An influx of Calcium ions (Ca2+) into the presynaptic terminal, triggered by an action potential.' },
           { id: 10, front: 'What is the synaptic cleft?', back: 'The tiny gap between the presynaptic and postsynaptic neurons where neurotransmitters are released.' },
           { id: 11, front: 'What are vesicles in the context of synaptic transmission?', back: 'Small membrane-bound sacs that store neurotransmitters and release them via exocytosis.' },
         ],
@@ -86,7 +84,7 @@ export default function StudySpace() {
         cardCount: 3,
         isPublic: false,
         cards: [
-          { id: 2,  front: 'What is primary function of the myelin sheath?', back: 'To increase the speed at which electrical impulses travel along the axon.' },
+          { id: 2, front: 'What is primary function of the myelin sheath?', back: 'To increase the speed at which electrical impulses travel along the axon.' },
           { id: 20, front: 'What is an action potential?', back: 'A rapid, temporary change in membrane potential that travels along the axon of a neuron.' },
           { id: 21, front: "Define 'resting membrane potential'.", back: 'The electrical potential difference across the neuronal membrane when the neuron is not firing, typically around -70mV.' },
         ],
@@ -98,12 +96,10 @@ export default function StudySpace() {
     if (spaceId && spaceId.startsWith('space-')) {
       const mainSet = flashcardSets[0];
       if (!mainSet) return;
-      
+
       if (currentSpace?.isImported) {
-        // Update volatile in-memory store
         updateSavedSpaceFlashcards(spaceId, mainSet.cards);
       } else {
-        // Update persistent localStorage store
         try {
           const saved = localStorage.getItem('my_study_spaces');
           if (saved) {
@@ -149,7 +145,6 @@ export default function StudySpace() {
     }
   };
 
-  // ── Toggle whole space visibility ────────────────────────────────────────
   const handleToggleSpaceVisibility = () => {
     if (spaceIsPublic) {
       setSpaceIsPublic(false);
@@ -161,7 +156,6 @@ export default function StudySpace() {
     }
   };
 
-  // ── Toggle individual deck visibility ────────────────────────────────────
   const handleToggleDeckVisibility = (deckId: number) => {
     setFlashcardSets(prev =>
       prev.map(s => s.id === deckId ? { ...s, isPublic: !s.isPublic } : s)
@@ -182,13 +176,13 @@ export default function StudySpace() {
     setIsCreateDeckModalOpen(false);
   };
 
-  // count public decks
+  // Public deck count
   const publicDeckCount = flashcardSets.filter(s => s.isPublic).length;
 
   return (
     <div className="h-[calc(100vh-4rem)] md:h-screen w-full flex flex-col bg-background overflow-hidden relative">
 
-      {/* ── Visibility toast ── */}
+      {/* Visibility toast */}
       {showVisibilityToast && createPortal(
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[70] animate-in fade-in slide-in-from-top-3 duration-200">
           <div className="flex items-center gap-3 bg-surface-container-high border border-white/10 px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-md">
@@ -203,7 +197,7 @@ export default function StudySpace() {
         document.body
       )}
 
-      {/* ── Header ── */}
+      {/* Header */}
       <header className="shrink-0 pt-4 px-4 md:px-6 border-b border-white/10 bg-page-50 backdrop-blur-md flex flex-col z-40">
         <div className="flex items-center justify-between pb-4 gap-2">
           <div className="flex items-center gap-2 md:gap-4 min-w-0">
@@ -216,11 +210,10 @@ export default function StudySpace() {
                 <span className="truncate">{currentSpace ? currentSpace.title : "Biology 101 Prep Space"}</span>
               </h1>
               {/* Space visibility badge */}
-              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-sans text-[10px] font-bold uppercase tracking-wider transition-colors shrink-0 ${
-                spaceIsPublic
-                  ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400'
-                  : 'bg-white/5 border-white/10 text-slate-500'
-              }`}>
+              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-sans text-[10px] font-bold uppercase tracking-wider transition-colors shrink-0 ${spaceIsPublic
+                ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400'
+                : 'bg-white/5 border-white/10 text-slate-500'
+                }`}>
                 {spaceIsPublic ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
                 {spaceIsPublic ? 'Public' : 'Private'}
               </span>
@@ -262,7 +255,6 @@ export default function StudySpace() {
 
         {/* Navigation Tabs Container */}
         <div className="relative w-full mb-2">
-          {/* Desktop/Tablet Horizontal Tabs */}
           <div className="hidden sm:flex gap-4 md:gap-8 overflow-x-auto pb-px scrollbar-none pr-8">
             <button
               onClick={() => setActiveTab('flashcards')}
@@ -335,11 +327,10 @@ export default function StudySpace() {
                         setActiveTab(item.id as any);
                         setIsMobileTabMenuOpen(false);
                       }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 text-left font-sans text-sm transition-colors ${
-                        isActive 
-                          ? 'bg-primary-fixed-dim/15 text-primary-fixed-dim font-bold' 
-                          : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                      }`}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-left font-sans text-sm transition-colors ${isActive
+                        ? 'bg-primary-fixed-dim/15 text-primary-fixed-dim font-bold'
+                        : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                        }`}
                     >
                       <Icon className={`w-4 h-4 ${isActive ? 'text-primary-fixed-dim' : 'text-slate-400'}`} />
                       <span>{item.label}</span>
@@ -352,7 +343,7 @@ export default function StudySpace() {
         </div>
       </header>
 
-      {/* ── Main Content ── */}
+      {/* Main Content */}
       <main className="flex-1 overflow-y-auto w-full max-w-7xl mx-auto p-4 md:p-8 relative">
 
         {/* Info banner when space is public */}
@@ -447,10 +438,10 @@ export default function StudySpace() {
         </form>
       </Modal>
 
-      {/* ── Share & Publicize Space Modal ── */}
-      <Modal 
-        isOpen={isShareModalOpen} 
-        onClose={() => { setIsShareModalOpen(false); }} 
+      {/* Share & Publicize Space Modal */}
+      <Modal
+        isOpen={isShareModalOpen}
+        onClose={() => { setIsShareModalOpen(false); }}
         title="CollabShare: Share & Publicize Space"
         maxWidth="max-w-md"
       >
@@ -468,22 +459,21 @@ export default function StudySpace() {
               </div>
 
               <div className="flex justify-end gap-3 w-full pt-4 border-t border-white/5">
-                <button 
-                  type="button" 
-                  onClick={() => setIsShareModalOpen(false)} 
+                <button
+                  type="button"
+                  onClick={() => setIsShareModalOpen(false)}
                   className="flex-1 py-3 bg-white/5 text-slate-300 hover:bg-white/10 rounded-xl font-sans text-sm font-semibold transition-all"
                 >
                   Cancel
                 </button>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => {
                     setSpaceIsPublic(true);
                     updateSpaceVisibilityInStore(true);
-                    // Trigger visibility toast
                     setShowVisibilityToast(true);
                     setTimeout(() => setShowVisibilityToast(false), 2500);
-                  }} 
+                  }}
                   className="flex-1 py-3 bg-primary-fixed-dim text-black hover:bg-primary-fixed-dim/90 rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 transition-all"
                 >
                   Enable CollabShare
@@ -492,22 +482,16 @@ export default function StudySpace() {
             </>
           ) : (
             <>
-              {/* QR Code Graphic Container with premium cyberpunk glow */}
               <div className="relative group p-3 bg-surface-container border border-white/10 rounded-2xl shadow-inner flex flex-col items-center justify-center">
                 <div className="absolute inset-0 bg-primary-fixed-dim/10 blur-xl opacity-50 group-hover:opacity-80 transition-opacity rounded-full"></div>
                 <div className="bg-slate-950 p-4 rounded-xl border border-white/5 relative z-10">
                   <svg viewBox="0 0 100 100" className="w-40 h-40 text-primary-fixed-dim fill-current">
-                    {/* Finder Pattern: Top-Left */}
                     <path d="M5,5 h25 v25 h-25 z M9,9 h17 v17 h-17 z M13,13 h9 v9 h-9 z" />
-                    {/* Finder Pattern: Top-Right */}
                     <path d="M70,5 h25 v25 h-25 z M74,9 h17 v17 h-17 z M78,13 h9 v9 h-9 z" />
-                    {/* Finder Pattern: Bottom-Left */}
                     <path d="M5,70 h25 v25 h-25 z M9,74 h17 v17 h-17 z M13,78 h9 v9 h-9 z" />
-                    {/* Alignment Pattern & Timing Patterns */}
                     <path d="M75,75 h10 v10 h-10 z M79,79 h2 v2 h-2 z" />
                     <path d="M35,10 h5 v5 h-5 z M45,10 h10 v5 h-10 z M60,10 h5 v5 h-5 z" />
                     <path d="M10,35 h5 v5 h-5 z M10,45 h5 v10 h-5 z M10,60 h5 v5 h-5 z" />
-                    {/* Stylized QR Dotted Pattern Noise */}
                     <path d="M35,20 h5 v5 h-5 z M45,20 h5 v5 h-5 z M55,20 h10 v5 h-10 z M35,27 h10 v3 h-10 z M50,27 h5 v3 h-5 z" />
                     <path d="M35,35 h5 v5 h-5 z M45,35 h10 v5 h-10 z M60,35 h5 v5 h-5 z M70,35 h5 v5 h-5 z M80,35 h15 v5 h-15 z" />
                     <path d="M35,45 h15 v5 h-15 z M55,45 h5 v5 h-5 z M65,45 h10 v5 h-10 z M80,45 h5 v5 h-5 z M90,45 h5 v5 h-5 z" />
@@ -532,11 +516,10 @@ export default function StudySpace() {
                       setIsCopied(true);
                       setTimeout(() => setIsCopied(false), 2000);
                     }}
-                    className={`px-4 py-2 rounded-lg font-sans text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
-                      isCopied 
-                        ? 'bg-teal-500/10 border border-teal-500/20 text-teal-400' 
-                        : 'bg-white/5 border border-white/5 text-slate-300 hover:text-white hover:bg-white/10'
-                    }`}
+                    className={`px-4 py-2 rounded-lg font-sans text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${isCopied
+                      ? 'bg-teal-500/10 border border-teal-500/20 text-teal-400'
+                      : 'bg-white/5 border border-white/5 text-slate-300 hover:text-white hover:bg-white/10'
+                      }`}
                   >
                     {isCopied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
                   </button>
@@ -544,23 +527,22 @@ export default function StudySpace() {
               </div>
 
               <div className="flex justify-end gap-3 w-full pt-4 border-t border-white/5">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => {
                     setSpaceIsPublic(false);
                     updateSpaceVisibilityInStore(false);
-                    // Trigger visibility toast
                     setShowVisibilityToast(true);
                     setTimeout(() => setShowVisibilityToast(false), 2500);
                     setIsShareModalOpen(false);
-                  }} 
+                  }}
                   className="flex-1 py-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 rounded-xl font-sans text-sm font-semibold transition-all"
                 >
                   Revoke Access
                 </button>
-                <button 
-                  type="button" 
-                  onClick={() => setIsShareModalOpen(false)} 
+                <button
+                  type="button"
+                  onClick={() => setIsShareModalOpen(false)}
                   className="flex-1 py-2.5 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 rounded-xl font-sans text-sm font-semibold transition-all"
                 >
                   Close

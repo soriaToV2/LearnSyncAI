@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Activity, Play, RefreshCw, CheckCircle2, AlertTriangle, 
-  ArrowRight, BrainCircuit, BarChart2, Star, Check, X, 
+import {
+  Activity, Play, RefreshCw, CheckCircle2, AlertTriangle,
+  ArrowRight, BrainCircuit, BarChart2, Star, Check, X,
   HelpCircle, List, ToggleLeft, Edit3, AlignLeft, GitMerge,
   BookOpen, Layers, Clock, ArrowLeft, Trophy, FileText
 } from 'lucide-react';
 import Modal from '../../../components/ui/Modal';
+import Dropdown from '../../../components/ui/Dropdown';
 
-// --- Types ---
+// Types
 export type QuestionType =
   | 'multiple-choice'
   | 'true-false'
@@ -18,7 +19,7 @@ export type QuestionType =
 
 interface ConceptMastery {
   name: string;
-  probability: number; // 0 to 1
+  probability: number;
   status: 'Mastered' | 'Reviewing' | 'Gaps Detected';
 }
 
@@ -46,15 +47,15 @@ interface AdaptiveTestTabProps {
 interface Question {
   id: number;
   type: QuestionType;
-  section: string; // e.g. 'Test I'
+  section: string;
   prompt: string;
-  options?: string[]; // MC
-  correctIndex?: number; // MC
-  correctValue?: boolean; // TF
-  answer?: string; // ID / FIB
-  blank?: string; // FIB
-  pairs?: { term: string; definition: string }[]; // Matching
-  sampleAnswer?: string; // Essay
+  options?: string[];
+  correctIndex?: number;
+  correctValue?: boolean;
+  answer?: string;
+  blank?: string;
+  pairs?: { term: string; definition: string }[];
+  sampleAnswer?: string;
   explanation: string;
   concept: string;
 }
@@ -62,7 +63,7 @@ interface Question {
 interface UserAnswer {
   questionId: number;
   prompt: string;
-  selected: any; // User selected value
+  selected: any;
   correct: boolean;
   type: QuestionType;
   section: string;
@@ -94,38 +95,109 @@ export default function AdaptiveTestTab({
   availableResources,
   courseConnected
 }: AdaptiveTestTabProps) {
-  // --- Setup State ---
   const [totalQuestions, setTotalQuestions] = useState<number>(10);
   const [sourceType, setSourceType] = useState<'flashcards' | 'resources'>('flashcards');
   const [selectedDeckId, setSelectedDeckId] = useState<number | null>(null);
   const [selectedResourceName, setSelectedResourceName] = useState<string>('');
-  
+
   const [typesConfig, setTypesConfig] = useState<Record<QuestionType, { enabled: boolean; section: string; items: number }>>({
-    'multiple-choice': { enabled: true, section: 'Test I', items: 5 },
-    'true-false': { enabled: false, section: 'Test II', items: 5 },
-    'identification': { enabled: false, section: 'Test III', items: 5 },
-    'fill-in-the-blank': { enabled: false, section: 'Test IV', items: 5 },
-    'matching': { enabled: false, section: 'Test V', items: 5 },
-    'essay': { enabled: false, section: 'Test VI', items: 5 },
+    'multiple-choice': { enabled: true, section: 'Test I', items: 10 },
+    'true-false': { enabled: false, section: 'Test II', items: 0 },
+    'identification': { enabled: false, section: 'Test III', items: 0 },
+    'fill-in-the-blank': { enabled: false, section: 'Test IV', items: 0 },
+    'matching': { enabled: false, section: 'Test V', items: 0 },
+    'essay': { enabled: false, section: 'Test VI', items: 0 },
   });
 
-  // --- Quiz Playback State ---
+  const redistributeAdaptiveItems = (
+    prevConfig: Record<QuestionType, { enabled: boolean; section: string; items: number }>,
+    total: number
+  ): Record<QuestionType, { enabled: boolean; section: string; items: number }> => {
+    const enabledKeys = (Object.keys(prevConfig) as QuestionType[]).filter(k => prevConfig[k].enabled);
+    if (enabledKeys.length === 0) return prevConfig;
+
+    const base = Math.floor(total / enabledKeys.length);
+    const remainder = total % enabledKeys.length;
+
+    const nextConfig = { ...prevConfig };
+    (Object.keys(nextConfig) as QuestionType[]).forEach(k => {
+      if (!nextConfig[k].enabled) {
+        nextConfig[k].items = 0;
+      }
+    });
+
+    enabledKeys.forEach((key, idx) => {
+      nextConfig[key] = {
+        ...nextConfig[key],
+        items: base + (idx < remainder ? 1 : 0)
+      };
+    });
+    return nextConfig;
+  };
+
+  const handleSetTotalQuestions = (count: number) => {
+    setTotalQuestions(count);
+    setTypesConfig(prev => redistributeAdaptiveItems(prev, count));
+  };
+
+  const toggleType = (tId: QuestionType) => {
+    setTypesConfig(prev => {
+      const isCurrentlyEnabled = prev[tId].enabled;
+
+      const enabledKeys = (Object.keys(prev) as QuestionType[]).filter(k => prev[k].enabled);
+      if (isCurrentlyEnabled && enabledKeys.length <= 1) {
+        return prev;
+      }
+
+      const nextEnabled = !isCurrentlyEnabled;
+
+      const updated = {
+        ...prev,
+        [tId]: { ...prev[tId], enabled: nextEnabled }
+      };
+
+      const nextConfig = redistributeAdaptiveItems(updated, totalQuestions);
+
+      const activeKeys = (Object.keys(nextConfig) as QuestionType[]).filter(k => nextConfig[k].enabled);
+      const limit = activeKeys.length;
+      const allowedOptions = ['Test I', 'Test II', 'Test III', 'Test IV', 'Test V', 'Test VI'].slice(0, limit);
+
+      activeKeys.forEach((key, idx) => {
+        let label = nextConfig[key].section;
+        if (!allowedOptions.includes(label)) {
+          label = allowedOptions[idx] || allowedOptions[0];
+        }
+        nextConfig[key].section = label;
+      });
+
+      const usedLabels = new Set<string>();
+      activeKeys.forEach((key) => {
+        let label = nextConfig[key].section;
+        if (usedLabels.has(label)) {
+          label = allowedOptions.find(o => !usedLabels.has(o)) || allowedOptions[0];
+        }
+        usedLabels.add(label);
+        nextConfig[key].section = label;
+      });
+
+      return nextConfig;
+    });
+  };
+
   const [inQuiz, setInQuiz] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
-  const [selectedOption, setSelectedOption] = useState<any>(null); // For current MC, TF, input
-  const [matchingAnswers, setMatchingAnswers] = useState<Record<string, string>>({}); // For matching
+  const [selectedOption, setSelectedOption] = useState<any>(null);
+  const [matchingAnswers, setMatchingAnswers] = useState<Record<string, string>>({});
   const [showExplanation, setShowExplanation] = useState(false);
   const [quizAnswers, setQuizAnswers] = useState<UserAnswer[]>([]);
   const [quizFinished, setQuizFinished] = useState(false);
   const [showExitConfirmModal, setShowExitConfirmModal] = useState(false);
 
-  // --- Past Test Review State ---
   const [pastTests, setPastTests] = useState<PastTest[]>([]);
   const [previewingPastTest, setPreviewingPastTest] = useState<PastTest | null>(null);
   const [resultsActiveTab, setResultsActiveTab] = useState<'all' | 'incorrect'>('all');
 
-  // --- BKT mastery vectors (simulated state) ---
   const [masteryData, setMasteryData] = useState<ConceptMastery[]>([
     { name: 'Presynaptic Calcium Influx', probability: 0.82, status: 'Mastered' },
     { name: 'Vesicle Exocytosis Steps', probability: 0.74, status: 'Reviewing' },
@@ -133,7 +205,6 @@ export default function AdaptiveTestTab({
     { name: 'Postsynaptic Receptor Binding', probability: 0.35, status: 'Gaps Detected' }
   ]);
 
-  // Set default selection values when props load
   useEffect(() => {
     if (flashcardSets.length > 0 && !selectedDeckId) {
       setSelectedDeckId(flashcardSets[0].id);
@@ -143,7 +214,6 @@ export default function AdaptiveTestTab({
     }
   }, [flashcardSets, availableResources]);
 
-  // Load history from localStorage
   useEffect(() => {
     try {
       const saved = localStorage.getItem('learnsync_test_history');
@@ -155,22 +225,17 @@ export default function AdaptiveTestTab({
     }
   }, []);
 
-  // --- Validation Helpers ---
   const validation = useMemo(() => {
     const enabledTypes = (Object.entries(typesConfig) as [string, { enabled: boolean; section: string; items: number }][]).filter(([_, conf]) => conf.enabled);
-    
-    // 1. Total items count validation
+
     const sumItems = enabledTypes.reduce((acc, [_, conf]) => acc + conf.items, 0);
     const overflow = sumItems > totalQuestions;
+    const underflow = sumItems < totalQuestions;
 
-    // 2. Duplicate sections validation
     const sections = enabledTypes.map(([_, conf]) => conf.section);
     const duplicateSections = new Set(sections).size !== sections.length;
 
-    // 3. No question types selected
     const noneSelected = enabledTypes.length === 0;
-
-    // 4. Source checks
     let sourceEmpty = false;
     if (sourceType === 'flashcards' && !selectedDeckId) sourceEmpty = true;
     if (sourceType === 'resources' && !selectedResourceName) sourceEmpty = true;
@@ -178,14 +243,14 @@ export default function AdaptiveTestTab({
     return {
       sumItems,
       overflow,
+      underflow,
       duplicateSections,
       noneSelected,
       sourceEmpty,
-      isValid: !overflow && !duplicateSections && !noneSelected && !sourceEmpty
+      isValid: sumItems === totalQuestions && !duplicateSections && !noneSelected && !sourceEmpty
     };
   }, [typesConfig, totalQuestions, sourceType, selectedDeckId, selectedResourceName]);
 
-  // Sort helper for sections: Test I, Test II, Test III, etc.
   const sectionOrderMap: Record<string, number> = {
     'Test I': 1,
     'Test II': 2,
@@ -195,7 +260,6 @@ export default function AdaptiveTestTab({
     'Test VI': 6,
   };
 
-  // --- Dynamic Question Generator ---
   const handleStartTest = () => {
     if (!validation.isValid) return;
 
@@ -208,7 +272,7 @@ export default function AdaptiveTestTab({
       cardsPool = deck?.cards || [];
     } else {
       sourceTitle = selectedResourceName;
-      // Generate simulated cards from the resource
+      // Simulated resource cards
       cardsPool = [
         { id: 9001, front: 'What initiates neurotransmitter release at the synapse?', back: 'An influx of Calcium ions (Ca2+) into the presynaptic terminal, triggered by an action potential.' },
         { id: 9002, front: 'What is the synaptic cleft?', back: 'The tiny extracellular gap separating the presynaptic membrane from the postsynaptic membrane.' },
@@ -221,7 +285,7 @@ export default function AdaptiveTestTab({
       ];
     }
 
-    // Fallback if cardsPool is empty
+    // Fallback pool
     if (cardsPool.length === 0) {
       cardsPool = [
         { id: 1, front: 'Simulated Neuroscience Concept 1', back: 'Simulated explanation or definition of synapse activation.' },
@@ -233,7 +297,7 @@ export default function AdaptiveTestTab({
     const generatedQuestions: Question[] = [];
     let idCounter = 1;
 
-    // Group active question types
+    // Sort active types by section order
     const activeTypes = (Object.entries(typesConfig) as [string, { enabled: boolean; section: string; items: number }][])
       .filter(([_, conf]) => conf.enabled)
       .map(([typeId, conf]) => ({
@@ -243,24 +307,24 @@ export default function AdaptiveTestTab({
       }))
       .sort((a, b) => (sectionOrderMap[a.section] || 99) - (sectionOrderMap[b.section] || 99));
 
-    // Generate questions for each configured type
+    // Generate questions per type
     activeTypes.forEach(tConfig => {
-      // Pick cards for this section
+      // Pick cards for section
       for (let i = 0; i < tConfig.count; i++) {
-        // Recycle cards if pool size is smaller than requested items
+        // Recycle cards if pool is smaller than requested count
         const cardIndex = (generatedQuestions.length + i) % cardsPool.length;
         const card = cardsPool[cardIndex];
-        
+
         const otherCards = cardsPool.filter(c => c.id !== card.id);
-        const distractors = otherCards.length > 0 
-          ? otherCards.map(c => c.back) 
+        const distractors = otherCards.length > 0
+          ? otherCards.map(c => c.back)
           : ['Alternative neuro-hypothesis 1', 'Alternative cell membrane interaction 2', 'Unrelated synapse response 3'];
-        
+
         const conceptNode = masteryData[cardIndex % masteryData.length].name;
 
         switch (tConfig.type) {
           case 'multiple-choice': {
-            // Shuffle correct + distractors
+            // Shuffle options
             const options = [...distractors.slice(0, 3), card.back].sort(() => Math.random() - 0.5);
             generatedQuestions.push({
               id: idCounter++,
@@ -281,7 +345,7 @@ export default function AdaptiveTestTab({
               id: idCounter++,
               type: tConfig.type,
               section: tConfig.section,
-              prompt: isTrue 
+              prompt: isTrue
                 ? `Is this statement true? "${card.back}" is the definition for: ${card.front}`
                 : `Is this statement true? "${wrongBack}" is the definition for: ${card.front}`,
               correctValue: isTrue,
@@ -303,10 +367,10 @@ export default function AdaptiveTestTab({
             break;
           }
           case 'fill-in-the-blank': {
-            // Split back definition and cover a middle word
+            // Blank out a middle word
             const words = card.back.split(' ');
             const middleIdx = Math.floor(words.length / 2);
-            const answerWord = words[middleIdx]?.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"") || 'signal';
+            const answerWord = words[middleIdx]?.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "") || 'signal';
             const blankText = words.map((w, index) => index === middleIdx ? '_______' : w).join(' ');
             generatedQuestions.push({
               id: idCounter++,
@@ -321,7 +385,7 @@ export default function AdaptiveTestTab({
             break;
           }
           case 'matching': {
-            // Pick a group of up to 4 pairs
+            // Build match pairs
             const matchIndex = cardIndex;
             const pairs = cardsPool.slice(matchIndex, matchIndex + 3).map(c => ({
               term: c.front,
@@ -358,7 +422,7 @@ export default function AdaptiveTestTab({
       }
     });
 
-    // Final limit check (slice to totalQuestions)
+    // Trim to requested total
     const finalQuestions = generatedQuestions.slice(0, totalQuestions);
 
     setQuestions(finalQuestions);
@@ -371,7 +435,7 @@ export default function AdaptiveTestTab({
     setInQuiz(true);
   };
 
-  // --- Grading Answer Logic ---
+  // Grade answer
   const handleGradeAnswer = () => {
     const q = questions[currentQuestionIdx];
     let isCorrect = false;
@@ -404,11 +468,10 @@ export default function AdaptiveTestTab({
         break;
       }
       case 'matching': {
-        // Answer is record of matching terms
         selectedVal = matchingAnswers;
-        // Check if all selected matches are correct
+        // Verify all matches
         const allMatches = q.pairs || [];
-        const correctMatches = allMatches.every(p => 
+        const correctMatches = allMatches.every(p =>
           (matchingAnswers[p.term] || '').trim().toLowerCase() === p.definition.toLowerCase()
         );
         isCorrect = correctMatches;
@@ -416,14 +479,14 @@ export default function AdaptiveTestTab({
         break;
       }
       case 'essay': {
-        // Essays are self-graded / automatically marked correct for mock progress
+        // Essays auto-pass (self-graded)
         isCorrect = true;
         correctAnswerText = q.sampleAnswer || '';
         break;
       }
     }
 
-    // Save answer
+    // Record answer
     const newAns: UserAnswer = {
       questionId: q.id,
       prompt: q.prompt,
@@ -437,7 +500,7 @@ export default function AdaptiveTestTab({
 
     setQuizAnswers(prev => [...prev, newAns]);
 
-    // BKT Mastery state updating simulation
+    // Update BKT mastery
     setMasteryData(prev => prev.map(mastery => {
       if (mastery.name === q.concept) {
         let newProb = mastery.probability;
@@ -466,7 +529,7 @@ export default function AdaptiveTestTab({
     if (currentQuestionIdx < questions.length - 1) {
       setCurrentQuestionIdx(prev => prev + 1);
     } else {
-      // Quiz Finished! Save to local history
+      // Save finished test to history
       const finalScore = quizAnswers.filter(a => a.correct).length;
       const newTestHistory: PastTest = {
         id: 'test-' + Date.now(),
@@ -477,7 +540,7 @@ export default function AdaptiveTestTab({
           hour: '2-digit',
           minute: '2-digit'
         }),
-        sourceTitle: sourceType === 'flashcards' 
+        sourceTitle: sourceType === 'flashcards'
           ? (flashcardSets.find(s => s.id === selectedDeckId)?.title || 'Flashcards Deck')
           : selectedResourceName,
         totalQuestions: questions.length,
@@ -494,7 +557,7 @@ export default function AdaptiveTestTab({
     }
   };
 
-  // --- Review Mode Tabs ---
+  // Filter answers for review tabs
   const filteredAnswersReview = useMemo(() => {
     const activeTest = previewingPastTest || { answers: quizAnswers };
     if (resultsActiveTab === 'incorrect') {
@@ -505,8 +568,8 @@ export default function AdaptiveTestTab({
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
-      
-      {/* Tab Header & Title */}
+
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-6">
         <div>
           <h2 className="font-display text-2xl font-semibold text-white flex items-center gap-2.5">
@@ -519,7 +582,7 @@ export default function AdaptiveTestTab({
         </div>
         {inQuiz && (
           <>
-            <button 
+            <button
               onClick={() => setShowExitConfirmModal(true)}
               className="flex items-center gap-2 px-4 py-2 border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-xl font-sans text-sm font-semibold transition-colors"
             >
@@ -538,7 +601,7 @@ export default function AdaptiveTestTab({
                     Are you sure you want to exit the current test? Your progress will not be saved.
                   </div>
                 </div>
-                
+
                 <div className="flex items-center justify-end gap-3">
                   <button
                     onClick={() => setShowExitConfirmModal(false)}
@@ -564,17 +627,17 @@ export default function AdaptiveTestTab({
         )}
       </div>
 
-      {/* --- RENDER 1: ACTIVE QUIZ IN-GAME --- */}
+      {/* Active quiz */}
       {inQuiz && !quizFinished && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Question display column */}
+
+          {/* Question column */}
           <div className="lg:col-span-2 space-y-6">
-            
-            {/* Question Card */}
+
+            {/* Question card */}
             <div className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-8 backdrop-blur-md space-y-6">
-              
-              {/* Question metadata / progress */}
+
+              {/* Progress header */}
               <div className="flex items-center justify-between border-b border-white/10 pb-4">
                 <div>
                   <span className="font-display text-sm font-bold text-primary-fixed-dim block uppercase tracking-wider">
@@ -591,7 +654,7 @@ export default function AdaptiveTestTab({
 
               {/* Progress bar */}
               <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div 
+                <div
                   className="h-full bg-gradient-to-r from-primary-fixed-dim to-primary transition-all duration-300"
                   style={{ width: `${((currentQuestionIdx) / questions.length) * 100}%` }}
                 />
@@ -607,10 +670,10 @@ export default function AdaptiveTestTab({
                 </h3>
               </div>
 
-              {/* Dynamic Inputs per question type */}
+              {/* Question inputs */}
               <div className="pt-2">
-                
-                {/* 1. Multiple Choice */}
+
+                {/* Multiple Choice */}
                 {questions[currentQuestionIdx]?.type === 'multiple-choice' && (
                   <div className="space-y-3">
                     {questions[currentQuestionIdx]?.options?.map((opt, optIdx) => {
@@ -623,19 +686,17 @@ export default function AdaptiveTestTab({
                           key={optIdx}
                           disabled={showExplanation}
                           onClick={() => setSelectedOption(optIdx)}
-                          className={`w-full flex items-start gap-3.5 p-4 rounded-xl border transition-all text-left font-sans text-sm ${
-                            correct 
-                              ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
-                              : wrong
-                                ? 'border-red-500/35 bg-red-500/10 text-red-400'
-                                : isSelected
-                                  ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-white'
-                                  : 'border-white/5 bg-surface-container/50 text-slate-300 hover:border-white/10 hover:text-white'
-                          }`}
+                          className={`w-full flex items-start gap-3.5 p-4 rounded-xl border transition-all text-left font-sans text-sm ${correct
+                            ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
+                            : wrong
+                              ? 'border-red-500/35 bg-red-500/10 text-red-400'
+                              : isSelected
+                                ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-white'
+                                : 'border-white/5 bg-surface-container/50 text-slate-300 hover:border-white/10 hover:text-white'
+                            }`}
                         >
-                          <span className={`w-5 h-5 rounded-full border shrink-0 flex items-center justify-center text-[10px] font-bold mt-0.5 ${
-                            isSelected ? 'border-primary-fixed-dim text-primary-fixed-dim' : 'border-white/20 text-slate-400'
-                          }`}>
+                          <span className={`w-5 h-5 rounded-full border shrink-0 flex items-center justify-center text-[10px] font-bold mt-0.5 ${isSelected ? 'border-primary-fixed-dim text-primary-fixed-dim' : 'border-white/20 text-slate-400'
+                            }`}>
                             {String.fromCharCode(65 + optIdx)}
                           </span>
                           <span className="flex-1 leading-relaxed">{opt}</span>
@@ -647,7 +708,7 @@ export default function AdaptiveTestTab({
                   </div>
                 )}
 
-                {/* 2. True or False */}
+                {/* True or False */}
                 {questions[currentQuestionIdx]?.type === 'true-false' && (
                   <div className="flex gap-4">
                     {[true, false].map((val) => {
@@ -660,15 +721,14 @@ export default function AdaptiveTestTab({
                           key={String(val)}
                           disabled={showExplanation}
                           onClick={() => setSelectedOption(val)}
-                          className={`flex-1 py-5 rounded-xl border-2 font-display text-lg font-bold transition-all text-center ${
-                            correct
-                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                              : wrong
-                                ? 'border-red-500/40 bg-red-500/10 text-red-400'
-                                : isSelected
-                                  ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-white'
-                                  : 'border-white/10 bg-surface-container/50 text-slate-400 hover:border-white/20 hover:text-white'
-                          }`}
+                          className={`flex-1 py-5 rounded-xl border-2 font-display text-lg font-bold transition-all text-center ${correct
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                            : wrong
+                              ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                              : isSelected
+                                ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-white'
+                                : 'border-white/10 bg-surface-container/50 text-slate-400 hover:border-white/20 hover:text-white'
+                            }`}
                         >
                           {val ? 'TRUE' : 'FALSE'}
                         </button>
@@ -677,11 +737,11 @@ export default function AdaptiveTestTab({
                   </div>
                 )}
 
-                {/* 3. Identification */}
+                {/* Identification */}
                 {questions[currentQuestionIdx]?.type === 'identification' && (
                   <div className="space-y-2">
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       disabled={showExplanation}
                       value={selectedOption as string || ''}
                       onChange={e => setSelectedOption(e.target.value)}
@@ -691,14 +751,14 @@ export default function AdaptiveTestTab({
                   </div>
                 )}
 
-                {/* 4. Fill in the Blank */}
+                {/* Fill in the Blank */}
                 {questions[currentQuestionIdx]?.type === 'fill-in-the-blank' && (
                   <div className="space-y-4">
                     <div className="p-4 bg-primary-fixed-dim/5 border border-primary-fixed-dim/10 text-primary-fixed rounded-xl font-mono text-sm">
                       {questions[currentQuestionIdx]?.blank}
                     </div>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       disabled={showExplanation}
                       value={selectedOption as string || ''}
                       onChange={e => setSelectedOption(e.target.value)}
@@ -708,7 +768,7 @@ export default function AdaptiveTestTab({
                   </div>
                 )}
 
-                {/* 5. Matching Type */}
+                {/* Matching */}
                 {questions[currentQuestionIdx]?.type === 'matching' && (
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-3 pb-1">
@@ -728,13 +788,12 @@ export default function AdaptiveTestTab({
                             disabled={showExplanation}
                             value={matchingAnswers[pair.term] ?? ''}
                             onChange={e => setMatchingAnswers(prev => ({ ...prev, [pair.term]: e.target.value }))}
-                            className={`bg-surface-container border rounded-lg px-3 py-2 text-sm font-sans focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 transition-all ${
-                              showExplanation 
-                                ? isMatchCorrect 
-                                  ? 'border-emerald-500/35 text-emerald-400' 
-                                  : 'border-red-500/35 text-red-400'
-                                : 'border-white/10 text-white'
-                            }`}
+                            className={`bg-surface-container border rounded-lg px-3 py-2 text-sm font-sans focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 transition-all ${showExplanation
+                              ? isMatchCorrect
+                                ? 'border-emerald-500/35 text-emerald-400'
+                                : 'border-red-500/35 text-red-400'
+                              : 'border-white/10 text-white'
+                              }`}
                           >
                             <option value="">Select match...</option>
                             {availableDefs.map((def, defIdx) => (
@@ -747,10 +806,10 @@ export default function AdaptiveTestTab({
                   </div>
                 )}
 
-                {/* 6. Essay */}
+                {/* Essay */}
                 {questions[currentQuestionIdx]?.type === 'essay' && (
                   <div className="space-y-3">
-                    <textarea 
+                    <textarea
                       disabled={showExplanation}
                       rows={5}
                       value={selectedOption as string || ''}
@@ -769,17 +828,16 @@ export default function AdaptiveTestTab({
 
               </div>
 
-              {/* Explanation / BKT Routing response */}
+              {/* Explanation */}
               {showExplanation && (
                 <div className="p-4 bg-white/5 border border-white/10 rounded-xl space-y-2 animate-in slide-in-from-bottom-2">
                   <div className="flex justify-between items-center">
                     <span className="font-display text-xs font-bold text-white uppercase tracking-wider">BKT Diagnostic Feedback</span>
                     {questions[currentQuestionIdx]?.type !== 'essay' && (
-                      <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-sans font-bold tracking-wider ${
-                        quizAnswers[quizAnswers.length - 1]?.correct
-                          ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                          : 'bg-red-500/10 border border-red-500/20 text-red-400'
-                      }`}>
+                      <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-sans font-bold tracking-wider ${quizAnswers[quizAnswers.length - 1]?.correct
+                        ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                        }`}>
                         {quizAnswers[quizAnswers.length - 1]?.correct ? 'Correct Answer' : 'Incorrect'}
                       </span>
                     )}
@@ -790,7 +848,7 @@ export default function AdaptiveTestTab({
                 </div>
               )}
 
-              {/* Button Bar */}
+              {/* Actions */}
               <div className="flex justify-end pt-2 border-t border-white/5">
                 {!showExplanation ? (
                   <button
@@ -808,7 +866,7 @@ export default function AdaptiveTestTab({
                     onClick={handleNextQuestion}
                     className="px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg hover:bg-primary-container transition-all active:scale-95 flex items-center gap-2"
                   >
-                    {currentQuestionIdx >= questions.length - 1 ? 'Finish Test' : 'Next Question'} 
+                    {currentQuestionIdx >= questions.length - 1 ? 'Finish Test' : 'Next Question'}
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 )}
@@ -818,7 +876,7 @@ export default function AdaptiveTestTab({
 
           </div>
 
-          {/* Real-time BKT updates panel */}
+          {/* BKT panel */}
           <div className="space-y-6">
             <div className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-6 backdrop-blur-md space-y-4">
               <h4 className="font-display text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
@@ -827,7 +885,7 @@ export default function AdaptiveTestTab({
               <p className="font-sans text-xs text-slate-400 leading-relaxed">
                 As you submit answers, BKT recalculates your concept mastery probabilities.
               </p>
-              
+
               <div className="space-y-3 pt-2">
                 {masteryData.map((mastery, idx) => (
                   <div key={idx} className="space-y-1">
@@ -850,16 +908,16 @@ export default function AdaptiveTestTab({
         </div>
       )}
 
-      {/* --- RENDER 2: PREVIEWING PAST TEST OR FINISHED RESULTS SCREEN --- */}
+      {/* Results screen */}
       {(quizFinished || previewingPastTest) && (
         <div className="max-w-4xl mx-auto space-y-8 animate-in scale-in duration-300">
-          
-          {/* Results Summary Card */}
+
+          {/* Summary card */}
           <div className="bg-surface-container-lowest/30 border border-white/10 rounded-3xl p-8 backdrop-blur-md relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-b from-primary-fixed-dim/5 to-transparent pointer-events-none" />
-            
+
             <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
-              
+
               <div className="text-center md:text-left space-y-3">
                 <div className="w-14 h-14 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 text-primary-fixed flex items-center justify-center mx-auto md:mx-0">
                   <Trophy className="w-7 h-7" />
@@ -869,19 +927,19 @@ export default function AdaptiveTestTab({
                     {previewingPastTest ? 'Quiz Review' : 'Test Complete!'}
                   </h3>
                   <p className="font-sans text-xs text-slate-400 mt-1">
-                    {previewingPastTest 
-                      ? `Source: ${previewingPastTest.sourceTitle} • Completed ${previewingPastTest.date}` 
+                    {previewingPastTest
+                      ? `Source: ${previewingPastTest.sourceTitle} • Completed ${previewingPastTest.date}`
                       : 'Your cognitive profile has been updated.'}
                   </p>
                 </div>
               </div>
 
-              {/* Score circle */}
+              {/* Score */}
               <div className="flex items-center gap-6">
                 <div className="text-center">
                   <span className="block font-sans text-[10px] text-slate-400 uppercase font-semibold">Total Score</span>
                   <span className="font-mono text-3xl font-black text-white">
-                    {previewingPastTest 
+                    {previewingPastTest
                       ? `${previewingPastTest.score} / ${previewingPastTest.totalQuestions}`
                       : `${quizAnswers.filter(a => a.correct).length} / ${questions.length}`}
                   </span>
@@ -889,7 +947,7 @@ export default function AdaptiveTestTab({
                 <div className="text-center border-l border-white/10 pl-6">
                   <span className="block font-sans text-[10px] text-slate-400 uppercase font-semibold">Accuracy</span>
                   <span className="font-mono text-3xl font-black text-primary-fixed-dim">
-                    {previewingPastTest 
+                    {previewingPastTest
                       ? `${((previewingPastTest.score / previewingPastTest.totalQuestions) * 100).toFixed(0)}%`
                       : `${((quizAnswers.filter(a => a.correct).length / questions.length) * 100).toFixed(0)}%`}
                   </span>
@@ -913,42 +971,40 @@ export default function AdaptiveTestTab({
 
           </div>
 
-          {/* Question Review Section (with All and Incorrect tabs) */}
+          {/* Question review */}
           <div className="bg-surface-container-lowest/30 border border-white/10 rounded-3xl p-8 backdrop-blur-md space-y-6">
             <div className="flex items-center justify-between border-b border-white/5 pb-4">
               <h4 className="font-display text-lg font-semibold text-white">Question Review</h4>
-              
-              {/* Tab Selector */}
+
+              {/* Tabs */}
               <div className="flex bg-white/5 border border-white/10 p-1 rounded-xl">
                 <button
                   onClick={() => setResultsActiveTab('all')}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-sans font-semibold transition-all ${
-                    resultsActiveTab === 'all' 
-                      ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-md' 
-                      : 'text-slate-400 hover:text-white'
-                  }`}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-sans font-semibold transition-all ${resultsActiveTab === 'all'
+                    ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                    }`}
                 >
                   All Questions
                 </button>
                 <button
                   onClick={() => setResultsActiveTab('incorrect')}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-sans font-semibold transition-all ${
-                    resultsActiveTab === 'incorrect' 
-                      ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-md' 
-                      : 'text-slate-400 hover:text-white'
-                  }`}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-sans font-semibold transition-all ${resultsActiveTab === 'incorrect'
+                    ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                    }`}
                 >
                   Incorrect Questions
                 </button>
               </div>
             </div>
 
-            {/* Questions Review List */}
+            {/* Answer list */}
             <div className="space-y-6">
               {filteredAnswersReview.length === 0 ? (
                 <div className="text-center py-10 text-slate-500 font-sans text-sm">
-                  {resultsActiveTab === 'incorrect' 
-                    ? 'Perfect score! No incorrect questions to review.' 
+                  {resultsActiveTab === 'incorrect'
+                    ? 'Perfect score! No incorrect questions to review.'
                     : 'No questions generated.'}
                 </div>
               ) : (
@@ -963,13 +1019,12 @@ export default function AdaptiveTestTab({
                           {ans.prompt}
                         </h5>
                       </div>
-                      
-                      {/* Correct / Wrong badge */}
-                      <span className={`px-2.5 py-1 rounded-lg border text-[10px] font-sans font-bold uppercase tracking-wider shrink-0 ${
-                        ans.correct 
-                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                          : 'bg-red-500/10 border-red-500/20 text-red-400'
-                      }`}>
+
+                      {/* Result badge */}
+                      <span className={`px-2.5 py-1 rounded-lg border text-[10px] font-sans font-bold uppercase tracking-wider shrink-0 ${ans.correct
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/10 border-red-500/20 text-red-400'
+                        }`}>
                         {ans.correct ? 'Correct' : 'Incorrect'}
                       </span>
                     </div>
@@ -1006,82 +1061,90 @@ export default function AdaptiveTestTab({
         </div>
       )}
 
-      {/* --- RENDER 3: TEST MODE SETUP SCREEN & PAST HISTORY --- */}
+      {/* Setup screen */}
       {!inQuiz && !quizFinished && !previewingPastTest && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* LEFT: Test Configuration Setup Form */}
+
+          {/* Config form */}
           <div className="lg:col-span-2 space-y-6">
-            
+
             <div className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-6 backdrop-blur-md space-y-6">
-              
+
               <h3 className="font-display text-lg font-semibold text-white border-b border-white/10 pb-3">
                 New Test Setup
               </h3>
 
-              {/* 1. Total Number of Questions (At the very top) */}
+              {/* 1. Total questions */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <label className="font-sans text-xs text-slate-300 uppercase tracking-widest font-semibold">
                     1. Total Items (Number of Questions)
                   </label>
-                  <span className="font-mono text-sm text-primary-fixed font-bold bg-primary-fixed-dim/10 px-2 py-0.5 rounded border border-primary-fixed-dim/20">
-                    {totalQuestions} Questions
-                  </span>
                 </div>
-                <div className="flex gap-2 flex-wrap">
-                  {[5, 10, 15, 20, 25, 30].map(n => (
+                <div className="flex gap-2 flex-wrap items-center">
+                  {[5, 10, 15, 20, 25, 30, 40, 50].map(n => (
                     <button
                       key={n}
                       type="button"
-                      onClick={() => setTotalQuestions(n)}
-                      className={`px-5 py-2.5 rounded-xl border font-sans text-sm font-bold transition-all ${
-                        totalQuestions === n 
-                          ? 'border-primary-fixed-dim bg-primary-fixed-dim/15 text-primary-fixed shadow-[0_0_15px_rgba(0,218,243,0.15)]' 
-                          : 'border-white/10 bg-surface-container text-slate-400 hover:border-white/20 hover:text-white'
-                      }`}
+                      onClick={() => handleSetTotalQuestions(n)}
+                      className={`px-4 py-2.5 rounded-xl border font-sans text-sm font-bold transition-all ${totalQuestions === n
+                        ? 'border-primary-fixed-dim bg-primary-fixed-dim/15 text-primary-fixed shadow-[0_0_15px_rgba(0,218,243,0.15)]'
+                        : 'border-white/10 bg-surface-container text-slate-400 hover:border-white/20 hover:text-white'
+                        }`}
                     >
-                      {n} Items
+                      {n}
                     </button>
                   ))}
+                  <div className="flex items-center gap-2 pl-3 border-l border-white/10 ml-2">
+                    <span className="font-sans text-xs text-slate-400 font-semibold">Custom:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={totalQuestions}
+                      onChange={e => {
+                        const val = Math.max(1, Number(e.target.value) || 1);
+                        handleSetTotalQuestions(val);
+                      }}
+                      className="w-16 px-2.5 py-1.5 rounded-lg bg-surface-container border border-white/10 text-white font-sans text-xs outline-none text-center focus:border-primary-fixed-dim"
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* 2. Source Selection */}
+              {/* 2. Source */}
               <div className="space-y-4">
                 <label className="font-sans text-xs text-slate-300 uppercase tracking-widest font-semibold block">
                   2. Select Assessment Source
                 </label>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  
-                  {/* Option A: Study Decks */}
+
+                  {/* Flashcard decks */}
                   <button
                     type="button"
                     onClick={() => setSourceType('flashcards')}
-                    className={`p-4 rounded-xl border text-left transition-all ${
-                      sourceType === 'flashcards' 
-                        ? 'border-primary-fixed-dim bg-primary-fixed-dim/5' 
-                        : 'border-white/10 bg-surface-container/50 hover:border-white/20'
-                    }`}
+                    className={`p-4 rounded-xl border text-left transition-all ${sourceType === 'flashcards'
+                      ? 'border-primary-fixed-dim bg-primary-fixed-dim/5'
+                      : 'border-white/10 bg-surface-container/50 hover:border-white/20'
+                      }`}
                   >
                     <Layers className={`w-5 h-5 mb-2.5 ${sourceType === 'flashcards' ? 'text-primary-fixed' : 'text-slate-400'}`} />
                     <span className="font-display font-semibold text-sm text-white block">Active Flashcard Deck</span>
                     <span className="font-sans text-xs text-slate-500 mt-1 block">Generate questions from custom review decks.</span>
                   </button>
 
-                  {/* Option B: Connected Course Resources */}
+                  {/* Course resources */}
                   <button
                     type="button"
                     disabled={!courseConnected}
                     onClick={() => setSourceType('resources')}
-                    className={`p-4 rounded-xl border text-left transition-all ${
-                      !courseConnected 
-                        ? 'opacity-40 cursor-not-allowed border-white/5 bg-surface-container/20' 
-                        : sourceType === 'resources'
-                          ? 'border-primary-fixed-dim bg-primary-fixed-dim/5'
-                          : 'border-white/10 bg-surface-container/50 hover:border-white/20'
-                    }`}
+                    className={`p-4 rounded-xl border text-left transition-all ${!courseConnected
+                      ? 'opacity-40 cursor-not-allowed border-white/5 bg-surface-container/20'
+                      : sourceType === 'resources'
+                        ? 'border-primary-fixed-dim bg-primary-fixed-dim/5'
+                        : 'border-white/10 bg-surface-container/50 hover:border-white/20'
+                      }`}
                   >
                     <FileText className={`w-5 h-5 mb-2.5 ${sourceType === 'resources' ? 'text-primary-fixed' : 'text-slate-400'}`} />
                     <span className="font-display font-semibold text-sm text-white block">Course Resources</span>
@@ -1092,7 +1155,7 @@ export default function AdaptiveTestTab({
 
                 </div>
 
-                {/* Sub-selectors depending on source type selection */}
+                {/* Source sub-selectors */}
                 {sourceType === 'flashcards' && (
                   <div className="space-y-2 pt-2 animate-in slide-in-from-top-1 duration-200">
                     <span className="font-sans text-[10px] text-slate-500 uppercase tracking-widest block font-bold">Select Deck Title</span>
@@ -1105,11 +1168,10 @@ export default function AdaptiveTestTab({
                             key={deck.id}
                             type="button"
                             onClick={() => setSelectedDeckId(deck.id)}
-                            className={`p-3 rounded-xl border text-left font-sans text-xs flex justify-between items-center transition-all ${
-                              selectedDeckId === deck.id 
-                                ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-white' 
-                                : 'border-white/5 bg-surface-container-high/40 text-slate-400 hover:border-white/10'
-                            }`}
+                            className={`p-3 rounded-xl border text-left font-sans text-xs flex justify-between items-center transition-all ${selectedDeckId === deck.id
+                              ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-white'
+                              : 'border-white/5 bg-surface-container-high/40 text-slate-400 hover:border-white/10'
+                              }`}
                           >
                             <span className="font-semibold truncate pr-2">{deck.title}</span>
                             <span className="font-mono bg-white/5 px-2 py-0.5 rounded text-[10px] shrink-0">{deck.cardCount} Cards</span>
@@ -1129,11 +1191,10 @@ export default function AdaptiveTestTab({
                           key={res}
                           type="button"
                           onClick={() => setSelectedResourceName(res)}
-                          className={`p-3.5 rounded-xl border text-left font-sans text-xs flex items-center justify-between transition-all ${
-                            selectedResourceName === res 
-                              ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-white font-semibold' 
-                              : 'border-white/5 bg-surface-container-high/40 text-slate-400 hover:border-white/10'
-                          }`}
+                          className={`p-3.5 rounded-xl border text-left font-sans text-xs flex items-center justify-between transition-all ${selectedResourceName === res
+                            ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-white font-semibold'
+                            : 'border-white/5 bg-surface-container-high/40 text-slate-400 hover:border-white/10'
+                            }`}
                         >
                           <span className="truncate">{res}</span>
                           <Check className={`w-3.5 h-3.5 text-primary-fixed-dim ${selectedResourceName === res ? 'opacity-100' : 'opacity-0'}`} />
@@ -1145,104 +1206,101 @@ export default function AdaptiveTestTab({
 
               </div>
 
-              {/* 3. Question Types Configuration (Dynamic Test Sections I, II, III...) */}
-              <div className="space-y-4">
+              {/* 3. Question types */}
+              <div className="space-y-3">
                 <label className="font-sans text-xs text-slate-300 uppercase tracking-widest font-semibold block">
-                  3. Question Types & Test Section Headers
+                  3. Question Types Selection
                 </label>
-                
-                <div className="space-y-3 bg-white/5 rounded-2xl border border-white/10 p-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {QUESTION_TYPES_INFO.map(qt => {
-                    const conf = typesConfig[qt.id];
-                    const sectionsInUse = (Object.entries(typesConfig) as [string, { enabled: boolean; section: string; items: number }][])
-                      .filter(([k, v]) => v.enabled && k !== qt.id)
-                      .map(([_, v]) => v.section);
-                    const isSectionDuplicate = conf.enabled && sectionsInUse.includes(conf.section);
+                    const sel = typesConfig[qt.id].enabled;
+                    return (
+                      <button
+                        key={qt.id}
+                        type="button"
+                        onClick={() => toggleType(qt.id)}
+                        className={`p-3.5 rounded-xl border-2 text-left transition-all flex flex-col justify-between h-24 ${sel
+                          ? 'border-primary-fixed-dim bg-primary-fixed-dim/10'
+                          : 'border-white/10 bg-surface-container hover:border-white/20'
+                          }`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <span className={sel ? 'text-primary-fixed-dim' : 'text-slate-400'}>{qt.icon}</span>
+                          {sel && <Check className="w-3.5 h-3.5 text-primary-fixed-dim" />}
+                        </div>
+                        <div>
+                          <p className={`font-sans text-sm font-bold leading-tight ${sel ? 'text-primary-fixed' : 'text-white'}`}>{qt.label}</p>
+                          <p className="font-sans text-[10px] text-slate-500 mt-0.5 leading-none">{qt.desc}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 4. Per-type config */}
+              <div className="space-y-3">
+                <label className="font-sans text-xs text-slate-300 uppercase tracking-widest font-semibold block">
+                  4. Test Configurations
+                </label>
+                <div className="bg-surface-container-lowest rounded-xl border border-white/5 divide-y divide-white/5">
+                  {(Object.keys(typesConfig) as QuestionType[]).map(key => {
+                    const config = typesConfig[key];
+                    if (!config.enabled) return null;
+                    const qt = QUESTION_TYPES_INFO.find(x => x.id === key);
+                    if (!qt) return null;
+
+                    const enabledCount = Object.values(typesConfig).filter((t: any) => t.enabled).length;
+                    const allowedOptions = ['Test I', 'Test II', 'Test III', 'Test IV', 'Test V', 'Test VI'].slice(0, enabledCount);
 
                     return (
-                      <div 
-                        key={qt.id} 
-                        className={`flex flex-col md:flex-row md:items-center justify-between gap-4 p-3 rounded-xl border transition-all ${
-                          conf.enabled 
-                            ? isSectionDuplicate 
-                              ? 'border-red-500/20 bg-red-500/5' 
-                              : 'border-white/10 bg-white/5' 
-                            : 'border-transparent bg-transparent opacity-60'
-                        }`}
-                      >
-                        {/* Title Checkbox */}
+                      <div key={key} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 animate-in fade-in duration-200">
+                        <div className="flex items-center gap-2">
+                          <span className="text-primary-fixed-dim">{qt.icon}</span>
+                          <span className="font-sans text-sm font-semibold text-white">{qt.label}</span>
+                        </div>
                         <div className="flex items-center gap-3">
-                          <input 
-                            type="checkbox"
-                            checked={conf.enabled}
-                            onChange={(e) => {
-                              setTypesConfig(prev => ({
-                                ...prev,
-                                [qt.id]: { ...prev[qt.id], enabled: e.target.checked }
-                              }));
-                            }}
-                            className="w-4 h-4 rounded border-white/20 bg-surface-container text-primary-fixed-dim focus:ring-primary-fixed-dim/50"
-                          />
-                          <div className="flex items-center gap-2">
-                            <span className={conf.enabled ? 'text-primary-fixed' : 'text-slate-400'}>{qt.icon}</span>
-                            <div>
-                              <span className="font-sans text-sm font-bold text-white block leading-tight">{qt.label}</span>
-                              <span className="font-sans text-[10px] text-slate-500 leading-tight block">{qt.desc}</span>
-                            </div>
+                          {/* Section label */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-sans text-xs text-slate-400">Designation:</span>
+                            <Dropdown
+                              value={config.section}
+                              onChange={val => {
+                                setTypesConfig(prev => ({
+                                  ...prev,
+                                  [key]: { ...prev[key], section: val }
+                                }));
+                              }}
+                              options={allowedOptions}
+                              className="w-28 text-left"
+                            />
+                          </div>
+                          {/* Item count */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-sans text-xs text-slate-400">Items:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={totalQuestions}
+                              value={config.items}
+                              onChange={e => {
+                                const val = Math.max(0, Number(e.target.value) || 0);
+                                setTypesConfig(prev => ({
+                                  ...prev,
+                                  [key]: { ...prev[key], items: val }
+                                }));
+                              }}
+                              className="w-16 px-2 py-1.5 rounded-lg bg-surface-container border border-white/10 text-white font-sans text-xs outline-none text-center focus:border-primary-fixed-dim"
+                            />
                           </div>
                         </div>
-
-                        {/* Config Inputs if Enabled */}
-                        {conf.enabled && (
-                          <div className="flex items-center gap-4 animate-in fade-in duration-200">
-                            {/* Section Label */}
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-sans text-[10px] text-slate-400">Order:</span>
-                              <select
-                                value={conf.section}
-                                onChange={(e) => {
-                                  setTypesConfig(prev => ({
-                                    ...prev,
-                                    [qt.id]: { ...prev[qt.id], section: e.target.value }
-                                  }));
-                                }}
-                                className={`bg-surface-container border rounded-lg px-2 py-1 text-xs font-sans focus:outline-none focus:ring-1 focus:ring-primary-fixed-dim transition-all ${
-                                  isSectionDuplicate ? 'border-red-500 text-red-400' : 'border-white/15 text-white'
-                                }`}
-                              >
-                                {['Test I', 'Test II', 'Test III', 'Test IV', 'Test V', 'Test VI'].map(s => (
-                                  <option key={s} value={s}>{s}</option>
-                                ))}
-                              </select>
-                            </div>
-
-                            {/* Item Count */}
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-sans text-[10px] text-slate-400">Items:</span>
-                              <input 
-                                type="number" 
-                                min={1}
-                                max={30}
-                                value={conf.items}
-                                onChange={(e) => {
-                                  const val = Math.max(1, parseInt(e.target.value) || 1);
-                                  setTypesConfig(prev => ({
-                                    ...prev,
-                                    [qt.id]: { ...prev[qt.id], items: val }
-                                  }));
-                                }}
-                                className="w-12 bg-surface-container border border-white/15 rounded-lg px-2 py-1 text-xs font-sans text-white text-center focus:outline-none focus:ring-1 focus:ring-primary-fixed-dim"
-                              />
-                            </div>
-                          </div>
-                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Validation Feedback Callouts */}
+              {/* Validation messages */}
               {validation.duplicateSections && (
                 <div className="flex items-start gap-3 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl animate-in shake duration-300">
                   <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -1267,6 +1325,18 @@ export default function AdaptiveTestTab({
                 </div>
               )}
 
+              {validation.underflow && (
+                <div className="flex items-start gap-3 p-4 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl animate-in slide-in-from-bottom-2">
+                  <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-display text-sm font-bold block leading-tight">Configured Items Mismatch</span>
+                    <span className="font-sans text-xs text-slate-400 mt-1 block">
+                      Total configured items ({validation.sumItems}) is less than the requested {totalQuestions} questions. Please adjust items to match.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {validation.noneSelected && (
                 <div className="flex items-start gap-3 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl">
                   <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -1279,7 +1349,7 @@ export default function AdaptiveTestTab({
                 </div>
               )}
 
-              {/* Dynamic Difficulty Info Block (Difficulty Level Dropdown Removed) */}
+              {/* BKT difficulty info */}
               <div className="p-4 bg-primary-fixed-dim/5 border border-primary-fixed-dim/20 rounded-xl flex items-start gap-3">
                 <BrainCircuit className="w-5 h-5 text-primary-fixed-dim shrink-0 mt-0.5" />
                 <p className="font-sans text-xs text-slate-400 leading-relaxed">
@@ -1288,7 +1358,7 @@ export default function AdaptiveTestTab({
                 </p>
               </div>
 
-              {/* Actions Button */}
+              {/* Start button */}
               <button
                 type="button"
                 onClick={handleStartTest}
@@ -1302,11 +1372,11 @@ export default function AdaptiveTestTab({
 
           </div>
 
-          {/* RIGHT: Test History List */}
+          {/* History panel */}
           <div className="space-y-6">
-            
+
             <div className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-6 backdrop-blur-md space-y-4 flex flex-col h-full min-h-[400px]">
-              
+
               <h3 className="font-display text-lg font-semibold text-white border-b border-white/10 pb-3 flex items-center gap-2">
                 <Clock className="w-4 h-4 text-slate-400" /> Past Test History
               </h3>
@@ -1321,8 +1391,8 @@ export default function AdaptiveTestTab({
               ) : (
                 <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1 no-scrollbar flex-1">
                   {pastTests.map((test) => (
-                    <div 
-                      key={test.id} 
+                    <div
+                      key={test.id}
                       className="p-3.5 bg-white/5 border border-white/5 rounded-xl space-y-2 hover:border-white/10 transition-colors"
                     >
                       <div className="flex justify-between items-start">

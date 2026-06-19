@@ -59,7 +59,7 @@ export default function FlashcardsTab({
 
   const handleSaveCards = (data: { title: string; description: string; cards: { front: string; back: string }[] }) => {
     if (editingSetId !== null) {
-      // Edit existing set
+      // Update existing set
       setFlashcardSets(prev =>
         prev.map(set => {
           if (set.id !== editingSetId) return set;
@@ -78,7 +78,7 @@ export default function FlashcardsTab({
       );
       setEditingSetId(null);
     } else {
-      // Create new set with cards
+      // Create new set
       const newId = Date.now();
       setFlashcardSets(prev => [
         ...prev,
@@ -118,7 +118,7 @@ export default function FlashcardsTab({
     setIsCreateModalOpen(true);
   };
 
-  // If in study mode, show the study view
+  // Render study view if active
   if (isStudying && selectedSet && selectedSet.cards.length > 0) {
     return (
       <div className="animate-in fade-in duration-300">
@@ -133,7 +133,7 @@ export default function FlashcardsTab({
 
   return (
     <div className="animate-in fade-in duration-300">
-      {/* Show Flashcard Sets */}
+      {/* Deck list */}
       {selectedSetContent === null ? (
         <>
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
@@ -178,7 +178,7 @@ export default function FlashcardsTab({
                 key={set.id}
                 className="bg-surface-container-lowest rounded-2xl border border-white/5 p-6 hover:-translate-y-1 transition-all duration-300 group hover:border-primary-fixed-dim/30 hover:shadow-lg hover:shadow-primary-fixed-dim/5 flex flex-col"
               >
-                {/* Deck icon + visibility badge row */}
+                {/* Deck header row */}
                 <div className="flex items-start justify-between mb-6">
                   <div
                     onClick={() => setSelectedSetContent(set.id)}
@@ -187,7 +187,7 @@ export default function FlashcardsTab({
                     <Layers className="w-6 h-6 text-slate-400 group-hover:text-primary-fixed-dim transition-colors" />
                   </div>
 
-                  {/* Per-deck visibility toggle */}
+                  {/* Visibility toggle */}
                   <button
                     onClick={e => { e.stopPropagation(); onToggleDeckVisibility(set.id); }}
                     title={set.isPublic ? 'Click to make this deck private' : 'Click to share this deck publicly'}
@@ -212,7 +212,7 @@ export default function FlashcardsTab({
                   <p className="font-sans text-sm text-slate-400">{set.cardCount} Cards</p>
                 </div>
 
-                {/* Disabled hint when space is private */}
+                {/* Space private hint */}
                 {!spaceIsPublic && (
                   <p className="font-sans text-[10px] text-slate-600 mt-3 flex items-center gap-1">
                     <Lock className="w-3 h-3" /> Publicize the space first to share individual decks
@@ -223,7 +223,7 @@ export default function FlashcardsTab({
           </div>
         </>
       ) : (
-        /* Show Flashcards in Selected Deck */
+        /* Selected deck view */
         <>
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
@@ -244,7 +244,7 @@ export default function FlashcardsTab({
               )}
             </div>
             <div className="flex flex-wrap gap-3">
-              {/* Study Button */}
+              {/* Study button */}
               {selectedSet && selectedSet.cards.length > 0 && (
                 <button
                   onClick={() => setIsStudying(true)}
@@ -258,7 +258,7 @@ export default function FlashcardsTab({
             </div>
           </div>
 
-          {/* Cards Empty State */}
+          {/* Empty state */}
           {selectedSet && selectedSet.cards.length === 0 && (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <div className="w-20 h-20 rounded-2xl bg-surface-container border border-white/5 flex items-center justify-center mb-6">
@@ -278,10 +278,10 @@ export default function FlashcardsTab({
             </div>
           )}
 
-          {/* Cards Grid */}
+          {/* Card grid */}
           {selectedSet && selectedSet.cards.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* Empty state card for adding new */}
+                {/* Add card tile */}
                 <div
                   onClick={() => handleOpenCreateModal(selectedSet.id)}
                   className="h-64 rounded-2xl border-2 border-dashed border-white/10 bg-surface-container-lowest/30 flex flex-col justify-center items-center text-center hover:border-primary-fixed-dim/30 hover:bg-primary-fixed-dim/5 transition-all cursor-pointer"
@@ -294,7 +294,7 @@ export default function FlashcardsTab({
                 </div>
               {selectedSet.cards.map((card) => (
                 <div key={card.id} className="group relative h-64 [perspective:1000px]">
-                  {/* Delete button */}
+                  {/* Delete */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -327,7 +327,7 @@ export default function FlashcardsTab({
           )}
         </>
       )}
-      {/* Create / Edit Flashcards Modal */}
+      {/* Create/Edit modal */}
       <CreateFlashcardsModal
         isOpen={isCreateModalOpen}
         onClose={() => {

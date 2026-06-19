@@ -3,9 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link as LinkIcon, FileText, BookOpen, Sparkles, MessageSquare, Send, CheckSquare, Square, X, Bot, User, FileImage, Download, Highlighter, Trash2, Edit3 } from 'lucide-react';
 import Modal from '../../../components/ui/Modal';
 
-// ─── Simulated Document Content ─────────────────────────────────────────────
-// Realistic sample text used in the viewer so annotation features work without
-// any external library dependencies or fetch calls.
+// Sample document text used for annotation features (no external deps).
 
 const SIM_CONTENT: Record<string, { title: string; pages: { label: string; body: string }[] }> = {
   'pdf': {
@@ -198,7 +196,7 @@ const getFileIcon = (type: string) => {
   }
 };
 
-// ─── DocViewer: Simulated Document Viewer with Annotation Support ────────────
+// DocViewer: Simulated document viewer with annotation support
 interface DocViewerProps {
   selectedDoc: string;
   docNotes: DocNote[];
@@ -226,7 +224,7 @@ function DocViewer({
   deleteNote,
   toggleNoteExpanded,
 }: DocViewerProps) {
-  // Simulated content — no fetch/extraction needed
+  // Simulated content
   const simContent = getSimContent(selectedDoc);
 
   const [selectionPos, setSelectionPos] = useState<{
@@ -540,7 +538,7 @@ function DocViewer({
   );
 }
 
-// Small helper components to avoid closure issues in the popup
+// Helper components (avoids closure issues in popup)
 function NoteEditor({ initialValue, onSave, onCancel }: { initialValue: string; onSave: (text: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState(initialValue);
   return (

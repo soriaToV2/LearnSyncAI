@@ -24,11 +24,11 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
     if (!explanationText.trim()) return;
     setIsEvaluating(true);
 
-    // Simulate AI text complexity analysis delay
+    // Simulate AI analysis
     setTimeout(() => {
       const textLower = explanationText.toLowerCase();
       
-      // Look for heavy jargon
+      // Detect jargon
       const jargonFound = [];
       if (textLower.includes('exocytosis')) jargonFound.push('Exocytosis');
       if (textLower.includes('postsynaptic')) jargonFound.push('Postsynaptic');
@@ -37,7 +37,7 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
       if (textLower.includes('action potential')) jargonFound.push('Action potential');
       if (textLower.includes('presynaptic')) jargonFound.push('Presynaptic');
 
-      let simplicityScore = 90; // Higher is simpler
+      let simplicityScore = 90; // 100 = simplest
       let feedback = "";
       let analogyIdea = "";
 
@@ -68,7 +68,7 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
           analogyIdea = "Compare neurotransmitter channels to keys unlocking a door.";
         }
       } else {
-        // Peer
+        // Peer audience
         simplicityScore = Math.max(80, 100 - jargonFound.length * 2);
         feedback = "Perfect level for a university peer. You've detailed the steps with precise medical/biology vocabulary.";
         analogyIdea = "No analogies needed for peer review, focus on step sequence accuracy.";

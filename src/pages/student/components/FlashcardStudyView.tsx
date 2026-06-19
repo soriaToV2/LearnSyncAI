@@ -26,7 +26,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
   const [studyCards, setStudyCards] = useState<Flashcard[]>(cards);
   const [showHint, setShowHint] = useState(true);
 
-  // Hide keyboard hints after first interaction
+  // Auto-hide keyboard hint
   useEffect(() => {
     const timer = setTimeout(() => setShowHint(false), 6000);
     return () => clearTimeout(timer);
@@ -63,10 +63,10 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
     }, 350);
   }, [currentIndex, studyCards, isAnimating, isFinished]);
 
-  // Keyboard controls
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent space from scrolling
+      // Block space scroll
       if (e.code === 'Space') {
         e.preventDefault();
         handleFlip();
@@ -111,7 +111,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
     setSlideDirection(null);
   };
 
-  // --- Results Screen ---
+  // Results screen
   if (isFinished) {
     const circumference = 2 * Math.PI * 54;
     const strokeDashoffset = circumference - (percentage / 100) * circumference;
@@ -135,13 +135,13 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
 
     return (
       <div className="animate-in fade-in duration-500 flex flex-col items-center justify-center py-12">
-        {/* Results Card */}
+        {/* Results card */}
         <div className="w-full max-w-lg bg-surface-container-lowest rounded-3xl border border-white/5 p-10 text-center relative overflow-hidden">
-          {/* Decorative gradient */}
+          {/* Gradient bg */}
           <div className="absolute inset-0 bg-gradient-to-b from-primary-fixed-dim/5 via-transparent to-transparent pointer-events-none" />
 
           <div className="relative z-10">
-            {/* Trophy */}
+            {/* Trophy icon */}
             <div className="w-16 h-16 rounded-2xl bg-surface-container border border-white/10 flex items-center justify-center mx-auto mb-6">
               <Trophy className={`w-8 h-8 ${getGradeColor()}`} />
             </div>
@@ -149,7 +149,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
             <h2 className="font-display text-2xl font-bold text-white mb-1">Session Complete</h2>
             <p className="font-sans text-sm text-slate-400 mb-8">{deckTitle}</p>
 
-            {/* Score Ring */}
+            {/* Score ring */}
             <div className="relative w-36 h-36 mx-auto mb-8">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
                 <circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" strokeWidth="6" className="text-white/5" />
@@ -167,10 +167,10 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
               </div>
             </div>
 
-            {/* Message */}
+            {/* Feedback */}
             <p className="font-sans text-sm text-slate-300 mb-8">{getGradeMessage()}</p>
 
-            {/* Stats Row */}
+            {/* Stats */}
             <div className="grid grid-cols-2 gap-4 mb-8">
               <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
                 <div className="flex items-center justify-center gap-2 mb-1">
@@ -188,7 +188,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
               </div>
             </div>
 
-            {/* Action Buttons */}
+            {/* Buttons */}
             <div className="flex flex-col gap-3">
               {incorrectCount > 0 && (
                 <button
@@ -220,12 +220,12 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
     );
   }
 
-  // --- Study View ---
+  // Study view
   const currentCard = studyCards[currentIndex];
 
   return (
     <div className="animate-in fade-in duration-300 flex flex-col items-center">
-      {/* Progress Header */}
+      {/* Progress header */}
       <div className="w-full max-w-2xl mb-8">
         <div className="flex items-center justify-between mb-3">
           <button
@@ -249,7 +249,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
           </div>
         </div>
 
-        {/* Progress Bar */}
+        {/* Progress bar */}
         <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
           <div
             className="h-full bg-gradient-to-r from-primary-fixed-dim to-primary rounded-full transition-all duration-500 ease-out"
@@ -258,7 +258,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
         </div>
       </div>
 
-      {/* Flashcard */}
+      {/* Card */}
       <div className="w-full max-w-2xl mb-8">
         <div
           onClick={handleFlip}
@@ -280,7 +280,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
               className="absolute inset-0 rounded-3xl border border-white/10 bg-surface-container-lowest p-8 md:p-12 flex flex-col justify-center items-center text-center shadow-2xl shadow-black/20"
               style={{ backfaceVisibility: 'hidden' }}
             >
-              {/* Card Label */}
+              {/* Label */}
               <span className="absolute top-5 left-6 font-sans text-[10px] uppercase tracking-widest text-slate-600 font-bold">
                 Question
               </span>
@@ -317,7 +317,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
 
       {/* Controls */}
       <div className="w-full max-w-2xl flex items-center justify-center gap-6">
-        {/* Wrong button */}
+        {/* Wrong */}
         <button
           onClick={() => handleAnswer(false)}
           className="group flex flex-col items-center gap-2"
@@ -332,7 +332,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
           </div>
         </button>
 
-        {/* Flip indicator */}
+        {/* Flip */}
         <div className="flex flex-col items-center gap-2 px-4">
           <button
             onClick={handleFlip}
@@ -343,7 +343,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
           <span className="font-sans text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Flip</span>
         </div>
 
-        {/* Correct button */}
+        {/* Correct */}
         <button
           onClick={() => handleAnswer(true)}
           className="group flex flex-col items-center gap-2"
@@ -359,7 +359,7 @@ export default function FlashcardStudyView({ cards, deckTitle, onExit }: Flashca
         </button>
       </div>
 
-      {/* Keyboard Hint */}
+      {/* Keyboard hint */}
       {showHint && (
         <div className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="bg-surface-container border border-white/5 rounded-xl px-5 py-3 flex items-center gap-4">

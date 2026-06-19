@@ -10,7 +10,6 @@ interface ModalProps {
   maxWidth?: string;
 }
 
-
 export default function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-md' }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -34,12 +33,12 @@ export default function Modal({ isOpen, onClose, title, children, maxWidth = 'ma
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div 
-        className="absolute inset-0" 
+      <div
+        className="absolute inset-0"
         onClick={onClose}
         aria-hidden="true"
       />
-      <div 
+      <div
         ref={modalRef}
         className={`relative w-full ${maxWidth} bg-surface-container-high rounded-2xl border border-white/10 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200`}
         role="dialog"
@@ -50,7 +49,7 @@ export default function Modal({ isOpen, onClose, title, children, maxWidth = 'ma
           <h2 id="modal-title" className="font-display text-lg font-semibold text-white">
             {title}
           </h2>
-          <button 
+          <button
             onClick={onClose}
             className="p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors"
             aria-label="Close modal"

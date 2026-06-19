@@ -18,7 +18,6 @@ export default function Dropdown({ value, onChange, options, className = '', ico
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Normalize options to object form
   const normalizedOptions: DropdownOption[] = options.map((opt) => {
     if (typeof opt === 'string') {
       return { label: opt, value: opt };
@@ -28,7 +27,6 @@ export default function Dropdown({ value, onChange, options, className = '', ico
 
   const selectedOption = normalizedOptions.find((opt) => opt.value === value) || normalizedOptions[0];
 
-  // Close when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
@@ -72,11 +70,10 @@ export default function Dropdown({ value, onChange, options, className = '', ico
                 <button
                   key={idx}
                   onClick={() => handleSelect(option.value)}
-                  className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${
-                    isSelected
+                  className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${isSelected
                       ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim font-bold'
                       : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                  }`}
+                    }`}
                   role="menuitem"
                 >
                   <span className="truncate flex-1">{option.label}</span>

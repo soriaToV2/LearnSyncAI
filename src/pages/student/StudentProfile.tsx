@@ -9,12 +9,7 @@ export default function StudentProfile() {
   const { studentId } = useParams();
   const [activeTab, setActiveTab] = useState<'achievements' | 'spaces'>('achievements');
   const [previewSpaceId, setPreviewSpaceId] = useState<string | null>(null);
-
-  // Look up student from mock data
   const student = MOCK_STUDENTS.find(s => s.id === studentId) || MOCK_STUDENTS.find(s => s.id === 'me');
-  
-  // Local state just for the UI toggle on this page.
-  // In a real app this would reflect/update the backend.
   const [isFollowing, setIsFollowing] = useState(student?.isFollowing || false);
   const [followerCount, setFollowerCount] = useState(student?.followers || 0);
 
@@ -51,22 +46,20 @@ export default function StudentProfile() {
 
   return (
     <>
-
-
       <main className="p-10 max-w-5xl mx-auto w-full">
         {/* Profile Header Area */}
         <div className="mb-12 flex flex-col md:flex-row items-center md:items-start gap-8">
           <div className="w-32 h-32 md:w-40 md:h-40 rounded-full overflow-hidden border-4 border-surface-container ring-2 ring-primary-fixed-dim/30 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
-            <img 
-              src={student.avatar} 
-              alt={student.name} 
-              className="w-full h-full object-cover" 
+            <img
+              src={student.avatar}
+              alt={student.name}
+              className="w-full h-full object-cover"
             />
           </div>
-          
+
           <div className="flex-1 text-center md:text-left flex flex-col items-center md:items-start">
             <h1 className="font-display text-4xl font-bold text-on-surface mb-2">{student.name}</h1>
-            
+
             <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 mb-6 text-on-surface-variant font-sans text-sm">
               <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-secondary-container/10 border border-secondary-container/20 text-secondary-container font-semibold uppercase tracking-wider text-[11px]">
                 <Building className="w-3.5 h-3.5" />
@@ -94,13 +87,12 @@ export default function StudentProfile() {
             </div>
 
             {!isMe && (
-              <button 
+              <button
                 onClick={handleFollowToggle}
-                className={`px-8 py-2.5 rounded-full font-display font-semibold transition-all active:scale-95 shadow-md flex items-center gap-2 ${
-                  isFollowing 
-                    ? 'bg-surface-container-high border border-white/20 text-white hover:bg-surface-container-highest' 
+                className={`px-8 py-2.5 rounded-full font-display font-semibold transition-all active:scale-95 shadow-md flex items-center gap-2 ${isFollowing
+                    ? 'bg-surface-container-high border border-white/20 text-white hover:bg-surface-container-highest'
                     : 'bg-on-surface text-background hover:bg-white'
-                }`}
+                  }`}
               >
                 {isFollowing ? (
                   <><UserCheck className="w-4 h-4" /> Following</>
@@ -110,31 +102,31 @@ export default function StudentProfile() {
               </button>
             )}
             {isMe && (
-               <button className="px-8 py-2.5 rounded-full font-display font-semibold transition-all active:scale-95 shadow-md bg-surface-container-high border border-white/20 text-white hover:bg-surface-container-highest flex items-center gap-2">
-                 Edit Profile
-               </button>
+              <button className="px-8 py-2.5 rounded-full font-display font-semibold transition-all active:scale-95 shadow-md bg-surface-container-high border border-white/20 text-white hover:bg-surface-container-highest flex items-center gap-2">
+                Edit Profile
+              </button>
             )}
           </div>
         </div>
 
         {/* Tabs */}
         <div className="border-b border-white/10 mb-8 flex overflow-x-auto no-scrollbar gap-8">
-          <button 
+          <button
             onClick={() => setActiveTab('achievements')}
             className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'achievements' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
           >
             <Award className="w-4 h-4" /> Achievements
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab('spaces')}
             className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'spaces' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
           >
-             <Box className="w-4 h-4" /> Public Study Spaces
-             {student.spaces.filter(s => s.isPublic).length > 0 && (
-               <span className="ml-1 px-2 py-0.5 rounded-full bg-primary-fixed-dim/10 text-primary-fixed-dim font-sans text-[11px] font-bold border border-primary-fixed-dim/20">
-                 {student.spaces.filter(s => s.isPublic).length}
-               </span>
-             )}
+            <Box className="w-4 h-4" /> Public Study Spaces
+            {student.spaces.filter(s => s.isPublic).length > 0 && (
+              <span className="ml-1 px-2 py-0.5 rounded-full bg-primary-fixed-dim/10 text-primary-fixed-dim font-sans text-[11px] font-bold border border-primary-fixed-dim/20">
+                {student.spaces.filter(s => s.isPublic).length}
+              </span>
+            )}
           </button>
         </div>
 
@@ -153,13 +145,13 @@ export default function StudentProfile() {
                 </div>
               );
             })}
-            
+
             {/* Empty Slots */}
             {Array.from({ length: Math.max(0, 8 - student.achievements.length) }).map((_, i) => (
               <div key={`empty-${i}`} className="rounded-2xl p-6 flex flex-col items-center justify-center border-2 border-dashed border-white/5 opacity-50">
-                 <div className="w-20 h-20 rounded-full bg-surface-container-high flex items-center justify-center mb-4">
+                <div className="w-20 h-20 rounded-full bg-surface-container-high flex items-center justify-center mb-4">
                   <div className="w-6 h-6 rounded-full bg-surface-bright"></div>
-                 </div>
+                </div>
               </div>
             ))}
           </div>
@@ -170,8 +162,8 @@ export default function StudentProfile() {
           return (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {publicSpaces.map(space => (
-                <div 
-                  key={space.id} 
+                <div
+                  key={space.id}
                   onClick={() => setPreviewSpaceId(space.id)}
                   className="glass-card p-6 rounded-xl border border-white/10 hover:border-primary-fixed-dim/40 transition-colors group cursor-pointer"
                 >
@@ -186,7 +178,7 @@ export default function StudentProfile() {
                   </div>
                   <p className="text-on-surface-variant text-sm mb-6">{space.description}</p>
                   <div className="flex items-center gap-4 text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                    <span className="flex items-center gap-1.5"><Users className="w-4 h-4"/> {space.studiedCount.toLocaleString()} Studied</span>
+                    <span className="flex items-center gap-1.5"><Users className="w-4 h-4" /> {space.studiedCount.toLocaleString()} Studied</span>
                   </div>
                 </div>
               ))}
@@ -208,10 +200,10 @@ export default function StudentProfile() {
           );
         })()}
       </main>
-      <StudySpacePreviewModal 
-        isOpen={previewSpaceId !== null} 
-        onClose={() => setPreviewSpaceId(null)} 
-        spaceId={previewSpaceId} 
+      <StudySpacePreviewModal
+        isOpen={previewSpaceId !== null}
+        onClose={() => setPreviewSpaceId(null)}
+        spaceId={previewSpaceId}
       />
     </>
   );

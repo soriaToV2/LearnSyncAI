@@ -7,7 +7,7 @@ import {
 import CourseLayout from '../../../components/layout/CourseLayout';
 import { getCourseById } from '../../../data/mockEducatorData';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// Types
 type ResourceType = 'document';
 
 interface LocalResource {
@@ -18,7 +18,7 @@ interface LocalResource {
   uploadedAt: string;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// Helpers
 const DOCUMENT_ACCEPT = '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv';
 
 const formatBytes = (bytes: number) => {
@@ -36,7 +36,7 @@ const getDocIcon = (name: string) => {
   return { icon: FileArchive, color: 'text-slate-400', bg: 'bg-surface-variant' };
 };
 
-// ─── Upload Modal ─────────────────────────────────────────────────────────────
+// Upload Modal
 function UploadModal({ onClose, onUpload }: {
   onClose: () => void;
   onUpload: (resource: LocalResource) => void;
@@ -80,7 +80,6 @@ function UploadModal({ onClose, onUpload }: {
 
       {/* Modal */}
       <div className="relative z-10 w-full max-w-lg bg-surface-container rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
           <h2 className="font-display text-xl font-bold text-on-surface">
             Upload Document
@@ -91,7 +90,7 @@ function UploadModal({ onClose, onUpload }: {
         </div>
 
         <div className="p-6">
-          {/* ── Step 2a: Upload Document ── */}
+          {/* Upload Document */}
           <div>
             <input ref={docInputRef} type="file" accept={DOCUMENT_ACCEPT} className="hidden" onChange={e => { if (e.target.files?.[0]) handleFileSelect(e.target.files[0]); }} />
             <div
@@ -147,7 +146,7 @@ function UploadModal({ onClose, onUpload }: {
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// Main Component
 export default function CourseResources() {
   const { courseId } = useParams();
   const course = getCourseById(courseId || '');
@@ -198,14 +197,14 @@ export default function CourseResources() {
 
       <div className="space-y-6">
         {/* Header row */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h3 className="font-display text-xl font-semibold text-on-surface">Learning Resources</h3>
             <p className="font-sans text-sm text-on-surface-variant mt-0.5">{allResources.length} resource{allResources.length !== 1 ? 's' : ''} uploaded</p>
           </div>
           <button
             onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 px-5 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-display text-sm font-semibold hover:bg-primary-container transition-all active:scale-95"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-display text-sm font-semibold hover:bg-primary-container transition-all active:scale-95"
           >
             <Plus className="w-4 h-4" /> Upload Resource
           </button>

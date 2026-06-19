@@ -24,6 +24,8 @@ export interface Course {
   hasReviewed?: boolean;
   userRating?: number;
   userComment?: string;
+  courseCode?: string;
+  section?: string;
 }
 
 export const MOCK_COURSES: Course[] = [
@@ -45,6 +47,8 @@ export const MOCK_COURSES: Course[] = [
     icon: BrainCircuit,
     accentColor: 'primary-fixed-dim',
     isEnrolled: true,
+    courseCode: 'BIO-301',
+    section: 'A',
   },
   {
     id: 'phys-401',
@@ -63,6 +67,8 @@ export const MOCK_COURSES: Course[] = [
     icon: Sigma,
     accentColor: 'indigo-400',
     isEnrolled: true,
+    courseCode: 'PHYS-401',
+    section: 'B',
   },
   {
     id: 'cs-202',
@@ -81,6 +87,8 @@ export const MOCK_COURSES: Course[] = [
     icon: Code2,
     accentColor: 'emerald-400',
     isEnrolled: true,
+    courseCode: 'CS-202',
+    section: 'A',
   },
 
   // ─── GLOBAL / INDEPENDENT COURSES ─────────────────────────────────────────

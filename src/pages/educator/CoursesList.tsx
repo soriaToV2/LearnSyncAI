@@ -9,8 +9,15 @@ import CreateCourseModal from './course/components/CreateCourseModal';
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = { BrainCircuit, Sigma, Code2 };
 
+const formatDate = (dateString?: string) => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return dateString;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
 export default function CoursesList() {
-  const [filter, setFilter] = useState<'all' | 'active' | 'archived' | 'draft'>('all');
+  const [filter, setFilter] = useState<'all' | 'active' | 'archived'>('all');
   const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [courses, setCourses] = useState([...EDUCATOR_COURSES]);
@@ -23,7 +30,6 @@ export default function CoursesList() {
     all: courses.length,
     active: courses.filter(c => c.status === 'active').length,
     archived: courses.filter(c => c.status === 'archived').length,
-    draft: courses.filter(c => c.status === 'draft').length,
   };
 
   return (
@@ -43,7 +49,7 @@ export default function CoursesList() {
               className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-sans text-base placeholder:text-slate-500 outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
           </div>
           <div className="flex flex-wrap gap-2">
-            {(['all', 'active', 'archived', 'draft'] as const).map(f => (
+            {(['all', 'active', 'archived'] as const).map(f => (
               <button key={f} onClick={() => setFilter(f)}
                 className={`px-4 py-2 rounded-full font-sans font-bold text-xs md:text-sm uppercase tracking-wider transition-colors border ${filter === f
                   ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim border-primary-fixed-dim/30'
@@ -83,15 +89,11 @@ export default function CoursesList() {
                         style={{ backgroundColor: `${c.color}15`, color: c.color }}>
                         <Icon className="w-6 h-6" />
                       </div>
-                      <div className="flex gap-1.5">
-                        {c.isPublic ? (
-                           <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-400/10 text-emerald-400 text-xs font-bold uppercase border border-emerald-400/20">
-                             <Globe className="w-3.5 h-3.5" /> Public
-                           </span>
-                        ) : (
-                           <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-400/10 text-amber-400 text-xs font-bold uppercase border border-amber-400/20">
-                             <Lock className="w-3.5 h-3.5" /> Restricted
-                           </span>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {c.section && (
+                          <span className="flex items-center px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs font-bold uppercase border border-indigo-500/20">
+                            Section {c.section}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -102,15 +104,19 @@ export default function CoursesList() {
                     <div className="flex items-center gap-2 text-slate-300 font-sans text-base font-semibold">
                       <Users className="w-5 h-5 text-slate-500" /> {c.studentCount} Students
                     </div>
-                    {nextDue && (
-                      <span className="flex items-center gap-1.5 text-amber-400 font-sans text-sm font-bold">
-                        <Clock className="w-4 h-4" /> {nextDue.deadline?.split('·')[0]}
+                    {c.status === 'archived' ? (
+                      <span className="flex items-center gap-1.5 text-slate-400 font-sans text-sm font-semibold">
+                        <Clock className="w-4 h-4 text-slate-500" /> Archived {c.archivedAt || 'recently'}
                       </span>
-                    )}
-                    {!nextDue && c.status === 'active' && (
-                      <span className="px-2.5 py-1 rounded bg-green-500/10 text-green-400 font-sans font-bold text-xs tracking-wider border border-green-500/20 uppercase">
-                        Active
-                      </span>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <span className="px-2.5 py-1 rounded bg-green-500/10 text-green-400 font-sans font-bold text-xs tracking-wider border border-green-500/20 uppercase">
+                          Active
+                        </span>
+                        <span className="font-sans text-xs text-slate-400 font-medium">
+                          Created {formatDate(c.createdAt)}
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>

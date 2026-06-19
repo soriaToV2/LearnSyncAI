@@ -31,9 +31,9 @@ export default function CreateAccount() {
 
       <main className="flex-grow flex items-center justify-center p-4 w-full max-w-[1000px] mx-auto relative z-10 min-h-screen">
 
-        <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-[90vh]">
+        <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-none lg:max-h-[90vh]">
 
-          <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 lg:p-10 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
+          <div className="hidden lg:flex w-full lg:w-1/2 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 lg:p-10 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
             <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2564&auto=format&fit=crop')] bg-cover bg-center opacity-10 mix-blend-luminosity"></div>
 
             <div className="relative z-10 flex flex-col items-center lg:items-start text-center lg:text-left">
@@ -71,6 +71,14 @@ export default function CreateAccount() {
           <div className="w-full lg:w-1/2 p-6 lg:p-10 flex flex-col justify-center bg-surface-container-lowest/50 relative overflow-y-auto no-scrollbar">
 
             <div className="w-full max-w-[340px] mx-auto flex flex-col justify-center">
+              <div className="lg:hidden flex flex-col items-center mb-6 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
+                  <BrainCircuit className="w-8 h-8 text-primary-fixed-dim" />
+                </div>
+                <h1 className="font-display text-3xl font-bold text-white">LearnSync AI</h1>
+                <p className="font-sans text-sm text-slate-400 mt-2">Personalized adaptive learning platform.</p>
+              </div>
+
               <div className="mb-6 text-center lg:text-left">
                 <h2 className="font-display text-2xl font-bold text-white mb-1">Create Account</h2>
                 <p className="font-sans text-sm text-slate-400">Select your role to access your study space or instructor dashboard.</p>

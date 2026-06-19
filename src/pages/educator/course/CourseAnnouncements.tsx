@@ -33,7 +33,7 @@ export default function CourseAnnouncements() {
   const [announcements, setAnnouncements] = useState<Announcement[]>(initialAnnouncements);
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
-  
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
@@ -74,8 +74,8 @@ export default function CourseAnnouncements() {
 
   const saveEdit = () => {
     if (editTitle.trim() && editContent.trim()) {
-      setAnnouncements(announcements.map(a => 
-        a.id === editingId 
+      setAnnouncements(announcements.map(a =>
+        a.id === editingId
           ? { ...a, title: editTitle.trim(), content: editContent.trim() }
           : a
       ));
@@ -91,7 +91,6 @@ export default function CourseAnnouncements() {
   return (
     <CourseLayout>
       <div className="space-y-6 max-w-3xl relative">
-        {/* Toast Notification */}
         {toastMessage && (
           <div className="fixed top-24 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4">
             <div className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-4 py-3 rounded-xl flex items-center gap-3 shadow-lg backdrop-blur-md">
@@ -111,14 +110,14 @@ export default function CourseAnnouncements() {
             placeholder="Announcement Title"
             className="w-full bg-surface-container-high border border-white/10 rounded-xl px-4 py-3 text-on-surface font-display text-md placeholder:text-slate-500 outline-none focus:border-primary-fixed-dim/50 mb-4"
           />
-          <textarea 
+          <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="What do you want to announce to your students in this course?" 
+            placeholder="What do you want to announce to your students in this course?"
             className="w-full bg-surface-container-high border border-white/10 rounded-xl p-4 text-on-surface font-sans text-sm placeholder:text-slate-500 outline-none focus:border-primary-fixed-dim/50 min-h-[120px] resize-y mb-4"
           ></textarea>
           <div className="flex justify-end">
-            <button 
+            <button
               onClick={handlePost}
               disabled={!title.trim() || !content.trim()}
               className="px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-lg font-display text-sm font-semibold hover:bg-primary-container transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
@@ -156,8 +155,7 @@ export default function CourseAnnouncements() {
               </div>
             ) : (
               <>
-                {/* Actions (visible on hover) */}
-                <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
+                <div className="absolute top-6 right-6 flex md:opacity-0 md:group-hover:opacity-100 transition-opacity items-center gap-2">
                   <button onClick={() => startEditing(announcement)} className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors" title="Edit">
                     <Edit2 className="w-4 h-4" />
                   </button>
@@ -166,14 +164,14 @@ export default function CourseAnnouncements() {
                   </button>
                 </div>
 
-                <div className="flex gap-4">
-                  <div className="w-12 h-12 rounded-full bg-primary-fixed-dim/20 flex items-center justify-center shrink-0">
-                    <Megaphone className="w-6 h-6 text-primary-fixed-dim" />
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="w-10 h-10 rounded-full bg-primary-fixed-dim/20 flex items-center justify-center shrink-0 self-start">
+                    <Megaphone className="w-5 h-5 text-primary-fixed-dim" />
                   </div>
-                  <div className="pr-16">
-                    <div className="flex items-center gap-3 mb-1">
-                      <h3 className="font-display text-lg font-semibold text-on-surface">{announcement.title}</h3>
-                      <span className="flex items-center gap-1 text-[11px] text-slate-400 font-sans">
+                  <div className="flex-1 min-w-0 pr-12 md:pr-16">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 mb-2">
+                      <h3 className="font-display text-base sm:text-lg font-semibold text-on-surface leading-snug">{announcement.title}</h3>
+                      <span className="flex items-center gap-1 text-[11px] text-slate-400 font-sans shrink-0">
                         <Clock className="w-3 h-3" /> {announcement.timestamp}
                       </span>
                     </div>

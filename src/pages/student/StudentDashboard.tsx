@@ -9,29 +9,27 @@ import {
 import { MOCK_STUDENTS } from '../../data/mockStudents';
 import { useStudentTheme } from '../../context/ThemeContext';
 
-// Updated: Reflects "Study Spaces" rather than generic courses
 const studySpaces = [
   {
     id: 'bio-301', title: 'Advanced Neurobiology', prof: 'Prof. Elias Vance',
     progress: 84, color: '#22d3ee', icon: BrainCircuit, uni: 'PLP - CCS', courseCode: 'BIO-301',
     dueLabel: 'Adaptive Test', dueDate: 'May 12',
-    modesActive: 4, completedSessions: 12,
+    modesActive: 4, completedSessions: 12, section: 'A'
   },
   {
     id: 'phys-401', title: 'Data Structures', prof: 'Prof. Sarah Chen',
     progress: 62, color: '#818cf8', icon: Sigma, uni: 'PLP - CCS', courseCode: 'IT-201',
     dueLabel: 'Free Recall', dueDate: 'May 15',
-    modesActive: 3, completedSessions: 8,
+    modesActive: 3, completedSessions: 8, section: 'B'
   },
   {
     id: 'cs-202', title: 'Algorithms Design', prof: 'Prof. Alan Turing',
     progress: 45, color: '#34d399', icon: Code2, uni: 'PLP - CCS', courseCode: 'CS-202',
     dueLabel: 'Feynman Log', dueDate: 'May 20',
-    modesActive: 4, completedSessions: 5,
+    modesActive: 4, completedSessions: 5, section: 'A'
   },
 ];
 
-// Updated: Reflects specific LearnSync AI review modes and CollabShare actions
 const agenda = [
   { title: 'BKT Adaptive Test — Neurobiology', date: 'Mon, May 12', type: 'adaptive', done: false },
   { title: 'Free Recall Evaluation — Data Structures', date: 'Thu, May 15', type: 'semantic', done: false },
@@ -59,7 +57,6 @@ export default function StudentDashboard() {
   const activeDeadlines = agenda.filter(item => !item.done && !checkedItems[agenda.indexOf(item)]);
   const pendingAlertCount = activeDeadlines.length;
 
-  // Updated: Reflects BKT updates, CollabShare cloning, and PlayMe XP
   const studentActivities = [
     { id: 1, label: 'Earned 500 XP in PlayMe Term Matching', time: '2 hours ago', icon: 'Trophy', accent: 'text-yellow-400', color: 'bg-yellow-500/10' },
     { id: 2, label: 'Cloned peer workspace via CollabShare (Read-Only)', time: '5 hours ago', icon: 'Share2', accent: 'text-indigo-400', color: 'bg-indigo-500/10' },
@@ -69,7 +66,6 @@ export default function StudentDashboard() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-page relative">
-      {/* Premium Ambient Aura Blurs */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full blur-[130px] animate-pulse" style={{ animationDuration: '8s', backgroundColor: theme.accentSoft.replace('0.1', '0.12') }} />
         <div className="absolute bottom-[20%] left-[-10%] w-[500px] h-[500px] rounded-full blur-[100px] animate-pulse" style={{ animationDuration: '12s', backgroundColor: theme.accentSoft.replace('0.1', '0.06') }} />
@@ -120,11 +116,7 @@ export default function StudentDashboard() {
 
         {/* Columns Grid */}
         <div className="grid grid-cols-12 gap-8">
-
-          {/* Left Column (8 cols) */}
           <div className="col-span-12 xl:col-span-8 flex flex-col gap-8">
-
-            {/* Active Study Spaces */}
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
@@ -147,14 +139,21 @@ export default function StudentDashboard() {
                         </div>
 
                         <div className="relative z-10">
-                          <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                             <div className="w-10 h-10 rounded-lg flex items-center justify-center border border-white/10 shrink-0"
                               style={{ backgroundColor: `${c.color}15`, color: c.color }}>
                               <Icon className="w-5 h-5" />
                             </div>
-                            <span className="font-mono text-[10px] text-slate-500 tracking-wider uppercase border border-white/5 px-2.5 py-0.5 rounded bg-white/[0.02]">
-                              {c.courseCode}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono text-[10px] text-slate-500 tracking-wider uppercase border border-white/5 px-2.5 py-0.5 rounded bg-white/[0.02]">
+                                {c.courseCode}
+                              </span>
+                              {c.section && (
+                                <span className="font-sans text-[10px] text-indigo-400 tracking-wider uppercase border border-indigo-500/20 px-2.5 py-0.5 rounded bg-indigo-500/5 font-semibold">
+                                  Section {c.section}
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <h3 className="font-display text-lg font-bold text-white group-hover:text-cyan-400 transition-colors line-clamp-1 mb-0.5">{c.title}</h3>
@@ -222,10 +221,7 @@ export default function StudentDashboard() {
                 ))}
               </div>
             </div>
-
           </div>
-
-          {/* Right Column (4 cols) */}
           <div className="col-span-12 xl:col-span-4 flex flex-col gap-6">
 
             {/* Action Center */}
@@ -274,7 +270,7 @@ export default function StudentDashboard() {
               </div>
             </div>
 
-            {/* Academic Activity (Student timeline logs) */}
+            {/* Academic Activity */}
             <div className="rounded-2xl border border-white/5 bg-white/[0.01] p-6 backdrop-blur-md shadow-xl">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-1.5 h-6 rounded bg-[#22d3ee]"></div>

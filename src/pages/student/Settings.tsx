@@ -7,19 +7,19 @@ import { useStudentTheme, THEMES } from '../../context/ThemeContext';
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<'profile' | 'preferences'>('profile');
-  const [studentData, setStudentData] = useState(MOCK_STUDENTS[0]); // Sarah Jenkins ("me")
+  const [studentData, setStudentData] = useState(MOCK_STUDENTS[0]); // current user
 
-  // Sub-tabs on profile tab
+  // Profile sub-tabs
   const [profileSubTab, setProfileSubTab] = useState<'achievements' | 'spaces'>('achievements');
 
-  // Inline Profile Editing States
+  // Profile editing states
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(studentData.name);
   const [editUniversity, setEditUniversity] = useState(studentData.university);
   const [editLocation, setEditLocation] = useState(studentData.location);
   const [editAvatar, setEditAvatar] = useState(studentData.avatar);
 
-  // Theme + toast states
+  // Theme & toast states
   const { theme: activeTheme, setTheme } = useStudentTheme();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -34,7 +34,7 @@ export default function Settings() {
     }));
     setIsEditing(false);
     
-    // Trigger premium micro-animation toast
+    // Show save toast
     setToastMessage('Profile details updated successfully.');
     setTimeout(() => setToastMessage(null), 3000);
   };
@@ -43,7 +43,7 @@ export default function Settings() {
     switch (type) {
       case 'BrainCircuit': return <BrainCircuit className={className} />;
       case 'Award': return <Award className={className} />;
-      case 'Star': return <Award className={className} />; // Fallback to Award
+      case 'Star': return <Award className={className} />;
       case 'Book': return <Book className={className} />;
       default: return <Award className={className} />;
     }
@@ -109,7 +109,7 @@ export default function Settings() {
                   key={t.id}
                   onClick={() => {
                     setActiveTab(t.id as any);
-                    setIsEditing(false); // Reset editing mode when switching tabs
+                    setIsEditing(false);
                   }}
                   className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-display text-sm font-semibold tracking-wide transition-all active:scale-98 text-left ${
                     activeTab === t.id

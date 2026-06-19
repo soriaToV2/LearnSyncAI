@@ -15,12 +15,10 @@ function StudentLayoutInner() {
   const isCourseActive = location.pathname.includes('/student/course/');
   const isSpaceActive = location.pathname.includes('/student/space/');
 
-  // Close mobile drawer when route changes
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [location.pathname]);
 
-  // Apply theme to this layout wrapper
   useEffect(() => {
     if (wrapperRef.current) {
       applyThemeToElement(theme, wrapperRef.current);
@@ -152,7 +150,7 @@ function StudentLayoutInner() {
         >
           <Menu className="w-6 h-6" />
         </button>
-        
+
         <div className="flex items-center gap-2">
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center border"
@@ -176,17 +174,16 @@ function StudentLayoutInner() {
 
       {/* Mobile Drawer Backdrop */}
       {isMobileMenuOpen && (
-        <div 
+        <div
           onClick={() => setIsMobileMenuOpen(false)}
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 transition-opacity duration-300 md:hidden"
         />
       )}
 
       {/* Mobile Navigation Drawer */}
-      <aside 
-        className={`fixed top-0 bottom-0 left-0 w-72 bg-slate-950 border-r border-white/10 p-6 flex flex-col z-50 transition-transform duration-300 ease-in-out md:hidden ${
-          isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+      <aside
+        className={`fixed top-0 bottom-0 left-0 w-72 bg-slate-950 border-r border-white/10 p-6 flex flex-col z-50 transition-transform duration-300 ease-in-out md:hidden ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
       >
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
@@ -205,7 +202,7 @@ function StudentLayoutInner() {
               </h1>
             </div>
           </div>
-          <button 
+          <button
             onClick={() => setIsMobileMenuOpen(false)}
             className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all"
           >

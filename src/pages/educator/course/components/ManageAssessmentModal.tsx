@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import type { Question, QuestionType } from '../../../../data/mockEducatorData';
 import Dropdown from '../../../../components/ui/Dropdown';
 
-// ─── Types (mirrors CreateAssessmentModal's GenQuestion) ──────────────────────
+// Types
 type QType = QuestionType;
 
 interface GenQuestion {
@@ -12,25 +12,26 @@ interface GenQuestion {
   text: string;
   type: QType;
   options: string[];
-  correct: number;        // index into options[]
-  answerText: string;     // for identification / fill-in-the-blank
+  correct: number;
+  answerText: string;
   matchingPairs: { left: string; right: string }[];
+  points: number;
   editing: boolean;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// Constants
 const Q_TYPES: { id: QType; label: string; icon: React.ReactNode }[] = [
-  { id: 'multiple-choice',  label: 'Multiple Choice',   icon: <List      className="w-4 h-4" /> },
-  { id: 'true-false',       label: 'True / False',      icon: <ToggleLeft className="w-4 h-4" /> },
-  { id: 'identification',   label: 'Identification',    icon: <HelpCircle className="w-4 h-4" /> },
-  { id: 'fill-in-the-blank',label: 'Fill in the Blank', icon: <PenTool   className="w-4 h-4" /> },
-  { id: 'matching',         label: 'Matching',          icon: <GitMerge  className="w-4 h-4" /> },
-  { id: 'essay',            label: 'Essay',             icon: <AlignLeft className="w-4 h-4" /> },
+  { id: 'multiple-choice', label: 'Multiple Choice', icon: <List className="w-4 h-4" /> },
+  { id: 'true-false', label: 'True / False', icon: <ToggleLeft className="w-4 h-4" /> },
+  { id: 'identification', label: 'Identification', icon: <HelpCircle className="w-4 h-4" /> },
+  { id: 'fill-in-the-blank', label: 'Fill in the Blank', icon: <PenTool className="w-4 h-4" /> },
+  { id: 'matching', label: 'Matching', icon: <GitMerge className="w-4 h-4" /> },
+  { id: 'essay', label: 'Essay', icon: <AlignLeft className="w-4 h-4" /> },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
-/** Convert a stored Question → editable GenQuestion */
+// Convert a stored Question to editable GenQuestion
 function toGen(q: Question): GenQuestion {
   let options: string[] = [];
   let correct = 0;
@@ -50,9 +51,9 @@ function toGen(q: Question): GenQuestion {
   } else if (q.type === 'matching') {
     matchingPairs = Array.isArray(q.correctAnswer)
       ? q.correctAnswer.map((a) => {
-          const [left = '', right = ''] = a.split(' → ');
-          return { left, right };
-        })
+        const [left = '', right = ''] = a.split(' → ');
+        return { left, right };
+      })
       : [{ left: '', right: '' }];
   }
 
@@ -64,11 +65,12 @@ function toGen(q: Question): GenQuestion {
     correct,
     answerText,
     matchingPairs,
+    points: q.points ?? (q.type === 'essay' ? 5 : 2),
     editing: false,
   };
 }
 
-/** Convert a GenQuestion back → storable Question */
+// Convert a GenQuestion back to storable Question
 function fromGen(g: GenQuestion): Question {
   let correctAnswer: string | string[] = '';
   let options: string[] | undefined;
@@ -91,11 +93,11 @@ function fromGen(g: GenQuestion): Question {
     question: g.text,
     options,
     correctAnswer,
-    points: 2, // default; not tracked in GenQuestion to keep parity with CreateAssessmentModal
+    points: g.points || 2,
   };
 }
 
-/** Create a blank GenQuestion ready for editing */
+// Create a blank GenQuestion ready for editing
 function makeBlank(count: number): GenQuestion {
   return {
     id: `q-${Date.now()}-${count}`,
@@ -105,11 +107,12 @@ function makeBlank(count: number): GenQuestion {
     correct: 0,
     answerText: '',
     matchingPairs: [{ left: '', right: '' }],
+    points: 2,
     editing: true,
   };
 }
 
-// ─── Props ────────────────────────────────────────────────────────────────────
+// Props
 interface Props {
   isOpen: boolean;
   onClose: () => void;
@@ -118,14 +121,14 @@ interface Props {
   onSave: (questions: Question[], saveMode: 'draft' | 'ready') => void;
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// Component
 export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle, questions, onSave }: Props) {
   const [qs, setQs] = useState<GenQuestion[]>(() => questions.map(toGen));
   const scrollRef = useRef<HTMLDivElement>(null);
 
   if (!isOpen) return null;
 
-  // ── Helpers ──
+  // Helpers
   const updateQ = (id: string, patch: Partial<GenQuestion>) =>
     setQs((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
 
@@ -145,13 +148,13 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
     onClose();
   };
 
-  // ── Render ──
+  // Render
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 p-0 bg-background/80 backdrop-blur-sm">
       <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-surface-container-high rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-2xl bg-surface-container-high sm:rounded-2xl rounded-none border border-white/10 shadow-2xl overflow-hidden flex flex-col h-full sm:h-auto max-h-full sm:max-h-[90vh]">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
           <div>
             <h2 className="font-display text-lg font-semibold text-white">Manage Questions</h2>
@@ -162,23 +165,30 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
           </button>
         </div>
 
-        {/* ── Scrollable body (same structure as CreateAssessmentModal step 4) ── */}
+        {/* Scrollable body */}
         <div ref={scrollRef} className="p-6 overflow-y-auto flex-1 no-scrollbar scroll-smooth relative">
           <div className="space-y-4">
 
-            {/* Sticky sub-header — identical to step 4 */}
-            <div className="sticky top-[-24px] z-20 bg-surface-container-high py-4 -mx-6 px-6 border-b border-white/10 flex items-center justify-between mb-2 shadow-sm">
-              <div>
-                <p className="font-sans text-sm text-slate-300 font-medium">Review &amp; Edit Questions</p>
-                <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">{qs.length} total questions</p>
-              </div>
-              <button
-                onClick={addQuestion}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim text-xs font-bold hover:bg-primary-fixed-dim/20 transition-all active:scale-95 shadow-lg shadow-primary-fixed-dim/5"
-              >
-                <Plus className="w-4 h-4" /> Add Question
-              </button>
-            </div>
+            {/* Sticky sub-header */}
+            {(() => {
+              const totalPoints = qs.reduce((sum, q) => sum + (q.points || 2), 0);
+              return (
+                <div className="sticky top-[-24px] z-20 bg-surface-container-high py-4 -mx-6 px-6 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
+                  <div>
+                    <p className="font-sans text-sm text-slate-300 font-medium">Review &amp; Edit Questions</p>
+                    <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">
+                      {qs.length} questions · <span className="text-indigo-400 font-bold">{totalPoints} Points Total</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={addQuestion}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim text-xs font-bold hover:bg-primary-fixed-dim/20 transition-all active:scale-95 shadow-lg shadow-primary-fixed-dim/5"
+                  >
+                    <Plus className="w-4 h-4" /> Add Question
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* Empty state */}
             {qs.length === 0 && (
@@ -188,37 +198,50 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
               </div>
             )}
 
-            {/* Question cards — pixel-faithful to step 4 */}
+            {/* Question cards */}
             <div className="space-y-3 pb-6">
               {qs.map((q, idx) => (
                 <div key={q.id} className="bg-surface-container rounded-xl border border-white/5 overflow-hidden">
 
                   {q.editing ? (
-                    /* ── Edit mode ── */
                     <div className="p-4 space-y-3">
-                      {/* Row: Q-badge + type select */}
-                      <div className="flex items-center justify-between">
-                        <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">
-                          Q{idx + 1}
-                        </span>
-                        <Dropdown
-                          value={q.type}
-                          onChange={(val) => {
-                            const t = val as QType;
-                            updateQ(q.id, {
-                              type: t,
-                              options:
-                                t === 'true-false'      ? ['True', 'False'] :
-                                t === 'multiple-choice' ? ['Option A', 'Option B', 'Option C', 'Option D'] :
-                                [],
-                              correct: 0,
-                              answerText: '',
-                              matchingPairs: [{ left: '', right: '' }],
-                            });
-                          }}
-                          options={Q_TYPES.map(qt => ({ label: qt.label, value: qt.id }))}
-                          className="w-44 text-left"
-                        />
+                      {/* Row: Q-badge + type select + points input */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">
+                            Q{idx + 1}
+                          </span>
+                          <Dropdown
+                            value={q.type}
+                            onChange={(val) => {
+                              const t = val as QType;
+                              updateQ(q.id, {
+                                type: t,
+                                options:
+                                  t === 'true-false' ? ['True', 'False'] :
+                                    t === 'multiple-choice' ? ['Option A', 'Option B', 'Option C', 'Option D'] :
+                                      [],
+                                correct: 0,
+                                answerText: '',
+                                matchingPairs: [{ left: '', right: '' }],
+                                points: t === 'essay' ? 5 : 2,
+                              });
+                            }}
+                            options={Q_TYPES.map(qt => ({ label: qt.label, value: qt.id }))}
+                            className="w-44 text-left"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="font-sans text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Points:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={q.points || 2}
+                            onChange={e => updateQ(q.id, { points: Math.max(1, Number(e.target.value)) })}
+                            className="w-16 px-2 py-1 rounded bg-white/5 border border-white/10 text-white font-sans text-xs text-center outline-none focus:border-primary-fixed-dim"
+                          />
+                        </div>
                       </div>
 
                       {/* Question textarea */}
@@ -246,9 +269,8 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                             <div key={oi} className="flex items-center gap-2">
                               <button
                                 onClick={() => updateQ(q.id, { correct: oi })}
-                                className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${
-                                  q.correct === oi ? 'border-emerald-400 bg-emerald-400' : 'border-white/20'
-                                }`}
+                                className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${q.correct === oi ? 'border-emerald-400 bg-emerald-400' : 'border-white/20'
+                                  }`}
                               >
                                 {q.correct === oi && <Check className="w-3 h-3 text-black" />}
                               </button>
@@ -343,7 +365,7 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                         </div>
                       )}
 
-                      {/* Done button (only) — same as step 4; delete is via hover in view mode */}
+                      {/* Done button */}
                       <div className="flex justify-end gap-2 pt-1">
                         <button
                           onClick={() => updateQ(q.id, { editing: false })}
@@ -355,12 +377,15 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                     </div>
 
                   ) : (
-                    /* ── View mode ── */
                     <div className="p-4 flex items-start gap-3 group">
                       <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded shrink-0 mt-0.5">
                         Q{idx + 1}
                       </span>
                       <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                          <span className="font-sans text-[10px] text-slate-500 uppercase tracking-wider font-semibold bg-white/5 border border-white/10 px-2 py-0.5 rounded">{q.type}</span>
+                          <span className="font-sans text-[10px] text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded font-bold">{q.points || 2} Points</span>
+                        </div>
                         <p className="font-sans text-sm text-white leading-relaxed">
                           {q.text || <span className="text-slate-500 italic">No question text</span>}
                         </p>
@@ -386,14 +411,10 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                             <span className="text-slate-400 italic">Manual Grading</span>
                           )}
                         </div>
-
-                        <span className="font-sans text-[10px] text-slate-500 uppercase tracking-wider mt-2 block">
-                          {q.type}
-                        </span>
                       </div>
 
-                      {/* Hover-revealed edit + delete — same as step 4 */}
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      {/* Hover-revealed edit + delete */}
+                      <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
                         <button
                           onClick={() => updateQ(q.id, { editing: true })}
                           className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
@@ -417,26 +438,26 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
           </div>
         </div>
 
-        {/* ── Footer ── */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-white/10 shrink-0">
+        {/* Footer */}
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-t border-white/10 shrink-0">
           <button
             onClick={onClose}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors w-full sm:w-auto"
           >
             Cancel
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-end gap-3 w-full sm:w-auto">
             <button
               onClick={() => handleSave('draft')}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-sans text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-sans text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all"
             >
               <Save className="w-4 h-4" /> Save as Draft
             </button>
             <button
               onClick={() => handleSave('ready')}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all hover:opacity-90"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all hover:opacity-90"
             >
-              <Sparkles className="w-4 h-4" /> Save &amp; Mark Ready
+              <Sparkles className="w-4 h-4" /> Save as Ready
             </button>
           </div>
         </div>

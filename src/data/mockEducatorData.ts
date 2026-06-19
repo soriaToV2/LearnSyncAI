@@ -21,6 +21,8 @@ export interface Assessment {
   status: AssessmentStatus; questionCount: number; duration: number;
   deadline?: string; difficulty: Difficulty; isLockdown: boolean;
   questions: Question[]; submissions: Submission[];
+  setQuestionsMap?: Record<string, any[]>;
+  numberOfSets?: number;
 }
 export interface Resource {
   id: string; name: string; type: 'pdf' | 'video' | 'document' | 'model';
@@ -41,6 +43,8 @@ export interface EducatorCourse {
   color: string; university?: string; isPublic: boolean; courseCode: string;
   studentCount: number; status: CourseStatus; createdAt: string; category?: string;
   resources: Resource[]; assessments: Assessment[]; students: EnrolledStudent[];
+  section?: string;
+  archivedAt?: string;
 }
 export interface ActivityItem {
   id: string; icon: string; label: string; time: string; accent: string; courseId?: string;
@@ -60,7 +64,7 @@ export const EDUCATOR_COURSES: EducatorCourse[] = [
     description: 'Advanced study of nervous system function, cellular physiology, and neural networks.',
     iconName: 'BrainCircuit', color: '#22d3ee', university: 'MIT',
     isPublic: true, courseCode: 'BIO-301-XK9', studentCount: 42,
-    status: 'active', createdAt: '2026-01-15',
+    status: 'active', createdAt: '2026-01-15', section: 'A',
     resources: [
       { id: 'r1', name: 'Synaptic Pathways Ch.4', type: 'pdf', size: '2.4 MB', uploadedAt: '2 days ago' },
       { id: 'r2', name: 'Lecture: Neuroplasticity', type: 'video', size: '145 MB', uploadedAt: 'Yesterday' },
@@ -120,7 +124,7 @@ export const EDUCATOR_COURSES: EducatorCourse[] = [
     description: 'Wave mechanics, quantum entanglement, and advanced operator theory.',
     iconName: 'Sigma', color: '#818cf8', university: 'Stanford',
     isPublic: true, courseCode: 'PHYS-401-M3P', studentCount: 28,
-    status: 'active', createdAt: '2026-01-10',
+    status: 'active', createdAt: '2026-01-10', section: 'B',
     resources: [
       { id: 'r6', name: 'Wave Function Collapse', type: 'pdf', size: '3.1 MB', uploadedAt: '3 days ago' },
       { id: 'r7', name: 'Lecture: Entanglement', type: 'video', size: '210 MB', uploadedAt: 'Yesterday' },
@@ -139,7 +143,7 @@ export const EDUCATOR_COURSES: EducatorCourse[] = [
     description: 'Analysis and design of efficient algorithms and data structures.',
     iconName: 'Code2', color: '#34d399', university: 'MIT',
     isPublic: false, courseCode: 'CS-202-7FQ', studentCount: 64,
-    status: 'active', createdAt: '2026-01-12',
+    status: 'active', createdAt: '2026-01-12', section: 'A',
     resources: [
       { id: 'r8', name: 'Sorting Algorithms Cheat Sheet', type: 'pdf', size: '890 KB', uploadedAt: '1 week ago' },
       { id: 'r9', name: 'Lecture: Graph Traversal', type: 'video', size: '180 MB', uploadedAt: '2 days ago' },
@@ -190,10 +194,11 @@ export const addCourse = (courseData: Partial<EducatorCourse>) => {
     category: courseData.category || '',
     iconName: 'BrainCircuit',
     color: '#00daf3',
-    status: 'draft',
+    status: 'active',
     studentCount: 0,
     isPublic: courseData.isPublic ?? true,
     courseCode: courseData.courseCode || '',
+    section: courseData.section || '',
     university: courseData.university || undefined,
     createdAt: new Date().toISOString().split('T')[0],
     resources: [],
@@ -219,7 +224,9 @@ export const addAssessment = (courseId: string, assessmentData: Partial<Assessme
     questionCount: assessmentData.questionCount || 10,
     isLockdown: assessmentData.isLockdown || false,
     submissions: [],
-    questions: assessmentData.questions || []
+    questions: assessmentData.questions || [],
+    setQuestionsMap: assessmentData.setQuestionsMap || {},
+    numberOfSets: assessmentData.numberOfSets || 1
   };
   course.assessments.unshift(newAssessment);
   return newAssessment;

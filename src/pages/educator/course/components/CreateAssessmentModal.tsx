@@ -7,6 +7,13 @@ interface Props { isOpen: boolean; onClose: () => void; courseResources: string[
 type QType = 'multiple-choice' | 'true-false' | 'identification' | 'fill-in-the-blank' | 'essay' | 'matching';
 type Diff = 'easy' | 'medium' | 'hard';
 
+interface TypeConfig {
+  typeId: QType;
+  testLabel: string;
+  itemCount: number;
+  pointsPerItem?: number;
+}
+
 interface GenQuestion {
   id: string;
   text: string;
@@ -15,6 +22,7 @@ interface GenQuestion {
   correct: number;
   answerText: string;
   matchingPairs: { left: string; right: string }[];
+  points: number;
   editing: boolean;
 }
 
@@ -43,31 +51,87 @@ const makeQuestion = (i: number, types: QType[]): GenQuestion => {
     correct: 0,
     answerText: 'Correct Answer',
     matchingPairs: [{ left: 'Term 1', right: 'Definition 1' }, { left: 'Term 2', right: 'Definition 2' }],
+    points: type === 'essay' ? 5 : 2,
     editing: false,
   };
+};
+
+const redistributeItems = (configs: TypeConfig[], total: number): TypeConfig[] => {
+  if (configs.length === 0) return configs;
+  const base = Math.floor(total / configs.length);
+  const remainder = total % configs.length;
+  return configs.map((c, idx) => ({
+    ...c,
+    itemCount: base + (idx < remainder ? 1 : 0)
+  }));
 };
 
 export default function CreateAssessmentModal({ isOpen, onClose, courseResources, onCreate }: Props) {
   const [step, setStep] = useState(0);
   const [title, setTitle] = useState('');
   const [assessType, setAssessType] = useState<'quiz' | 'exam'>('quiz');
-  const [isLockdown, setIsLockdown] = useState(false);
   const [duration, setDuration] = useState(30);
-  const [deadline, setDeadline] = useState('');
-  const [method, setMethod] = useState<'manual' | 'ai'>('ai');
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [startTime, setStartTime] = useState('09:00');
+  const method = 'ai';
   const [selectedResources, setSelectedResources] = useState<string[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<QType[]>(['multiple-choice']);
   const [difficulty, setDifficulty] = useState<Diff>('medium');
   const [questionCount, setQuestionCount] = useState(10);
   const [questions, setQuestions] = useState<GenQuestion[]>([]);
+  const [setQuestionsMap, setSetQuestionsMap] = useState<Record<string, GenQuestion[]>>({});
+  const [activeSet, setActiveSet] = useState<string>('Set A');
+  const [numberOfSets, setNumberOfSets] = useState(3);
+  const [typeConfigs, setTypeConfigs] = useState<TypeConfig[]>(() => [
+    { typeId: 'multiple-choice', testLabel: 'Test I', itemCount: 10, pointsPerItem: 2 }
+  ]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   if (!isOpen) return null;
 
-  const totalSteps = method === 'ai' ? 5 : 3;
-  const toggleType = (t: QType) => setSelectedTypes(p => p.includes(t) ? (p.length > 1 ? p.filter(x => x !== t) : p) : [...p, t]);
-  const canProceed0 = title.trim().length > 0;
-  const canProceed1 = method === 'manual' || selectedResources.length > 0;
+  const totalSteps = 5;
+  const toggleType = (t: QType) => {
+    setTypeConfigs(prev => {
+      const exists = prev.some(x => x.typeId === t);
+      let next: TypeConfig[];
+      if (exists) {
+        if (prev.length <= 1) return prev;
+        next = prev.filter(x => x.typeId !== t);
+      } else {
+        const currentLabels = prev.map(x => x.testLabel);
+        const options = ['Test I', 'Test II', 'Test III', 'Test IV', 'Test V', 'Test VI'];
+        const unusedLabel = options.find(o => !currentLabels.includes(o)) || `Test ${prev.length + 1}`;
+        next = [...prev, { typeId: t, testLabel: unusedLabel, itemCount: 0, pointsPerItem: t === 'essay' ? 5 : 2 }];
+      }
+
+      // Ensure designations are unique and strictly up to Test Roman(N)
+      const limit = next.length;
+      const allowedOptions = ['Test I', 'Test II', 'Test III', 'Test IV', 'Test V', 'Test VI'].slice(0, limit);
+      const cleaned: TypeConfig[] = [];
+      next.forEach(cfg => {
+        let label = cfg.testLabel;
+        if (!allowedOptions.includes(label) || cleaned.some(x => x.testLabel === label)) {
+          label = allowedOptions.find(o => !cleaned.some(x => x.testLabel === o)) || allowedOptions[0];
+        }
+        cleaned.push({ ...cfg, testLabel: label });
+      });
+
+      return redistributeItems(cleaned, questionCount);
+    });
+  };
+  const handleSetQuestionCount = (count: number) => {
+    setQuestionCount(count);
+    setTypeConfigs(prev => redistributeItems(prev, count));
+  };
+
+  const canProceed0 = title.trim().length > 0 && startDate !== '' && startTime !== '';
+  const canProceed1 = selectedResources.length > 0;
+
+  const sumItems = typeConfigs.reduce((s, c) => s + c.itemCount, 0);
+  const hasDuplicateLabels = new Set(typeConfigs.map(c => c.testLabel)).size !== typeConfigs.length;
+  const isSumOver = sumItems > questionCount;
+  const isSumUnder = sumItems < questionCount;
+  const canProceed2 = !hasDuplicateLabels && sumItems === questionCount;
 
   const diffColorMap: Record<string, { sel: string; unsel: string }> = {
     emerald: { sel: 'border-emerald-400 bg-emerald-400/10 text-emerald-300', unsel: 'border-white/10 text-slate-400' },
@@ -76,23 +140,161 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
   };
 
   const handleNextFromReview = () => {
-    if (method === 'ai' && step === 3) {
-      setQuestions(Array.from({ length: questionCount }, (_, i) => makeQuestion(i, selectedTypes)));
+    if (step === 3) {
+      const generatedTypes: QType[] = [];
+      typeConfigs.forEach(cfg => {
+        for (let j = 0; j < cfg.itemCount; j++) {
+          generatedTypes.push(cfg.typeId);
+        }
+      });
+      if (generatedTypes.length === 0) {
+        generatedTypes.push('multiple-choice');
+      }
+
+      const baseQuestions = Array.from({ length: questionCount }, (_, i) => {
+        const type = generatedTypes[i] || generatedTypes[generatedTypes.length - 1];
+        const cfg = typeConfigs.find(c => c.typeId === type);
+        const pts = cfg?.pointsPerItem ?? (type === 'essay' ? 5 : 2);
+        return {
+          ...makeQuestion(i, [type]),
+          points: pts,
+        };
+      });
+
+      const newSets: Record<string, GenQuestion[]> = {};
+      const setLetters = ['A', 'B', 'C', 'D', 'E'].slice(0, numberOfSets);
+
+      setLetters.forEach((letter, idx) => {
+        const setLabel = `Set ${letter}`;
+        let questionsForSet = baseQuestions.map(q => {
+          let text = q.text;
+          if (letter !== 'A') {
+            text = text.replace(
+              'What is the primary concept described in the selected resource?',
+              `Identify the core principle detailed within the resource (Isomorphic Option ${letter}).`
+            );
+          }
+          return {
+            ...q,
+            id: `${q.id}-set-${letter}`,
+            text,
+          };
+        });
+
+        if (letter !== 'A') {
+          questionsForSet = [...questionsForSet].sort(() => Math.random() - 0.5);
+        }
+
+        newSets[setLabel] = questionsForSet;
+      });
+
+      setSetQuestionsMap(newSets);
+      setQuestions(baseQuestions);
+      setActiveSet('Set A');
     }
     setStep(s => s + 1);
   };
 
   const handleSave = (status: 'draft' | 'ready') => {
-    onCreate({ title, type: assessType, isLockdown, duration, deadline, method, selectedResources, selectedTypes, difficulty, questionCount, questions, status });
-    setStep(0); setTitle(''); setQuestions([]); onClose();
+    let deadlineStr = '';
+    if (startDate) {
+      const formattedDate = new Date(startDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+      if (startTime) {
+        const [hours, minutes] = startTime.split(':');
+        const ampm = Number(hours) >= 12 ? 'PM' : 'AM';
+        const formattedHours = Number(hours) % 12 || 12;
+        deadlineStr = `${formattedDate} · ${formattedHours}:${minutes} ${ampm}`;
+      } else {
+        deadlineStr = formattedDate;
+      }
+    }
+
+    const mapToQuestionSchema = (q: GenQuestion) => {
+      let correctAnswer: string | string[] = '';
+      let options: string[] | undefined;
+
+      if (q.type === 'multiple-choice') {
+        options = q.options;
+        correctAnswer = q.options[q.correct] ?? '';
+      } else if (q.type === 'true-false') {
+        options = ['True', 'False'];
+        correctAnswer = q.correct === 0 ? 'true' : 'false';
+      } else if (q.type === 'identification' || q.type === 'fill-in-the-blank') {
+        correctAnswer = q.answerText;
+      } else if (q.type === 'matching') {
+        correctAnswer = q.matchingPairs.map((p) => `${p.left} → ${p.right}`);
+      }
+
+      return {
+        id: q.id,
+        type: q.type,
+        question: q.text,
+        options,
+        correctAnswer,
+        points: q.points || 2
+      };
+    };
+
+    const finalQuestions = (setQuestionsMap['Set A'] || questions || []).map(mapToQuestionSchema);
+    const finalSetMap: Record<string, any[]> = {};
+    Object.keys(setQuestionsMap).forEach(k => {
+      finalSetMap[k] = (setQuestionsMap[k] || []).map(mapToQuestionSchema);
+    });
+
+    onCreate({
+      title,
+      type: assessType,
+      isLockdown: false,
+      duration,
+      deadline: deadlineStr,
+      method,
+      selectedResources,
+      selectedTypes: typeConfigs.map(c => c.typeId),
+      typeConfigs,
+      numberOfSets,
+      difficulty,
+      questionCount,
+      questions: finalQuestions,
+      setQuestionsMap: finalSetMap,
+      status
+    });
+    setStep(0);
+    setTitle('');
+    setQuestions([]);
+    setSetQuestionsMap({});
+    setActiveSet('Set A');
+    onClose();
   };
 
   // Question editor helpers
-  const updateQ = (id: string, patch: Partial<GenQuestion>) =>
+  const updateQ = (id: string, patch: Partial<GenQuestion>) => {
+    setSetQuestionsMap(prev => {
+      const currentList = prev[activeSet] || [];
+      const updatedList = currentList.map(q => q.id === id ? { ...q, ...patch } : q);
+      return { ...prev, [activeSet]: updatedList };
+    });
     setQuestions(qs => qs.map(q => q.id === id ? { ...q, ...patch } : q));
-  const deleteQ = (id: string) => setQuestions(qs => qs.filter(q => q.id !== id));
+  };
+
+  const deleteQ = (id: string) => {
+    setSetQuestionsMap(prev => {
+      const currentList = prev[activeSet] || [];
+      const updatedList = currentList.filter(q => q.id !== id);
+      return { ...prev, [activeSet]: updatedList };
+    });
+    setQuestions(qs => qs.filter(q => q.id !== id));
+  };
+
   const addQuestion = () => {
-    setQuestions(qs => [...qs, { ...makeQuestion(qs.length, selectedTypes), text: '', editing: true }]);
+    const defaultType = typeConfigs[0]?.typeId || 'multiple-choice';
+    const cfg = typeConfigs.find(x => x.typeId === defaultType);
+    const pts = cfg?.pointsPerItem ?? (defaultType === 'essay' ? 5 : 2);
+    const newQ = { ...makeQuestion(questions.length, [defaultType]), text: '', points: pts, editing: true };
+    setSetQuestionsMap(prev => {
+      const currentList = prev[activeSet] || [];
+      return { ...prev, [activeSet]: [...currentList, newQ] };
+    });
+    setQuestions(qs => [...qs, newQ]);
     setTimeout(() => {
       if (scrollRef.current) {
         scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -100,19 +302,21 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
     }, 100);
   };
 
-  const isLastStep = (method === 'manual' && step === 2) || (method === 'ai' && step === 4);
-  const isGenerateStep = method === 'ai' && step === 3;
+  const isLastStep = step === 4;
+  const isGenerateStep = step === 3;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 p-0 bg-background/80 backdrop-blur-sm">
       <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-surface-container-high rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-2xl bg-surface-container-high sm:rounded-2xl rounded-none border border-white/10 shadow-2xl overflow-hidden flex flex-col h-full sm:h-auto max-h-full sm:max-h-[90vh]">
+
+
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
           <div>
             <h2 className="font-display text-lg font-semibold text-white">Create Assessment</h2>
             <p className="font-sans text-xs text-slate-400 mt-0.5">
-              Step {step + 1} of {totalSteps} — {['Details', 'Method', method === 'ai' ? 'Configure AI' : 'Review', 'Review Config', 'Edit Questions'][step]}
+              Step {step + 1} of {totalSteps} — {['Details', 'Select Resources', 'Configure AI', 'Review Config', 'Edit Questions'][step]}
             </p>
           </div>
           <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors"><X className="w-5 h-5" /></button>
@@ -149,77 +353,89 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold mb-2 block">Duration (min)</label>
-                  <input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} min={5} max={240}
+                  <label className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold mb-2 block">Start Date *</label>
+                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
                     className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white font-sans text-sm outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
                 </div>
                 <div>
-                  <label className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold mb-2 block">Deadline</label>
-                  <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)}
+                  <label className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold mb-2 block">Start Time *</label>
+                  <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)}
                     className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white font-sans text-sm outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
                 </div>
               </div>
-              <button onClick={() => setIsLockdown(!isLockdown)}
-                className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${isLockdown ? 'border-rose-400 bg-rose-400/10' : 'border-white/10 bg-surface-container hover:border-white/20'}`}>
-                <Shield className={`w-5 h-5 ${isLockdown ? 'text-rose-400' : 'text-slate-400'}`} />
-                <div>
-                  <p className={`font-sans text-sm font-semibold ${isLockdown ? 'text-rose-300' : 'text-white'}`}>Lockdown Browser</p>
-                  <p className="font-sans text-xs text-slate-400">Prevents tab-switching during the assessment</p>
-                </div>
-                <div className={`ml-auto w-10 h-6 rounded-full flex items-center px-1 transition-all ${isLockdown ? 'bg-rose-400 justify-end' : 'bg-white/10 justify-start'}`}>
-                  <div className="w-4 h-4 rounded-full bg-white shadow" />
-                </div>
-              </button>
+              <div>
+                <label className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold mb-2 block">Duration (minutes)</label>
+                <input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} min={5} max={240}
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white font-sans text-sm outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
+              </div>
             </div>
           )}
 
-          {/* Step 1: Method */}
+          {/* Step 1: Select Resources */}
           {step === 1 && (
             <div className="space-y-5">
-              <p className="font-sans text-sm text-slate-300">How would you like to create questions?</p>
-              <div className="grid grid-cols-2 gap-4">
-                <button onClick={() => setMethod('manual')} className={`p-5 rounded-xl border-2 text-left transition-all ${method === 'manual' ? 'border-primary-fixed-dim bg-primary-fixed-dim/10' : 'border-white/10 bg-surface-container hover:border-white/20'}`}>
-                  <PenTool className={`w-6 h-6 mb-3 ${method === 'manual' ? 'text-primary-fixed-dim' : 'text-slate-400'}`} />
-                  <p className={`font-sans text-sm font-semibold ${method === 'manual' ? 'text-primary-fixed' : 'text-white'}`}>Manual</p>
-                  <p className="font-sans text-xs text-slate-400 mt-1">Write questions yourself</p>
-                </button>
-                <button onClick={() => setMethod('ai')} className={`p-5 rounded-xl border-2 text-left transition-all ${method === 'ai' ? 'border-primary-fixed-dim bg-primary-fixed-dim/10' : 'border-white/10 bg-surface-container hover:border-white/20'}`}>
-                  <Sparkles className={`w-6 h-6 mb-3 ${method === 'ai' ? 'text-primary-fixed-dim' : 'text-slate-400'}`} />
-                  <p className={`font-sans text-sm font-semibold ${method === 'ai' ? 'text-primary-fixed' : 'text-white'}`}>AI-Assisted</p>
-                  <p className="font-sans text-xs text-slate-400 mt-1">Generate from resources</p>
-                </button>
-              </div>
-              {method === 'ai' && (
-                <div className="space-y-2">
-                  <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Select Source Resources</p>
-                  {courseResources.map(res => {
-                    const sel = selectedResources.includes(res);
-                    return (
-                      <button key={res} onClick={() => setSelectedResources(p => p.includes(res) ? p.filter(r => r !== res) : [...p, res])}
-                        className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${sel ? 'border-primary-fixed-dim/50 bg-primary-fixed-dim/10' : 'border-white/5 bg-surface-container hover:border-white/20'}`}>
-                        <div className="flex items-center gap-3">
-                          <FileText className={`w-5 h-5 ${sel ? 'text-primary-fixed-dim' : 'text-slate-400'}`} />
-                          <p className={`font-sans text-sm font-semibold ${sel ? 'text-primary-fixed' : 'text-white'}`}>{res}</p>
-                        </div>
-                        {sel && <Check className="w-4 h-4 text-primary-fixed-dim shrink-0" />}
-                      </button>
-                    );
-                  })}
+              <div className="flex bg-primary-fixed-dim/5 border border-primary-fixed-dim/10 rounded-xl p-4 items-start gap-3">
+                <Sparkles className="w-5 h-5 text-primary-fixed-dim mt-0.5 shrink-0" />
+                <div>
+                  <h4 className="font-display text-sm font-semibold text-white">AI-Powered Isomorphic Questions</h4>
+                  <p className="font-sans text-xs text-slate-400 mt-1 leading-relaxed">
+                    All assessments are automatically generated by the AI assistant using isomorphic question templates.
+                    This ensures that each student receives structurally equivalent yet unique questions to prevent cheating and promote fairness.
+                  </p>
                 </div>
-              )}
+              </div>
+
+              <div className="space-y-2">
+                <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Select Source Resources</p>
+                {courseResources.map(res => {
+                  const sel = selectedResources.includes(res);
+                  return (
+                    <button key={res} onClick={() => setSelectedResources(p => p.includes(res) ? p.filter(r => r !== res) : [...p, res])}
+                      className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${sel ? 'border-primary-fixed-dim/50 bg-primary-fixed-dim/10' : 'border-white/5 bg-surface-container hover:border-white/20'}`}>
+                      <div className="flex items-center gap-3">
+                        <FileText className={`w-5 h-5 ${sel ? 'text-primary-fixed-dim' : 'text-slate-400'}`} />
+                        <p className={`font-sans text-sm font-semibold ${sel ? 'text-primary-fixed' : 'text-white'}`}>{res}</p>
+                      </div>
+                      {sel && <Check className="w-4 h-4 text-primary-fixed-dim shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
-          {/* Step 2 AI: Configure */}
-          {step === 2 && method === 'ai' && (
+          {/* Step 2: Configure */}
+          {step === 2 && (
             <div className="space-y-6">
               <div className="space-y-3">
+                <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Number of Questions (Total Items)</p>
+                <div className="flex gap-2 flex-wrap items-center">
+                  {Q_COUNTS.map(n => (
+                    <button key={n} type="button" onClick={() => handleSetQuestionCount(n)}
+                      className={`px-4 py-2 rounded-xl border-2 font-sans text-sm font-bold transition-all ${questionCount === n ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-primary-fixed' : 'border-white/10 bg-surface-container text-slate-400 hover:border-white/20'}`}>
+                      {n}
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-2 pl-3 border-l border-white/10 ml-2">
+                    <span className="font-sans text-xs text-slate-400 font-semibold">Custom:</span>
+                    <input type="number" min={1} max={100} value={questionCount}
+                      onChange={e => {
+                        const val = Math.max(1, Number(e.target.value));
+                        handleSetQuestionCount(val);
+                      }}
+                      className="w-16 px-2.5 py-1.5 rounded-lg bg-surface-container border border-white/10 text-white font-sans text-xs outline-none text-center focus:border-primary-fixed-dim" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Question Types Selector */}
+              <div className="space-y-3">
                 <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Question Types</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {Q_TYPES.map(qt => {
-                    const sel = selectedTypes.includes(qt.id);
+                    const sel = typeConfigs.some(x => x.typeId === qt.id);
                     return (
-                      <button key={qt.id} onClick={() => toggleType(qt.id)}
+                      <button key={qt.id} type="button" onClick={() => toggleType(qt.id)}
                         className={`p-3 rounded-xl border-2 text-left transition-all flex items-center gap-2 ${sel ? 'border-primary-fixed-dim bg-primary-fixed-dim/10' : 'border-white/10 bg-surface-container hover:border-white/20'}`}>
                         <span className={sel ? 'text-primary-fixed-dim' : 'text-slate-400'}>{qt.icon}</span>
                         <p className={`font-sans text-sm font-semibold ${sel ? 'text-primary-fixed' : 'text-white'}`}>{qt.label}</p>
@@ -229,52 +445,124 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                   })}
                 </div>
               </div>
+
+              {/* Test Configurations */}
               <div className="space-y-3">
-                <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Difficulty</p>
-                <div className="grid grid-cols-3 gap-3">
-                  {DIFFS.map(d => {
-                    const sel = difficulty === d.id;
-                    const cm = diffColorMap[d.color];
+                <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Test Configurations</p>
+                <div className="bg-surface-container-lowest rounded-xl border border-white/5 divide-y divide-white/5">
+                  {typeConfigs.map(config => {
+                    const qt = Q_TYPES.find(x => x.id === config.typeId);
+                    if (!qt) return null;
                     return (
-                      <button key={d.id} onClick={() => setDifficulty(d.id)}
-                        className={`p-3 rounded-xl border-2 text-center transition-all bg-surface-container ${sel ? cm.sel : cm.unsel}`}>
-                        <span className="flex justify-center mb-1">{d.icon}</span>
-                        <p className="font-sans text-sm font-bold">{d.label}</p>
-                      </button>
+                      <div key={config.typeId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-primary-fixed-dim">{qt.icon}</span>
+                          <span className="font-sans text-sm font-semibold text-white">{qt.label}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                          {/* Test Label Selection */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-sans text-xs text-slate-400">Designation:</span>
+                            <Dropdown
+                              value={config.testLabel}
+                              onChange={val => {
+                                setTypeConfigs(prev => prev.map(x => x.typeId === config.typeId ? { ...x, testLabel: val } : x));
+                              }}
+                              options={['Test I', 'Test II', 'Test III', 'Test IV', 'Test V', 'Test VI'].slice(0, typeConfigs.length).map(o => ({ label: o, value: o }))}
+                              className="w-24 text-left font-sans text-xs"
+                            />
+                          </div>
+                          {/* Item Count Selection */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-sans text-xs text-slate-400">Items:</span>
+                            <input type="number" min={0} max={questionCount} value={config.itemCount}
+                              onChange={e => {
+                                const val = Math.max(0, Number(e.target.value));
+                                setTypeConfigs(prev => prev.map(x => x.typeId === config.typeId ? { ...x, itemCount: val } : x));
+                              }}
+                              className="w-16 px-2 py-1 rounded-lg bg-surface-container border border-white/10 text-white font-sans text-xs outline-none text-center" />
+                          </div>
+                          {/* Points per Item */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-sans text-xs text-slate-400">Pts/Item:</span>
+                            <input type="number" min={1} max={100} value={config.pointsPerItem || (config.typeId === 'essay' ? 5 : 2)}
+                              onChange={e => {
+                                const val = Math.max(1, Number(e.target.value));
+                                setTypeConfigs(prev => prev.map(x => x.typeId === config.typeId ? { ...x, pointsPerItem: val } : x));
+                              }}
+                              className="w-14 px-2 py-1 rounded-lg bg-surface-container border border-white/10 text-white font-sans text-xs outline-none text-center" />
+                          </div>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
+
+                {/* Validation messages */}
+                {hasDuplicateLabels && (
+                  <p className="font-sans text-xs text-rose-400 font-semibold mt-1">
+                    Duplicate test designation found. Each question type must have a unique Designation (e.g. Test I, Test II).
+                  </p>
+                )}
+                {isSumOver && (
+                  <p className="font-sans text-xs text-rose-400 font-semibold mt-1">
+                    Total configured items ({sumItems}) exceeds the max limit of {questionCount} questions.
+                  </p>
+                )}
+                {isSumUnder && (
+                  <p className="font-sans text-xs text-amber-400 font-semibold mt-1">
+                    Total configured items ({sumItems}) is less than the total {questionCount} questions. Please adjust items to match.
+                  </p>
+                )}
               </div>
-              <div className="space-y-3">
-                <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Number of Questions</p>
-                <div className="flex gap-2 flex-wrap">
-                  {Q_COUNTS.map(n => (
-                    <button key={n} onClick={() => setQuestionCount(n)}
-                      className={`px-4 py-2 rounded-xl border-2 font-sans text-sm font-bold transition-all ${questionCount === n ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-primary-fixed' : 'border-white/10 bg-surface-container text-slate-400 hover:border-white/20'}`}>
-                      {n}
-                    </button>
-                  ))}
+
+              {/* Isomorphic Exam Sets */}
+              <div className="space-y-3 pt-2">
+                <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Isomorphic Exam Sets</p>
+                <div className="bg-primary-fixed-dim/5 border border-primary-fixed-dim/10 rounded-xl p-4 space-y-4">
+                  <div className="block">
+                    <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                      Select the number of isomorphic sets to generate. Question ordering is scrambled and definitions vary between sets (e.g. Set A meaning differs from Set B) to prevent student cheating.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <span className="font-sans text-xs font-semibold text-slate-300">Number of Sets:</span>
+                    <div className="flex gap-2">
+                      {[1, 2, 3, 4, 5].map(s => (
+                        <button key={s} type="button" onClick={() => setNumberOfSets(s)}
+                          className={`w-10 h-10 rounded-xl border-2 flex items-center justify-center font-sans text-sm font-bold transition-all ${numberOfSets === s ? 'border-primary-fixed-dim bg-primary-fixed-dim/10 text-primary-fixed' : 'border-white/10 bg-surface-container text-slate-400 hover:border-white/20'}`}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 flex-wrap mt-1">
+                    {Array.from({ length: numberOfSets }).map((_, i) => (
+                      <span key={i} className="px-3 py-1 rounded-lg bg-surface-container border border-white/5 font-sans text-[10px] uppercase font-bold text-slate-300">
+                        Set {String.fromCharCode(65 + i)}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
           {/* Review Config */}
-          {((step === 2 && method === 'manual') || (step === 3 && method === 'ai')) && (
+          {step === 3 && (
             <div className="space-y-5">
               <p className="font-sans text-sm text-slate-300">Review your assessment configuration.</p>
               <div className="bg-surface-container-lowest rounded-xl border border-white/5 divide-y divide-white/5">
                 {[
                   { label: 'Title', value: title },
                   { label: 'Type', value: assessType },
+                  { label: 'Start Date', value: startDate },
+                  { label: 'Start Time', value: startTime },
                   { label: 'Duration', value: `${duration} min` },
-                  { label: 'Lockdown', value: isLockdown ? 'Yes' : 'No' },
-                  { label: 'Method', value: method === 'ai' ? 'AI-Assisted' : 'Manual' },
-                  ...(method === 'ai' ? [
-                    { label: 'Resources', value: `${selectedResources.length} selected` },
-                    { label: 'Difficulty', value: difficulty },
-                    { label: 'Questions', value: String(questionCount) },
-                  ] : []),
+                  { label: 'Generation', value: 'AI Isomorphic' },
+                  { label: 'Sets', value: `${numberOfSets} (${Array.from({ length: numberOfSets }).map((_, i) => String.fromCharCode(65 + i)).join(', ')})` },
+                  { label: 'Resources', value: `${selectedResources.length} selected` },
+                  { label: 'Questions', value: `${questionCount} items` },
                 ].map(r => (
                   <div key={r.label} className="flex items-center justify-between px-5 py-3">
                     <span className="font-sans text-xs uppercase tracking-widest text-slate-400 font-semibold">{r.label}</span>
@@ -282,174 +570,213 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                   </div>
                 ))}
               </div>
-              <div className="bg-primary-fixed-dim/5 border border-primary-fixed-dim/20 rounded-xl p-4 flex items-start gap-3">
+              <div className="hidden sm:flex bg-primary-fixed-dim/5 border border-primary-fixed-dim/20 rounded-xl p-4 items-start gap-3">
                 <Sparkles className="w-5 h-5 text-primary-fixed-dim mt-0.5 shrink-0" />
                 <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                  {method === 'ai' ? 'Click Generate to create questions from your selected resources. You can edit them in the next step.' : 'The assessment will be saved as a draft. You can add questions manually from the editor.'}
+                  Click Generate to create isomorphic questions from your selected resources. You can edit them in the next step.
                 </p>
               </div>
             </div>
           )}
-
-          {/* Step 4 AI: Editable Questions */}
-          {step === 4 && method === 'ai' && (
-            <div className="space-y-4">
-              <div className="sticky top-[-24px] z-20 bg-surface-container-high py-4 -mx-6 px-6 border-b border-white/10 flex items-center justify-between mb-2 shadow-sm">
-                <div>
-                  <p className="font-sans text-sm text-slate-300 font-medium">Review & Edit Questions</p>
-                  <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">{questions.length} total questions</p>
+          {/* Step 4: Editable Questions */}
+          {step === 4 && (() => {
+            const questionsList = setQuestionsMap[activeSet] || questions || [];
+            const totalPoints = questionsList.reduce((sum, q) => sum + (q.points || 2), 0);
+            return (
+              <div className="space-y-4">
+                <div className="sticky top-[-24px] z-20 bg-surface-container-high py-4 -mx-6 px-6 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
+                  <div>
+                    <p className="font-sans text-sm text-slate-300 font-medium">Review & Edit Questions</p>
+                    <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">
+                      {questionsList.length} questions · <span className="text-indigo-400 font-bold">{totalPoints} Points Total</span> ({activeSet})
+                    </p>
+                  </div>
+                  {/* Set Tabs Selector */}
+                  {Object.keys(setQuestionsMap).length > 1 && (
+                    <div className="flex gap-1 bg-white/5 p-1 rounded-xl border border-white/10 overflow-x-auto w-full sm:w-auto no-scrollbar shrink-0">
+                      {Object.keys(setQuestionsMap).map(setLabel => (
+                        <button
+                          key={setLabel}
+                          onClick={() => setActiveSet(setLabel)}
+                          className={`flex-1 sm:flex-initial text-center px-4 py-1.5 rounded-lg font-sans text-xs font-bold transition-all ${activeSet === setLabel
+                              ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-md'
+                              : 'text-slate-400 hover:text-white hover:bg-white/5'
+                            }`}
+                        >
+                          {setLabel}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <button onClick={addQuestion}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim text-xs font-bold hover:bg-primary-fixed-dim/20 transition-all active:scale-95 shadow-lg shadow-primary-fixed-dim/5">
-                  <Plus className="w-4 h-4" /> Add Question
-                </button>
-              </div>
-              <div className="space-y-3 pb-6">
-                {questions.map((q, idx) => (
-                  <div key={q.id} className="bg-surface-container rounded-xl border border-white/5 overflow-hidden">
-                    {q.editing ? (
-                      <div className="p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">Q{idx + 1}</span>
-                          <Dropdown
-                            value={q.type}
-                            onChange={val => updateQ(q.id, { type: val as QType })}
-                            options={Q_TYPES.map(qt => ({ label: qt.label, value: qt.id }))}
-                            className="w-44 text-left"
-                          />
-                        </div>
-                        <textarea value={q.text} onChange={e => updateQ(q.id, { text: e.target.value })}
-                          placeholder="Enter question text…"
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40 resize-none min-h-[60px]" />
-                        {(q.type === 'multiple-choice' || q.type === 'true-false') && (
-                          <div className="space-y-2">
-                            {q.type === 'multiple-choice' && <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Options & Correct Answer</p>}
-                            {q.type === 'true-false' && <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Select Correct Answer</p>}
-                            {q.options.map((opt, oi) => (
-                              <div key={oi} className="flex items-center gap-2">
-                                <button onClick={() => updateQ(q.id, { correct: oi })}
-                                  className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${q.correct === oi ? 'border-emerald-400 bg-emerald-400' : 'border-white/20'}`}>
-                                  {q.correct === oi && <Check className="w-3 h-3 text-black" />}
-                                </button>
-                                {q.type === 'multiple-choice' ? (
-                                  <input value={opt} onChange={e => { const opts = [...q.options]; opts[oi] = e.target.value; updateQ(q.id, { options: opts }); }}
+
+                {/* Description of Isomorphic scrambler */}
+                <div className="block bg-surface-container-lowest p-3.5 rounded-xl border border-white/5">
+                  <p className="font-sans text-[11px] text-slate-400 leading-relaxed">
+                    <span className="text-primary-fixed-dim font-bold uppercase tracking-wider block mb-1">Isomorphic Set Configuration ({activeSet})</span>
+                    Questions in this set are jumbled and isomorphic variations are applied (meaning changes per set, but the core answers remain identical). Profs can check, test, and edit questions in each set below before the exam opens to ensure clarity.
+                  </p>
+                </div>
+
+                <div className="space-y-3 pb-6">
+                  {questionsList.map((q, idx) => (
+                    <div key={q.id} className="bg-surface-container rounded-xl border border-white/5 overflow-hidden">
+                      {q.editing ? (
+                        <div className="p-4 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">Q{idx + 1}</span>
+                              <span className="font-sans text-xs font-semibold text-slate-400 bg-white/5 border border-white/10 px-3 py-1 rounded-xl">
+                                {Q_TYPES.find(qt => qt.id === q.type)?.label || q.type}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="font-sans text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Points:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={100}
+                                value={q.points || 2}
+                                onChange={e => updateQ(q.id, { points: Math.max(1, Number(e.target.value)) })}
+                                className="w-16 px-2 py-1 rounded bg-white/5 border border-white/10 text-white font-sans text-xs text-center outline-none focus:border-primary-fixed-dim"
+                              />
+                            </div>
+                          </div>
+                          <textarea value={q.text} onChange={e => updateQ(q.id, { text: e.target.value })}
+                            placeholder="Enter question text…"
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40 resize-none min-h-[60px]" />
+                          {(q.type === 'multiple-choice' || q.type === 'true-false') && (
+                            <div className="space-y-2">
+                              {q.type === 'multiple-choice' && <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Options & Correct Answer</p>}
+                              {q.type === 'true-false' && <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Select Correct Answer</p>}
+                              {q.options.map((opt, oi) => (
+                                <div key={oi} className="flex items-center gap-2">
+                                  <button onClick={() => updateQ(q.id, { correct: oi })}
+                                    className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${q.correct === oi ? 'border-emerald-400 bg-emerald-400' : 'border-white/20'}`}>
+                                    {q.correct === oi && <Check className="w-3 h-3 text-black" />}
+                                  </button>
+                                  {q.type === 'multiple-choice' ? (
+                                    <input value={opt} onChange={e => { const opts = [...q.options]; opts[oi] = e.target.value; updateQ(q.id, { options: opts }); }}
+                                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
+                                  ) : (
+                                    <span className="text-sm text-white font-sans">{opt}</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {(q.type === 'identification' || q.type === 'fill-in-the-blank') && (
+                            <div className="space-y-1.5">
+                              <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Correct Answer</p>
+                              <input value={q.answerText} onChange={e => updateQ(q.id, { answerText: e.target.value })}
+                                placeholder="Type the exact correct answer..."
+                                className="w-full bg-white/5 border border-emerald-400/50 rounded-lg px-3 py-2 text-sm text-emerald-100 font-sans outline-none focus:ring-1 focus:ring-emerald-400/50" />
+                            </div>
+                          )}
+                          {q.type === 'matching' && (
+                            <div className="space-y-2">
+                              <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Matching Pairs</p>
+                              {q.matchingPairs.map((pair, pi) => (
+                                <div key={pi} className="flex items-center gap-2">
+                                  <input value={pair.left} onChange={e => { const pairs = [...q.matchingPairs]; pairs[pi].left = e.target.value; updateQ(q.id, { matchingPairs: pairs }); }}
+                                    placeholder="Term"
                                     className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
-                                ) : (
-                                  <span className="text-sm text-white font-sans">{opt}</span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {(q.type === 'identification' || q.type === 'fill-in-the-blank') && (
-                          <div className="space-y-1.5">
-                            <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Correct Answer</p>
-                            <input value={q.answerText} onChange={e => updateQ(q.id, { answerText: e.target.value })}
-                              placeholder="Type the exact correct answer..."
-                              className="w-full bg-white/5 border border-emerald-400/50 rounded-lg px-3 py-2 text-sm text-emerald-100 font-sans outline-none focus:ring-1 focus:ring-emerald-400/50" />
-                          </div>
-                        )}
-                        {q.type === 'matching' && (
-                          <div className="space-y-2">
-                            <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Matching Pairs</p>
-                            {q.matchingPairs.map((pair, pi) => (
-                              <div key={pi} className="flex items-center gap-2">
-                                <input value={pair.left} onChange={e => { const pairs = [...q.matchingPairs]; pairs[pi].left = e.target.value; updateQ(q.id, { matchingPairs: pairs }); }}
-                                  placeholder="Term"
-                                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
-                                <span className="text-slate-500">-</span>
-                                <input value={pair.right} onChange={e => { const pairs = [...q.matchingPairs]; pairs[pi].right = e.target.value; updateQ(q.id, { matchingPairs: pairs }); }}
-                                  placeholder="Definition"
-                                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
-                                <button onClick={() => { const pairs = q.matchingPairs.filter((_, i) => i !== pi); updateQ(q.id, { matchingPairs: pairs }); }}
-                                  className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10">
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
-                            ))}
-                            <button onClick={() => updateQ(q.id, { matchingPairs: [...q.matchingPairs, { left: '', right: '' }] })}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 text-slate-300 text-xs font-semibold hover:bg-white/10 transition-colors w-full justify-center mt-2">
-                              <Plus className="w-3.5 h-3.5" /> Add Pair
+                                  <span className="text-slate-500">-</span>
+                                  <input value={pair.right} onChange={e => { const pairs = [...q.matchingPairs]; pairs[pi].right = e.target.value; updateQ(q.id, { matchingPairs: pairs }); }}
+                                    placeholder="Definition"
+                                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
+                                  <button onClick={() => { const pairs = q.matchingPairs.filter((_, i) => i !== pi); updateQ(q.id, { matchingPairs: pairs }); }}
+                                    className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10">
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              ))}
+                              <button onClick={() => updateQ(q.id, { matchingPairs: [...q.matchingPairs, { left: '', right: '' }] })}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 text-slate-300 text-xs font-semibold hover:bg-white/10 transition-colors w-full justify-center mt-2">
+                                <Plus className="w-3.5 h-3.5" /> Add Pair
+                              </button>
+                            </div>
+                          )}
+                          {q.type === 'essay' && (
+                            <div className="p-3 bg-white/5 rounded-lg border border-white/5">
+                              <p className="text-xs text-slate-400 font-sans italic">Essay questions will be manually graded by the educator.</p>
+                            </div>
+                          )}
+                          <div className="flex justify-end gap-2 pt-1">
+                            <button onClick={() => updateQ(q.id, { editing: false })}
+                              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary-fixed-dim text-on-primary-fixed hover:bg-primary-container transition-colors flex items-center gap-1">
+                              <Check className="w-3.5 h-3.5" /> Done
                             </button>
                           </div>
-                        )}
-                        {q.type === 'essay' && (
-                          <div className="p-3 bg-white/5 rounded-lg border border-white/5">
-                            <p className="text-xs text-slate-400 font-sans italic">Essay questions will be manually graded by the educator.</p>
+                        </div>
+                      ) : (
+                        <div className="p-4 flex items-start gap-3 group">
+                          <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded shrink-0 mt-0.5">Q{idx + 1}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                              <span className="font-sans text-[10px] text-slate-500 uppercase tracking-wider font-semibold bg-white/5 border border-white/10 px-2 py-0.5 rounded">{q.type}</span>
+                              <span className="font-sans text-[10px] text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded font-bold">{q.points || 2} Points</span>
+                            </div>
+                            <p className="font-sans text-sm text-white leading-relaxed">{q.text || <span className="text-slate-500 italic">No question text</span>}</p>
+
+                            {/* Answer Preview */}
+                            <div className="mt-2 text-xs font-sans">
+                              {(q.type === 'multiple-choice' || q.type === 'true-false') && (
+                                <span className="text-emerald-400 font-medium">Answer: {q.options[q.correct]}</span>
+                              )}
+                              {(q.type === 'identification' || q.type === 'fill-in-the-blank') && (
+                                <span className="text-emerald-400 font-medium">Answer: {q.answerText || 'Not set'}</span>
+                              )}
+                              {q.type === 'matching' && (
+                                <span className="text-emerald-400 font-medium">{q.matchingPairs.length} pairs</span>
+                              )}
+                              {q.type === 'essay' && (
+                                <span className="text-slate-400 italic">Manual Grading</span>
+                              )}
+                            </div>
                           </div>
-                        )}
-                        <div className="flex justify-end gap-2 pt-1">
-                          <button onClick={() => updateQ(q.id, { editing: false })}
-                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary-fixed-dim text-on-primary-fixed hover:bg-primary-container transition-colors flex items-center gap-1">
-                            <Check className="w-3.5 h-3.5" /> Done
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="p-4 flex items-start gap-3 group">
-                        <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded shrink-0 mt-0.5">Q{idx + 1}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-sans text-sm text-white leading-relaxed">{q.text || <span className="text-slate-500 italic">No question text</span>}</p>
-                          
-                          {/* Answer Preview */}
-                          <div className="mt-2 text-xs font-sans">
-                            {(q.type === 'multiple-choice' || q.type === 'true-false') && (
-                              <span className="text-emerald-400 font-medium">Answer: {q.options[q.correct]}</span>
-                            )}
-                            {(q.type === 'identification' || q.type === 'fill-in-the-blank') && (
-                              <span className="text-emerald-400 font-medium">Answer: {q.answerText || 'Not set'}</span>
-                            )}
-                            {q.type === 'matching' && (
-                              <span className="text-emerald-400 font-medium">{q.matchingPairs.length} pairs</span>
-                            )}
-                            {q.type === 'essay' && (
-                              <span className="text-slate-400 italic">Manual Grading</span>
-                            )}
+                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
+                            <button onClick={() => updateQ(q.id, { editing: true })}
+                              className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors" title="Edit">
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => deleteQ(q.id)}
+                              className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors" title="Delete">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
-                          
-                          <span className="font-sans text-[10px] text-slate-500 uppercase tracking-wider mt-2 block">{q.type}</span>
                         </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                          <button onClick={() => updateQ(q.id, { editing: true })}
-                            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors" title="Edit">
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => deleteQ(q.id)}
-                            className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors" title="Delete">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-white/10 shrink-0">
+        <div className="flex flex-row items-center justify-between gap-3 px-6 py-4 border-t border-white/10 shrink-0">
           <button onClick={() => step === 0 ? onClose() : setStep(s => s - 1)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors">
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors">
             <ChevronLeft className="w-4 h-4" /> {step === 0 ? 'Cancel' : 'Back'}
           </button>
 
           {isLastStep ? (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-[2] sm:flex-initial w-full sm:w-auto">
               <button onClick={() => handleSave('draft')}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-sans text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all">
-                <Save className="w-4 h-4" /> Save as Draft
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl font-sans text-xs sm:text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all">
+                <Save className="w-3.5 h-3.5 shrink-0" /> Draft
               </button>
               <button onClick={() => handleSave('ready')}
-                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all hover:opacity-90">
-                <Sparkles className="w-4 h-4" /> Save as Ready
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all hover:opacity-90">
+                <Sparkles className="w-3.5 h-3.5 shrink-0" /> Save Ready
               </button>
             </div>
           ) : (
             <button onClick={isGenerateStep ? handleNextFromReview : () => setStep(s => s + 1)}
-              disabled={(step === 0 && !canProceed0) || (step === 1 && !canProceed1)}
-              className="flex items-center gap-2 px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              disabled={(step === 0 && !canProceed0) || (step === 1 && !canProceed1) || (step === 2 && !canProceed2)}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-40 disabled:cursor-not-allowed">
               {isGenerateStep ? <><Sparkles className="w-4 h-4" /> Generate</> : <>Next <ChevronRight className="w-4 h-4" /></>}
             </button>
           )}

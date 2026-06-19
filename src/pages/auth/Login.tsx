@@ -46,9 +46,9 @@ export default function Login() {
 
       <main className="flex-grow flex items-center justify-center p-4 w-full max-w-[1000px] mx-auto relative z-10 min-h-screen">
 
-        <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-[90vh]">
+        <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-none lg:max-h-[90vh]">
 
-          <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
+          <div className="hidden lg:flex w-full lg:w-1/2 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
             <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop')] bg-cover bg-center opacity-10 mix-blend-luminosity"></div>
 
             <div className="relative z-10">

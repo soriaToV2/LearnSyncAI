@@ -37,20 +37,33 @@ function CourseCard({ course, onEnroll }: { key?: React.Key; course: Course; onE
       onClick={handleClick}
       className="group bg-surface-container-lowest border border-white/5 rounded-2xl overflow-hidden hover:border-white/15 hover:-translate-y-1 transition-all duration-300 shadow-xl cursor-pointer flex flex-col h-[180px] justify-between relative"
     >
-      {/* Top Accent Banner */}
-      <div className={`p-6 bg-gradient-to-br ${gradientClass} flex-1 flex flex-col justify-end relative overflow-hidden`}>
-        {/* Decorative background shape */}
+      <div className={`p-6 bg-gradient-to-br ${gradientClass} flex-1 flex flex-col justify-between relative overflow-hidden`}>
         <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl -mr-8 -mt-8 group-hover:scale-110 transition-transform duration-500" />
-        
-        <h3 className="font-display text-xl font-bold text-white leading-tight group-hover:text-white/90 transition-colors line-clamp-1">
-          {course.title}
-        </h3>
-        <p className="font-sans text-xs text-white/75 mt-1 font-medium">
-          {course.instructor}
-        </p>
+
+        <div className="flex items-center gap-1.5 flex-wrap relative z-10">
+          {course.courseCode && (
+            <span className="font-mono text-[9px] text-white/80 tracking-wider uppercase border border-white/20 px-2 py-0.5 rounded bg-white/5 font-semibold">
+              {course.courseCode}
+            </span>
+          )}
+          {course.section && (
+            <span className="font-sans text-[9px] text-white tracking-wider uppercase border border-white/20 px-2 py-0.5 rounded bg-white/10 font-bold">
+              Section {course.section}
+            </span>
+          )}
+        </div>
+
+        <div>
+          <h3 className="font-display text-xl font-bold text-white leading-tight group-hover:text-white/90 transition-colors line-clamp-1">
+            {course.title}
+          </h3>
+          <p className="font-sans text-xs text-white/75 mt-1 font-medium">
+            {course.instructor}
+          </p>
+        </div>
       </div>
 
-      {/* Clean Card Footer */}
+      {/* Card footer */}
       <div className="p-4 bg-surface-container/30 border-t border-white/5 flex items-center justify-between">
         <span className="font-sans text-[10px] font-bold uppercase tracking-widest text-slate-500">
           {course.isEnrolled ? 'Enrolled' : 'Explore'}
@@ -86,7 +99,6 @@ export default function CourseCatalog() {
   return (
     <div className="flex-1 flex flex-col">
       <main className="flex-1 p-10 max-w-7xl mx-auto w-full">
-        {/* Hero Banner resembling Google Classroom cover header */}
         <div className="relative mb-10 rounded-2xl border border-white/5 bg-surface-container overflow-hidden p-6 md:p-8">
           <div className="absolute inset-0 pointer-events-none">
             <div className="absolute top-0 right-0 w-72 h-72 bg-primary-fixed-dim/10 rounded-full blur-[80px] -mr-32 -mt-32" />
@@ -115,7 +127,7 @@ export default function CourseCatalog() {
           </div>
         </div>
 
-        {/* Section: Enrolled Classes */}
+        {/* Enrolled courses */}
         <div className="mb-12">
           <h2 className="font-display text-2xl font-bold text-on-surface mb-6 flex items-center gap-2">
             <GraduationCap className="w-6 h-6 text-primary-fixed-dim" />
@@ -135,7 +147,7 @@ export default function CourseCatalog() {
         </div>
       </main>
 
-      {/* Join Code Modal */}
+      {/* Join code modal */}
       {showJoinModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="relative w-full max-w-md flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden p-6 shadow-[0_0_40px_rgba(0,218,243,0.1)]">
@@ -188,7 +200,7 @@ export default function CourseCatalog() {
                 onClick={() => {
                   const rawInput = joinCode.trim();
                   let cleanedCode = rawInput;
-                  
+
                   if (rawInput.includes('/') || rawInput.includes('.')) {
                     try {
                       const urlParts = rawInput.split('/').filter(Boolean);
@@ -197,16 +209,16 @@ export default function CourseCatalog() {
                       cleanedCode = rawInput;
                     }
                   }
-                  
+
                   cleanedCode = cleanedCode.toUpperCase();
-                  
+
                   if (cleanedCode.length < 3) {
                     setJoinError('Please enter a valid class code or link.');
                   } else {
-                    // Try to find matching course
+                    // Find matching course
                     const match = courses.find(
-                      (c) => c.id.toUpperCase() === cleanedCode || 
-                             c.id.replace(/-/g, '').toUpperCase() === cleanedCode.replace(/-/g, '')
+                      (c) => c.id.toUpperCase() === cleanedCode ||
+                        c.id.replace(/-/g, '').toUpperCase() === cleanedCode.replace(/-/g, '')
                     );
                     if (match) {
                       handleEnroll(match.id);

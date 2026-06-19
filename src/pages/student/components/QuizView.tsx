@@ -11,7 +11,7 @@ interface QuizViewProps {
   onExit: () => void;
 }
 
-// ── Question shape ─────────────────────────────────────────────────────────────
+// Question types
 interface BaseQuestion { id: number; type: QuestionType; prompt: string; }
 interface MCQuestion extends BaseQuestion { type: 'multiple-choice'; options: string[]; correctIndex: number; }
 interface TFQuestion extends BaseQuestion { type: 'true-false'; correct: boolean; }
@@ -25,7 +25,7 @@ interface MatchingQuestion extends BaseQuestion {
 type Question = MCQuestion | TFQuestion | IDQuestion | FIBQuestion | EssayQuestion | MatchingQuestion;
 type UserAnswer = string | number | boolean | Record<string, string> | null;
 
-// ── Question Generator ─────────────────────────────────────────────────────────
+// Question generator
 function generateQuestions(config: QuizConfig, flashcardSets: QuizViewProps['flashcardSets']): Question[] {
   let cards: Flashcard[] = [];
 
@@ -34,7 +34,7 @@ function generateQuestions(config: QuizConfig, flashcardSets: QuizViewProps['fla
     const set = flashcardSets.find(s => s.id === source.setId);
     cards = set?.cards ?? [];
   } else {
-    // Simulate resource-based cards
+    // Simulated cards from resource
     cards = [
       { id: 9001, front: 'What initiates neurotransmitter release?', back: 'An influx of Ca2+ ions triggered by an action potential.' },
       { id: 9002, front: 'What is the synaptic cleft?', back: 'The gap between presynaptic and postsynaptic neurons.' },
@@ -98,7 +98,7 @@ function shuffle<T>(arr: T[]): T[] {
   return [...arr].sort(() => Math.random() - 0.5);
 }
 
-// ── Score helpers ──────────────────────────────────────────────────────────────
+// Score helpers
 function scoreAnswer(question: Question, answer: UserAnswer): boolean {
   if (answer === null) return false;
   switch (question.type) {
@@ -107,7 +107,7 @@ function scoreAnswer(question: Question, answer: UserAnswer): boolean {
     case 'identification':
     case 'fill-in-the-blank':
       return typeof answer === 'string' && answer.trim().toLowerCase() === question.answer.toLowerCase();
-    case 'essay': return true; // essays are auto-passed (self-graded)
+    case 'essay': return true; // auto-pass
     case 'matching': {
       if (typeof answer !== 'object' || Array.isArray(answer)) return false;
       return question.pairs.every(p => (answer as Record<string, string>)[p.term]?.trim().toLowerCase() === p.definition.toLowerCase());
@@ -115,7 +115,7 @@ function scoreAnswer(question: Question, answer: UserAnswer): boolean {
   }
 }
 
-// ── Sub-renderers ──────────────────────────────────────────────────────────────
+// Sub-renderers
 function MCRenderer({ q, answer, setAnswer, submitted }: { q: MCQuestion; answer: UserAnswer; setAnswer: (a: UserAnswer) => void; submitted: boolean }) {
   return (
     <div className="space-y-3 mt-2">
@@ -215,7 +215,7 @@ function MatchingRenderer({ q, answer, setAnswer, submitted }: { q: MatchingQues
   );
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────────
+// Main component
 export default function QuizView({ config, flashcardSets, onExit }: QuizViewProps) {
   const questions = useMemo(() => generateQuestions(config, flashcardSets), [config, flashcardSets]);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -264,7 +264,7 @@ export default function QuizView({ config, flashcardSets, onExit }: QuizViewProp
     setFinished(false);
   };
 
-  // ── Results Screen ──
+  // Results screen
   if (finished) {
     const totalScored = questions.filter((q, i) => q.type !== 'essay' && scoreAnswer(q, answers[i])).length;
     const essayCount = questions.filter(q => q.type === 'essay').length;
@@ -331,7 +331,7 @@ export default function QuizView({ config, flashcardSets, onExit }: QuizViewProp
     );
   }
 
-  // ── Question Screen ──
+  // Question screen
   const difficultyBadge: Record<string, string> = {
     easy: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/30',
     medium: 'text-amber-400 bg-amber-400/10 border-amber-400/30',

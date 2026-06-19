@@ -84,12 +84,12 @@ export const THEMES: ThemeDefinition[] = [
   },
 ];
 
-// ─── Storage Keys ──────────────────────────────────────────────────────────────
+// Storage Keys
 const STUDENT_STORAGE_KEY = 'learnsyncai_student_theme';
 const EDUCATOR_STORAGE_KEY = 'learnsyncai_educator_theme';
 export const LAST_ROLE_KEY = 'learnsyncai_last_role';
 
-// ─── CSS var application (applied to a specific element, not always root) ──────
+// Apply theme to element
 export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
   el.dataset.theme = t.id;
   el.style.setProperty('--theme-accent', t.accent);
@@ -103,7 +103,7 @@ export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
   el.style.setProperty('--color-primary-container', t.accent);
 }
 
-// ─── Student Theme Context ─────────────────────────────────────────────────────
+// Student Theme Context
 interface ThemeContextValue {
   theme: ThemeDefinition;
   setTheme: (id: string) => void;
@@ -111,7 +111,7 @@ interface ThemeContextValue {
 
 const StudentThemeContext = createContext<ThemeContextValue>({
   theme: THEMES[0],
-  setTheme: () => {},
+  setTheme: () => { },
 });
 
 export function StudentThemeProvider({ children }: { children: React.ReactNode }) {
@@ -143,10 +143,10 @@ export function useStudentTheme() {
   return useContext(StudentThemeContext);
 }
 
-// ─── Educator Theme Context ────────────────────────────────────────────────────
+// Educator Theme Context
 const EducatorThemeContext = createContext<ThemeContextValue>({
   theme: THEMES[0],
-  setTheme: () => {},
+  setTheme: () => { },
 });
 
 export function EducatorThemeProvider({ children }: { children: React.ReactNode }) {
@@ -178,7 +178,7 @@ export function useEducatorTheme() {
   return useContext(EducatorThemeContext);
 }
 
-// ─── Auth-page helper: returns the theme for whichever role was last active ────
+// Auth-page helper: returns the theme for whichever role was last active
 export function getAuthTheme(): ThemeDefinition {
   const lastRole = localStorage.getItem(LAST_ROLE_KEY);
   const key = lastRole === 'educator' ? EDUCATOR_STORAGE_KEY : STUDENT_STORAGE_KEY;
@@ -186,13 +186,13 @@ export function getAuthTheme(): ThemeDefinition {
   return THEMES.find(t => t.id === saved) ?? THEMES[0];
 }
 
-// ─── Legacy alias so any component using useTheme() still compiles ─────────────
+// Legacy alias so any component using useTheme() still compiles
 // Student pages use this; educators should use useEducatorTheme() instead.
 export function useTheme() {
   return useContext(StudentThemeContext);
 }
 
-/** @deprecated Use StudentThemeProvider or EducatorThemeProvider instead */
+// deprecated use StudentThemeProvider or EducatorThemeProvider instead
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   return <StudentThemeProvider>{children}</StudentThemeProvider>;
 }

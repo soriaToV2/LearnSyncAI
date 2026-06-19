@@ -86,7 +86,7 @@ export default function EducatorSettings() {
             </span>
           </h1>
           <p className="font-sans text-base text-slate-400 font-medium mt-2 max-w-xl">
-            Manage your professor profile and customize your LearnSyncAI Pro visual experience.
+            Manage your professor profile and customize your LearnSyncAI visual experience.
           </p>
         </div>
 

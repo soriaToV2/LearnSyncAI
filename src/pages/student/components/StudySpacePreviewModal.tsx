@@ -15,7 +15,7 @@ export default function StudySpacePreviewModal({ isOpen, onClose, spaceId }: Stu
   const [isSaved, setIsSaved] = useState(false);
   const [hoverUnsave, setHoverUnsave] = useState(false);
 
-  // Look up space details
+  // Find space
   const space: PublicSpaceDetail | undefined = spaceId ? MOCK_PUBLIC_SPACES[spaceId] : undefined;
 
   useEffect(() => {
@@ -25,7 +25,7 @@ export default function StudySpacePreviewModal({ isOpen, onClose, spaceId }: Stu
       setActiveTab('flashcards');
       setHoverUnsave(false);
       
-      // Check if already saved in volatile in-memory store
+      // Check if already saved
       if (spaceId) {
         const exists = getSavedSpaces().some((s: any) => s.id === `space-${spaceId}`);
         setIsSaved(exists);
@@ -39,11 +39,11 @@ export default function StudySpacePreviewModal({ isOpen, onClose, spaceId }: Stu
 
   const handleSaveToggle = () => {
     if (isSaved) {
-      // Unsave/Remove from volatile in-memory store
+      // Remove from store
       unsaveSpaceFromMemory(`space-${space.id}`);
       setIsSaved(false);
     } else {
-      // Save/Import to volatile in-memory store
+      // Add to store
       const newSpace = {
         id: `space-${space.id}`,
         title: space.title,
