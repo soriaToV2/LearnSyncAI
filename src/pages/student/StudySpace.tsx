@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, X, Plus, BookOpen, Layers, Globe, Lock, Eye, EyeOff, Brain, Award, BrainCircuit, Share2, Copy, Check, ChevronDown } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import Modal from '../../components/ui/Modal';
-import FlashcardsTab from './components/FlashcardsTab';
-import FreeRecallTab from './components/FreeRecallTab';
-import FeynmanTab from './components/FeynmanTab';
-import AdaptiveTestTab from './components/AdaptiveTestTab';
-import ResourcesTab from './components/ResourcesTab';
+import FlashcardsTab from './studySpaceTabs/FlashcardsTab';
+import FreeRecallTab from './studySpaceTabs/FreeRecallTab';
+import FeynmanTab from './studySpaceTabs/FeynmanTab';
+import AdaptiveTestTab from './studySpaceTabs/AdaptiveTestTab';
+import ResourcesTab from './studySpaceTabs/ResourcesTab';
 import { createPortal } from 'react-dom';
 import { getSavedSpaces, updateSavedSpaceFlashcards } from '../../data/mockPublicSpaces';
 

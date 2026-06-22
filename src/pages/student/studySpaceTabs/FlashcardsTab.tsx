@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Sparkles, Plus, Layers, ChevronLeft, RefreshCw, Play, Edit3, Trash2, BookOpen, ClipboardList, Globe, Lock } from 'lucide-react';
-import FlashcardStudyView from './FlashcardStudyView';
-import CreateFlashcardsModal from './CreateFlashcardsModal';
+import FlashcardStudyView from '../components/FlashcardStudyView';
+import CreateFlashcardsModal from '../components/CreateFlashcardsModal';
 
 
 interface Flashcard {

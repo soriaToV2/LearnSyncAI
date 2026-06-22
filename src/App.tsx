@@ -1,7 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import CreateAccount from './pages/auth/CreateAccount';
 import Login from './pages/auth/Login';
@@ -26,7 +22,7 @@ import Settings from './pages/student/Settings';
 import StudySpacesList from './pages/student/StudySpacesList';
 import StudySpace from './pages/student/StudySpace';
 import PlayMeGames from './pages/student/PlayMeGames';
-import CourseCatalog from './pages/student/CourseCatalog';
+import CourseCatalog from './pages/student/Course';
 
 export default function App() {
   return (

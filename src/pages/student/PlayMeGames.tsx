@@ -767,7 +767,7 @@ export default function PlayMeGames() {
                   <div className="w-12 h-12 rounded-xl bg-amber-400/10 flex items-center justify-center border border-amber-400/20 text-amber-400 mb-4 group-hover:scale-110 transition-transform">
                     <HelpCircle className="w-6 h-6" />
                   </div>
-                  <h3 className="font-display text-xl font-bold text-white mb-2">Mini Crossword</h3>
+                  <h3 className="font-display text-xl font-bold text-white mb-2">Crossword</h3>
                   <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
                     Solve course cross-clues inside an interactive grid. Read the horizontal and vertical hints to identify core structures.
                   </p>

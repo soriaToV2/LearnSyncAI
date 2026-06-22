@@ -1,3 +1,5 @@
+//ETO YUNG PAGE SA LOOB NG courses > select 1 enrolled course > this page will load
+
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Bell, ChevronRight, CheckCircle2, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock, Star, X, ClipboardList, HelpCircle, Award, AlertCircle, Lock, ShieldAlert, Timer, Check, Activity, Sparkles, LayoutGrid } from 'lucide-react';

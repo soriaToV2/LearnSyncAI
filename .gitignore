@@ -6,4 +6,12 @@ coverage/
 *.log
 .env*
 !.env.example
-Learnsync AI-2.pdf
+
+# Python BKT service
+bkt_service/__pycache__/
+bkt_service/.venv/
+bkt_service/*.pyc
+bkt_service/.env
+
+# Server build output
+server/dist/
