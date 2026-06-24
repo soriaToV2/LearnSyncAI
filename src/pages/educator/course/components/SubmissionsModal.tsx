@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import {
-  X, CheckCircle2, AlertCircle, Clock, User, BarChart2,
+  CheckCircle2, AlertCircle, Clock, User, BarChart2,
   ChevronRight, Award, Search, SlidersHorizontal,
 } from 'lucide-react';
-import { createPortal } from 'react-dom';
+import Modal from '../../../../components/ui/Modal';
 import type { Assessment, Submission } from '../../../../data/mockEducatorData';
 
 interface Props {
@@ -49,24 +49,22 @@ export default function SubmissionsModal({ isOpen, onClose, assessment, onGrade 
   const maxScore = assessment.submissions[0]?.maxScore ?? 0;
   const pct = maxScore > 0 ? Math.round((avgScore / maxScore) * 100) : 0;
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 p-0 bg-background/80 backdrop-blur-sm">
-      <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-surface-container-high sm:rounded-2xl rounded-none border border-white/10 shadow-2xl overflow-hidden h-full sm:h-auto max-h-full sm:max-h-[90vh] flex flex-col">
-
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-white/10 shrink-0">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-display text-lg font-semibold text-white">Submissions</h2>
-              <p className="font-sans text-xs text-slate-400 mt-0.5 truncate max-w-xs">{assessment.title}</p>
-            </div>
-            <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Stats row */}
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <div className="flex flex-col gap-1 items-start">
+          <span className="font-display text-base sm:text-lg font-semibold text-white">Submissions</span>
+          <p className="font-sans text-xs text-slate-400 font-normal normal-case truncate max-w-xs">{assessment.title}</p>
+        </div>
+      }
+      maxWidth="max-w-2xl"
+      noPadding={true}
+    >
+      <div className="flex flex-col max-h-[75vh] landscape:max-h-[60vh] sm:max-h-[80vh] md:max-h-[85vh]">
+        {/* Stats Row & Avg Score Bar (originally after header) */}
+        <div className="px-6 py-4 border-b border-white/10 shrink-0 bg-surface-container/20">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
             {[
               { label: 'Submitted', value: total, color: 'text-white' },
@@ -81,9 +79,8 @@ export default function SubmissionsModal({ isOpen, onClose, assessment, onGrade 
             ))}
           </div>
 
-          {/* Score distribution bar */}
           {total > 0 && (
-            <div className="space-y-1 mb-4">
+            <div className="space-y-1">
               <div className="flex justify-between items-center">
                 <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">Class Average</p>
                 <p className="font-sans text-xs text-slate-300 font-semibold">{avgScore}/{maxScore}</p>
@@ -115,6 +112,7 @@ export default function SubmissionsModal({ isOpen, onClose, assessment, onGrade 
             {(['all', 'graded', 'needs-review'] as const).map(f => (
               <button
                 key={f}
+                type="button"
                 onClick={() => setFilter(f)}
                 className={`px-3 py-1.5 rounded-lg font-sans text-[11px] font-semibold uppercase tracking-wider transition-colors shrink-0 ${filter === f
                   ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim border border-primary-fixed-dim/30'
@@ -128,7 +126,7 @@ export default function SubmissionsModal({ isOpen, onClose, assessment, onGrade 
         </div>
 
         {/* Submission list */}
-        <div className="flex-1 overflow-y-auto p-6 no-scrollbar space-y-3">
+        <div className="flex-1 overflow-y-auto p-6 no-scrollbar space-y-3 min-h-0">
           {subs.length === 0 && (
             <div className="text-center py-14 border-2 border-dashed border-white/10 rounded-2xl">
               <User className="w-8 h-8 text-slate-600 mx-auto mb-2" />
@@ -175,6 +173,7 @@ export default function SubmissionsModal({ isOpen, onClose, assessment, onGrade 
 
                 {/* Action */}
                 <button
+                  type="button"
                   onClick={() => onGrade(s)}
                   className={`w-full sm:w-auto shrink-0 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg font-sans text-xs font-semibold transition-all border ${s.status === 'needs-review'
                     ? 'bg-amber-400/10 border-amber-400/20 text-amber-400 hover:bg-amber-400/20'
@@ -191,11 +190,12 @@ export default function SubmissionsModal({ isOpen, onClose, assessment, onGrade 
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-white/10 shrink-0 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="px-6 py-4 border-t border-white/5 shrink-0 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-surface-container-high">
           <p className="font-sans text-xs text-slate-500 text-center sm:text-left">
             {graded}/{total} graded · {needsReview} pending
           </p>
           <button
+            type="button"
             onClick={onClose}
             className="px-5 py-2.5 bg-white/5 border border-white/10 text-slate-300 rounded-xl font-sans text-sm font-semibold hover:bg-white/10 transition-all text-center"
           >
@@ -203,7 +203,6 @@ export default function SubmissionsModal({ isOpen, onClose, assessment, onGrade 
           </button>
         </div>
       </div>
-    </div>,
-    document.body
+    </Modal>
   );
 }

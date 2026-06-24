@@ -1,7 +1,9 @@
-import React, { useState, useRef } from 'react';
-import { X, ChevronRight, ChevronLeft, Check, Zap, Flame, Snowflake, Shield, List, ToggleLeft, HelpCircle, Edit3, GitMerge, AlignLeft, FileText, PenTool, Sparkles, Plus, Trash2, Save } from 'lucide-react';
-import { createPortal } from 'react-dom';
+import React, { useState, useRef, useEffect } from 'react';
+import { ChevronRight, ChevronLeft, Check, Zap, Flame, Snowflake, Shield, List, ToggleLeft, HelpCircle, Edit3, GitMerge, AlignLeft, FileText, PenTool, Sparkles, Plus, Trash2, Save, Loader2 } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { api } from '../../../../lib/api';
 import Dropdown from '../../../../components/ui/Dropdown';
+import Modal from '../../../../components/ui/Modal';
 
 interface Props { isOpen: boolean; onClose: () => void; courseResources: string[]; onCreate: (data: any) => void; }
 type QType = 'multiple-choice' | 'true-false' | 'identification' | 'fill-in-the-blank' | 'essay' | 'matching';
@@ -86,6 +88,24 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
     { typeId: 'multiple-choice', testLabel: 'Test I', itemCount: 10, pointsPerItem: 2 }
   ]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { courseId } = useParams();
+  const [dbResources, setDbResources] = useState<string[]>([]);
+  const [loadingResources, setLoadingResources] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && courseId) {
+      setLoadingResources(true);
+      api.get<any[]>(`/courses/${courseId}/materials`)
+        .then(res => {
+          const names = (res.data || [])
+            .filter(m => m.parsed_status === 'completed')
+            .map(m => m.title);
+          setDbResources(names);
+        })
+        .catch(err => console.error('Error fetching materials:', err))
+        .finally(() => setLoadingResources(false));
+    }
+  }, [isOpen, courseId]);
 
   if (!isOpen) return null;
 
@@ -305,35 +325,37 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
   const isLastStep = step === 4;
   const isGenerateStep = step === 3;
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 p-0 bg-background/80 backdrop-blur-sm">
-      <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-surface-container-high sm:rounded-2xl rounded-none border border-white/10 shadow-2xl overflow-hidden flex flex-col h-full sm:h-auto max-h-full sm:max-h-[90vh]">
+  const resourcesList = dbResources.length > 0
+    ? dbResources
+    : (courseResources.length > 0 ? courseResources : ["Course Syllabus & Introduction.pdf"]);
 
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
-          <div>
-            <h2 className="font-display text-lg font-semibold text-white">Create Assessment</h2>
-            <p className="font-sans text-xs text-slate-400 mt-0.5">
-              Step {step + 1} of {totalSteps} — {['Details', 'Select Resources', 'Configure AI', 'Review Config', 'Edit Questions'][step]}
-            </p>
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Create Assessment"
+      maxWidth="max-w-2xl"
+    >
+      <div className="flex flex-col gap-4 sm:gap-6 max-h-[75vh] landscape:max-h-[60vh] sm:max-h-[80vh] md:max-h-[90vh] overflow-y-auto pr-1 no-scrollbar">
+        {/* Step Indicator */}
+        <div className="space-y-3">
+          <div className="flex justify-between items-center text-xs font-sans text-slate-400">
+            <span className="font-semibold uppercase tracking-wider">Step {step + 1} of {totalSteps}</span>
+            <span className="text-slate-500">{['Details', 'Select Resources', 'Configure AI', 'Review Config', 'Edit Questions'][step]}</span>
           </div>
-          <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors"><X className="w-5 h-5" /></button>
-        </div>
-        {/* Progress bar */}
-        <div className="flex h-1 shrink-0">
-          {Array.from({ length: totalSteps }).map((_, i) => (
-            <div key={i} className={`flex-1 transition-all duration-500 ${i <= step ? 'bg-primary-fixed-dim' : 'bg-white/5'}`} />
-          ))}
+          <div className="flex h-1.5 gap-1 bg-white/5 rounded-full overflow-hidden">
+            {Array.from({ length: totalSteps }).map((_, i) => (
+              <div key={i} className={`flex-1 transition-all duration-500 rounded-full ${i <= step ? 'bg-primary-fixed-dim' : 'bg-transparent'}`} />
+            ))}
+          </div>
         </div>
 
         {/* Body */}
-        <div ref={scrollRef} className="p-6 overflow-y-auto flex-1 no-scrollbar scroll-smooth relative">
+        <div ref={scrollRef} className="flex-1 scroll-smooth relative">
 
           {/* Step 0: Details */}
           {step === 0 && (
-            <div className="space-y-5">
+            <div className="space-y-5 animate-fade-in">
               <div>
                 <label className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold mb-2 block">Title *</label>
                 <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Midterm Exam"
@@ -373,7 +395,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
 
           {/* Step 1: Select Resources */}
           {step === 1 && (
-            <div className="space-y-5">
+            <div className="space-y-5 animate-fade-in">
               <div className="flex bg-primary-fixed-dim/5 border border-primary-fixed-dim/10 rounded-xl p-4 items-start gap-3">
                 <Sparkles className="w-5 h-5 text-primary-fixed-dim mt-0.5 shrink-0" />
                 <div>
@@ -387,7 +409,12 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
 
               <div className="space-y-2">
                 <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Select Source Resources</p>
-                {courseResources.map(res => {
+                {loadingResources ? (
+                  <div className="flex flex-col items-center justify-center py-12 gap-3 border border-white/5 bg-white/5 rounded-2xl animate-pulse">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary-fixed-dim" />
+                    <span className="font-sans text-sm text-slate-400">Loading course materials...</span>
+                  </div>
+                ) : resourcesList.map(res => {
                   const sel = selectedResources.includes(res);
                   return (
                     <button key={res} onClick={() => setSelectedResources(p => p.includes(res) ? p.filter(r => r !== res) : [...p, res])}
@@ -406,7 +433,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
 
           {/* Step 2: Configure */}
           {step === 2 && (
-            <div className="space-y-6">
+            <div className="space-y-6 animate-fade-in">
               <div className="space-y-3">
                 <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">Number of Questions (Total Items)</p>
                 <div className="flex gap-2 flex-wrap items-center">
@@ -454,7 +481,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                     const qt = Q_TYPES.find(x => x.id === config.typeId);
                     if (!qt) return null;
                     return (
-                      <div key={config.typeId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4">
+                      <div key={config.typeId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 animate-fade-in">
                         <div className="flex items-center gap-2">
                           <span className="text-primary-fixed-dim">{qt.icon}</span>
                           <span className="font-sans text-sm font-semibold text-white">{qt.label}</span>
@@ -538,7 +565,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                   </div>
                   <div className="flex gap-2 flex-wrap mt-1">
                     {Array.from({ length: numberOfSets }).map((_, i) => (
-                      <span key={i} className="px-3 py-1 rounded-lg bg-surface-container border border-white/5 font-sans text-[10px] uppercase font-bold text-slate-300">
+                      <span key={i} className="px-3 py-1 rounded-lg bg-surface-container border border-white/5 font-sans text-[10px] uppercase font-bold text-slate-300 animate-fade-in">
                         Set {String.fromCharCode(65 + i)}
                       </span>
                     ))}
@@ -550,7 +577,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
 
           {/* Review Config */}
           {step === 3 && (
-            <div className="space-y-5">
+            <div className="space-y-5 animate-fade-in">
               <p className="font-sans text-sm text-slate-300">Review your assessment configuration.</p>
               <div className="bg-surface-container-lowest rounded-xl border border-white/5 divide-y divide-white/5">
                 {[
@@ -583,8 +610,8 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
             const questionsList = setQuestionsMap[activeSet] || questions || [];
             const totalPoints = questionsList.reduce((sum, q) => sum + (q.points || 2), 0);
             return (
-              <div className="space-y-4">
-                <div className="sticky top-[-24px] z-20 bg-surface-container-high py-4 -mx-6 px-6 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
+              <div className="space-y-4 animate-fade-in">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
                   <div>
                     <p className="font-sans text-sm text-slate-300 font-medium">Review & Edit Questions</p>
                     <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">
@@ -599,8 +626,8 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                           key={setLabel}
                           onClick={() => setActiveSet(setLabel)}
                           className={`flex-1 sm:flex-initial text-center px-4 py-1.5 rounded-lg font-sans text-xs font-bold transition-all ${activeSet === setLabel
-                              ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-md'
-                              : 'text-slate-400 hover:text-white hover:bg-white/5'
+                            ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-md'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
                             }`}
                         >
                           {setLabel}
@@ -622,7 +649,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                   {questionsList.map((q, idx) => (
                     <div key={q.id} className="bg-surface-container rounded-xl border border-white/5 overflow-hidden">
                       {q.editing ? (
-                        <div className="p-4 space-y-3">
+                        <div key="edit" className="p-3 sm:p-4 space-y-3 animate-fade-in">
                           <div className="flex items-center justify-between gap-3">
                             <div className="flex items-center gap-2">
                               <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">Q{idx + 1}</span>
@@ -677,18 +704,23 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                             <div className="space-y-2">
                               <p className="font-sans text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-1">Matching Pairs</p>
                               {q.matchingPairs.map((pair, pi) => (
-                                <div key={pi} className="flex items-center gap-2">
-                                  <input value={pair.left} onChange={e => { const pairs = [...q.matchingPairs]; pairs[pi].left = e.target.value; updateQ(q.id, { matchingPairs: pairs }); }}
-                                    placeholder="Term"
-                                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
-                                  <span className="text-slate-500">-</span>
-                                  <input value={pair.right} onChange={e => { const pairs = [...q.matchingPairs]; pairs[pi].right = e.target.value; updateQ(q.id, { matchingPairs: pairs }); }}
-                                    placeholder="Definition"
-                                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
-                                  <button onClick={() => { const pairs = q.matchingPairs.filter((_, i) => i !== pi); updateQ(q.id, { matchingPairs: pairs }); }}
-                                    className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10">
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                <div key={pi} className="flex flex-col sm:flex-row sm:items-center gap-2 bg-white/5 p-2 rounded-xl border border-white/5 sm:bg-transparent sm:p-0 sm:border-0">
+                                  <div className="flex-1 flex items-center gap-2">
+                                    <input value={pair.left} onChange={e => { const pairs = [...q.matchingPairs]; pairs[pi].left = e.target.value; updateQ(q.id, { matchingPairs: pairs }); }}
+                                      placeholder="Term"
+                                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
+                                    <span className="text-slate-500 hidden sm:inline">-</span>
+                                  </div>
+                                  <div className="flex-1 flex items-center gap-2">
+                                    <input value={pair.right} onChange={e => { const pairs = [...q.matchingPairs]; pairs[pi].right = e.target.value; updateQ(q.id, { matchingPairs: pairs }); }}
+                                      placeholder="Definition"
+                                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40" />
+                                    <button onClick={() => { const pairs = q.matchingPairs.filter((_, i) => i !== pi); updateQ(q.id, { matchingPairs: pairs }); }}
+                                      className="p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 hover:border-rose-500/20 transition-all shrink-0"
+                                      title="Remove pair">
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
                                 </div>
                               ))}
                               <button onClick={() => updateQ(q.id, { matchingPairs: [...q.matchingPairs, { left: '', right: '' }] })}
@@ -710,7 +742,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                           </div>
                         </div>
                       ) : (
-                        <div className="p-4 flex items-start gap-3 group">
+                        <div key="preview" className="p-3 sm:p-4 flex items-start gap-3 group animate-fade-in">
                           <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded shrink-0 mt-0.5">Q{idx + 1}</span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
@@ -735,14 +767,14 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                               )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
+                          <div className="flex items-center gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
                             <button onClick={() => updateQ(q.id, { editing: true })}
-                              className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors" title="Edit">
-                              <Edit3 className="w-4 h-4" />
+                              className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all" title="Edit">
+                              <Edit3 className="w-3.5 h-3.5" />
                             </button>
                             <button onClick={() => deleteQ(q.id)}
-                              className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors" title="Delete">
-                              <Trash2 className="w-4 h-4" />
+                              className="p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 hover:border-rose-500/20 transition-all" title="Delete">
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </div>
@@ -756,7 +788,7 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
         </div>
 
         {/* Footer */}
-        <div className="flex flex-row items-center justify-between gap-3 px-6 py-4 border-t border-white/10 shrink-0">
+        <div className="flex flex-row items-center justify-between gap-3 pt-4 border-t border-white/10 mt-2 shrink-0">
           <button onClick={() => step === 0 ? onClose() : setStep(s => s - 1)}
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors">
             <ChevronLeft className="w-4 h-4" /> {step === 0 ? 'Cancel' : 'Back'}
@@ -782,7 +814,6 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
           )}
         </div>
       </div>
-    </div>,
-    document.body
+    </Modal>
   );
 }

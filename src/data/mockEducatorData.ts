@@ -168,7 +168,83 @@ export const RECENT_ACTIVITY: ActivityItem[] = [
 ];
 
 // ─── Helpers ────────────────────────────────────────────
-export const getCourseById = (id: string) => EDUCATOR_COURSES.find(c => c.id === id);
+export const getCourseById = (id: string) => {
+  let course = EDUCATOR_COURSES.find(c => c.id === id);
+  if (!course) {
+    course = {
+      id: id,
+      title: 'Information Security',
+      description: 'This course teaches students the concepts about security that they must learn.',
+      iconName: 'ShieldAlert',
+      color: '#22d3ee',
+      university: 'MIT',
+      isPublic: true,
+      courseCode: 'IT-101',
+      studentCount: 4,
+      status: 'active',
+      createdAt: new Date().toISOString().split('T')[0],
+      section: '3D',
+      resources: [],
+      assessments: [],
+      students: []
+    };
+    EDUCATOR_COURSES.push(course);
+  }
+
+  if (course.students.length === 0) {
+    course.students = [
+      { id: 's1', name: 'Sarah Jenkins', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150', email: 'sarah.j@mit.edu', joinedAt: 'Jan 16', assessmentScores: [{ assessmentId: 'mock-a3', score: 10, total: 10 }], averageGrade: 88, status: 'excelling', badges: [] },
+      { id: 's2', name: 'Marcus Thorne', avatar: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?auto=format&fit=crop&q=80&w=150', email: 'marcus.t@mit.edu', joinedAt: 'Jan 16', assessmentScores: [{ assessmentId: 'mock-a3', score: 8, total: 10 }], averageGrade: 81, status: 'active', badges: [] },
+      { id: 's3', name: 'Elena Rostova', avatar: '', email: 'elena.r@mit.edu', joinedAt: 'Jan 18', assessmentScores: [], averageGrade: 72, status: 'at-risk', badges: [] },
+      { id: 's4', name: 'Aisha Patel', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150', email: 'aisha.p@mit.edu', joinedAt: 'Jan 17', assessmentScores: [], averageGrade: 95, status: 'excelling', badges: [] }
+    ];
+    course.studentCount = course.students.length;
+  }
+  if (course.assessments.length === 0) {
+    course.assessments = [
+      {
+        id: 'mock-a1', title: 'Midterm Exam', type: 'exam', status: 'deployed',
+        description: `Comprehensive midterm assessment for ${course.title}.`,
+        questionCount: 5, duration: 60, deadline: 'Jun 30, 2026 · 11:59 PM',
+        difficulty: 'medium', isLockdown: true,
+        questions: [
+          { id: 'mq1', type: 'multiple-choice', question: 'Which of the following is a primary threat model?', options: ['STRIDE', 'DREAD', 'PASTA', 'OWASP'], correctAnswer: 'STRIDE', points: 5 },
+          { id: 'mq2', type: 'true-false', question: 'Multi-factor authentication guarantees absolute security.', correctAnswer: 'false', points: 2 },
+          { id: 'mq3', type: 'identification', question: 'What does the abbreviation RLS stand for in database design?', correctAnswer: 'row level security', points: 3 },
+          { id: 'mq4', type: 'matching', question: 'Match the cryptographic terms.', correctAnswer: 'A-1, B-2', points: 5 },
+          { id: 'mq5', type: 'essay', question: 'Explain the difference between Symmetric and Asymmetric encryption.', correctAnswer: '', points: 10 }
+        ],
+        submissions: [
+          { studentId: 's1', studentName: 'Sarah Jenkins', studentAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150', submittedAt: '1h ago', answers: [{ questionId: 'mq5', answer: 'Symmetric encryption uses the same key for both encryption and decryption, whereas asymmetric encryption uses a public-private key pair...' }], autoScore: 10, maxScore: 25, status: 'needs-review' },
+          { studentId: 's2', studentName: 'Marcus Thorne', studentAvatar: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?auto=format&fit=crop&q=80&w=150', submittedAt: '3h ago', answers: [], autoScore: 18, manualScore: 4, totalScore: 22, maxScore: 25, status: 'graded' }
+        ]
+      },
+      {
+        id: 'mock-a2', title: 'Quiz 1: Security Fundamentals', type: 'quiz', status: 'draft',
+        description: 'A check on elementary terms like confidentiality, integrity, and availability.',
+        questionCount: 2, duration: 15, difficulty: 'easy', isLockdown: false,
+        questions: [
+          { id: 'mq6', type: 'multiple-choice', question: 'What does the "C" in the CIA triad stand for?', options: ['Confidentiality', 'Complexity', 'Control', 'Consistency'], correctAnswer: 'Confidentiality', points: 5 },
+          { id: 'mq7', type: 'true-false', question: 'Integrity ensures data is not modified by unauthorized users.', correctAnswer: 'true', points: 5 }
+        ],
+        submissions: []
+      },
+      {
+        id: 'mock-a3', title: 'Syllabus Review Checkpoint', type: 'quiz', status: 'closed',
+        description: 'Validating review of course materials and syllabus rules.',
+        questionCount: 1, duration: 10, difficulty: 'easy', isLockdown: false,
+        questions: [
+          { id: 'mq8', type: 'true-false', question: 'I have read the course syllabus.', correctAnswer: 'true', points: 10 }
+        ],
+        submissions: [
+          { studentId: 's1', studentName: 'Sarah Jenkins', studentAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150', submittedAt: '3 days ago', answers: [], autoScore: 10, totalScore: 10, maxScore: 10, status: 'graded' },
+          { studentId: 's2', studentName: 'Marcus Thorne', studentAvatar: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?auto=format&fit=crop&q=80&w=150', submittedAt: '3 days ago', answers: [], autoScore: 8, totalScore: 8, maxScore: 10, status: 'graded' }
+        ]
+      }
+    ];
+  }
+  return course;
+};
 export const getAtRiskStudents = () => {
   const r: { student: EnrolledStudent; courseName: string }[] = [];
   EDUCATOR_COURSES.forEach(c => c.students.filter(s => s.status === 'at-risk').forEach(s => r.push({ student: s, courseName: c.title })));

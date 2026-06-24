@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, RotateCcw, Trophy, ArrowLeft, Check, X as XI
 
 
 interface Flashcard {
-  id: number;
+  id: number | string;
   front: string;
   back: string;
 }
@@ -19,7 +19,7 @@ type CardResult = 'correct' | 'incorrect' | null;
 export default function FlashcardStudyView({ cards, deckTitle, onExit }: FlashcardStudyViewProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
-  const [results, setResults] = useState<Map<number, CardResult>>(new Map());
+  const [results, setResults] = useState<Map<number | string, CardResult>>(new Map());
   const [isFinished, setIsFinished] = useState(false);
   const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);

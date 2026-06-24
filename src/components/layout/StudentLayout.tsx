@@ -256,8 +256,10 @@ function StudentLayoutInner() {
       </nav>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col md:ml-64 min-h-screen pt-16 md:pt-0">
-        <Outlet />
+      <div className="flex-1 flex flex-col md:ml-64 min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden">
+        <div key={location.pathname} className="flex-1 flex flex-col animate-page-fade">
+          <Outlet />
+        </div>
       </div>
     </div>
   );

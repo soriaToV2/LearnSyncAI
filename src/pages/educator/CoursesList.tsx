@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  BrainCircuit, Sigma, Code2, Plus, Users, Search, Clock, Loader2, AlertCircle,
+  BrainCircuit, Sigma, Code2, Plus, Users, Search, Clock, Loader2, AlertCircle, Pencil
 } from 'lucide-react';
 import { api } from '../../lib/api';
 import CreateCourseModal from './course/components/CreateCourseModal';
+import EditCourseModal from './course/components/EditCourseModal';
 
 // ─── Types ────────────────────────────────────────────────
 interface Course {
@@ -47,6 +48,10 @@ export default function CoursesList() {
   const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
 
+  // Edit Course state
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+
   const [courses, setCourses] = useState<Course[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,10 +90,37 @@ export default function CoursesList() {
     }
   };
 
+  // ── Update a course via backend ──
+  const handleUpdateCourse = async (data: {
+    course_title: string;
+    course_code?: string;
+    section?: string;
+    description?: string;
+    status?: 'active' | 'archived';
+  }) => {
+    if (!editingCourse) return;
+    try {
+      await api.put(`/courses/${editingCourse.id}`, data);
+      await fetchCourses();
+    } catch (err: any) {
+      setError(err.message || 'Failed to update course.');
+    }
+  };
+
+
+
   // ── Filtering ──
   const filtered = courses
     .filter(c => filter === 'all' || c.status === filter)
-    .filter(c => c.course_title.toLowerCase().includes(search.toLowerCase()));
+    .filter(c => {
+      const query = search.toLowerCase().trim();
+      return (
+        c.course_title.toLowerCase().includes(query) ||
+        (c.course_code && c.course_code.toLowerCase().includes(query)) ||
+        (c.section && c.section.toLowerCase().includes(query)) ||
+        (c.description && c.description.toLowerCase().includes(query))
+      );
+    });
 
   const counts = {
     all: courses.length,
@@ -97,7 +129,7 @@ export default function CoursesList() {
   };
 
   return (
-    <main className="flex-1 overflow-y-auto bg-page">
+    <main className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-10 w-full">
         {/* Header */}
         <div className="mb-10">
@@ -134,9 +166,9 @@ export default function CoursesList() {
 
         {/* Loading State */}
         {isLoading && (
-          <div className="flex items-center justify-center py-24 gap-3 text-slate-400">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <span className="font-sans text-base">Loading courses...</span>
+          <div className="flex items-center justify-center py-20 gap-3 text-slate-400 bg-surface-container/10 border border-white/5 rounded-2xl">
+            <Loader2 className="w-6 h-6 animate-spin text-primary-fixed-dim" />
+            <span className="font-sans text-sm">Loading courses...</span>
           </div>
         )}
 
@@ -168,6 +200,12 @@ export default function CoursesList() {
             {filtered.map(c => {
               const { color, iconName } = getCourseStyle(c.id);
               const Icon = iconMap[iconName] || BrainCircuit;
+              let displayTitle = c.course_title;
+              if (c.course_code && displayTitle.toUpperCase().startsWith(`${c.course_code.toUpperCase()} - `)) {
+                displayTitle = displayTitle.substring(c.course_code.length + 3);
+              } else if (c.course_code && displayTitle.toUpperCase().startsWith(`${c.course_code.toUpperCase()}-`)) {
+                displayTitle = displayTitle.substring(c.course_code.length + 1);
+              }
               return (
                 <Link
                   to={`/educator/course/${c.id}/resources`}
@@ -179,47 +217,65 @@ export default function CoursesList() {
                       <Icon className="w-28 h-28 group-hover:scale-110 transition-transform duration-500" style={{ color }} />
                     </div>
                     <div className="relative z-10">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div
-                          className="w-12 h-12 rounded-xl flex items-center justify-center border border-white/10 shrink-0"
-                          style={{ backgroundColor: `${color}15`, color }}>
-                          <Icon className="w-6 h-6" />
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-12 h-12 rounded-xl flex items-center justify-center border border-white/10 shrink-0"
+                            style={{ backgroundColor: `${color}15`, color }}>
+                            <Icon className="w-6 h-6" />
+                          </div>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {c.course_code && (
+                              <span className="flex items-center px-2.5 py-1 rounded-full bg-white/5 text-slate-400 text-xs font-mono border border-white/10">
+                                {c.course_code}
+                              </span>
+                            )}
+                            {c.section && (
+                              <span className="flex items-center px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs font-bold uppercase border border-indigo-500/20">
+                                Section {c.section}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex gap-1.5 flex-wrap">
-                          {c.section && (
-                            <span className="flex items-center px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs font-bold uppercase border border-indigo-500/20">
-                              Section {c.section}
-                            </span>
-                          )}
-                          {c.course_code && (
-                            <span className="flex items-center px-2.5 py-1 rounded-full bg-white/5 text-slate-400 text-xs font-mono border border-white/10">
-                              {c.course_code}
-                            </span>
-                          )}
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-1.5 relative z-20">
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setEditingCourse(c);
+                              setShowEditModal(true);
+                            }}
+                            title="Edit Course"
+                            className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
                       <h3 className="font-display text-2xl font-bold text-white mb-2 group-hover:text-primary-fixed-dim transition-colors line-clamp-1">
-                        {c.course_title}
+                        {displayTitle}
                       </h3>
                       <p className="font-sans text-base text-slate-300 mb-6 line-clamp-2 leading-relaxed">
                         {c.description || 'No description provided.'}
                       </p>
                     </div>
-                    <div className="flex items-center justify-between border-t border-white/5 pt-4 relative z-10 shrink-0">
-                      <div className="flex items-center gap-2 text-slate-300 font-sans text-base font-semibold">
-                        <Users className="w-5 h-5 text-slate-500" />
+                    <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4 border-t border-white/5 pt-4 relative z-10 shrink-0">
+                      <div className="flex items-center gap-1.5 text-slate-300 font-sans text-sm font-semibold shrink-0">
+                        <Users className="w-4 h-4 text-slate-500" />
                         {c.student_count ?? 0} Students
                       </div>
                       {c.status === 'archived' ? (
-                        <span className="flex items-center gap-1.5 text-slate-400 font-sans text-sm font-semibold">
-                          <Clock className="w-4 h-4 text-slate-500" /> Archived {formatDate(c.archived_at) || 'recently'}
+                        <span className="flex items-center gap-1.5 text-slate-400 font-sans text-xs font-semibold shrink-0">
+                          <Clock className="w-3.5 h-3.5 text-slate-500" /> Archived {formatDate(c.archived_at) || 'recently'}
                         </span>
                       ) : (
-                        <div className="flex items-center gap-3">
-                          <span className="px-2.5 py-1 rounded bg-green-500/10 text-green-400 font-sans font-bold text-xs tracking-wider border border-green-500/20 uppercase">
+                        <div className="flex items-center gap-2 flex-wrap shrink-0">
+                          <span className="px-2 py-0.5 rounded bg-green-500/10 text-green-400 font-sans font-bold text-[10px] tracking-wider border border-green-500/20 uppercase">
                             Active
                           </span>
-                          <span className="font-sans text-xs text-slate-400 font-medium">
+                          <span className="font-sans text-[11px] text-slate-400 font-medium whitespace-nowrap">
                             Created {formatDate(c.created_at)}
                           </span>
                         </div>
@@ -229,17 +285,16 @@ export default function CoursesList() {
                 </Link>
               );
             })}
-          </div>
-        )}
-
-        {/* Empty State */}
-        {!isLoading && !error && filtered.length === 0 && (
-          <div className="text-center py-16 border-2 border-dashed border-white/10 rounded-2xl mt-4">
-            <p className="text-slate-400 font-sans">
-              {courses.length === 0
-                ? "You haven't created any courses yet. Click \"New Course\" to get started!"
-                : 'No courses found matching your criteria.'}
-            </p>
+            {/* Empty State Card */}
+            {filtered.length === 0 && (
+              <div className="md:col-span-1 lg:col-span-2 flex flex-col items-center justify-center border-2 border-dashed border-white/5 bg-white/[0.005] rounded-2xl p-6 min-h-[220px] text-center">
+                <p className="text-slate-400 font-sans text-sm max-w-sm leading-relaxed">
+                  {courses.length === 0
+                    ? "You haven't created any courses yet. Click \"New Course\" to get started!"
+                    : 'No courses found matching your criteria.'}
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -248,6 +303,18 @@ export default function CoursesList() {
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onCreate={handleCreateCourse}
+      />
+
+
+
+      <EditCourseModal
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setEditingCourse(null);
+        }}
+        onSave={handleUpdateCourse}
+        initialData={editingCourse}
       />
     </main>
   );

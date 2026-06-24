@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Key, X, Sparkles, GraduationCap, Loader2, AlertCircle } from 'lucide-react';
 import { api } from '../../lib/api';
+import Modal from '../../components/ui/Modal';
 
 export interface CourseData {
   id: string;
@@ -118,7 +119,16 @@ export default function CourseCatalog() {
           id: c.id,
           courseCode: c.course_code,
           section: c.section,
-          title: c.course_title || c.title || 'Untitled Course',
+          title: (() => {
+            const rawTitle = c.course_title || c.title || 'Untitled Course';
+            const code = c.course_code;
+            if (code && rawTitle.toUpperCase().startsWith(`${code.toUpperCase()} - `)) {
+              return rawTitle.substring(code.length + 3);
+            } else if (code && rawTitle.toUpperCase().startsWith(`${code.toUpperCase()}-`)) {
+              return rawTitle.substring(code.length + 1);
+            }
+            return rawTitle;
+          })(),
           instructor: c.profiles ? `${c.profiles.first_name} ${c.profiles.last_name}` : 'Unknown Instructor',
           isEnrolled: true,
           accentColor: colors[index % colors.length]
@@ -177,7 +187,7 @@ export default function CourseCatalog() {
           </h2>
           {isLoading ? (
             <div className="flex items-center justify-center py-16 gap-3 text-slate-400 bg-surface-container/10 border border-white/5 rounded-2xl">
-              <Loader2 className="w-6 h-6 animate-spin" />
+              <Loader2 className="w-6 h-6 animate-spin text-primary-fixed-dim" />
               <span className="font-sans text-sm">Loading your classes...</span>
             </div>
           ) : error ? (
@@ -200,106 +210,98 @@ export default function CourseCatalog() {
       </main>
 
       {/* Join code modal */}
-      {showJoinModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="relative w-full max-w-md flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden p-6 shadow-[0_0_40px_rgba(0,218,243,0.1)]">
-            <button
-              onClick={() => {
-                setShowJoinModal(false);
-                setJoinError('');
-                setJoinCode('');
-              }}
-              className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
-            >
-              <X className="w-4 h-4" />
-            </button>
+      <Modal
+        isOpen={showJoinModal}
+        onClose={() => {
+          setShowJoinModal(false);
+          setJoinError('');
+          setJoinCode('');
+        }}
+        title="Join Class"
+        maxWidth="max-w-md"
+      >
+        <p className="font-sans text-sm text-slate-400 mb-6 leading-relaxed">
+          Enter the class link or class code provided by your educator to enroll in their course stream.
+        </p>
 
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-lg bg-primary-fixed-dim/10 flex items-center justify-center border border-primary-fixed-dim/20 text-primary-fixed-dim">
-                <Key className="w-5 h-5" />
-              </div>
-              <h2 className="font-display text-xl font-bold text-on-surface">Join Class</h2>
-            </div>
-
-            <p className="font-sans text-sm text-slate-400 mb-6 leading-relaxed">
-              Enter the class link or class code provided by your educator to enroll in their course stream.
-            </p>
-
-            <input
-              type="text"
-              placeholder="e.g. BIO-301 or https://learnsync.ai/join/bio-301"
-              value={joinCode}
-              onChange={(e) => {
-                setJoinCode(e.target.value);
-                setJoinError('');
-              }}
-              className="w-full bg-surface-container-high border border-white/10 rounded-xl px-4 py-3 font-sans text-on-surface placeholder:text-slate-500 focus:outline-none focus:border-primary-fixed-dim/50 mb-2"
-            />
-            {joinError && <p className="text-rose-400 text-xs font-sans mb-4">{joinError}</p>}
-
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={() => {
-                  setShowJoinModal(false);
-                  setJoinError('');
-                  setJoinCode('');
-                }}
-                className="flex-1 py-3 rounded-xl border border-white/10 font-display font-semibold text-sm text-slate-300 hover:bg-white/5 transition-all"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const rawInput = joinCode.trim();
-                  let cleanedCode = rawInput;
-
-                  if (rawInput.includes('/') || rawInput.includes('.')) {
-                    try {
-                      const urlParts = rawInput.split('/').filter(Boolean);
-                      cleanedCode = urlParts[urlParts.length - 1] || rawInput;
-                    } catch (e) {
-                      cleanedCode = rawInput;
-                    }
-                  }
-
-                  cleanedCode = cleanedCode.toUpperCase();
-
-                  if (cleanedCode.length < 3) {
-                    setJoinError('Please enter a valid class code or link.');
-                  } else {
-                    setIsJoining(true);
-                    setJoinError('');
-                    try {
-                      const res = await api.post<{ data: { id: string } }>('/courses/join', { join_code: cleanedCode });
-                      const newCourseId = res.data?.data?.id;
-                      setShowJoinModal(false);
-                      setJoinCode('');
-                      fetchCourses(); // refresh the list
-                      if (newCourseId) {
-                        navigate(`/student/course/${newCourseId}`);
-                      }
-                    } catch (err: any) {
-                      if (err.response?.status === 409) {
-                        setJoinError('You are already enrolled in this class.');
-                      } else if (err.response?.status === 404) {
-                        setJoinError('Class not found. Please verify the code with your educator.');
-                      } else {
-                        setJoinError(err.message || 'Failed to join class. Please try again.');
-                      }
-                    } finally {
-                      setIsJoining(false);
-                    }
-                  }
-                }}
-                disabled={isJoining}
-                className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-display font-semibold text-sm hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isJoining && <Loader2 className="w-4 h-4 animate-spin" />} Join
-              </button>
-            </div>
-          </div>
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-slate-300">
+            Class Code or Link
+          </label>
+          <input
+            type="text"
+            placeholder="e.g. BIO-301 or https://learnsync.ai/join/bio-301"
+            value={joinCode}
+            onChange={(e) => {
+              setJoinCode(e.target.value);
+              setJoinError('');
+            }}
+            className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50"
+          />
+          {joinError && <p className="text-rose-400 text-xs font-sans pt-1">{joinError}</p>}
         </div>
-      )}
+
+        <div className="mt-8 flex gap-3">
+          <button
+            onClick={() => {
+              setShowJoinModal(false);
+              setJoinError('');
+              setJoinCode('');
+            }}
+            className="flex-1 px-4 py-3 rounded-xl border border-white/10 text-white font-medium hover:bg-white/5 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              const rawInput = joinCode.trim();
+              let cleanedCode = rawInput;
+
+              if (rawInput.includes('/') || rawInput.includes('.')) {
+                try {
+                  const urlParts = rawInput.split('/').filter(Boolean);
+                  cleanedCode = urlParts[urlParts.length - 1] || rawInput;
+                } catch (e) {
+                  cleanedCode = rawInput;
+                }
+              }
+
+              cleanedCode = cleanedCode.toUpperCase();
+
+              if (cleanedCode.length < 3) {
+                setJoinError('Please enter a valid class code or link.');
+              } else {
+                setIsJoining(true);
+                setJoinError('');
+                try {
+                  const res = await api.post<{ data: { id: string } }>('/courses/join', { join_code: cleanedCode });
+                  const newCourseId = res.data?.data?.id;
+                  setShowJoinModal(false);
+                  setJoinCode('');
+                  fetchCourses();
+                  if (newCourseId) {
+                    navigate(`/student/course/${newCourseId}`);
+                  }
+                } catch (err: any) {
+                  if (err.response?.status === 409) {
+                    setJoinError('You are already enrolled in this class.');
+                  } else if (err.response?.status === 404) {
+                    setJoinError('Class not found. Please verify the code with your educator.');
+                  } else {
+                    setJoinError(err.message || 'Failed to join class. Please try again.');
+                  }
+                } finally {
+                  setIsJoining(false);
+                }
+              }
+            }}
+            disabled={isJoining}
+            className="flex-1 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-medium hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {isJoining && <Loader2 className="w-4 h-4 animate-spin" />} Join
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

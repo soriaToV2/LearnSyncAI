@@ -118,7 +118,7 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
       </div>
 
       {!evaluationResult ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div key="workspace" className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300">
           {/* Main workspace */}
           <div className="lg:col-span-2 space-y-6">
             {/* Audience selectors */}
@@ -215,7 +215,7 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
         </div>
       ) : (
         /* Evaluation Results View */
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300">
+        <div key="result" className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300">
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-6 backdrop-blur-md space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

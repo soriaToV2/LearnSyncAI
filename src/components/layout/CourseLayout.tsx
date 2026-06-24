@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, useParams, Link, useNavigate } from 'react-router-dom';
+import { NavLink, useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronRight, Users as UsersIcon, Copy, Check, Archive, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { api } from '../../lib/api';
+import Modal from '../ui/Modal';
 
 // Database Course Type
 interface Course {
@@ -26,6 +27,7 @@ function getCourseColor(id: string) {
 export default function CourseLayout({ children }: { children: React.ReactNode }) {
   const { courseId } = useParams();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   
   const [course, setCourse] = useState<Course | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,10 +70,10 @@ export default function CourseLayout({ children }: { children: React.ReactNode }
     }
   };
 
-  if (isLoading) {
+  if (isLoading && !course) {
     return (
       <div className="flex items-center justify-center min-h-[400px] text-slate-400 gap-3">
-        <Loader2 className="w-6 h-6 animate-spin" />
+        <Loader2 className="w-6 h-6 animate-spin text-primary-fixed-dim" />
         <span className="font-sans">Loading course...</span>
       </div>
     );
@@ -191,43 +193,47 @@ export default function CourseLayout({ children }: { children: React.ReactNode }
           </NavLink>
         </div>
 
-        {children}
+        <div key={pathname} className="animate-in fade-in duration-300">
+          {children}
+        </div>
       </div>
 
       {/* Archive Course Confirmation Modal */}
-      {isArchiveOpen && (
-        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-card w-full max-w-sm rounded-2xl border border-white/10 p-6 space-y-6 text-center animate-in fade-in zoom-in duration-200">
-            <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
-              <Archive className="w-5 h-5" />
-            </div>
-            
-            <div className="space-y-2">
-              <h4 className="font-display text-lg font-bold text-white tracking-tight">Archive Course?</h4>
-              <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                Are you sure you want to archive <span className="text-white font-semibold">{displayTitle}</span>? Archiving will remove this course from your active dashboard.
-              </p>
-            </div>
+      <Modal
+        isOpen={isArchiveOpen}
+        onClose={() => setIsArchiveOpen(false)}
+        title="Archive Course"
+        maxWidth="max-w-sm"
+      >
+        <div className="space-y-6 text-center">
+          <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
+            <Archive className="w-5 h-5" />
+          </div>
+          
+          <div className="space-y-2">
+            <p className="font-sans text-sm text-slate-300 leading-relaxed">
+              Are you sure you want to archive <span className="text-white font-semibold">{displayTitle}</span>? Archiving will remove this course from your active dashboard.
+            </p>
+          </div>
 
-            <div className="flex gap-3 justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => setIsArchiveOpen(false)}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase transition-all"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleArchive}
-                className="flex-1 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-amber-600/20"
-              >
-                Archive
-              </button>
-            </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsArchiveOpen(false)}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleArchive}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-amber-600/20"
+            >
+              Archive
+            </button>
           </div>
         </div>
-      )}
+      </Modal>
     </>
   );
 }

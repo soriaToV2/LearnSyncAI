@@ -1,9 +1,11 @@
 //ETO YUNG PAGE SA LOOB NG courses > select 1 enrolled course > this page will load
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link } from 'react-router-dom';
-import { Bell, ChevronRight, CheckCircle2, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock, Star, X, ClipboardList, HelpCircle, Award, AlertCircle, Lock, ShieldAlert, Timer, Check, Activity, Sparkles, LayoutGrid } from 'lucide-react';
+import { Bell, ChevronRight, CheckCircle2, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock, Star, X, ClipboardList, HelpCircle, Award, AlertCircle, Lock, ShieldAlert, Timer, Check, Activity, Sparkles, LayoutGrid, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
+import Modal from '../../components/ui/Modal';
 import { MOCK_COURSES } from '../../data/mockCourses';
 import { api } from '../../lib/api';
 
@@ -154,8 +156,8 @@ function ReviewModal({ resource, onClose, onSubmit }: ReviewModalProps) {
   if (!resource) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden p-6 shadow-2xl">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-backdrop-in">
+      <div className="relative w-full max-w-lg flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden p-6 shadow-2xl animate-modal-in">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
@@ -335,8 +337,8 @@ function QuizTakingModal({ assessment, onClose, onSubmit, courseId }: QuizTaking
   const percentComplete = Math.round((answeredCount / totalQuestions) * 100);
   const isLowTime = timeLeft < 300;
 
-  return (
-    <div className="fixed inset-0 z-[100] bg-slate-950 overflow-hidden flex flex-col animate-in fade-in duration-300">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] bg-slate-950 overflow-hidden flex flex-col animate-page-fade">
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full blur-[130px] bg-primary-fixed-dim/10 animate-pulse" style={{ animationDuration: '8s' }} />
         <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full blur-[100px] bg-indigo-500/5 animate-pulse" style={{ animationDuration: '12s' }} />
@@ -396,7 +398,7 @@ function QuizTakingModal({ assessment, onClose, onSubmit, courseId }: QuizTaking
                 return (
                   <div
                     key={q.id}
-                    className="p-6 md:p-10 rounded-3xl bg-white/[0.01] border border-white/5 hover:border-white/10 transition-all duration-300 space-y-8 shadow-[0_4px_30px_rgba(0,0,0,0.2)] animate-in fade-in zoom-in-95 duration-200"
+                    className="p-6 md:p-10 rounded-3xl bg-white/[0.01] border border-white/5 hover:border-white/10 transition-all duration-300 space-y-8 shadow-[0_4px_30px_rgba(0,0,0,0.2)] animate-modal-in"
                   >
                     <div className="flex items-start gap-4">
                       <span className="w-10 h-10 rounded-full bg-primary-fixed-dim/15 border border-primary-fixed-dim/30 flex items-center justify-center font-display text-sm font-bold text-primary-fixed shrink-0">
@@ -668,7 +670,8 @@ function QuizTakingModal({ assessment, onClose, onSubmit, courseId }: QuizTaking
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -682,55 +685,53 @@ function QuizResultsModal({ assessment, onClose }: QuizResultsModalProps) {
   if (!assessment) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-white/10 bg-surface-container overflow-hidden shadow-2xl">
-        {/* Header */}
-        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-surface-container-high/40">
-          <div>
-            <span className="font-sans text-[10px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
-              <Award className="w-3.5 h-3.5" /> Assessment Results
+    <Modal
+      isOpen={!!assessment}
+      onClose={onClose}
+      title={assessment.title}
+      maxWidth="max-w-2xl"
+    >
+      <div className="flex flex-col gap-6 max-h-[70vh] overflow-y-auto pr-1 no-scrollbar">
+        {/* Score and Status Info */}
+        <div className="flex flex-wrap items-center justify-between p-4 bg-surface-container-high/30 border border-white/5 rounded-xl text-xs md:text-sm font-sans text-slate-350 gap-3">
+          <div className="flex items-center gap-3">
+            <span className="font-sans text-xs text-slate-500 uppercase tracking-widest font-semibold">Score:</span>
+            <span className="bg-primary-fixed-dim/15 border border-primary-fixed-dim/30 px-3 py-1 rounded-lg text-center font-display text-base font-bold text-primary-fixed-dim">
+              {assessment.score}
             </span>
-            <h2 className="font-display text-xl font-bold text-white mt-0.5">{assessment.title}</h2>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="bg-primary-fixed-dim/15 border border-primary-fixed-dim/30 px-3.5 py-1.5 rounded-lg text-center font-display text-lg font-bold text-primary-fixed-dim">
-              Score: {assessment.score}
-            </div>
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
-            >
-              <X className="w-4 h-4" />
-            </button>
+          <div className="flex items-center gap-2">
+            <span>Status: <span className="text-emerald-450 font-semibold">Completed</span></span>
+            <span className="text-slate-650">•</span>
+            <span>Submitted: {assessment.date}</span>
           </div>
         </div>
 
-        {/* Scrollable Results */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
-          <div className="flex items-center justify-between p-4 bg-surface-container-lowest border border-white/5 rounded-xl text-sm font-sans text-slate-400">
-            <span>Status: <span className="text-emerald-400 font-semibold">Completed</span></span>
-            <span>Date Submitted: {assessment.date}</span>
-          </div>
-
+        {/* Questions list */}
+        <div className="space-y-6">
           {assessment.questions.map((q, idx) => {
-            const isCorrect = q.type === 'multiple-choice' ? q.studentAnswer === q.correctAnswer : q.points >= (q.maxPoints * 0.75);
+            const isFullyCorrect = q.points === q.maxPoints;
+            const isPartiallyCorrect = q.points > 0 && q.points < q.maxPoints;
+            const isIncorrect = q.points === 0;
 
             return (
               <div key={q.id} className="space-y-4 border-b border-white/5 pb-6 last:border-b-0 last:pb-0">
                 <div className="flex justify-between items-start gap-4">
                   <div className="flex items-start gap-3">
-                    <span className="w-6 h-6 rounded-full bg-surface-container-high border border-white/5 flex items-center justify-center font-display text-xs font-bold text-white">
+                    <span className="w-6 h-6 rounded-full bg-surface-container-high border border-white/5 flex items-center justify-center font-display text-xs font-bold text-white shrink-0">
                       {idx + 1}
                     </span>
-                    <p className="font-sans text-base text-white font-medium leading-relaxed pt-0.5">
+                    <p className="font-sans text-sm md:text-base text-white font-medium leading-relaxed pt-0.5">
                       {q.questionText}
                     </p>
                   </div>
                   <span className={clsx(
                     "px-2.5 py-1 rounded-md font-sans text-[10px] font-bold uppercase tracking-wider border shrink-0",
-                    isCorrect
-                      ? "bg-emerald-400/10 border-emerald-400/20 text-emerald-400"
-                      : "bg-amber-400/10 border-amber-400/20 text-amber-400"
+                    isFullyCorrect
+                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-450"
+                      : isPartiallyCorrect
+                        ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                        : "bg-rose-500/10 border-rose-500/20 text-rose-400"
                   )}>
                     {q.points} / {q.maxPoints} pts
                   </span>
@@ -742,17 +743,24 @@ function QuizResultsModal({ assessment, onClose }: QuizResultsModalProps) {
                     <p className="font-sans text-xs text-slate-500 uppercase tracking-widest font-semibold">
                       Your Answer:
                     </p>
-                    <p className={clsx("font-sans text-sm", isCorrect ? "text-emerald-400" : "text-amber-400")}>
+                    <p className={clsx(
+                      "font-sans text-sm",
+                      isFullyCorrect
+                        ? "text-emerald-450"
+                        : isPartiallyCorrect
+                          ? "text-amber-400"
+                          : "text-rose-400"
+                    )}>
                       {q.studentAnswer || '(No response recorded)'}
                     </p>
 
-                    {q.type === 'multiple-choice' && !isCorrect && (
+                    {q.type === 'multiple-choice' && !isFullyCorrect && (
                       <>
                         <div className="h-px bg-white/5 my-2" />
                         <p className="font-sans text-xs text-slate-500 uppercase tracking-widest font-semibold">
                           Correct Answer:
                         </p>
-                        <p className="font-sans text-sm text-emerald-400">
+                        <p className="font-sans text-sm text-emerald-450">
                           {q.correctAnswer}
                         </p>
                       </>
@@ -773,15 +781,14 @@ function QuizResultsModal({ assessment, onClose }: QuizResultsModalProps) {
                       </>
                     )}
                   </div>
-
                 </div>
               </div>
             );
           })}
         </div>
 
-        {/* Footer */}
-        <div className="p-6 border-t border-white/10 bg-surface-container-lowest/30 flex justify-end">
+        {/* Footer actions */}
+        <div className="flex justify-end pt-4 border-t border-white/5">
           <button
             onClick={onClose}
             className="px-6 py-2.5 rounded-xl bg-surface-container-high border border-white/10 hover:bg-white/10 text-white font-sans text-sm font-semibold transition-all active:scale-95"
@@ -790,7 +797,7 @@ function QuizResultsModal({ assessment, onClose }: QuizResultsModalProps) {
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -807,10 +814,6 @@ function ResourceCard({ resource, onReview }: { key?: React.Key; resource: Resou
         <div className="flex-1 min-w-0 relative z-10 flex flex-col justify-center h-12">
           <div className="flex items-center justify-between mb-0.5">
             <h4 className="font-sans text-base font-medium text-on-surface truncate group-hover:text-primary-fixed-dim transition-colors">{resource.title}</h4>
-            <button onClick={(e) => { e.stopPropagation(); onReview(); }} className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-amber-400 transition-colors">
-              <Star className={clsx("w-3 h-3", resource.hasReviewed && "fill-amber-400 text-amber-400")} />
-              <span className="text-[10px] font-sans font-semibold uppercase tracking-widest">{resource.hasReviewed ? 'Reviewed' : 'Rate'}</span>
-            </button>
           </div>
           <div className="flex items-center gap-2">
             <p className="font-sans text-sm text-on-surface-variant truncate">{resource.meta}</p>
@@ -833,10 +836,6 @@ function ResourceCard({ resource, onReview }: { key?: React.Key; resource: Resou
       <div className="flex-1 min-w-0 flex flex-col justify-center h-12">
         <div className="flex items-center justify-between mb-0.5">
           <h4 className="font-sans text-base font-medium text-on-surface truncate group-hover:text-primary-fixed-dim transition-colors">{resource.title}</h4>
-          <button onClick={(e) => { e.stopPropagation(); onReview(); }} className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-amber-400 transition-colors">
-            <Star className={clsx("w-3 h-3", resource.hasReviewed && "fill-amber-400 text-amber-400")} />
-            <span className="text-[10px] font-sans font-semibold uppercase tracking-widest">{resource.hasReviewed ? 'Reviewed' : 'Rate'}</span>
-          </button>
         </div>
         <p className="font-sans text-sm text-on-surface-variant truncate">{resource.meta}</p>
       </div>
@@ -847,10 +846,11 @@ function ResourceCard({ resource, onReview }: { key?: React.Key; resource: Resou
 export default function StudentCourseView() {
   const { courseId } = useParams();
   const [activeTab, setActiveTab] = useState<'resources' | 'quizzes' | 'announcements'>('resources');
-  
+
   const [resources, setResources] = useState<Resource[]>([]);
   const [announcements, setAnnouncements] = useState<BackendAnnouncement[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [course, setCourse] = useState<any>(null);
 
   const [reviewingResource, setReviewingResource] = useState<Resource | null>(null);
   const [assessments, setAssessments] = useState<Assessment[]>(INITIAL_ASSESSMENTS);
@@ -862,9 +862,10 @@ export default function StudentCourseView() {
       if (!courseId) return;
       setIsLoading(true);
       try {
-        const [materialsRes, announcementsRes] = await Promise.all([
+        const [materialsRes, announcementsRes, courseRes] = await Promise.all([
           api.get<any[]>(`/materials/course/${courseId}`),
-          api.get<BackendAnnouncement[]>(`/courses/${courseId}/announcements`)
+          api.get<BackendAnnouncement[]>(`/courses/${courseId}/announcements`),
+          api.get<any>(`/courses/${courseId}`).catch(() => null)
         ]);
 
         const materialsData = materialsRes.data || [];
@@ -877,6 +878,17 @@ export default function StudentCourseView() {
         })));
 
         setAnnouncements(announcementsRes.data || []);
+
+        if (courseRes && courseRes.data) {
+          const c = courseRes.data;
+          setCourse({
+            id: c.id,
+            courseCode: c.course_code,
+            section: c.section,
+            title: c.course_title || c.title || 'Untitled Course',
+            instructor: c.profiles ? `${c.profiles.first_name} ${c.profiles.last_name}` : 'Unknown Instructor'
+          });
+        }
       } catch (error) {
         console.error("Failed to load course data", error);
       } finally {
@@ -947,19 +959,35 @@ export default function StudentCourseView() {
     setTakingQuiz(null);
   };
 
-  const course = MOCK_COURSES.find(c => c.id === courseId);
-  const courseTitle = course ? course.title : 'Course Overview';
-  const educator = course ? course.instructor : 'Prof. Elias Vance';
-  const courseCode = course ? course.courseCode : undefined;
-  const section = course ? course.section : undefined;
+  const activeCourse = course || MOCK_COURSES.find(c => c.id === courseId);
+  const courseTitle = activeCourse ? activeCourse.title : 'Course Overview';
+  const educator = activeCourse ? activeCourse.instructor : 'Prof. Elias Vance';
+  const courseCode = activeCourse ? activeCourse.courseCode : undefined;
+  const section = activeCourse ? activeCourse.section : undefined;
+
+  if (isLoading) {
+    return (
+      <div className="h-[calc(100vh-4rem)] md:h-screen w-full flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-white">
+          <Loader2 className="w-8 h-8 animate-spin text-primary-fixed-dim" />
+          <span className="font-sans text-sm font-semibold">
+            Loading Course Overview...
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
-      <header className="sticky top-16 md:top-0 w-full border-b border-white/10 bg-page-50 backdrop-blur-md shadow-none flex justify-between items-center h-16 px-4 md:px-8 z-40">
-        <div className="flex items-center gap-4 text-slate-400 font-sans text-[13px]">
-          <Link to="/student/catalog" className="hover:text-primary-fixed-dim cursor-pointer transition-colors">Courses</Link>
-          <ChevronRight className="w-4 h-4" />
-          <span>{courseTitle}</span>
+      <header className="relative md:sticky top-0 w-full border-b border-white/10 bg-page-50 backdrop-blur-md flex justify-between items-center h-12 md:h-16 px-4 md:px-8 z-40">
+        <div className="flex items-center gap-2 md:gap-4 text-slate-400 font-sans text-[13px] min-w-0">
+          <Link to="/student/catalog" className="hover:text-primary-fixed-dim cursor-pointer transition-colors shrink-0 flex items-center gap-1">
+            <ChevronRight className="w-4 h-4 rotate-180 md:hidden" />
+            <span className="hidden md:inline">Courses</span>
+          </Link>
+          <ChevronRight className="w-4 h-4 hidden md:block" />
+          <span className="truncate text-slate-200 font-medium md:font-normal md:text-slate-400">{courseCode ? `${courseCode} - ${courseTitle}` : courseTitle}</span>
         </div>
 
         <div className="hidden md:flex items-center gap-4 text-slate-400">
@@ -976,7 +1004,7 @@ export default function StudentCourseView() {
         </div>
       </header>
 
-      <main className="p-4 md:p-10 max-w-7xl mx-auto w-full">
+      <main className="p-4 md:p-10 max-w-7xl mx-auto w-full animate-page-fade">
         {/* Course Header */}
         <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
@@ -1023,7 +1051,7 @@ export default function StudentCourseView() {
 
         {/* Tab Content */}
         {activeTab === 'resources' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div key="resources" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-page-fade">
             {isLoading ? (
               <p className="text-slate-400 font-sans col-span-full">Loading resources...</p>
             ) : resources.length > 0 ? (
@@ -1041,7 +1069,7 @@ export default function StudentCourseView() {
         )}
 
         {activeTab === 'quizzes' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div key="quizzes" className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-page-fade">
             {assessments.map((assessment) => {
               const now = new Date();
               const openTime = new Date(assessment.openDate);
@@ -1118,7 +1146,7 @@ export default function StudentCourseView() {
         )}
 
         {activeTab === 'announcements' && (
-          <div className="space-y-6 max-w-3xl">
+          <div key="announcements" className="space-y-6 max-w-3xl animate-page-fade">
             {isLoading ? (
               <p className="text-slate-400 font-sans">Loading announcements...</p>
             ) : announcements.length > 0 ? (

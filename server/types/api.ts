@@ -52,7 +52,9 @@ export const CreateCourseSchema = z.object({
 });
 export type CreateCourseInput = z.infer<typeof CreateCourseSchema>;
 
-export const UpdateCourseSchema = CreateCourseSchema.partial();
+export const UpdateCourseSchema = CreateCourseSchema.extend({
+  status: z.enum(['active', 'archived', 'draft']).optional(),
+}).partial();
 export type UpdateCourseInput = z.infer<typeof UpdateCourseSchema>;
 
 export const JoinCourseSchema = z.object({
@@ -104,8 +106,10 @@ export type SubmitAssessmentInput = z.infer<typeof SubmitAssessmentSchema>;
 // ── Study Spaces ──────────────────────────────────────────
 
 export const CreateStudySpaceSchema = z.object({
-  course_id: z.string().uuid(),
+  course_id: z.string().uuid().optional().nullable(),
   title: z.string().min(1),
+  cloned_from_id: z.string().uuid().optional().nullable(),
+  original_author_name: z.string().optional().nullable(),
 });
 export type CreateStudySpaceInput = z.infer<typeof CreateStudySpaceSchema>;
 

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Users, Sparkles, RefreshCw, Move, HelpCircle, CheckCircle2, AlertTriangle, Monitor, Grid, RotateCw } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { X, Users, Sparkles, RefreshCw, Move, HelpCircle, CheckCircle2, AlertTriangle, Monitor, Grid, RotateCw } from 'lucide-react';
 import type { EnrolledStudent, Assessment } from '../../../../data/mockEducatorData';
 import Dropdown from '../../../../components/ui/Dropdown';
+import Modal from '../../../../components/ui/Modal';
 
 interface SeatInfo {
   row: number;
@@ -264,61 +265,64 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
   // Helper for row names
   const getRowLetter = (rIdx: number) => String.fromCharCode(65 + rIdx);
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 p-0 bg-background/80 backdrop-blur-sm">
-      <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative w-full max-w-5xl bg-surface-container-high sm:rounded-2xl rounded-none border border-white/10 shadow-2xl overflow-hidden h-full sm:h-auto max-h-full sm:max-h-[95vh] flex flex-col animate-in zoom-in-95 duration-200">
-
-        {/* Landscape rotation warning for mobile portrait screens */}
+  return (
+    <>
+      {/* Landscape rotation warning for mobile portrait screens */}
+      {isOpen && createPortal(
         <div
           onClick={onClose}
-          className="hidden portrait:max-sm:flex absolute inset-0 bg-slate-950/95 z-[60] flex-col items-center justify-center text-center p-6 select-none animate-in fade-in duration-200 cursor-pointer"
+          className="hidden portrait:max-sm:flex fixed inset-0 bg-slate-950/95 z-[250] flex-col items-center justify-center text-center p-6 select-none animate-in fade-in duration-200 cursor-pointer"
         >
           <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-4 animate-bounce">
             <RotateCw className="w-8 h-8 text-amber-400" />
           </div>
           <h3 className="font-display text-base font-bold text-white mb-2">Rotate Your Device</h3>
-          <p className="font-sans text-xs text-slate-400 max-w-[240px] leading-relaxed mb-6">
+          <p className="font-sans text-xs text-slate-400 max-w-[240px] leading-relaxed mb-6 normal-case">
             For this to work, please rotate your phone to landscape mode.
           </p>
           <span className="font-sans text-[11px] uppercase tracking-wider text-slate-500 font-semibold border border-white/10 px-3 py-1.5 rounded-full hover:text-white hover:border-white/20 transition-all">
             Tap anywhere to cancel
           </span>
-        </div>
+        </div>,
+        document.body
+      )}
 
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-white/10 shrink-0">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-display text-base sm:text-lg font-semibold text-white">Classroom Seating &amp; Attendance</h2>
-              <span className="px-2 py-0.5 rounded-full bg-primary-fixed-dim/15 text-primary-fixed-dim border border-primary-fixed-dim/20 text-[10px] uppercase font-bold tracking-wider font-sans">
-                {assessment.type} Layout
-              </span>
-            </div>
-            <p className="hidden sm:block font-sans text-xs text-slate-400 mt-0.5">
-              Confirm who is absent and verify the anti-cheat isomorphic set distribution before students take the test.
-            </p>
+      <Modal
+        isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <div className="flex flex-col gap-1 items-start">
+          <div className="flex items-center gap-2">
+            <span className="font-display text-base sm:text-lg font-semibold text-white">Classroom Seating &amp; Attendance</span>
+            <span className="px-2 py-0.5 rounded-full bg-primary-fixed-dim/15 text-primary-fixed-dim border border-primary-fixed-dim/20 text-[10px] uppercase font-bold tracking-wider font-sans whitespace-nowrap">
+              {assessment.type} Layout
+            </span>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowHelp(h => !h)}
-              className={`p-2 text-slate-400 hover:text-white rounded-full transition-colors ${showHelp ? 'bg-white/10 text-white' : 'hover:bg-white/5'}`}
-              title="Show Layout Help"
-            >
-              <HelpCircle className="w-5 h-5" />
-            </button>
-            <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <p className="hidden sm:block font-sans text-xs text-slate-400 font-normal normal-case">
+            Confirm who is absent and verify the anti-cheat isomorphic set distribution before students take the test.
+          </p>
         </div>
+      }
+      headerActions={
+        <button
+          onClick={() => setShowHelp(h => !h)}
+          className={`p-2 text-slate-400 hover:text-white rounded-full transition-colors ${showHelp ? 'bg-white/10 text-white' : 'hover:bg-white/5'}`}
+          title="Show Layout Help"
+        >
+          <HelpCircle className="w-5 h-5" />
+        </button>
+      }
+      maxWidth="max-w-5xl"
+      noPadding={true}
+    >
+      <div className="relative w-full flex flex-col max-h-[75vh] landscape:max-h-[60vh] sm:max-h-[80vh] md:max-h-[85vh] overflow-y-auto no-scrollbar">
 
         {/* Top Info Dashboard */}
         <div className="bg-surface-container/60 px-4 py-2 sm:px-6 sm:py-3.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 shrink-0 text-sans text-[11px] sm:text-xs">
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <Users className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="text-slate-300">
+              <span className="text-slate-300 normal-case">
                 Attendance: <strong className="text-emerald-400 font-semibold">{presentCount} Present</strong>
                 {absentCount > 0 && <span className="text-slate-500"> / </span>}
                 {absentCount > 0 && <strong className="text-rose-400 font-semibold">{absentCount} Absent</strong>}
@@ -335,13 +339,13 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
 
           {isReadOnly ? (
             <div className="flex items-center gap-3">
-              <span className="text-slate-400 italic font-sans text-[11px] bg-white/5 border border-white/5 rounded-xl px-2.5 py-1 flex items-center gap-1.5">
+              <span className="text-slate-400 italic font-sans text-[11px] bg-white/5 border border-white/5 rounded-xl px-2.5 py-1 flex items-center gap-1.5 normal-case">
                 <Monitor className="w-3.5 h-3.5 text-slate-500" /> Layout is Locked
               </span>
             </div>
           ) : (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-slate-400 font-medium hidden sm:inline">Grid Dimension:</span>
+              <span className="text-slate-400 font-medium hidden sm:inline normal-case">Grid Dimension:</span>
               <Dropdown
                 value={String(gridRows)}
                 onChange={(val) => handleResize(parseInt(val), gridCols)}
@@ -373,7 +377,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
 
               <button
                 onClick={markAllPresent}
-                className="px-2.5 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 rounded-xl font-sans text-xs font-semibold transition-all hover:text-white"
+                className="px-2.5 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 rounded-xl font-sans text-xs font-semibold transition-all hover:text-white normal-case"
               >
                 Reset Attendance
               </button>
@@ -387,7 +391,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
 
             {/* Help / Alert banner */}
             {isReadOnly ? (
-              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-xs font-sans text-amber-200 leading-relaxed">
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-xs font-sans text-amber-200 leading-relaxed normal-case">
                 <h4 className="font-semibold text-white mb-1 uppercase tracking-wide flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400 font-bold animate-pulse" /> Seating Layout Locked
                 </h4>
@@ -397,13 +401,13 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
               </div>
             ) : (
               showHelp && (
-                <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4 text-xs font-sans text-indigo-200 leading-relaxed animate-in slide-in-from-top-2">
+                <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4 text-xs font-sans text-indigo-200 leading-relaxed animate-in slide-in-from-top-2 normal-case">
                   <h4 className="font-semibold text-white mb-1 uppercase tracking-wide flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-primary-fixed-dim" /> How to Edit Seats &amp; Attendance
                   </h4>
                   <ul className="list-disc pl-4 space-y-1 mt-1">
                     <li><strong>Seating Swap / Move:</strong> Click a student card (it will pulse in cyan). Then click <i>any other seat</i> (either empty or occupied) to instantly swap or move them there.</li>
-                    <li><strong>Attendance:</strong> Click the <span className="text-emerald-400 font-semibold">Present</span> or <span className="text-rose-400 font-semibold">Absent</span> toggle on each student's card to change their attendance.</li>
+                    <li><strong>Attendance:</strong> Click the <span className="text-emerald-400 font-semibold font-normal">Present</span> or <span className="text-rose-400 font-semibold font-normal">Absent</span> toggle on each student's card to change their attendance.</li>
                     <li><strong>Anti-Cheat sets:</strong> Color codes correspond to the test sets assigned to each seat. If a student is absent, their set assignment is released to prevent key leakage. Sets are optimized checkerboard style.</li>
                   </ul>
                 </div>
@@ -412,7 +416,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
 
             {/* Selection floating helper */}
             {selectedSeat && (
-              <div className="bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 rounded-xl px-4 py-3 flex items-center justify-between text-xs font-sans text-slate-200 animate-pulse">
+              <div className="bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 rounded-xl px-4 py-3 flex items-center justify-between text-xs font-sans text-slate-200 animate-pulse normal-case">
                 <div className="flex items-center gap-2">
                   <Move className="w-4 h-4 text-primary-fixed-dim" />
                   <span>
@@ -502,7 +506,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
                                   {student?.name.charAt(0)}
                                 </div>
                               )}
-                              <p className="font-sans text-[11px] font-bold text-slate-100 group-hover:text-white truncate" title={student?.name}>
+                              <p className="font-sans text-[11px] font-bold text-slate-100 group-hover:text-white truncate normal-case" title={student?.name}>
                                 {student?.name.split(' ')[0]}
                               </p>
                             </div>
@@ -563,7 +567,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
                         showToast(`Placed ${student.name} at seat ${getRowLetter(updated[firstEmptyIdx].row)}${updated[firstEmptyIdx].col + 1}`);
                       }
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-amber-400/40 text-slate-300 hover:text-white transition-all text-xs cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-amber-400/40 text-slate-300 hover:text-white transition-all text-xs cursor-pointer normal-case"
                   >
                     {student.avatar ? (
                       <img src={student.avatar} alt={student.name} className="w-4 h-4 rounded-full object-cover" />
@@ -598,7 +602,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
             <div className="w-full flex justify-end">
               <button
                 onClick={onClose}
-                className="w-full sm:w-auto px-6 py-2 bg-white/5 border border-white/10 hover:bg-white/10 text-white rounded-xl font-sans text-sm font-bold transition-all text-center"
+                className="w-full sm:w-auto px-6 py-2 bg-white/5 border border-white/10 hover:bg-white/10 text-white rounded-xl font-sans text-sm font-bold transition-all text-center normal-case"
               >
                 Close View
               </button>
@@ -607,7 +611,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
             <>
               <button
                 onClick={onClose}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors text-center"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors text-center normal-case"
               >
                 Cancel
               </button>
@@ -618,7 +622,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
                     saveLayout(seats);
                     onClose();
                   }}
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl font-sans text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all text-center"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl font-sans text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all text-center normal-case"
                 >
                   Save Layout
                 </button>
@@ -626,7 +630,7 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
                 {onDeploy && assessment.status === 'ready' && (
                   <button
                     onClick={handleDeployClick}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-xl font-sans text-sm font-bold shadow-lg shadow-emerald-500/10 hover:opacity-90 transition-all active:scale-[0.98]"
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-xl font-sans text-sm font-bold shadow-lg shadow-emerald-500/10 hover:opacity-90 transition-all active:scale-[0.98] normal-case"
                   >
                     <CheckCircle2 className="w-4 h-4" /> Save &amp; Deploy Now
                   </button>
@@ -635,10 +639,9 @@ export default function SeatingGridModal({ isOpen, onClose, courseId, students, 
             </>
           )}
         </div>
-
       </div>
-    </div>,
-    document.body
+    </Modal>
+    </>
   );
 }
 

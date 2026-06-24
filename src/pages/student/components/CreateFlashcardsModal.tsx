@@ -4,7 +4,7 @@ import Modal from '../../../components/ui/Modal';
 
 
 interface CardEntry {
-  id: number;
+  id: number | string;
   front: string;
   back: string;
 }
@@ -16,7 +16,7 @@ interface CreateFlashcardsModalProps {
   initialData?: {
     title: string;
     description: string;
-    cards: { id: number; front: string; back: string }[];
+    cards: { id: number | string; front: string; back: string }[];
   } | null;
   courseConnected?: boolean;
   availableResources?: string[];
@@ -25,14 +25,14 @@ interface CreateFlashcardsModalProps {
 export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initialData, courseConnected, availableResources }: CreateFlashcardsModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [cards, setCards] = useState<CardEntry[]>([
-    { id: Date.now(), front: '', back: '' },
-    { id: Date.now(), front: '', back: '' },
-    { id: Date.now() + 1, front: '', back: '' },
-  ]);
+  const [cards, setCards] = useState<CardEntry[]>([]);
   const [showAiConfig, setShowAiConfig] = useState(false);
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const generateUniqueId = () => {
+    return 'card-' + Math.random().toString(36).substring(2, 11) + '-' + Date.now();
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -49,20 +49,20 @@ export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initial
       setCards(
         initialData.cards.length > 0
           ? initialData.cards.map(c => ({ ...c }))
-          : [{ id: Date.now(), front: '', back: '' }, { id: Date.now() + 1, front: '', back: '' }]
+          : [{ id: generateUniqueId(), front: '', back: '' }, { id: generateUniqueId(), front: '', back: '' }]
       );
     } else if (isOpen && !initialData) {
       setTitle('');
       setDescription('');
       setCards([
-        { id: Date.now(), front: '', back: '' },
-        { id: Date.now() + 1, front: '', back: '' },
+        { id: generateUniqueId(), front: '', back: '' },
+        { id: generateUniqueId(), front: '', back: '' },
       ]);
     }
   }, [isOpen, initialData]);
 
   const addCard = () => {
-    setCards(prev => [...prev, { id: Date.now(), front: '', back: '' }]);
+    setCards(prev => [...prev, { id: generateUniqueId(), front: '', back: '' }]);
   };
 
   const handleGenerateAI = () => {
@@ -72,9 +72,9 @@ export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initial
         const existing = prev.filter(c => c.front.trim() || c.back.trim());
         return [
           ...existing,
-          { id: Date.now(), front: 'What is the primary role of an IT professional?', back: 'To design, implement, and maintain digital systems while navigating complex ethical responsibilities involving data privacy, cybersecurity, and societal impact.' },
-          { id: Date.now() + 1, front: 'What is the difference between an Error and a Failure?', back: 'An error is a human mistake that introduces a defect, while a failure is when a system deviates from its specified behavior during operation.' },
-          { id: Date.now() + 2, front: 'What is the formula for Risk?', back: 'Risk = Likelihood × Impact.' }
+          { id: generateUniqueId(), front: 'What is the primary role of an IT professional?', back: 'To design, implement, and maintain digital systems while navigating complex ethical responsibilities involving data privacy, cybersecurity, and societal impact.' },
+          { id: generateUniqueId(), front: 'What is the difference between an Error and a Failure?', back: 'An error is a human mistake that introduces a defect, while a failure is when a system deviates from its specified behavior during operation.' },
+          { id: generateUniqueId(), front: 'What is the formula for Risk?', back: 'Risk = Likelihood × Impact.' }
         ];
       });
       if (!title.trim()) setTitle('Generated Flashcards');
@@ -86,12 +86,11 @@ export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initial
     }, 2000);
   };
 
-  const removeCard = (id: number) => {
-    if (cards.length <= 1) return;
+  const removeCard = (id: string | number) => {
     setCards(prev => prev.filter(c => c.id !== id));
   };
 
-  const updateCard = (id: number, field: 'front' | 'back', value: string) => {
+  const updateCard = (id: string | number, field: 'front' | 'back', value: string) => {
     setCards(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
@@ -262,16 +261,14 @@ export default function CreateFlashcardsModal({ isOpen, onClose, onSave, initial
                     Card {index + 1}
                   </span>
                 </div>
-                {cards.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeCard(card.id)}
-                    className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                    title="Remove card"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => removeCard(card.id)}
+                  className="p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 hover:border-rose-500/20 transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                  title="Remove card"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

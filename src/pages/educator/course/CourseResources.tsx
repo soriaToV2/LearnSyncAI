@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Plus, FileText, PlayCircle, File, Trash2,
-  X, CloudUpload, FileArchive, CheckCircle2,
+  CloudUpload, FileArchive, CheckCircle2,
   Loader2, AlertCircle, RefreshCw, Cpu
 } from 'lucide-react';
 import CourseLayout from '../../../components/layout/CourseLayout';
+import Modal from '../../../components/ui/Modal';
 import { api } from '../../../lib/api';
 
 // ─── Types ────────────────────────────────────────────────
@@ -87,67 +88,63 @@ function UploadModal({ courseId, onClose, onSuccess }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+    <Modal isOpen={true} onClose={uploading ? () => {} : onClose} title="Upload Document" maxWidth="max-w-lg">
+      <div className="space-y-5">
+        {error && (
+          <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+          </div>
+        )}
 
-      {/* Modal */}
-      <div className="relative z-10 w-full max-w-lg bg-surface-container rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
-          <h2 className="font-display text-xl font-bold text-on-surface">
-            Upload Document
-          </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors" disabled={uploading}>
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6">
-          {error && (
-            <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" /> {error}
-            </div>
-          )}
-          
-          {/* Upload Dropzone */}
-          <div>
-            <input ref={docInputRef} type="file" accept={DOCUMENT_ACCEPT} className="hidden" onChange={e => { if (e.target.files?.[0]) handleFileSelect(e.target.files[0]); }} disabled={uploading} />
-            <div
-              onDragOver={e => { e.preventDefault(); if (!uploading) setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={uploading ? undefined : handleDrop}
-              onClick={() => { if (!uploading) docInputRef.current?.click(); }}
-              className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center text-center transition-all ${
-                uploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-              } ${
-                dragOver ? 'border-primary-fixed-dim bg-primary-fixed-dim/5' : 'border-white/20 hover:border-primary-fixed-dim/50 hover:bg-surface-container-high'
-              }`}
-            >
-              <CloudUpload className={`w-10 h-10 mb-3 ${dragOver ? 'text-primary-fixed-dim' : 'text-slate-500'}`} />
-              {selectedFile ? (
-                <div>
-                  <p className="font-display text-sm font-semibold text-on-surface">{selectedFile.name}</p>
-                  <p className="text-xs text-slate-400 mt-1">{formatBytes(selectedFile.size)}</p>
-                </div>
-              ) : (
-                <div>
-                  <p className="font-display text-sm font-semibold text-on-surface mb-1">Drop your file here</p>
-                  <p className="text-xs text-slate-400">or click to browse · PDF, DOCX, PPTX, TXT</p>
-                </div>
-              )}
-            </div>
+        {/* Upload Dropzone */}
+        <div>
+          <input
+            ref={docInputRef}
+            type="file"
+            accept={DOCUMENT_ACCEPT}
+            className="hidden"
+            onChange={e => { if (e.target.files?.[0]) handleFileSelect(e.target.files[0]); }}
+            disabled={uploading}
+          />
+          <div
+            onDragOver={e => { e.preventDefault(); if (!uploading) setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={uploading ? undefined : handleDrop}
+            onClick={() => { if (!uploading) docInputRef.current?.click(); }}
+            className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center text-center transition-all ${
+              uploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+            } ${
+              dragOver ? 'border-primary-fixed-dim bg-primary-fixed-dim/5' : 'border-white/20 hover:border-primary-fixed-dim/50 hover:bg-surface-container-high'
+            }`}
+          >
+            <CloudUpload className={`w-10 h-10 mb-3 ${dragOver ? 'text-primary-fixed-dim' : 'text-slate-500'}`} />
+            {selectedFile ? (
+              <div>
+                <p className="font-display text-sm font-semibold text-on-surface">{selectedFile.name}</p>
+                <p className="text-xs text-slate-400 mt-1">{formatBytes(selectedFile.size)}</p>
+              </div>
+            ) : (
+              <div>
+                <p className="font-display text-sm font-semibold text-on-surface mb-1">Drop your file here</p>
+                <p className="text-xs text-slate-400">or click to browse · PDF, DOCX, PPTX, TXT</p>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 pb-6 flex justify-end gap-3">
-          <button onClick={onClose} disabled={uploading} className="px-5 py-2.5 rounded-lg text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors disabled:opacity-50">
+        <div className="flex justify-end gap-3 pt-2 border-t border-white/5">
+          <button
+            onClick={onClose}
+            disabled={uploading}
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-300 border border-white/10 hover:bg-white/5 transition-colors disabled:opacity-50"
+          >
             Cancel
           </button>
           <button
             onClick={executeUpload}
             disabled={!selectedFile || uploading}
-            className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-primary-fixed-dim text-on-primary-fixed hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-primary-fixed-dim text-on-primary-fixed hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
           >
             {uploading ? (
               <><Loader2 className="animate-spin w-4 h-4" /> Uploading...</>
@@ -157,7 +154,7 @@ function UploadModal({ courseId, onClose, onSuccess }: {
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -171,6 +168,8 @@ export default function CourseResources() {
   
   const [showModal, setShowModal] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [deletingMaterial, setDeletingMaterial] = useState<Material | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchMaterials = useCallback(async () => {
     if (!courseId) return;
@@ -205,14 +204,22 @@ export default function CourseResources() {
     showToast(`File uploaded successfully! AI extraction started.`);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this resource?")) return;
+  const handleDelete = (material: Material) => {
+    setDeletingMaterial(material);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingMaterial) return;
+    setIsDeleting(true);
     try {
-      await api.delete(`/materials/${id}`);
-      setMaterials(prev => prev.filter(m => m.id !== id));
-      showToast("Resource deleted.");
+      await api.delete(`/materials/${deletingMaterial.id}`);
+      setMaterials(prev => prev.filter(m => m.id !== deletingMaterial.id));
+      showToast('Resource deleted.');
     } catch (err: any) {
-      alert(err.message || 'Failed to delete resource');
+      showToast(err.message || 'Failed to delete resource.');
+    } finally {
+      setIsDeleting(false);
+      setDeletingMaterial(null);
     }
   };
 
@@ -248,8 +255,8 @@ export default function CourseResources() {
 
         {/* States */}
         {isLoading && (
-          <div className="flex items-center justify-center py-24 gap-3 text-slate-400">
-            <Loader2 className="w-6 h-6 animate-spin" />
+          <div className="flex items-center justify-center py-20 gap-3 text-slate-400 bg-surface-container/10 border border-white/5 rounded-2xl">
+            <Loader2 className="w-6 h-6 animate-spin text-primary-fixed-dim" />
             <span className="font-sans text-sm">Loading resources...</span>
           </div>
         )}
@@ -299,11 +306,11 @@ export default function CourseResources() {
                   </div>
                   
                   <button
-                    onClick={(e) => { e.preventDefault(); handleDelete(r.id); }}
-                    className="absolute top-4 right-4 p-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors opacity-0 group-hover:opacity-100"
+                    onClick={(e) => { e.preventDefault(); handleDelete(r); }}
+                    className="absolute top-4 right-4 p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 hover:border-rose-500/20 transition-all opacity-0 group-hover:opacity-100"
                     title="Remove resource"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               );
@@ -319,6 +326,43 @@ export default function CourseResources() {
           </div>
         )}
       </div>
+      {/* Delete Resource Confirmation Modal */}
+      <Modal
+        isOpen={!!deletingMaterial}
+        onClose={() => setDeletingMaterial(null)}
+        title="Delete Resource"
+        maxWidth="max-w-sm"
+      >
+        <div className="space-y-6 text-center">
+          <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+            <Trash2 className="w-5 h-5" />
+          </div>
+          <div className="space-y-2">
+            <p className="font-sans text-xs text-slate-400 leading-relaxed">
+              Are you sure you want to delete{' '}
+              <span className="font-semibold text-white">{deletingMaterial?.title}</span>?
+              {' '}This will also remove any AI-extracted data associated with it.
+            </p>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setDeletingMaterial(null)}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase tracking-wider transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-sans text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-red-600/20 flex items-center justify-center gap-2"
+            >
+              {isDeleting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Deleting...</> : 'Delete'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </CourseLayout>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { UserMinus, Search, Loader2 } from 'lucide-react';
 import CourseLayout from '../../../components/layout/CourseLayout';
+import Modal from '../../../components/ui/Modal';
 import { api } from '../../../lib/api';
 
 export interface EnrolledStudent {
@@ -25,7 +26,8 @@ export default function CourseStudents() {
       setIsLoading(true);
       try {
         const res = await api.get<{ data: any[] }>(`/courses/${courseId}/students`);
-        const data = res.data?.data || res.data || [];
+        const rawData = res.data;
+        const data = Array.isArray(rawData?.data) ? rawData.data : (Array.isArray(rawData) ? rawData : []);
         
         const mapped = data.map((enrollment: any) => {
           const p = enrollment.profiles;
@@ -97,8 +99,9 @@ export default function CourseStudents() {
         {/* Student Rows */}
         <div className="space-y-3">
           {isLoading ? (
-            <div className="flex justify-center items-center py-10 text-slate-400">
-              <Loader2 className="w-6 h-6 animate-spin" />
+            <div className="flex justify-center items-center py-20 gap-3 text-slate-400 bg-surface-container/10 border border-white/5 rounded-2xl">
+              <Loader2 className="w-6 h-6 animate-spin text-primary-fixed-dim" />
+              <span className="font-sans text-sm">Loading students...</span>
             </div>
           ) : (
             filteredStudents.map(s => {
@@ -144,19 +147,21 @@ export default function CourseStudents() {
       </div>
 
       {/* Kick Confirmation Modal */}
-      {studentToKick && (
-        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-card w-full max-w-sm rounded-2xl border border-white/10 p-6 space-y-6 text-center animate-in fade-in zoom-in duration-200">
+      <Modal
+        isOpen={!!studentToKick}
+        onClose={() => setStudentToKick(null)}
+        title="Remove Student?"
+        maxWidth="max-w-sm"
+      >
+        {studentToKick && (
+          <div className="space-y-6 text-center">
             <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
               <UserMinus className="w-5 h-5" />
             </div>
             
-            <div className="space-y-2">
-              <h4 className="font-display text-lg font-bold text-white tracking-tight">Remove Student?</h4>
-              <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                Are you sure you want to remove <span className="text-white font-semibold">{studentToKick.name}</span> from this course? This action cannot be undone.
-              </p>
-            </div>
+            <p className="font-sans text-sm text-slate-300 leading-relaxed">
+              Are you sure you want to remove <span className="text-white font-semibold">{studentToKick.name}</span> from this course? This action cannot be undone.
+            </p>
 
             <div className="flex gap-3 justify-end pt-2">
               <button
@@ -177,8 +182,8 @@ export default function CourseStudents() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </CourseLayout>
   );
 }

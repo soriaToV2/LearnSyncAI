@@ -109,7 +109,7 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
       </div>
 
       {!evaluationResult ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div key="editor" className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-500">
           {/* Editor Area */}
           <div className="lg:col-span-2 space-y-4">
             <div className="relative bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-5 backdrop-blur-md">
@@ -186,7 +186,7 @@ export default function FreeRecallTab({ availableResources }: FreeRecallTabProps
         </div>
       ) : (
         /* Results view */
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div key="results" className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-500">
           <div className="lg:col-span-2 space-y-6">
             {/* Score Card */}
             <div className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-6 backdrop-blur-md space-y-6">

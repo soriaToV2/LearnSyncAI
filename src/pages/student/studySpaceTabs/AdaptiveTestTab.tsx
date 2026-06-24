@@ -589,57 +589,62 @@ export default function AdaptiveTestTab({
               <ArrowLeft className="w-4 h-4" /> Exit Test
             </button>
 
-            {showExitConfirmModal && (
-              <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="glass-card w-full max-w-sm rounded-2xl border border-white/10 p-6 space-y-6 text-center animate-in fade-in zoom-in duration-200">
-                  <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
-                    <AlertTriangle className="w-5 h-5" />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <h4 className="font-display text-lg font-bold text-white tracking-tight">Exit Assessment?</h4>
-                    <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                      Are you sure you want to exit the current test? Your progress will not be saved.
-                    </p>
-                  </div>
+            <Modal
+              isOpen={showExitConfirmModal}
+              onClose={() => setShowExitConfirmModal(false)}
+              title="Exit Assessment?"
+              maxWidth="max-w-sm"
+            >
+              <div className="space-y-6 text-center">
+                <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto animate-in fade-in duration-300">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                
+                <div className="space-y-2">
+                  <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                    Are you sure you want to exit the current test? Your progress will not be saved.
+                  </p>
+                </div>
 
-                  <div className="flex gap-3 justify-end pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowExitConfirmModal(false)}
-                      className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase transition-all"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setInQuiz(false);
-                        setQuizFinished(false);
-                        setPreviewingPastTest(null);
-                        setShowExitConfirmModal(false);
-                      }}
-                      className="flex-1 px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-rose-600/20"
-                    >
-                      Exit Test
-                    </button>
-                  </div>
+                <div className="flex gap-3 justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowExitConfirmModal(false)}
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInQuiz(false);
+                      setQuizFinished(false);
+                      setPreviewingPastTest(null);
+                      setShowExitConfirmModal(false);
+                    }}
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-rose-600/20"
+                  >
+                    Exit Test
+                  </button>
                 </div>
               </div>
-            )}
+            </Modal>
           </>
         )}
       </div>
 
       {/* Active quiz */}
       {inQuiz && !quizFinished && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div key="active-quiz" className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300">
 
           {/* Question column */}
           <div className="lg:col-span-2 space-y-6">
 
             {/* Question card */}
-            <div className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-8 backdrop-blur-md space-y-6">
+            <div
+              key={currentQuestionIdx}
+              className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-8 backdrop-blur-md space-y-6 animate-in fade-in duration-300"
+            >
 
               {/* Progress header */}
               <div className="flex items-center justify-between border-b border-white/10 pb-4">
@@ -914,7 +919,7 @@ export default function AdaptiveTestTab({
 
       {/* Results screen */}
       {(quizFinished || previewingPastTest) && (
-        <div className="max-w-4xl mx-auto space-y-8 animate-in scale-in duration-300">
+        <div key="results-screen" className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
 
           {/* Summary card */}
           <div className="bg-surface-container-lowest/30 border border-white/10 rounded-3xl p-8 backdrop-blur-md relative overflow-hidden">
@@ -1067,7 +1072,7 @@ export default function AdaptiveTestTab({
 
       {/* Setup screen */}
       {!inQuiz && !quizFinished && !previewingPastTest && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div key="setup-screen" className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300">
 
           {/* Config form */}
           <div className="lg:col-span-2 space-y-6">
@@ -1161,7 +1166,7 @@ export default function AdaptiveTestTab({
 
                 {/* Source sub-selectors */}
                 {sourceType === 'flashcards' && (
-                  <div className="space-y-2 pt-2 animate-in slide-in-from-top-1 duration-200">
+                  <div className="space-y-2 pt-2 animate-in fade-in slide-in-from-top-1 duration-200">
                     <span className="font-sans text-[10px] text-slate-500 uppercase tracking-widest block font-bold">Select Deck Title</span>
                     {flashcardSets.length === 0 ? (
                       <p className="text-xs text-amber-400">No decks available. Create a flashcard deck first.</p>
@@ -1187,7 +1192,7 @@ export default function AdaptiveTestTab({
                 )}
 
                 {sourceType === 'resources' && courseConnected && (
-                  <div className="space-y-2 pt-2 animate-in slide-in-from-top-1 duration-200">
+                  <div className="space-y-2 pt-2 animate-in fade-in slide-in-from-top-1 duration-200">
                     <span className="font-sans text-[10px] text-slate-500 uppercase tracking-widest block font-bold">Select Resource Document</span>
                     <div className="grid grid-cols-1 gap-2">
                       {availableResources.map(res => (

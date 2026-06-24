@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, X, Plus, BookOpen, Layers, Globe, Lock, Eye, EyeOff, Brain, Award, BrainCircuit, Share2, Copy, Check, ChevronDown } from 'lucide-react';
+import { ChevronLeft, Plus, BookOpen, Layers, Globe, Lock, Eye, EyeOff, Brain, Award, BrainCircuit, Share2, Copy, Check, ChevronDown, Loader2 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import Modal from '../../components/ui/Modal';
 import FlashcardsTab from './studySpaceTabs/FlashcardsTab';
@@ -8,14 +8,20 @@ import FeynmanTab from './studySpaceTabs/FeynmanTab';
 import AdaptiveTestTab from './studySpaceTabs/AdaptiveTestTab';
 import ResourcesTab from './studySpaceTabs/ResourcesTab';
 import { createPortal } from 'react-dom';
-import { getSavedSpaces, updateSavedSpaceFlashcards } from '../../data/mockPublicSpaces';
+import { api } from '../../lib/api';
+
+interface Flashcard {
+  id: string;
+  front: string;
+  back: string;
+}
 
 interface FlashcardSet {
-  id: number;
+  id: string;
   title: string;
   description?: string;
   cardCount: number;
-  cards: { id: number; front: string; back: string }[];
+  cards: Flashcard[];
   isPublic: boolean;
 }
 
@@ -26,141 +32,113 @@ export default function StudySpace() {
   const [courseConnected, setCourseConnected] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [selectedSetContent, setSelectedSetContent] = useState<number | null>(null);
+  const [selectedSetContent, setSelectedSetContent] = useState<string | null>(null);
   const [isCreateDeckModalOpen, setIsCreateDeckModalOpen] = useState(false);
   const [newDeckTitle, setNewDeckTitle] = useState('');
+  
+  const [currentSpace, setCurrentSpace] = useState<any>(null);
+  const [flashcardSets, setFlashcardSets] = useState<FlashcardSet[]>([]);
+  const [spaceIsPublic, setSpaceIsPublic] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const [spaces, setSpaces] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_study_spaces');
-      const localArray = saved ? JSON.parse(saved) : [];
-      return [...getSavedSpaces(), ...localArray];
-    } catch {
-      return getSavedSpaces();
-    }
-  });
-
-  const currentSpace = spaces.find((s: any) => s.id === spaceId);
-
-  const [spaceIsPublic, setSpaceIsPublic] = useState(() => {
-    return currentSpace ? !!currentSpace.isPublic : false;
-  });
   const [showVisibilityToast, setShowVisibilityToast] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [availableResources, setAvailableResources] = useState<string[]>([
+    'Synaptic_Pathways_Ch4.pdf',
+    'Lecture_03_Action_Potentials.pptx',
+    'Study_Guide_Midterm.docx'
+  ]);
 
-  const availableResources = currentSpace?.resources || ['Synaptic_Pathways_Ch4.pdf', 'Lecture_03_Action_Potentials.pptx', 'Study_Guide_Midterm.docx'];
+  const fetchSpaceData = async () => {
+    if (!spaceId) return;
+    try {
+      const resSpace = await api.get<any>(`/spaces/${spaceId}`);
+      const space = resSpace.data;
+      setCurrentSpace(space);
+      setSpaceIsPublic(!!space.is_published);
 
-  const [flashcardSets, setFlashcardSets] = useState<FlashcardSet[]>(() => {
-    if (currentSpace && currentSpace.flashcards) {
-      return [
-        {
-          id: 1,
-          title: currentSpace.title,
-          description: currentSpace.description || `Key concepts from ${currentSpace.title}.`,
-          cardCount: currentSpace.flashcards.length,
-          isPublic: true,
-          cards: currentSpace.flashcards
+      if (space.course_id) {
+        setCourseConnected(true);
+        try {
+          const resMaterials = await api.get<any>(`/materials?course_id=${space.course_id}`);
+          const materials = resMaterials.data || [];
+          if (materials.length > 0) {
+            setAvailableResources(materials.map((m: any) => m.title || m.name));
+          }
+        } catch (err) {
+          console.error('Failed to load course materials', err);
         }
-      ];
+      } else {
+        setCourseConnected(false);
+      }
+
+      const resDecks = await api.get<any>(`/spaces/${spaceId}/decks`);
+      const decks = resDecks.data || [];
+
+      const decksWithCards = await Promise.all(
+        decks.map(async (deck: any) => {
+          const resCards = await api.get<any>(`/spaces/${spaceId}/decks/${deck.id}/flashcards`);
+          const cardsList = resCards.data || [];
+          return {
+            id: deck.id,
+            title: deck.title,
+            description: deck.description,
+            cardCount: cardsList.length,
+            cards: cardsList.map((c: any) => ({
+              id: c.id,
+              front: c.term,
+              back: c.definition,
+            })),
+            isPublic: deck.is_public || false
+          };
+        })
+      );
+      setFlashcardSets(decksWithCards);
+    } catch (err) {
+      console.error('Failed to load study space details', err);
+    } finally {
+      setIsLoading(false);
     }
-    return [
-      {
-        id: 1,
-        title: 'Ch 4. Synaptic Transmission',
-        description: 'Key concepts from chapter 4 covering neurotransmitter release and synaptic function.',
-        cardCount: 3,
-        isPublic: true,
-        cards: [
-          { id: 1, front: 'What initiates the release of neurotransmitters?', back: 'An influx of Calcium ions (Ca2+) into the presynaptic terminal, triggered by an action potential.' },
-          { id: 10, front: 'What is the synaptic cleft?', back: 'The tiny gap between the presynaptic and postsynaptic neurons where neurotransmitters are released.' },
-          { id: 11, front: 'What are vesicles in the context of synaptic transmission?', back: 'Small membrane-bound sacs that store neurotransmitters and release them via exocytosis.' },
-        ],
-      },
-      {
-        id: 2,
-        title: 'Midterm Review Terms',
-        description: 'Essential definitions and concepts to review before the midterm examination.',
-        cardCount: 3,
-        isPublic: false,
-        cards: [
-          { id: 2, front: 'What is primary function of the myelin sheath?', back: 'To increase the speed at which electrical impulses travel along the axon.' },
-          { id: 20, front: 'What is an action potential?', back: 'A rapid, temporary change in membrane potential that travels along the axon of a neuron.' },
-          { id: 21, front: "Define 'resting membrane potential'.", back: 'The electrical potential difference across the neuronal membrane when the neuron is not firing, typically around -70mV.' },
-        ],
-      },
-    ];
-  });
+  };
 
   useEffect(() => {
-    if (spaceId && spaceId.startsWith('space-')) {
-      const mainSet = flashcardSets[0];
-      if (!mainSet) return;
-
-      if (currentSpace?.isImported) {
-        updateSavedSpaceFlashcards(spaceId, mainSet.cards);
-      } else {
-        try {
-          const saved = localStorage.getItem('my_study_spaces');
-          if (saved) {
-            const spacesArray = JSON.parse(saved);
-            const idx = spacesArray.findIndex((s: any) => s.id === spaceId);
-            if (idx !== -1) {
-              spacesArray[idx].flashcards = mainSet.cards;
-              spacesArray[idx].flashcardsCount = mainSet.cards.length;
-              localStorage.setItem('my_study_spaces', JSON.stringify(spacesArray));
-            }
-          }
-        } catch (e) {
-          console.error('Error syncing flashcards back', e);
-        }
-      }
-    }
-  }, [flashcardSets, spaceId, currentSpace]);
+    fetchSpaceData();
+  }, [spaceId]);
 
   const handleConnectCourse = () => setCourseConnected(true);
 
-  const updateSpaceVisibilityInStore = (isPublic: boolean) => {
-    if (!spaceId) return;
-    if (currentSpace?.isImported) {
-      const list = getSavedSpaces();
-      const match = list.find((s: any) => s.id === spaceId);
-      if (match) {
-        match.isPublic = isPublic;
-      }
-    } else {
-      try {
-        const saved = localStorage.getItem('my_study_spaces');
-        if (saved) {
-          const spacesArray = JSON.parse(saved);
-          const idx = spacesArray.findIndex((s: any) => s.id === spaceId);
-          if (idx !== -1) {
-            spacesArray[idx].isPublic = isPublic;
-            localStorage.setItem('my_study_spaces', JSON.stringify(spacesArray));
-          }
-        }
-      } catch (e) {
-        console.error('Error saving visibility', e);
-      }
-    }
-  };
-
-  const handleToggleSpaceVisibility = () => {
-    if (spaceIsPublic) {
-      setSpaceIsPublic(false);
-      updateSpaceVisibilityInStore(false);
-      setFlashcardSets(prev => prev.map(s => ({ ...s, isPublic: false })));
+  const handleToggleSpaceVisibility = async () => {
+    if (!currentSpace || isCloned) return;
+    const newVisibility = !spaceIsPublic;
+    try {
+      await api.put(`/spaces/${spaceId}`, {
+        is_published: newVisibility
+      });
+      setSpaceIsPublic(newVisibility);
       triggerToast();
-    } else {
-      setIsShareModalOpen(true);
+    } catch (err) {
+      console.error('Failed to update visibility', err);
     }
   };
 
-  const handleToggleDeckVisibility = (deckId: number) => {
-    setFlashcardSets(prev =>
-      prev.map(s => s.id === deckId ? { ...s, isPublic: !s.isPublic } : s)
-    );
-    triggerToast();
+  const handleToggleDeckVisibility = async (deckId: string) => {
+    if (isCloned) return;
+    const deck = flashcardSets.find(s => s.id === deckId);
+    if (!deck) return;
+    try {
+      await api.put(`/spaces/${spaceId}/decks/${deckId}`, {
+        title: deck.title,
+        description: deck.description,
+        is_public: !deck.isPublic
+      });
+      setFlashcardSets(prev =>
+        prev.map(s => s.id === deckId ? { ...s, isPublic: !s.isPublic } : s)
+      );
+      triggerToast();
+    } catch (err) {
+      console.error('Failed to toggle deck visibility', err);
+    }
   };
 
   const triggerToast = () => {
@@ -168,19 +146,38 @@ export default function StudySpace() {
     setTimeout(() => setShowVisibilityToast(false), 2500);
   };
 
-  const handleCreateDeck = (e: React.FormEvent) => {
+  const handleCreateDeck = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newDeckTitle.trim()) return;
-    setFlashcardSets(prev => [...prev, { id: Date.now(), title: newDeckTitle.trim(), cardCount: 0, cards: [], isPublic: false }]);
-    setNewDeckTitle('');
-    setIsCreateDeckModalOpen(false);
+    if (!newDeckTitle.trim() || isCloned) return;
+    try {
+      await api.post(`/spaces/${spaceId}/decks`, {
+        title: newDeckTitle.trim(),
+        description: `Key concepts from ${currentSpace?.title || 'Study Space'}.`
+      });
+      await fetchSpaceData();
+      setNewDeckTitle('');
+      setIsCreateDeckModalOpen(false);
+    } catch (err) {
+      console.error('Failed to create deck', err);
+    }
   };
 
-  // Public deck count
+  const isCloned = !!(currentSpace?.cloned_from_id || currentSpace?.original_author_name);
   const publicDeckCount = flashcardSets.filter(s => s.isPublic).length;
 
+  if (isLoading) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-white">
+          <Loader2 className="w-8 h-8 animate-spin text-primary-fixed-dim" />
+          <span className="font-sans text-sm font-semibold">Loading study space...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="h-[calc(100vh-4rem)] md:h-screen w-full flex flex-col bg-background overflow-hidden relative">
+    <div className="h-[calc(100vh-4rem)] md:h-screen w-full flex flex-col bg-background overflow-hidden relative animate-page-fade">
 
       {/* Visibility toast */}
       {showVisibilityToast && createPortal(
@@ -210,45 +207,54 @@ export default function StudySpace() {
                 <span className="truncate">{currentSpace ? currentSpace.title : "Biology 101 Prep Space"}</span>
               </h1>
               {/* Space visibility badge */}
-              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-sans text-[10px] font-bold uppercase tracking-wider transition-colors shrink-0 ${spaceIsPublic
-                ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400'
-                : 'bg-white/5 border-white/10 text-slate-500'
-                }`}>
-                {spaceIsPublic ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                {spaceIsPublic ? 'Public' : 'Private'}
-              </span>
+              {!isCloned && (
+                <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-sans text-[10px] font-bold uppercase tracking-wider transition-colors shrink-0 ${spaceIsPublic
+                  ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400'
+                  : 'bg-white/5 border-white/10 text-slate-500'
+                  }`}>
+                  {spaceIsPublic ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                  {spaceIsPublic ? 'Public' : 'Private'}
+                </span>
+              )}
+              {isCloned && (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-primary-fixed-dim/20 bg-primary-fixed-dim/5 text-primary-fixed-dim font-sans text-[10px] font-bold uppercase tracking-wider shrink-0">
+                  Cloned Space {currentSpace.original_author_name ? `by ${currentSpace.original_author_name}` : ''}
+                </span>
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {spaceIsPublic ? (
-              <>
-                {/* Share Link & QR Button */}
+            {!isCloned && (
+              spaceIsPublic ? (
+                <>
+                  {/* Share Link & QR Button */}
+                  <button
+                    onClick={() => setIsShareModalOpen(true)}
+                    className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-xl border border-primary-fixed-dim/20 bg-primary-fixed-dim/10 text-primary-fixed-dim hover:bg-primary-fixed-dim/20 font-sans text-xs md:text-sm font-semibold transition-all active:scale-95 animate-in fade-in duration-200"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span className="hidden sm:inline">Share Link &amp; QR</span>
+                  </button>
+                  {/* Make Private Button */}
+                  <button
+                    onClick={handleToggleSpaceVisibility}
+                    className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-xl border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white font-sans text-xs md:text-sm font-semibold transition-all active:scale-95 animate-in fade-in duration-200"
+                  >
+                    <EyeOff className="w-4 h-4" />
+                    <span className="hidden sm:inline">Make Private</span>
+                  </button>
+                </>
+              ) : (
+                /* Publicize Button */
                 <button
                   onClick={() => setIsShareModalOpen(true)}
-                  className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-xl border border-primary-fixed-dim/20 bg-primary-fixed-dim/10 text-primary-fixed-dim hover:bg-primary-fixed-dim/20 font-sans text-xs md:text-sm font-semibold transition-all active:scale-95 animate-in fade-in duration-200"
+                  className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-xl border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white font-sans text-xs md:text-sm font-semibold transition-all active:scale-95"
                 >
-                  <Share2 className="w-4 h-4" />
-                  <span className="hidden sm:inline">Share Link &amp; QR</span>
+                  <Globe className="w-4 h-4" />
+                  <span className="hidden sm:inline">Publicize Space</span>
                 </button>
-                {/* Make Private Button */}
-                <button
-                  onClick={handleToggleSpaceVisibility}
-                  className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-xl border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white font-sans text-xs md:text-sm font-semibold transition-all active:scale-95 animate-in fade-in duration-200"
-                >
-                  <EyeOff className="w-4 h-4" />
-                  <span className="hidden sm:inline">Make Private</span>
-                </button>
-              </>
-            ) : (
-              /* Publicize Button */
-              <button
-                onClick={handleToggleSpaceVisibility}
-                className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-xl border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white font-sans text-xs md:text-sm font-semibold transition-all active:scale-95"
-              >
-                <Globe className="w-4 h-4" />
-                <span className="hidden sm:inline">Publicize Space</span>
-              </button>
+              )
             )}
           </div>
         </div>
@@ -344,10 +350,10 @@ export default function StudySpace() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto w-full max-w-7xl mx-auto p-4 md:p-8 relative">
+      <main key={activeTab} className="flex-1 overflow-y-auto w-full max-w-7xl mx-auto p-4 md:p-8 relative animate-page-fade">
 
         {/* Info banner when space is public */}
-        {spaceIsPublic && (
+        {!isCloned && spaceIsPublic && (
           <div className="mb-6 flex items-center gap-4 px-5 py-4 rounded-xl bg-emerald-400/5 border border-emerald-400/15 animate-in fade-in duration-300">
             <div className="w-9 h-9 rounded-full bg-emerald-400/10 flex items-center justify-center shrink-0">
               <Eye className="w-4 h-4 text-emerald-400" />
@@ -371,6 +377,8 @@ export default function StudySpace() {
 
         {activeTab === 'flashcards' && (
           <FlashcardsTab
+            spaceId={spaceId!}
+            readOnly={isCloned}
             courseConnected={courseConnected}
             isGenerating={isGenerating}
             selectedSetContent={selectedSetContent}
@@ -378,7 +386,7 @@ export default function StudySpace() {
             setSelectedSetContent={setSelectedSetContent}
             setIsCreateDeckModalOpen={setIsCreateDeckModalOpen}
             setActiveTab={setActiveTab as any}
-            setFlashcardSets={setFlashcardSets}
+            onRefresh={fetchSpaceData}
             availableResources={availableResources}
             spaceIsPublic={spaceIsPublic}
             onToggleDeckVisibility={handleToggleDeckVisibility}
@@ -409,12 +417,11 @@ export default function StudySpace() {
             setSelectedDoc={setSelectedDoc}
             setActiveTab={setActiveTab as any}
             setIsGenerating={setIsGenerating}
-            setSelectedSetContent={setSelectedSetContent}
-            setFlashcardSets={setFlashcardSets}
+            setSelectedSetContent={setSelectedSetContent as any}
+            setFlashcardSets={setFlashcardSets as any}
           />
         )}
       </main>
-
 
       {/* Create Deck Modal */}
       <Modal isOpen={isCreateDeckModalOpen} onClose={() => { setIsCreateDeckModalOpen(false); setNewDeckTitle(''); }} title="Create New Deck">
@@ -448,8 +455,8 @@ export default function StudySpace() {
         <div className="flex flex-col items-center text-center gap-5">
           {!spaceIsPublic ? (
             <>
-              <div className="w-16 h-16 rounded-full bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center text-primary-fixed-dim shadow-lg shadow-primary-fixed-dim/5">
-                <Globe className="w-8 h-8 animate-pulse" />
+              <div className="w-16 h-16 rounded-full bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center text-primary-fixed-dim">
+                <Globe className="w-8 h-8" />
               </div>
               <div>
                 <h3 className="font-display text-lg font-bold text-white mb-2">Publicize this Study Space?</h3>
@@ -468,11 +475,15 @@ export default function StudySpace() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSpaceIsPublic(true);
-                    updateSpaceVisibilityInStore(true);
-                    setShowVisibilityToast(true);
-                    setTimeout(() => setShowVisibilityToast(false), 2500);
+                  onClick={async () => {
+                    try {
+                      await api.put(`/spaces/${spaceId}`, { is_published: true });
+                      setSpaceIsPublic(true);
+                      setShowVisibilityToast(true);
+                      setTimeout(() => setShowVisibilityToast(false), 2500);
+                    } catch (err) {
+                      console.error('Failed to make space public', err);
+                    }
                   }}
                   className="flex-1 py-3 bg-primary-fixed-dim text-black hover:bg-primary-fixed-dim/90 rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 transition-all"
                 >
@@ -507,11 +518,11 @@ export default function StudySpace() {
                 <h4 className="font-display text-sm font-semibold text-slate-300 mb-2.5 text-left">Share Link</h4>
                 <div className="flex gap-2 bg-slate-950 border border-white/10 rounded-xl p-1 w-full pl-3 items-center">
                   <span className="font-sans text-xs text-slate-400 select-all truncate flex-1 text-left">
-                    {`${window.location.origin}/student/spaces?clone=${spaceId?.replace('space-', '') || 's1'}`}
+                    {`${window.location.origin}/student/spaces?clone=${currentSpace?.id}`}
                   </span>
                   <button
                     onClick={() => {
-                      const shareLink = `${window.location.origin}/student/spaces?clone=${spaceId?.replace('space-', '') || 's1'}`;
+                      const shareLink = `${window.location.origin}/student/spaces?clone=${currentSpace?.id}`;
                       navigator.clipboard.writeText(shareLink);
                       setIsCopied(true);
                       setTimeout(() => setIsCopied(false), 2000);
@@ -529,12 +540,16 @@ export default function StudySpace() {
               <div className="flex justify-end gap-3 w-full pt-4 border-t border-white/5">
                 <button
                   type="button"
-                  onClick={() => {
-                    setSpaceIsPublic(false);
-                    updateSpaceVisibilityInStore(false);
-                    setShowVisibilityToast(true);
-                    setTimeout(() => setShowVisibilityToast(false), 2500);
-                    setIsShareModalOpen(false);
+                  onClick={async () => {
+                    try {
+                      await api.put(`/spaces/${spaceId}`, { is_published: false });
+                      setSpaceIsPublic(false);
+                      setShowVisibilityToast(true);
+                      setTimeout(() => setShowVisibilityToast(false), 2500);
+                      setIsShareModalOpen(false);
+                    } catch (err) {
+                      console.error('Failed to revoke access', err);
+                    }
                   }}
                   className="flex-1 py-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 rounded-xl font-sans text-sm font-semibold transition-all"
                 >

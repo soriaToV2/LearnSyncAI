@@ -988,3 +988,69 @@
     color: var(--page-bg);
   }
 }
+
+/* Page Transition Keyframes */
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-page-fade {
+  animation: pageFadeIn 0.35s ease-out forwards;
+}
+
+.fade-in,
+.animate-fade-in,
+.animate-in.fade-in {
+  animation: pageFadeIn 0.35s ease-out forwards;
+}
+
+.duration-200 {
+  animation-duration: 200ms !important;
+  transition-duration: 200ms !important;
+}
+.duration-300 {
+  animation-duration: 300ms !important;
+  transition-duration: 300ms !important;
+}
+.duration-500 {
+  animation-duration: 500ms !important;
+  transition-duration: 500ms !important;
+}
+.duration-1000 {
+  animation-duration: 1000ms !important;
+  transition-duration: 1000ms !important;
+}
+
+/* Modal Entry Animations */
+@keyframes backdropFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalZoomIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-backdrop-in {
+  animation: backdropFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-modal-in {
+  animation: modalZoomIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}

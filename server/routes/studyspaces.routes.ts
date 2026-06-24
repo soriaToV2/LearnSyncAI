@@ -41,7 +41,7 @@ router.get('/', requireRole('student'), async (req: Request, res: Response): Pro
 
 /**
  * POST /api/spaces
- * Creates a new study space. Students only.
+ * Creates a new study space or clones an existing one. Students only.
  */
 router.post('/', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateStudySpaceSchema.safeParse(req.body);
@@ -50,10 +50,15 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
     return;
   }
 
-  const { data, error } = await supabaseAdmin
+  const { title, course_id, cloned_from_id, original_author_name } = parsed.data;
+
+  const { data: newSpace, error: spaceError } = await supabaseAdmin
     .from('study_spaces')
     .insert({
-      ...parsed.data,
+      title,
+      course_id: course_id || null,
+      cloned_from_id: cloned_from_id || null,
+      original_author_name: original_author_name || null,
       student_id: req.user!.id,
       is_published: false,
       share_token: generateShareToken(),
@@ -61,12 +66,54 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
     .select()
     .single();
 
-  if (error) {
-    res.status(500).json({ error: 'Failed to create study space', message: error.message });
+  if (spaceError || !newSpace) {
+    res.status(500).json({ error: 'Failed to create study space', message: spaceError?.message });
     return;
   }
 
-  res.status(201).json({ data, message: 'Study space created' });
+  // If this is a cloned space, clone all its decks and flashcards
+  if (cloned_from_id) {
+    const { data: originalDecks } = await supabaseAdmin
+      .from('flashcard_decks')
+      .select('*')
+      .eq('space_id', cloned_from_id);
+
+    if (originalDecks && originalDecks.length > 0) {
+      for (const deck of originalDecks) {
+        const { data: newDeck } = await supabaseAdmin
+          .from('flashcard_decks')
+          .insert({
+            space_id: newSpace.id,
+            title: deck.title,
+            description: deck.description || ''
+          })
+          .select()
+          .single();
+
+        if (newDeck) {
+          const { data: originalCards } = await supabaseAdmin
+            .from('flashcards')
+            .select('*')
+            .eq('deck_id', deck.id);
+
+          if (originalCards && originalCards.length > 0) {
+            const cardsToInsert = originalCards.map(c => ({
+              deck_id: newDeck.id,
+              term: c.term,
+              definition: c.definition,
+              is_ai_generated: c.is_ai_generated || false
+            }));
+
+            await supabaseAdmin
+              .from('flashcards')
+              .insert(cardsToInsert);
+          }
+        }
+      }
+    }
+  }
+
+  res.status(201).json({ data: newSpace, message: 'Study space created' });
 });
 
 /**
@@ -103,6 +150,20 @@ router.put('/:id', requireRole('student'), async (req: Request, res: Response): 
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
     return;
+  }
+
+  // Prevent renaming cloned spaces
+  if (parsed.data.title !== undefined) {
+    const { data: spaceCheck } = await supabaseAdmin
+      .from('study_spaces')
+      .select('cloned_from_id')
+      .eq('id', req.params.id)
+      .single();
+
+    if (spaceCheck?.cloned_from_id) {
+      res.status(403).json({ error: 'Cannot rename a cloned study space' });
+      return;
+    }
   }
 
   const { data, error } = await supabaseAdmin
@@ -233,6 +294,198 @@ router.post(
     }
 
     res.status(201).json({ data, message: 'Flashcard created' });
+  }
+);
+
+/**
+ * PUT /api/spaces/:id/decks/:deckId
+ * Updates a deck title/description. Owner only.
+ */
+router.put('/:id/decks/:deckId', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
+  const { data: space } = await supabaseAdmin
+    .from('study_spaces')
+    .select('student_id')
+    .eq('id', req.params.id)
+    .single();
+
+  if (!space || space.student_id !== req.user!.id) {
+    res.status(403).json({ error: 'Unauthorized or space not found' });
+    return;
+  }
+
+  const { title, description } = req.body;
+  const { data, error } = await supabaseAdmin
+    .from('flashcard_decks')
+    .update({ title, description })
+    .eq('id', req.params.deckId)
+    .eq('space_id', req.params.id)
+    .select()
+    .single();
+
+  if (error || !data) {
+    res.status(500).json({ error: 'Failed to update deck', message: error?.message });
+    return;
+  }
+
+  res.json({ data, message: 'Deck updated' });
+});
+
+/**
+ * DELETE /api/spaces/:id/decks/:deckId
+ * Deletes a deck. Owner only.
+ */
+router.delete('/:id/decks/:deckId', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
+  const { data: space } = await supabaseAdmin
+    .from('study_spaces')
+    .select('student_id')
+    .eq('id', req.params.id)
+    .single();
+
+  if (!space || space.student_id !== req.user!.id) {
+    res.status(403).json({ error: 'Unauthorized or space not found' });
+    return;
+  }
+
+  await supabaseAdmin
+    .from('flashcards')
+    .delete()
+    .eq('deck_id', req.params.deckId);
+
+  const { error } = await supabaseAdmin
+    .from('flashcard_decks')
+    .delete()
+    .eq('id', req.params.deckId)
+    .eq('space_id', req.params.id);
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to delete deck', message: error.message });
+    return;
+  }
+
+  res.json({ message: 'Deck deleted' });
+});
+
+/**
+ * PUT /api/spaces/:id/decks/:deckId/flashcards/:cardId
+ * Updates a single flashcard. Owner only.
+ */
+router.put(
+  '/:id/decks/:deckId/flashcards/:cardId',
+  requireRole('student'),
+  async (req: Request, res: Response): Promise<void> => {
+    const { data: space } = await supabaseAdmin
+      .from('study_spaces')
+      .select('student_id')
+      .eq('id', req.params.id)
+      .single();
+
+    if (!space || space.student_id !== req.user!.id) {
+      res.status(403).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { term, definition } = req.body;
+    const { data, error } = await supabaseAdmin
+      .from('flashcards')
+      .update({ term, definition })
+      .eq('id', req.params.cardId)
+      .eq('deck_id', req.params.deckId)
+      .select()
+      .single();
+
+    if (error || !data) {
+      res.status(500).json({ error: 'Failed to update flashcard', message: error?.message });
+      return;
+    }
+
+    res.json({ data, message: 'Flashcard updated' });
+  }
+);
+
+/**
+ * DELETE /api/spaces/:id/decks/:deckId/flashcards/:cardId
+ * Deletes a single flashcard. Owner only.
+ */
+router.delete(
+  '/:id/decks/:deckId/flashcards/:cardId',
+  requireRole('student'),
+  async (req: Request, res: Response): Promise<void> => {
+    const { data: space } = await supabaseAdmin
+      .from('study_spaces')
+      .select('student_id')
+      .eq('id', req.params.id)
+      .single();
+
+    if (!space || space.student_id !== req.user!.id) {
+      res.status(403).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { error } = await supabaseAdmin
+      .from('flashcards')
+      .delete()
+      .eq('id', req.params.cardId)
+      .eq('deck_id', req.params.deckId);
+
+    if (error) {
+      res.status(500).json({ error: 'Failed to delete flashcard', message: error.message });
+      return;
+    }
+
+    res.json({ message: 'Flashcard deleted' });
+  }
+);
+
+/**
+ * POST /api/spaces/:id/decks/:deckId/flashcards/bulk
+ * Overwrites all flashcards in a deck. Owner only.
+ */
+router.post(
+  '/:id/decks/:deckId/flashcards/bulk',
+  requireRole('student'),
+  async (req: Request, res: Response): Promise<void> => {
+    const { data: space } = await supabaseAdmin
+      .from('study_spaces')
+      .select('student_id')
+      .eq('id', req.params.id)
+      .single();
+
+    if (!space || space.student_id !== req.user!.id) {
+      res.status(403).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const cards = req.body.cards;
+    if (!Array.isArray(cards)) {
+      res.status(400).json({ error: 'Validation error: cards must be an array' });
+      return;
+    }
+
+    // Delete old ones
+    await supabaseAdmin
+      .from('flashcards')
+      .delete()
+      .eq('deck_id', req.params.deckId);
+
+    // Insert new ones
+    if (cards.length > 0) {
+      const toInsert = cards.map((c: any) => ({
+        deck_id: req.params.deckId,
+        term: c.term || c.front,
+        definition: c.definition || c.back,
+        is_ai_generated: c.is_ai_generated || false,
+      }));
+      const { error } = await supabaseAdmin
+        .from('flashcards')
+        .insert(toInsert);
+
+      if (error) {
+        res.status(500).json({ error: 'Failed to insert flashcards', message: error.message });
+        return;
+      }
+    }
+
+    res.json({ message: 'Flashcards bulk synced' });
   }
 );
 

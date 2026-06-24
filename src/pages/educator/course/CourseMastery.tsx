@@ -55,7 +55,7 @@ export default function CourseMastery() {
           api.get(`/materials/course/${courseId}`)
         ]);
         setCourse(cRes.data);
-        const formattedResources = (mRes.data || []).map((m: any) => ({
+        const formattedResources = ((mRes.data || []) as any[]).map((m: any) => ({
           id: m.id,
           name: m.title || m.name,
           type: m.title?.split('.').pop() || 'document',
@@ -73,8 +73,8 @@ export default function CourseMastery() {
   if (isLoading) {
     return (
       <CourseLayout>
-        <div className="flex items-center justify-center py-24 gap-3 text-slate-400">
-          <Loader2 className="w-6 h-6 animate-spin" />
+        <div className="flex items-center justify-center py-20 gap-3 text-slate-400 bg-surface-container/10 border border-white/5 rounded-2xl">
+          <Loader2 className="w-6 h-6 animate-spin text-primary-fixed-dim" />
           <span className="font-sans text-sm">Loading mastery data...</span>
         </div>
       </CourseLayout>
@@ -211,14 +211,14 @@ export default function CourseMastery() {
 
         {/* Student list */}
         <div className="space-y-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="w-1.5 h-6 rounded" style={{ backgroundColor: courseColor }}></div>
               <h4 className="font-display text-lg font-bold text-white tracking-tight">Student-Specific BKT Breakdown</h4>
             </div>
 
             {/* Search and Filters */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
               <div className="relative flex-1 sm:w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <input
@@ -230,7 +230,7 @@ export default function CourseMastery() {
                 />
               </div>
 
-              <div className="flex bg-white/5 border border-white/10 rounded-xl p-1 gap-1 shrink-0 justify-between sm:justify-start">
+              <div className="flex bg-white/5 border border-white/10 rounded-xl p-1 gap-1 shrink-0 justify-between sm:justify-start overflow-x-auto no-scrollbar">
                 {[
                   { id: 'all', label: 'All Resources' },
                   { id: 'highest-lowest', label: 'Highest & Lowest' },
@@ -240,7 +240,7 @@ export default function CourseMastery() {
                     key={f.id}
                     onClick={() => setViewFilter(f.id as any)}
                     className={clsx(
-                      "px-3 py-1.5 rounded-lg text-xs font-semibold font-sans transition-all duration-200",
+                      "px-3 py-1.5 rounded-lg text-xs font-semibold font-sans transition-all duration-200 shrink-0",
                       viewFilter === f.id
                         ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
                         : "text-slate-400 hover:text-white"
@@ -254,7 +254,7 @@ export default function CourseMastery() {
           </div>
 
           {filteredStudents.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div key={viewFilter} className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-300">
               {filteredStudents.map(student => {
                 // Student average
                 const resourceScores = resources.map(res => ({

@@ -123,9 +123,16 @@ router.put('/:id', requireRole('instructor'), async (req: Request, res: Response
     return;
   }
 
+  const updateData: any = { ...parsed.data };
+  if (parsed.data.status === 'archived') {
+    updateData.archived_at = new Date().toISOString();
+  } else if (parsed.data.status === 'active' || parsed.data.status === 'draft') {
+    updateData.archived_at = null;
+  }
+
   const { data, error } = await supabaseAdmin
     .from('courses')
-    .update(parsed.data)
+    .update(updateData)
     .eq('id', req.params.id)
     .eq('instructor_id', req.user!.id)
     .select()

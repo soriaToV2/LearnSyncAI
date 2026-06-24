@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, Gamepad2, BrainCircuit, Zap, Award, RefreshCw, CheckCircle2, XCircle, ArrowRight, Hourglass, HelpCircle, Sparkles, TrendingUp, AlertCircle, Layers, ChevronDown, FlaskConical, Code, Brain, FileText, Check, BookOpen } from 'lucide-react';
 import clsx from 'clsx';
+import Modal from '../../components/ui/Modal';
 import { MOCK_COURSES, Course } from '../../data/mockCourses';
 
 interface Question {
@@ -837,7 +838,7 @@ export default function PlayMeGames() {
 
         {/* Term Matching */}
         {activeGame === 'matching' && (
-          <div className="space-y-6 max-w-4xl mx-auto animate-in zoom-in-95 duration-200">
+          <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in zoom-in-95 duration-300">
             <div className="flex flex-wrap gap-4 justify-between items-center">
               <button
                 onClick={() => setActiveGame('selection')}
@@ -865,7 +866,7 @@ export default function PlayMeGames() {
             </div>
 
             {matchingVictory ? (
-              <div className="glass-card rounded-2xl border border-emerald-500/20 bg-emerald-950/20 p-10 text-center space-y-6">
+              <div className="glass-card rounded-2xl border border-emerald-500/20 bg-emerald-950/20 p-10 text-center space-y-6 animate-modal-in">
                 <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/10">
                   <CheckCircle2 className="w-10 h-10" />
                 </div>
@@ -947,7 +948,7 @@ export default function PlayMeGames() {
 
         {/* Mini Crossword */}
         {activeGame === 'crossword' && (
-          <div className="space-y-6 max-w-4xl mx-auto animate-in zoom-in-95 duration-200">
+          <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in zoom-in-95 duration-300">
             <div className="flex flex-wrap gap-4 justify-between items-center">
               <button
                 onClick={() => setActiveGame('selection')}
@@ -983,7 +984,7 @@ export default function PlayMeGames() {
             </div>
 
             {crosswordVictory ? (
-              <div className="glass-card rounded-2xl border border-emerald-500/20 bg-emerald-950/20 p-10 text-center space-y-6">
+              <div className="glass-card rounded-2xl border border-emerald-500/20 bg-emerald-950/20 p-10 text-center space-y-6 animate-modal-in">
                 <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/10">
                   <CheckCircle2 className="w-10 h-10" />
                 </div>
@@ -1093,7 +1094,7 @@ export default function PlayMeGames() {
 
         {/* Trivia Blast */}
         {activeGame === 'trivia' && (
-          <div className="space-y-6 max-w-2xl mx-auto animate-in zoom-in-95 duration-200">
+          <div className="space-y-6 max-w-2xl mx-auto animate-in fade-in zoom-in-95 duration-300">
             <div className="flex flex-wrap gap-4 justify-between items-center">
               <button
                 onClick={() => setActiveGame('selection')}
@@ -1115,7 +1116,7 @@ export default function PlayMeGames() {
             </div>
 
             {triviaFinished ? (
-              <div className="glass-card rounded-2xl border border-cyan-500/20 bg-cyan-950/20 p-10 text-center space-y-6">
+              <div className="glass-card rounded-2xl border border-cyan-500/20 bg-cyan-950/20 p-10 text-center space-y-6 animate-modal-in">
                 <div className="w-16 h-16 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center mx-auto shadow-lg shadow-cyan-500/10">
                   <Trophy className="w-10 h-10" />
                 </div>
@@ -1204,7 +1205,7 @@ export default function PlayMeGames() {
 
         {/* Word Boggle */}
         {activeGame === 'boggle' && (
-          <div className="space-y-6 max-w-4xl mx-auto animate-in zoom-in-95 duration-200">
+          <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in zoom-in-95 duration-300">
             <div className="flex flex-wrap gap-4 justify-between items-center">
               <button
                 onClick={() => setActiveGame('selection')}
@@ -1230,7 +1231,7 @@ export default function PlayMeGames() {
             </div>
 
             {boggleFinished ? (
-              <div className="glass-card rounded-2xl border border-indigo-500/20 bg-indigo-950/20 p-10 text-center space-y-6">
+              <div className="glass-card rounded-2xl border border-indigo-500/20 bg-indigo-950/20 p-10 text-center space-y-6 animate-modal-in">
                 <div className="w-16 h-16 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 flex items-center justify-center mx-auto shadow-lg shadow-indigo-500/10">
                   <Hourglass className="w-10 h-10" />
                 </div>
@@ -1347,7 +1348,7 @@ export default function PlayMeGames() {
                       </div>
                     ) : (
                       <div className="flex flex-col items-center justify-center py-10 text-center">
-                        <Hourglass className="w-8 h-8 text-slate-650 mb-2 animate-spin duration-3000" />
+                        <Hourglass className="w-8 h-8 text-slate-650 mb-2" />
                         <p className="text-xs font-sans text-slate-500">
                           Connect adjacent grid letter blocks to spell terms matching your course syllabus.
                         </p>
@@ -1362,161 +1363,153 @@ export default function PlayMeGames() {
       </main>
 
       {/* Game Build / Resource Selection Modal */}
-      {isBuildModalOpen && selectedGameType && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          {/* Backdrop overlay */}
-          <div
-            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
-            onClick={() => setIsBuildModalOpen(false)}
-          />
-
-          {/* Modal Container */}
-          <div className="relative bg-slate-900 border border-white/10 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl p-6 space-y-6 animate-in zoom-in-95 duration-200">
-            {/* Header */}
-            <div className="flex justify-between items-start">
+      <Modal
+        isOpen={isBuildModalOpen && !!selectedGameType}
+        onClose={() => setIsBuildModalOpen(false)}
+        title={`Build ${selectedGameType === 'matching' ? 'Term Matcher' : selectedGameType === 'crossword' ? 'Mini Crossword' : selectedGameType === 'trivia' ? 'Trivia Blast' : 'Word Boggle'} Game`}
+        maxWidth="max-w-lg"
+      >
+        <div className="flex flex-col gap-6 max-h-[70vh] overflow-y-auto pr-1 no-scrollbar">
+          {/* Header Section */}
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center">
+                <Gamepad2 className="w-5 h-5 text-primary-fixed-dim" />
+              </div>
               <div>
-                <h3 className="text-xl font-display font-bold text-white flex items-center gap-2">
-                  <Gamepad2 className="w-5.5 h-5.5 text-primary-fixed-dim" />
-                  Build {selectedGameType === 'matching' ? 'Term Matcher' : selectedGameType === 'crossword' ? 'Mini Crossword' : selectedGameType === 'trivia' ? 'Trivia Blast' : 'Word Boggle'} Game
-                </h3>
-                <p className="text-xs text-slate-400 font-sans mt-1">
-                  Connect reference materials to formulate custom game content.
+                <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">
+                  Setup Game Content
                 </p>
-              </div>
-              <button
-                onClick={() => setIsBuildModalOpen(false)}
-                className="text-slate-450 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
-              >
-                <XCircle className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Course Selector (Single Selection) */}
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-sans block">
-                Target Course (Select 1)
-              </label>
-              <div className="grid grid-cols-1 gap-2.5">
-                {enrolledCourses.map((c) => {
-                  const isSelected = modalSelectedCourse === c.id;
-                  const info = getCourseDisplayInfo(c);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => setModalSelectedCourse(c.id)}
-                      className={clsx(
-                        "w-full flex items-center gap-3 p-3 rounded-xl border font-sans text-left transition-all active:scale-[0.99]",
-                        isSelected
-                          ? "bg-primary-fixed-dim/10 border-primary-fixed-dim text-white shadow-[0_0_15px_rgba(0,218,243,0.15)]"
-                          : "bg-surface-container border-white/5 text-slate-350 hover:bg-white/5 hover:text-white"
-                      )}
-                    >
-                      <div className={`p-2 rounded-lg ${info.bg}`}>
-                        <info.icon className={`w-4 h-4 ${info.color}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="block font-semibold text-sm truncate">{c.title}</span>
-                        <span className="block text-[10px] text-slate-500">{c.courseCode} • {c.instructor}</span>
-                      </div>
-                      {isSelected && (
-                        <div className="w-5 h-5 rounded-full bg-primary-fixed-dim flex items-center justify-center text-black">
-                          <Check className="w-3.5 h-3.5 font-bold" />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
+                <p className="font-sans text-xs text-slate-500">Connect reference materials to formulate custom game content.</p>
               </div>
             </div>
+          </div>
 
-            {/* Learning Materials Selector (Multiple Selection) */}
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-sans">
-                  Learning Materials (Select Multiple)
-                </label>
-                {getCourseResources(modalSelectedCourse).length > 0 && (
+          {/* Course Selector (Single Selection) */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-sans block">
+              Target Course (Select 1)
+            </label>
+            <div className="grid grid-cols-1 gap-2.5">
+              {enrolledCourses.map((c) => {
+                const isSelected = modalSelectedCourse === c.id;
+                const info = getCourseDisplayInfo(c);
+                return (
                   <button
+                    key={c.id}
                     type="button"
-                    onClick={() => {
-                      const allRes = getCourseResources(modalSelectedCourse);
-                      if (selectedResources.length === allRes.length) {
-                        setSelectedResources([]);
-                      } else {
-                        setSelectedResources(allRes);
-                      }
-                    }}
-                    className="text-[10px] font-sans font-bold text-primary-fixed-dim hover:underline"
+                    onClick={() => setModalSelectedCourse(c.id)}
+                    className={clsx(
+                      "w-full flex items-center gap-3 p-3 rounded-xl border font-sans text-left transition-all active:scale-[0.99]",
+                      isSelected
+                        ? "bg-primary-fixed-dim/10 border-primary-fixed-dim text-white shadow-[0_0_15px_rgba(0,218,243,0.15)]"
+                        : "bg-surface-container border-white/5 text-slate-350 hover:bg-white/5 hover:text-white"
+                    )}
                   >
-                    {selectedResources.length === getCourseResources(modalSelectedCourse).length ? 'Deselect All' : 'Select All'}
-                  </button>
-                )}
-              </div>
-
-              <div className="bg-slate-950/50 border border-white/5 rounded-xl p-3 max-h-48 overflow-y-auto space-y-2.5">
-                {getCourseResources(modalSelectedCourse).map((res) => {
-                  const isChecked = selectedResources.includes(res);
-                  return (
-                    <button
-                      key={res}
-                      type="button"
-                      onClick={() => {
-                        if (isChecked) {
-                          setSelectedResources(prev => prev.filter(r => r !== res));
-                        } else {
-                          setSelectedResources(prev => [...prev, res]);
-                        }
-                      }}
-                      className={clsx(
-                        "w-full flex items-center gap-3 p-2.5 rounded-lg border font-sans text-xs text-left transition-all",
-                        isChecked
-                          ? "bg-white/5 border-white/10 text-white"
-                          : "bg-transparent border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
-                      )}
-                    >
-                      <div className={clsx(
-                        "w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0",
-                        isChecked ? "bg-primary-fixed-dim border-primary-fixed-dim text-black" : "border-white/20 bg-white/5"
-                      )}>
-                        {isChecked && <Check className="w-3.5 h-3.5 font-bold" />}
+                    <div className={`p-2 rounded-lg ${info.bg}`}>
+                      <info.icon className={`w-4 h-4 ${info.color}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="block font-semibold text-sm truncate">{c.title}</span>
+                      <span className="block text-[10px] text-slate-500">{c.courseCode} • {c.instructor}</span>
+                    </div>
+                    {isSelected && (
+                      <div className="w-5 h-5 rounded-full bg-primary-fixed-dim flex items-center justify-center text-black">
+                        <Check className="w-3.5 h-3.5 font-bold" />
                       </div>
-                      <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                      <span className="truncate flex-1 font-medium">{res}</span>
-                    </button>
-                  );
-                })}
-              </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-              {selectedResources.length === 0 && (
-                <div className="flex items-center gap-1.5 text-xs text-rose-450 bg-rose-500/5 border border-rose-500/10 p-2.5 rounded-xl mt-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>Please select at least one learning material to launch the game.</span>
-                </div>
+          {/* Learning Materials Selector (Multiple Selection) */}
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-sans">
+                Learning Materials (Select Multiple)
+              </label>
+              {getCourseResources(modalSelectedCourse).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allRes = getCourseResources(modalSelectedCourse);
+                    if (selectedResources.length === allRes.length) {
+                      setSelectedResources([]);
+                    } else {
+                      setSelectedResources(allRes);
+                    }
+                  }}
+                  className="text-[10px] font-sans font-bold text-primary-fixed-dim hover:underline"
+                >
+                  {selectedResources.length === getCourseResources(modalSelectedCourse).length ? 'Deselect All' : 'Select All'}
+                </button>
               )}
             </div>
 
-            {/* Actions */}
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setIsBuildModalOpen(false)}
-                className="flex-1 py-3 rounded-xl border border-white/10 font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-all"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleBuildAndLaunchGame}
-                disabled={selectedResources.length === 0}
-                className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans font-bold text-sm hover:bg-primary-container transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-primary-fixed-dim/20"
-              >
-                Build & Launch Game
-              </button>
+            <div className="bg-slate-950/50 border border-white/5 rounded-xl p-3 max-h-48 overflow-y-auto space-y-2.5">
+              {getCourseResources(modalSelectedCourse).map((res) => {
+                const isChecked = selectedResources.includes(res);
+                return (
+                  <button
+                    key={res}
+                    type="button"
+                    onClick={() => {
+                      if (isChecked) {
+                        setSelectedResources(prev => prev.filter(r => r !== res));
+                      } else {
+                        setSelectedResources(prev => [...prev, res]);
+                      }
+                    }}
+                    className={clsx(
+                      "w-full flex items-center gap-3 p-2.5 rounded-lg border font-sans text-xs text-left transition-all",
+                      isChecked
+                        ? "bg-white/5 border-white/10 text-white"
+                        : "bg-transparent border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+                    )}
+                  >
+                    <div className={clsx(
+                      "w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0",
+                      isChecked ? "bg-primary-fixed-dim border-primary-fixed-dim text-black" : "border-white/20 bg-white/5"
+                    )}>
+                      {isChecked && <Check className="w-3.5 h-3.5 font-bold" />}
+                    </div>
+                    <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span className="truncate flex-1 font-medium">{res}</span>
+                  </button>
+                );
+              })}
             </div>
+
+            {selectedResources.length === 0 && (
+              <div className="flex items-center gap-1.5 text-xs text-rose-450 bg-rose-500/5 border border-rose-500/10 p-2.5 rounded-xl mt-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>Please select at least one learning material to launch the game.</span>
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsBuildModalOpen(false)}
+              className="flex-1 py-3 rounded-xl border border-white/10 font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleBuildAndLaunchGame}
+              disabled={selectedResources.length === 0}
+              className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans font-bold text-sm hover:bg-primary-container transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-primary-fixed-dim/20"
+            >
+              Build & Launch Game
+            </button>
           </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

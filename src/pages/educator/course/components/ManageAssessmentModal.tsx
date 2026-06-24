@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { X, Check, List, ToggleLeft, HelpCircle, Edit3, GitMerge, AlignLeft, PenTool, Plus, Trash2, Save, Sparkles } from 'lucide-react';
-import { createPortal } from 'react-dom';
+import { Check, List, ToggleLeft, HelpCircle, Edit3, GitMerge, AlignLeft, PenTool, Plus, Trash2, Save, Sparkles } from 'lucide-react';
+import Modal from '../../../../components/ui/Modal';
 import type { Question, QuestionType } from '../../../../data/mockEducatorData';
 import Dropdown from '../../../../components/ui/Dropdown';
 
@@ -149,24 +149,22 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
   };
 
   // Render
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 p-0 bg-background/80 backdrop-blur-sm">
-      <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-surface-container-high sm:rounded-2xl rounded-none border border-white/10 shadow-2xl overflow-hidden flex flex-col h-full sm:h-auto max-h-full sm:max-h-[90vh]">
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
-          <div>
-            <h2 className="font-display text-lg font-semibold text-white">Manage Questions</h2>
-            <p className="font-sans text-xs text-slate-400 mt-0.5 truncate max-w-xs">{assessmentTitle}</p>
-          </div>
-          <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <div className="flex flex-col gap-1 items-start">
+          <span className="font-display text-base sm:text-lg font-semibold text-white">Manage Questions</span>
+          <p className="font-sans text-xs text-slate-400 font-normal normal-case truncate max-w-xs">{assessmentTitle}</p>
         </div>
-
+      }
+      maxWidth="max-w-2xl"
+      noPadding={true}
+    >
+      <div className="flex flex-col max-h-[75vh] landscape:max-h-[60vh] sm:max-h-[80vh] md:max-h-[85vh]">
         {/* Scrollable body */}
-        <div ref={scrollRef} className="p-6 overflow-y-auto flex-1 no-scrollbar scroll-smooth relative">
+        <div ref={scrollRef} className="p-6 overflow-y-auto flex-1 no-scrollbar scroll-smooth relative min-h-0">
           <div className="space-y-4">
 
             {/* Sticky sub-header */}
@@ -181,6 +179,7 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                     </p>
                   </div>
                   <button
+                    type="button"
                     onClick={addQuestion}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim text-xs font-bold hover:bg-primary-fixed-dim/20 transition-all active:scale-95 shadow-lg shadow-primary-fixed-dim/5"
                   >
@@ -268,6 +267,7 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                           {q.options.map((opt, oi) => (
                             <div key={oi} className="flex items-center gap-2">
                               <button
+                                type="button"
                                 onClick={() => updateQ(q.id, { correct: oi })}
                                 className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${q.correct === oi ? 'border-emerald-400 bg-emerald-400' : 'border-white/20'
                                   }`}
@@ -337,17 +337,21 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                                 className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-sans outline-none focus:ring-1 focus:ring-primary-fixed-dim/40"
                               />
                               <button
+                                type="button"
                                 onClick={() => {
                                   const pairs = q.matchingPairs.filter((_, i) => i !== pi);
                                   updateQ(q.id, { matchingPairs: pairs });
                                 }}
-                                className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10"
+                                className="p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 hover:border-rose-500/20 transition-all shrink-0"
+                                title="Remove pair"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
+
                             </div>
                           ))}
                           <button
+                            type="button"
                             onClick={() => updateQ(q.id, { matchingPairs: [...q.matchingPairs, { left: '', right: '' }] })}
                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 text-slate-300 text-xs font-semibold hover:bg-white/10 transition-colors w-full justify-center mt-2"
                           >
@@ -368,6 +372,7 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                       {/* Done button */}
                       <div className="flex justify-end gap-2 pt-1">
                         <button
+                          type="button"
                           onClick={() => updateQ(q.id, { editing: false })}
                           className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary-fixed-dim text-on-primary-fixed hover:bg-primary-container transition-colors flex items-center gap-1"
                         >
@@ -414,22 +419,25 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                       </div>
 
                       {/* Hover-revealed edit + delete */}
-                      <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
+                      <div className="flex items-center gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
                         <button
+                          type="button"
                           onClick={() => updateQ(q.id, { editing: true })}
-                          className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                          className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all"
                           title="Edit"
                         >
-                          <Edit3 className="w-4 h-4" />
+                          <Edit3 className="w-3.5 h-3.5" />
                         </button>
                         <button
+                          type="button"
                           onClick={() => deleteQ(q.id)}
-                          className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                          className="p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 hover:border-rose-500/20 transition-all"
                           title="Delete"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
+
                     </div>
                   )}
                 </div>
@@ -439,8 +447,9 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
         </div>
 
         {/* Footer */}
-        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-t border-white/10 shrink-0">
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-t border-white/5 shrink-0 bg-surface-container-high">
           <button
+            type="button"
             onClick={onClose}
             className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors w-full sm:w-auto"
           >
@@ -448,12 +457,14 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
           </button>
           <div className="flex items-center justify-end gap-3 w-full sm:w-auto">
             <button
+              type="button"
               onClick={() => handleSave('draft')}
               className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-sans text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all"
             >
               <Save className="w-4 h-4" /> Save as Draft
             </button>
             <button
+              type="button"
               onClick={() => handleSave('ready')}
               className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all hover:opacity-90"
             >
@@ -462,7 +473,6 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
           </div>
         </div>
       </div>
-    </div>,
-    document.body
+    </Modal>
   );
 }

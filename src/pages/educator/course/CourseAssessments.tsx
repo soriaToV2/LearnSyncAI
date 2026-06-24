@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import {
   PlusCircle, Calendar, ListOrdered, Rocket, Clock, Shield,
   FileCheck, ChevronDown, BookOpen, ArrowRight, CheckCircle2,
-  XCircle, GraduationCap, Users, Grid,
+  XCircle, GraduationCap, Users, Grid, Plus,
 } from 'lucide-react';
 import CourseLayout from '../../../components/layout/CourseLayout';
 import {
@@ -16,6 +16,7 @@ import GradeStudentModal from './components/GradeStudentModal';
 import ManageAssessmentModal from './components/ManageAssessmentModal';
 import SubmissionsModal from './components/SubmissionsModal';
 import SeatingGridModal from './components/SeatingGridModal';
+import Modal from '../../../components/ui/Modal';
 
 const STATUS_CONFIG: Record<string, { label: string; dot: string; bg: string; text: string; border: string }> = {
   draft: { label: 'Draft', dot: 'bg-slate-400', bg: 'bg-surface-bright', text: 'text-slate-300', border: 'border-white/10' },
@@ -109,6 +110,10 @@ export default function CourseAssessments() {
   const [localAssessments, setLocalAssessments] = useState<Assessment[]>([...(course?.assessments || [])]);
   const refresh = () => setLocalAssessments([...(course?.assessments || [])]);
 
+  useEffect(() => {
+    setLocalAssessments([...(course?.assessments || [])]);
+  }, [courseId, course]);
+
   const filtered = localAssessments.filter(a => filter === 'all' || a.status === filter);
 
   // Toast
@@ -171,10 +176,13 @@ export default function CourseAssessments() {
 
       {/* Confirm dialog */}
       {confirmDialog && (
-        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="absolute inset-0" onClick={() => setConfirmDialog(null)} />
-          
-          <div className="glass-card relative w-full max-w-sm rounded-2xl border border-white/10 p-6 space-y-6 text-center animate-in zoom-in-95 duration-200">
+        <Modal
+          isOpen={!!confirmDialog}
+          onClose={() => setConfirmDialog(null)}
+          title="Change Status?"
+          maxWidth="max-w-sm"
+        >
+          <div className="space-y-6 text-center">
             {/* Status-specific Icon */}
             {(() => {
               const status = confirmDialog.newStatus;
@@ -207,12 +215,9 @@ export default function CourseAssessments() {
               );
             })()}
 
-            <div className="space-y-2">
-              <h4 className="font-display text-lg font-bold text-white tracking-tight">Change Status?</h4>
-              <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                Are you sure you want to update <span className="text-white font-semibold">"{confirmDialog.title}"</span> to <span className="text-white font-semibold uppercase tracking-wider">{STATUS_CONFIG[confirmDialog.newStatus].label}</span>?
-              </p>
-            </div>
+            <p className="font-sans text-xs text-slate-400 leading-relaxed">
+              Are you sure you want to update <span className="text-white font-semibold">"{confirmDialog.title}"</span> to <span className="text-white font-semibold uppercase tracking-wider">{STATUS_CONFIG[confirmDialog.newStatus].label}</span>?
+            </p>
 
             <div className="flex gap-3 justify-end pt-2">
               <button
@@ -225,13 +230,13 @@ export default function CourseAssessments() {
               <button
                 type="button"
                 onClick={executeStatusChange}
-                className="flex-1 px-4 py-2.5 bg-primary-fixed-dim hover:bg-primary-fixed-dim/80 text-on-primary-fixed font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-primary-fixed-dim/20"
+                className="flex-1 px-4 py-2.5 rounded-xl bg-primary-fixed-dim hover:bg-primary-fixed-dim/80 text-on-primary-fixed font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-primary-fixed-dim/20"
               >
                 Confirm
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Toolbar */}
@@ -247,8 +252,8 @@ export default function CourseAssessments() {
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <button onClick={() => setShowCreate(true)}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-primary-container text-on-primary-container rounded-lg font-display text-sm font-semibold hover:bg-primary-fixed transition-all active:scale-95">
-            <PlusCircle className="w-4 h-4" /> Create Assessment
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-display text-sm font-semibold hover:bg-primary-container transition-all active:scale-95">
+            <Plus className="w-4 h-4" /> Create Assessment
           </button>
         </div>
       </div>
