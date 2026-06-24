@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   BrainCircuit, Sparkles, TrendingUp, Award, Users, ChevronDown,
-  BookOpen, FileText, PlayCircle, File, FileArchive, Search, UserMinus
+  BookOpen, FileText, PlayCircle, File, FileArchive, Search, UserMinus, Loader2
 } from 'lucide-react';
 import CourseLayout from '../../../components/layout/CourseLayout';
-import { getCourseById } from '../../../data/mockEducatorData';
+import { api } from '../../../lib/api';
 import clsx from 'clsx';
 
 // BKT generator
@@ -24,10 +24,62 @@ const getDocIcon = (name: string) => {
   return { icon: FileArchive, color: 'text-slate-400', bg: 'bg-white/5' };
 };
 
+const COURSE_COLORS = ['#00DAF3', '#818CF8', '#34D399', '#F59E0B', '#F472B6', '#A78BFA'];
+function getCourseColor(id: string) {
+  const hash = id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return COURSE_COLORS[hash % COURSE_COLORS.length];
+}
+
 export default function CourseMastery() {
   const { courseId } = useParams();
-  const course = getCourseById(courseId || '');
+  
+  const [course, setCourse] = useState<any>(null);
+  const [resources, setResources] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  
   const [viewFilter, setViewFilter] = useState<'all' | 'highest-lowest' | 'overall-only'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const [localStudents, setLocalStudents] = useState<any[]>([
+    { id: 's1', name: 'Sarah Jenkins', email: 'sarah.j@mit.edu', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150' },
+    { id: 's2', name: 'Marcus Thorne', email: 'marcus.t@mit.edu', avatar: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?auto=format&fit=crop&q=80&w=150' },
+    { id: 's4', name: 'Aisha Patel', email: 'aisha.p@mit.edu', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150' }
+  ]);
+
+  useEffect(() => {
+    async function loadData() {
+      if (!courseId) return;
+      try {
+        const [cRes, mRes] = await Promise.all([
+          api.get(`/courses/${courseId}`),
+          api.get(`/materials/course/${courseId}`)
+        ]);
+        setCourse(cRes.data);
+        const formattedResources = (mRes.data || []).map((m: any) => ({
+          id: m.id,
+          name: m.title || m.name,
+          type: m.title?.split('.').pop() || 'document',
+        }));
+        setResources(formattedResources);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadData();
+  }, [courseId]);
+
+  if (isLoading) {
+    return (
+      <CourseLayout>
+        <div className="flex items-center justify-center py-24 gap-3 text-slate-400">
+          <Loader2 className="w-6 h-6 animate-spin" />
+          <span className="font-sans text-sm">Loading mastery data...</span>
+        </div>
+      </CourseLayout>
+    );
+  }
 
   if (!course) {
     return (
@@ -37,25 +89,14 @@ export default function CourseMastery() {
     );
   }
 
-  const [localStudents, setLocalStudents] = useState<any[]>([...(course.students || [])]);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  useEffect(() => {
-    const handleUpdate = () => {
-      setLocalStudents([...(course.students || [])]);
-    };
-    window.addEventListener('learnSyncAI_courseUpdated', handleUpdate);
-    return () => {
-      window.removeEventListener('learnSyncAI_courseUpdated', handleUpdate);
-    };
-  }, [course]);
-
   const filteredStudents = localStudents.filter(s =>
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const { resources = [], title: courseTitle, color: courseColor } = course;
+  const courseTitle = course.course_title;
+  const courseColor = getCourseColor(course.id);
+  const courseCode = course.course_code || 'COURSE';
 
   // Calculate statistics
   let classSubjectMastery = 0;
@@ -114,7 +155,7 @@ export default function CourseMastery() {
           {/* Course badge */}
           <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 font-sans text-xs font-semibold text-slate-300 shrink-0">
             <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: courseColor }} />
-            <span>{course.courseCode} · {courseTitle}</span>
+            <span>{courseCode} · {courseTitle}</span>
           </div>
         </div>
 

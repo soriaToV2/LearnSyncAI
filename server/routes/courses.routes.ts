@@ -161,8 +161,49 @@ router.delete('/:id', requireRole('instructor'), async (req: Request, res: Respo
 // ── Enrollment ────────────────────────────────────────────
 
 /**
- * POST /api/courses/:id/join
+ * POST /api/courses/join
  * Student joins a course using a join_code. Students only.
+ */
+router.post('/join', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
+  const parsed = JoinCourseSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+    return;
+  }
+
+  const { data: course, error: courseError } = await supabaseAdmin
+    .from('courses')
+    .select('id')
+    .eq('join_code', parsed.data.join_code)
+    .single();
+
+  if (courseError || !course) {
+    res.status(404).json({ error: 'Invalid join code or course not found' });
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('enrollments')
+    .insert({ course_id: course.id, student_id: req.user!.id })
+    .select()
+    .single();
+
+  if (error) {
+    // Unique constraint violation = already enrolled
+    if (error.code === '23505') {
+      res.status(409).json({ error: 'Already enrolled in this course' });
+    } else {
+      res.status(500).json({ error: 'Enrollment failed', message: error.message });
+    }
+    return;
+  }
+
+  res.status(201).json({ data: course, message: 'Enrolled successfully' });
+});
+
+/**
+ * POST /api/courses/:id/join
+ * Student joins a course using both id and join_code.
  */
 router.post('/:id/join', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = JoinCourseSchema.safeParse(req.body);
@@ -274,6 +315,62 @@ router.post(
     // notifications for all enrolled students — no additional code needed here.
 
     res.status(201).json({ data, message: 'Announcement posted' });
+  }
+);
+
+/**
+ * PUT /api/courses/:id/announcements/:announcementId
+ * Updates an announcement. Instructors only.
+ */
+router.put(
+  '/:id/announcements/:announcementId',
+  requireRole('instructor'),
+  async (req: Request, res: Response): Promise<void> => {
+    const { title, description } = req.body;
+    if (!title || !description) {
+      res.status(400).json({ error: 'Title and description are required' });
+      return;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('course_announcements')
+      .update({ title, description })
+      .eq('id', req.params.announcementId)
+      .eq('course_id', req.params.id)
+      .eq('instructor_id', req.user!.id)
+      .select()
+      .single();
+
+    if (error || !data) {
+      res.status(404).json({ error: 'Announcement not found or unauthorized', message: error?.message });
+      return;
+    }
+
+    res.json({ data, message: 'Announcement updated' });
+  }
+);
+
+/**
+ * DELETE /api/courses/:id/announcements/:announcementId
+ * Deletes an announcement. Instructors only.
+ */
+router.delete(
+  '/:id/announcements/:announcementId',
+  requireRole('instructor'),
+  async (req: Request, res: Response): Promise<void> => {
+    const { error } = await supabaseAdmin
+      .from('course_announcements')
+      .delete()
+      .eq('id', req.params.announcementId)
+      .eq('course_id', req.params.id)
+      .eq('instructor_id', req.user!.id);
+
+    if (error) {
+      res.status(500).json({ error: 'Failed to delete announcement', message: error.message });
+      return;
+    }
+
+    res.json({ message: 'Announcement deleted' });
   }
 );
 

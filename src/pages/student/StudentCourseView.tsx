@@ -5,22 +5,32 @@ import { useParams, Link } from 'react-router-dom';
 import { Bell, ChevronRight, CheckCircle2, Box, PlayCircle, FileText, ArrowRight, Megaphone, Clock, Star, X, ClipboardList, HelpCircle, Award, AlertCircle, Lock, ShieldAlert, Timer, Check, Activity, Sparkles, LayoutGrid } from 'lucide-react';
 import clsx from 'clsx';
 import { MOCK_COURSES } from '../../data/mockCourses';
+import { api } from '../../lib/api';
 
 interface Resource {
   id: string;
   type: 'pdf' | 'video' | 'ar';
   title: string;
   meta: string;
+  storage_path?: string;
   hasReviewed?: boolean;
   userRating?: number;
   userComment?: string;
 }
 
-const INITIAL_RESOURCES: Resource[] = [
-  { id: '1', type: 'pdf', title: 'Synaptic Pathways Ch.4', meta: '2.4 MB • Required Reading' },
-  { id: '2', type: 'video', title: 'Lecture: Neuroplasticity', meta: '45 mins • Video Lecture' },
-  { id: '3', type: 'ar', title: 'Human Brain Model', meta: '.gltf Interactive' },
-];
+interface BackendAnnouncement {
+  id: string;
+  title: string;
+  description: string;
+  created_at: string;
+}
+
+const formatDate = (dateString?: string) => {
+  if (!dateString) return 'Just now';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return dateString;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
 
 interface QuizQuestion {
   id: number;
@@ -837,11 +847,44 @@ function ResourceCard({ resource, onReview }: { key?: React.Key; resource: Resou
 export default function StudentCourseView() {
   const { courseId } = useParams();
   const [activeTab, setActiveTab] = useState<'resources' | 'quizzes' | 'announcements'>('resources');
-  const [resources, setResources] = useState<Resource[]>(INITIAL_RESOURCES);
+  
+  const [resources, setResources] = useState<Resource[]>([]);
+  const [announcements, setAnnouncements] = useState<BackendAnnouncement[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
   const [reviewingResource, setReviewingResource] = useState<Resource | null>(null);
   const [assessments, setAssessments] = useState<Assessment[]>(INITIAL_ASSESSMENTS);
   const [takingQuiz, setTakingQuiz] = useState<Assessment | null>(null);
   const [viewingResults, setViewingResults] = useState<Assessment | null>(null);
+
+  useEffect(() => {
+    async function fetchCourseData() {
+      if (!courseId) return;
+      setIsLoading(true);
+      try {
+        const [materialsRes, announcementsRes] = await Promise.all([
+          api.get<any[]>(`/materials/course/${courseId}`),
+          api.get<BackendAnnouncement[]>(`/courses/${courseId}/announcements`)
+        ]);
+
+        const materialsData = materialsRes.data || [];
+        setResources(materialsData.map(m => ({
+          id: m.id,
+          title: m.title,
+          type: m.storage_path?.toLowerCase().endsWith('.mp4') ? 'video' : 'pdf',
+          meta: `Added ${formatDate(m.created_at)}`,
+          storage_path: m.storage_path
+        })));
+
+        setAnnouncements(announcementsRes.data || []);
+      } catch (error) {
+        console.error("Failed to load course data", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchCourseData();
+  }, [courseId]);
 
   const handleReviewSubmit = (id: string, rating: number, comment: string) => {
     setResources(prev =>
@@ -981,13 +1024,19 @@ export default function StudentCourseView() {
         {/* Tab Content */}
         {activeTab === 'resources' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {resources.map(resource => (
-              <ResourceCard
-                key={resource.id}
-                resource={resource}
-                onReview={() => setReviewingResource(resource)}
-              />
-            ))}
+            {isLoading ? (
+              <p className="text-slate-400 font-sans col-span-full">Loading resources...</p>
+            ) : resources.length > 0 ? (
+              resources.map(resource => (
+                <ResourceCard
+                  key={resource.id}
+                  resource={resource}
+                  onReview={() => setReviewingResource(resource)}
+                />
+              ))
+            ) : (
+              <p className="text-slate-400 font-sans col-span-full border border-dashed border-white/10 rounded-2xl p-8 text-center bg-surface-container/10">No learning resources uploaded yet.</p>
+            )}
           </div>
         )}
 
@@ -1070,47 +1119,32 @@ export default function StudentCourseView() {
 
         {activeTab === 'announcements' && (
           <div className="space-y-6 max-w-3xl">
-            <article className="glass-card rounded-xl p-6 relative overflow-hidden border border-white/5 hover:border-white/10 transition-colors">
-              <div className="flex gap-4">
-                <div className="w-12 h-12 rounded-full bg-primary-fixed-dim/20 flex items-center justify-center shrink-0">
-                  <Megaphone className="w-6 h-6 text-primary-fixed-dim" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-3 mb-1">
-                    <h3 className="font-display text-lg font-semibold text-on-surface">Midterm Exam Details</h3>
-                    <span className="flex items-center gap-1 text-[11px] text-slate-400 font-sans">
-                      <Clock className="w-3 h-3" /> 2 days ago
-                    </span>
+            {isLoading ? (
+              <p className="text-slate-400 font-sans">Loading announcements...</p>
+            ) : announcements.length > 0 ? (
+              announcements.map((announcement) => (
+                <article key={announcement.id} className="glass-card rounded-xl p-6 relative overflow-hidden border border-white/5 hover:border-white/10 transition-colors">
+                  <div className="flex gap-4">
+                    <div className="w-12 h-12 rounded-full bg-primary-fixed-dim/20 flex items-center justify-center shrink-0">
+                      <Megaphone className="w-6 h-6 text-primary-fixed-dim" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-3 mb-1">
+                        <h3 className="font-display text-lg font-semibold text-on-surface">{announcement.title}</h3>
+                        <span className="flex items-center gap-1 text-[11px] text-slate-400 font-sans">
+                          <Clock className="w-3 h-3" /> {formatDate(announcement.created_at)}
+                        </span>
+                      </div>
+                      <p className="font-sans text-sm text-on-surface-variant leading-relaxed whitespace-pre-wrap">
+                        {announcement.description}
+                      </p>
+                    </div>
                   </div>
-                  <p className="font-sans text-sm text-on-surface-variant leading-relaxed">
-                    Hello class, just a reminder that our midterm exam is scheduled for next Tuesday. Please ensure you have reviewed chapters 1 through 4. Good luck!
-                  </p>
-                </div>
-              </div>
-            </article>
-
-            <article className="glass-card rounded-xl p-6 relative overflow-hidden border border-white/5 hover:border-white/10 transition-colors">
-              <div className="flex gap-4">
-                <div className="w-12 h-12 rounded-full bg-surface-variant flex items-center justify-center shrink-0">
-                  <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=150" alt="Educator" className="w-full h-full object-cover rounded-full" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-3 mb-1">
-                    <h3 className="font-display text-lg font-semibold text-on-surface">New Reading Material Uploaded</h3>
-                    <span className="flex items-center gap-1 text-[11px] text-slate-400 font-sans">
-                      <Clock className="w-3 h-3" /> Last week
-                    </span>
-                  </div>
-                  <p className="font-sans text-sm text-on-surface-variant leading-relaxed mb-3">
-                    I've uploaded the new interactive AR model for the human brain. Please take a look at it before our next lecture as we will be using it for our discussion on neuroplasticity.
-                  </p>
-                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-container-high border border-white/5 text-sm font-sans text-on-surface cursor-pointer hover:bg-white/5 transition-colors">
-                    <Box className="w-4 h-4 text-primary-fixed-dim" />
-                    Human Brain Model.gltf
-                  </div>
-                </div>
-              </div>
-            </article>
+                </article>
+              ))
+            ) : (
+              <p className="text-slate-400 font-sans border border-dashed border-white/10 rounded-2xl p-8 text-center bg-surface-container/10">No announcements posted yet.</p>
+            )}
           </div>
         )}
       </main>

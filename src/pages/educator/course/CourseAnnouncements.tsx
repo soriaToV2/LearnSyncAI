@@ -1,42 +1,37 @@
-import React, { useState } from 'react';
-import { Megaphone, Send, Clock, Trash2, Edit2, CheckCircle2, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Megaphone, Send, Clock, Trash2, Edit2, CheckCircle2, X, Loader2, AlertCircle } from 'lucide-react';
 import CourseLayout from '../../../components/layout/CourseLayout';
 import { useParams } from 'react-router-dom';
+import { api } from '../../../lib/api';
 
 interface Announcement {
   id: string;
   title: string;
-  content: string;
-  timestamp: string;
-  seenCount: number;
+  description: string;
+  created_at: string;
+  seenCount?: number;
 }
 
-const initialAnnouncements: Announcement[] = [
-  {
-    id: '1',
-    title: 'Midterm Exam Details',
-    content: 'Hello class, just a reminder that our midterm exam is scheduled for next Tuesday. Please ensure you have reviewed chapters 1 through 4. The exam will utilize Lockdown Mode, so make sure your system is ready.',
-    timestamp: '2 days ago',
-    seenCount: 42
-  },
-  {
-    id: '2',
-    title: 'New Reading Material Uploaded',
-    content: "I've uploaded the new interactive AR model for the human brain. Please take a look at it before our next lecture as we will be using it for our discussion on neuroplasticity.",
-    timestamp: 'Last week',
-    seenCount: 115
-  }
-];
+const formatDate = (dateString?: string) => {
+  if (!dateString) return 'Just now';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return dateString;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
 
 export default function CourseAnnouncements() {
   const { courseId } = useParams();
-  const [announcements, setAnnouncements] = useState<Announcement[]>(initialAnnouncements);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const [editContent, setEditContent] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -45,42 +40,78 @@ export default function CourseAnnouncements() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const handlePost = () => {
+  useEffect(() => {
+    async function fetchAnnouncements() {
+      if (!courseId) return;
+      try {
+        const res = await api.get<{ data: Announcement[] }>(`/courses/${courseId}/announcements`);
+        setAnnouncements(res.data?.data || res.data || []);
+      } catch (err: any) {
+        setError(err.message || 'Failed to load announcements.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchAnnouncements();
+  }, [courseId]);
+
+  const handlePost = async () => {
     if (content.trim() && title.trim()) {
-      const newAnnouncement: Announcement = {
-        id: Date.now().toString(),
-        title: title.trim(),
-        content: content.trim(),
-        timestamp: 'Just now',
-        seenCount: 0
-      };
-      setAnnouncements([newAnnouncement, ...announcements]);
-      setContent('');
-      setTitle('');
-      showToast("Announcement posted successfully!");
+      setIsSubmitting(true);
+      try {
+        const res = await api.post<{ data: Announcement }>(`/courses/${courseId}/announcements`, {
+          title: title.trim(),
+          description: content.trim()
+        });
+        const newAnnouncement = res.data?.data || res.data;
+        setAnnouncements([newAnnouncement, ...announcements]);
+        setContent('');
+        setTitle('');
+        showToast("Announcement posted successfully!");
+      } catch (err: any) {
+        alert(err.message || "Failed to post announcement");
+      } finally {
+        setIsSubmitting(false);
+      }
     }
   };
 
-  const handleDelete = (id: string) => {
-    setAnnouncements(announcements.filter(a => a.id !== id));
-    showToast("Announcement deleted.");
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this announcement?")) return;
+    try {
+      await api.delete(`/courses/${courseId}/announcements/${id}`);
+      setAnnouncements(announcements.filter(a => a.id !== id));
+      showToast("Announcement deleted.");
+    } catch (err: any) {
+      alert(err.message || "Failed to delete announcement");
+    }
   };
 
   const startEditing = (announcement: Announcement) => {
     setEditingId(announcement.id);
     setEditTitle(announcement.title);
-    setEditContent(announcement.content);
+    setEditDescription(announcement.description);
   };
 
-  const saveEdit = () => {
-    if (editTitle.trim() && editContent.trim()) {
-      setAnnouncements(announcements.map(a =>
-        a.id === editingId
-          ? { ...a, title: editTitle.trim(), content: editContent.trim() }
-          : a
-      ));
-      setEditingId(null);
-      showToast("Announcement updated.");
+  const saveEdit = async () => {
+    if (editTitle.trim() && editDescription.trim()) {
+      setIsSubmitting(true);
+      try {
+        const res = await api.put<{ data: Announcement }>(`/courses/${courseId}/announcements/${editingId}`, {
+          title: editTitle.trim(),
+          description: editDescription.trim()
+        });
+        const updatedAnnouncement = res.data?.data || res.data;
+        setAnnouncements(announcements.map(a =>
+          a.id === editingId ? updatedAnnouncement : a
+        ));
+        setEditingId(null);
+        showToast("Announcement updated.");
+      } catch (err: any) {
+        alert(err.message || "Failed to update announcement");
+      } finally {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -119,17 +150,31 @@ export default function CourseAnnouncements() {
           <div className="flex justify-end">
             <button
               onClick={handlePost}
-              disabled={!title.trim() || !content.trim()}
+              disabled={!title.trim() || !content.trim() || isSubmitting}
               className="px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-lg font-display text-sm font-semibold hover:bg-primary-container transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
             >
-              <Send className="w-4 h-4" /> Post Now
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Post Now
             </button>
           </div>
         </div>
 
         <h3 className="font-display text-xl font-semibold text-on-surface mb-4">Recent Announcements</h3>
 
-        {announcements.map((announcement) => (
+        {isLoading && (
+          <div className="flex items-center justify-center py-12 gap-3 text-slate-400">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span className="font-sans text-sm">Loading announcements...</span>
+          </div>
+        )}
+
+        {!isLoading && error && (
+          <div className="flex items-center gap-3 p-5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <p className="font-sans text-sm">{error}</p>
+          </div>
+        )}
+
+        {!isLoading && !error && announcements.map((announcement) => (
           <article key={announcement.id} className="glass-card rounded-xl p-6 relative overflow-hidden border border-white/5 hover:border-white/10 transition-colors group">
             {editingId === announcement.id ? (
               <div className="space-y-4">
@@ -140,16 +185,16 @@ export default function CourseAnnouncements() {
                   className="w-full bg-surface-container-high border border-white/10 rounded-lg px-3 py-2 text-on-surface font-display text-md outline-none focus:border-primary-fixed-dim/50"
                 />
                 <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
                   className="w-full bg-surface-container-high border border-white/10 rounded-lg p-3 text-on-surface font-sans text-sm outline-none focus:border-primary-fixed-dim/50 min-h-[100px] resize-y"
                 />
                 <div className="flex justify-end gap-2">
                   <button onClick={cancelEdit} className="px-4 py-2 rounded-lg text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors flex items-center gap-2">
                     <X className="w-4 h-4" /> Cancel
                   </button>
-                  <button onClick={saveEdit} className="px-4 py-2 rounded-lg text-sm font-semibold bg-primary-fixed-dim text-on-primary-fixed hover:bg-primary-container transition-colors flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4" /> Save
+                  <button onClick={saveEdit} disabled={isSubmitting} className="px-4 py-2 rounded-lg text-sm font-semibold bg-primary-fixed-dim text-on-primary-fixed hover:bg-primary-container transition-colors flex items-center gap-2 disabled:opacity-50">
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Save
                   </button>
                 </div>
               </div>
@@ -172,14 +217,14 @@ export default function CourseAnnouncements() {
                     <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 mb-2">
                       <h3 className="font-display text-base sm:text-lg font-semibold text-on-surface leading-snug">{announcement.title}</h3>
                       <span className="flex items-center gap-1 text-[11px] text-slate-400 font-sans shrink-0">
-                        <Clock className="w-3 h-3" /> {announcement.timestamp}
+                        <Clock className="w-3 h-3" /> {formatDate(announcement.created_at)}
                       </span>
                     </div>
                     <p className="font-sans text-sm text-on-surface-variant leading-relaxed mb-3 whitespace-pre-wrap">
-                      {announcement.content}
+                      {announcement.description}
                     </p>
                     <div className="flex items-center gap-2 text-xs text-slate-400 font-sans">
-                      <span>Seen by {announcement.seenCount} students</span>
+                      <span>Seen by {announcement.seenCount || 0} students</span>
                     </div>
                   </div>
                 </div>
@@ -188,7 +233,7 @@ export default function CourseAnnouncements() {
           </article>
         ))}
 
-        {announcements.length === 0 && (
+        {!isLoading && !error && announcements.length === 0 && (
           <div className="text-center py-12 border-2 border-dashed border-white/10 rounded-2xl">
             <p className="text-slate-400 font-sans">No announcements posted yet.</p>
           </div>

@@ -1,9 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Key, X, Sparkles, GraduationCap } from 'lucide-react';
-import { MOCK_COURSES, Course } from '../../data/mockCourses';
+import { ArrowRight, Key, X, Sparkles, GraduationCap, Loader2, AlertCircle } from 'lucide-react';
+import { api } from '../../lib/api';
 
-function CourseCard({ course, onEnroll }: { key?: React.Key; course: Course; onEnroll: (id: string) => void }) {
+export interface CourseData {
+  id: string;
+  courseCode?: string;
+  section?: string;
+  title: string;
+  instructor: string;
+  isEnrolled: boolean;
+  accentColor: string;
+}
+
+interface BackendCourse {
+  id: string;
+  course_code?: string;
+  section?: string;
+  course_title?: string;
+  title?: string;
+  profiles?: { first_name: string; last_name: string };
+}
+
+function CourseCard({ course, onEnroll }: { key?: React.Key; course: CourseData; onEnroll?: (id: string) => void }) {
   const navigate = useNavigate();
 
   const colorMap: Record<string, string> = {
@@ -26,8 +45,9 @@ function CourseCard({ course, onEnroll }: { key?: React.Key; course: Course; onE
   const handleClick = () => {
     if (course.isEnrolled) {
       navigate(`/student/course/${course.id}`);
-    } else {
-      onEnroll(course.id);
+      if (onEnroll) {
+        onEnroll(course.id);
+      }
       navigate(`/student/course/${course.id}`);
     }
   };
@@ -82,19 +102,41 @@ export default function CourseCatalog() {
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState('');
-  const [courses, setCourses] = useState<Course[]>(MOCK_COURSES);
+  const [courses, setCourses] = useState<CourseData[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isJoining, setIsJoining] = useState(false);
 
-  const handleEnroll = (id: string) => {
-    const globalMatch = MOCK_COURSES.find(c => c.id === id);
-    if (globalMatch) {
-      globalMatch.isEnrolled = true;
+  const fetchCourses = async () => {
+    setIsLoading(true);
+    try {
+      const res = await api.get<BackendCourse[]>('/courses');
+      const coursesData = res.data || [];
+      const mapped = coursesData.map((c: BackendCourse, index: number) => {
+        const colors = ['primary-fixed-dim', 'indigo-400', 'emerald-400', 'violet-400', 'amber-400', 'rose-400', 'lime-400', 'sky-400', 'teal-400', 'cyan-400', 'pink-400', 'orange-400'];
+        return {
+          id: c.id,
+          courseCode: c.course_code,
+          section: c.section,
+          title: c.course_title || c.title || 'Untitled Course',
+          instructor: c.profiles ? `${c.profiles.first_name} ${c.profiles.last_name}` : 'Unknown Instructor',
+          isEnrolled: true,
+          accentColor: colors[index % colors.length]
+        };
+      });
+      setCourses(mapped);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load enrolled courses.');
+    } finally {
+      setIsLoading(false);
     }
-    setCourses((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, isEnrolled: true } : c))
-    );
   };
 
-  const enrolledCourses = courses.filter((c) => c.isEnrolled);
+  useEffect(() => {
+    fetchCourses();
+  }, []);
+
+  const enrolledCourses = courses;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -133,15 +175,25 @@ export default function CourseCatalog() {
             <GraduationCap className="w-6 h-6 text-primary-fixed-dim" />
             Enrolled
           </h2>
-          {enrolledCourses.length > 0 ? (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-slate-400 bg-surface-container/10 border border-white/5 rounded-2xl">
+              <Loader2 className="w-6 h-6 animate-spin" />
+              <span className="font-sans text-sm">Loading your classes...</span>
+            </div>
+          ) : error ? (
+            <div className="flex items-center gap-3 p-5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <p className="font-sans text-sm">{error}</p>
+            </div>
+          ) : enrolledCourses.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {enrolledCourses.map((course) => (
-                <CourseCard key={course.id} course={course} onEnroll={handleEnroll} />
+                <CourseCard key={course.id} course={course} />
               ))}
             </div>
           ) : (
             <div className="py-12 text-center text-slate-500 font-sans border border-dashed border-white/10 rounded-2xl bg-surface-container/10">
-              You are not enrolled in any classes yet. Join a class or enroll below.
+              You are not enrolled in any classes yet. Click "Join Class" above to enter a class code.
             </div>
           )}
         </div>
@@ -197,7 +249,7 @@ export default function CourseCatalog() {
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   const rawInput = joinCode.trim();
                   let cleanedCode = rawInput;
 
@@ -215,24 +267,34 @@ export default function CourseCatalog() {
                   if (cleanedCode.length < 3) {
                     setJoinError('Please enter a valid class code or link.');
                   } else {
-                    // Find matching course
-                    const match = courses.find(
-                      (c) => c.id.toUpperCase() === cleanedCode ||
-                        c.id.replace(/-/g, '').toUpperCase() === cleanedCode.replace(/-/g, '')
-                    );
-                    if (match) {
-                      handleEnroll(match.id);
+                    setIsJoining(true);
+                    setJoinError('');
+                    try {
+                      const res = await api.post<{ data: { id: string } }>('/courses/join', { join_code: cleanedCode });
+                      const newCourseId = res.data?.data?.id;
                       setShowJoinModal(false);
                       setJoinCode('');
-                      navigate(`/student/course/${match.id}`);
-                    } else {
-                      setJoinError('Class not found. Please verify the link or code with your educator.');
+                      fetchCourses(); // refresh the list
+                      if (newCourseId) {
+                        navigate(`/student/course/${newCourseId}`);
+                      }
+                    } catch (err: any) {
+                      if (err.response?.status === 409) {
+                        setJoinError('You are already enrolled in this class.');
+                      } else if (err.response?.status === 404) {
+                        setJoinError('Class not found. Please verify the code with your educator.');
+                      } else {
+                        setJoinError(err.message || 'Failed to join class. Please try again.');
+                      }
+                    } finally {
+                      setIsJoining(false);
                     }
                   }
                 }}
-                className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-display font-semibold text-sm hover:bg-primary-container transition-all active:scale-95"
+                disabled={isJoining}
+                className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-display font-semibold text-sm hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                Join
+                {isJoining && <Loader2 className="w-4 h-4 animate-spin" />} Join
               </button>
             </div>
           </div>
