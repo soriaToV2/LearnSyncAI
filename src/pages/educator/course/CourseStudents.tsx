@@ -1,27 +1,70 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { UserMinus, Search } from 'lucide-react';
+import { UserMinus, Search, Loader2 } from 'lucide-react';
 import CourseLayout from '../../../components/layout/CourseLayout';
-import { getCourseById, type EnrolledStudent } from '../../../data/mockEducatorData';
+import { api } from '../../../lib/api';
+
+export interface EnrolledStudent {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  joinedAt: string;
+}
 
 export default function CourseStudents() {
   const { courseId } = useParams();
-  const course = getCourseById(courseId || '');
-  const [localStudents, setLocalStudents] = useState<EnrolledStudent[]>([...(course?.students || [])]);
+  const [localStudents, setLocalStudents] = useState<EnrolledStudent[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [studentToKick, setStudentToKick] = useState<EnrolledStudent | null>(null);
 
-  const confirmKick = () => {
-    if (!studentToKick) return;
-    const studentId = studentToKick.id;
-    if (course) {
-      course.students = course.students.filter(s => s.id !== studentId);
-      course.studentCount = course.students.length;
+  useEffect(() => {
+    async function fetchStudents() {
+      if (!courseId) return;
+      setIsLoading(true);
+      try {
+        const res = await api.get<{ data: any[] }>(`/courses/${courseId}/students`);
+        const data = res.data?.data || res.data || [];
+        
+        const mapped = data.map((enrollment: any) => {
+          const p = enrollment.profiles;
+          return {
+            id: p?.id || 'unknown',
+            name: p ? `${p.first_name} ${p.last_name}` : 'Unknown Student',
+            email: 'student@example.com', // Profiles doesn't expose email by default
+            joinedAt: new Date(enrollment.enrolled_at || Date.now()).toLocaleDateString(),
+          };
+        });
+        setLocalStudents(mapped);
+      } catch (error) {
+        console.error("Failed to load students:", error);
+      } finally {
+        setIsLoading(false);
+      }
     }
-    setLocalStudents(prev => prev.filter(s => s.id !== studentId));
-    showToast(`${studentToKick.name} has been kicked from the course.`);
-    window.dispatchEvent(new CustomEvent('learnSyncAI_courseUpdated'));
-    setStudentToKick(null);
+    fetchStudents();
+  }, [courseId]);
+
+  const [isKicking, setIsKicking] = useState(false);
+
+  const confirmKick = async () => {
+    if (!studentToKick || !courseId) return;
+    const studentId = studentToKick.id;
+    
+    setIsKicking(true);
+    try {
+      await api.delete(`/courses/${courseId}/students/${studentId}`);
+      // Optimistic UI update
+      setLocalStudents(prev => prev.filter(s => s.id !== studentId));
+      showToast(`${studentToKick.name} has been kicked from the course.`);
+      setStudentToKick(null);
+    } catch (error: any) {
+      console.error("Failed to kick student:", error);
+      showToast(`Failed to kick student: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsKicking(false);
+    }
   };
 
   const filteredStudents = localStudents.filter(s =>
@@ -53,39 +96,45 @@ export default function CourseStudents() {
 
         {/* Student Rows */}
         <div className="space-y-3">
-          {filteredStudents.map(s => {
-            return (
-              <div key={s.id} className="rounded-xl glass-card border border-white/5 hover:border-white/10 bg-white/[0.01] transition-all overflow-hidden animate-in fade-in duration-200">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4.5 gap-4">
-                  <div className="flex items-center gap-4">
-                    {s.avatar ? (
-                      <img src={s.avatar} alt={s.name} className="w-12 h-12 rounded-full object-cover border-2 border-white/5 shrink-0" />
-                    ) : (
-                      <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-slate-300 font-display text-lg font-semibold border-2 border-white/5 shrink-0">
-                        {s.name.split(' ').map(n => n[0]).join('')}
+          {isLoading ? (
+            <div className="flex justify-center items-center py-10 text-slate-400">
+              <Loader2 className="w-6 h-6 animate-spin" />
+            </div>
+          ) : (
+            filteredStudents.map(s => {
+              return (
+                <div key={s.id} className="rounded-xl glass-card border border-white/5 hover:border-white/10 bg-white/[0.01] transition-all overflow-hidden animate-in fade-in duration-200">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4.5 gap-4">
+                    <div className="flex items-center gap-4">
+                      {s.avatar ? (
+                        <img src={s.avatar} alt={s.name} className="w-12 h-12 rounded-full object-cover border-2 border-white/5 shrink-0" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-slate-300 font-display text-lg font-semibold border-2 border-white/5 shrink-0 uppercase">
+                          {s.name.split(' ').slice(0, 2).map(n => n[0]).join('')}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <h3 className="font-display text-base text-white font-semibold truncate">{s.name}</h3>
+                        <p className="font-sans text-xs text-slate-400 mt-0.5 truncate">Joined {s.joinedAt}</p>
                       </div>
-                    )}
-                    <div className="min-w-0">
-                      <h3 className="font-display text-base text-white font-semibold truncate">{s.name}</h3>
-                      <p className="font-sans text-xs text-slate-400 mt-0.5 truncate">{s.email} · Joined {s.joinedAt}</p>
+                    </div>
+
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      <button
+                        onClick={() => setStudentToKick(s)}
+                        className="w-full sm:w-auto px-4.5 py-2.5 rounded-xl border border-rose-500/20 hover:border-rose-500/40 text-rose-400 hover:bg-rose-500/10 active:scale-[0.98] transition-all font-sans text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider"
+                      >
+                        <UserMinus className="w-3.5 h-3.5" /> Kick Student
+                      </button>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-3 w-full sm:w-auto">
-                    <button
-                      onClick={() => setStudentToKick(s)}
-                      className="w-full sm:w-auto px-4.5 py-2.5 rounded-xl border border-rose-500/20 hover:border-rose-500/40 text-rose-400 hover:bg-rose-500/10 active:scale-[0.98] transition-all font-sans text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider"
-                    >
-                      <UserMinus className="w-3.5 h-3.5" /> Kick Student
-                    </button>
-                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
 
-        {filteredStudents.length === 0 && (
+        {!isLoading && filteredStudents.length === 0 && (
           <div className="text-center py-16 border-2 border-dashed border-white/10 rounded-2xl">
             <p className="text-slate-400 font-sans font-medium">
               {searchQuery ? 'No matching students found.' : 'No students enrolled in this course.'}
@@ -120,8 +169,10 @@ export default function CourseStudents() {
               <button
                 type="button"
                 onClick={confirmKick}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-rose-600/20"
+                disabled={isKicking}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-rose-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
               >
+                {isKicking && <Loader2 className="w-4 h-4 animate-spin" />}
                 Remove
               </button>
             </div>

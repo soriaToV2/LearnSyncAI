@@ -261,6 +261,38 @@ router.get('/:id/students', requireRole('instructor'), async (req: Request, res:
   res.json({ data });
 });
 
+/**
+ * DELETE /api/courses/:id/students/:studentId
+ * Removes a student from a course. Instructors only.
+ */
+router.delete('/:id/students/:studentId', requireRole('instructor'), async (req: Request, res: Response): Promise<void> => {
+  // First, verify the instructor actually owns this course
+  const { data: course, error: courseError } = await supabaseAdmin
+    .from('courses')
+    .select('id')
+    .eq('id', req.params.id)
+    .eq('instructor_id', req.user!.id)
+    .single();
+
+  if (courseError || !course) {
+    res.status(403).json({ error: 'Unauthorized or course not found' });
+    return;
+  }
+
+  const { error } = await supabaseAdmin
+    .from('enrollments')
+    .delete()
+    .eq('course_id', req.params.id)
+    .eq('student_id', req.params.studentId);
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to remove student', message: error.message });
+    return;
+  }
+
+  res.json({ message: 'Student removed from course successfully' });
+});
+
 // ── Announcements ─────────────────────────────────────────
 
 /**
