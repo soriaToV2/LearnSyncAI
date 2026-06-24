@@ -79,7 +79,7 @@ CREATE TABLE concepts (
     material_id UUID REFERENCES materials(id) ON DELETE CASCADE,
     term TEXT NOT NULL,
     definition TEXT NOT NULL,
-    embedding vector(768), -- 768 dimensions for Google Gemini embeddings
+    embedding vector(3072), -- 3072 dimensions for Gemini embedding models (gemini-embedding-001)
     parent_concept_id UUID REFERENCES concepts(id), -- For hierarchical concept maps
     created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -365,7 +365,10 @@ USING (student_id = auth.uid());
 -- ==========================================
 
 -- AI & Analytics Indexes (Existing)
-CREATE INDEX idx_concepts_embedding ON concepts USING hnsw (embedding vector_cosine_ops);
+-- NOTE: idx_concepts_embedding intentionally removed — pgvector HNSW/IVFFlat indexes
+-- only support up to 2000 dimensions. Our embedding model (gemini-embedding-001) outputs
+-- 3072 dimensions. Cosine similarity queries using the <=> operator still work correctly
+-- without the index for development-scale data.
 CREATE INDEX idx_bkt_student_concept ON bkt_mastery(student_id, concept_id);
 CREATE INDEX idx_practice_telemetry_student ON practice_telemetry(student_id);
 CREATE INDEX idx_enrollments_student ON enrollments(student_id);

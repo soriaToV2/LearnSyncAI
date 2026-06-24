@@ -17,7 +17,7 @@ const genai = new GoogleGenAI({ apiKey: apiKey ?? '' });
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const response = await genai.models.embedContent({
-    model: 'text-embedding-004',
+    model: 'gemini-embedding-001',
     contents: text,
   });
 
@@ -36,7 +36,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
  */
 export async function generateContent(prompt: string): Promise<string> {
   const response = await genai.models.generateContent({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     contents: prompt,
   });
 
@@ -56,8 +56,52 @@ export async function generateContent(prompt: string): Promise<string> {
  */
 export async function generateJson<T = unknown>(prompt: string): Promise<T> {
   const response = await genai.models.generateContent({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+    },
+  });
+
+  const text = response.text;
+  if (!text) {
+    throw new Error('Failed to generate JSON content: empty response from Gemini API');
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Failed to parse Gemini JSON response: ${text}`);
+  }
+}
+
+/**
+ * Generates structured JSON content using Gemini 2.0 Flash from a document.
+ * Configures the model to output valid JSON for parsing, passing the document as inlineData.
+ *
+ * @param prompt - The instructions for extraction.
+ * @param mimeType - The mime type of the file (e.g. 'application/pdf').
+ * @param base64Data - The raw file data encoded as a base64 string.
+ * @returns Parsed JavaScript object/array
+ */
+export async function generateJsonFromDocument<T = unknown>(
+  prompt: string,
+  mimeType: string,
+  base64Data: string
+): Promise<T> {
+  // @google/genai v1.x requires a single content object with a `parts` array
+  // for multimodal requests (text instruction + inlineData file).
+  const response = await genai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType, data: base64Data } },
+        ],
+      },
+    ],
     config: {
       responseMimeType: 'application/json',
     },

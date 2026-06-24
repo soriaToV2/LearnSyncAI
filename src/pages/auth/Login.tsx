@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BrainCircuit, Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
 import { getAuthTheme, applyThemeToElement } from '../../context/ThemeContext';
+import { supabase } from '../../lib/supabase';
+import { api } from '../../lib/api';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -19,20 +21,38 @@ export default function Login() {
     }
   }, []);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setError('');
 
-    setTimeout(() => {
-      if (email === 'admin' && password === 'admin@12') {
+    try {
+      // 1. Authenticate with Supabase
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError || !authData.user) {
+        throw new Error(authError?.message || 'Authentication failed');
+      }
+
+      // 2. Fetch the user's role from the backend
+      const profileRes = await api.get<{ role: string }>('/auth/me');
+      const userRole = profileRes.data.role;
+
+      // 3. Redirect based on role
+      if (userRole === 'instructor' || userRole === 'admin') {
         navigate('/dashboard');
-      } else if (email === 'student' && password === 'student@12') {
+      } else if (userRole === 'student') {
         navigate('/student/dashboard');
       } else {
-        setError('Invalid credentials. Use mock roles: admin (Instructor) OR student (password: admin@12 / student@12)');
-        setIsLoading(false);
+        throw new Error('Unknown user role: ' + userRole);
       }
-    }, 800);
+    } catch (err: any) {
+      setError(err.message || 'Failed to login. Please check your credentials.');
+      setIsLoading(false);
+    }
   };
 
   return (

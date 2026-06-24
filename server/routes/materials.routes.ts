@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateEmbedding, generateJson } from '../lib/gemini';
+import { generateEmbedding, generateJsonFromDocument } from '../lib/gemini';
 import { CreateMaterialSchema } from '../types/api';
 import multer from 'multer';
 
@@ -166,32 +166,45 @@ async function processMaterialAsync(
 
     const prompt = `
 You are an expert academic concept extractor.
-Analyze the following document and extract the most important terms and their definitions.
+Analyze the attached document and extract the most important terms and their definitions.
 
 Return a JSON array of objects with this exact shape:
 [{ "term": "string", "definition": "string" }]
 
 Rules:
-- Extract 10–30 key concepts
+- Extract all key concepts without missing important details
 - Definitions should be concise (1–3 sentences)
 - Focus on domain-specific terminology
-
-Document (base64, mime: ${mimeType}):
-${base64File.substring(0, 5000)}...
 `;
 
-    const concepts = await generateJson<Array<{ term: string; definition: string }>>(prompt);
+    const concepts = await generateJsonFromDocument<Array<{ term: string; definition: string }>>(
+      prompt,
+      mimeType,
+      base64File
+    );
 
     // Generate embeddings and insert concepts
+    let insertedCount = 0;
     for (const concept of concepts) {
       const embedding = await generateEmbedding(concept.definition);
 
-      await supabaseAdmin.from('concepts').insert({
+      // Log the dimension count on the first concept to verify it matches the DB
+      if (insertedCount === 0) {
+        console.log(`[Material Processing] 🔢 Embedding dimensions: ${embedding.length}`);
+      }
+
+      const { error: insertError } = await supabaseAdmin.from('concepts').insert({
         material_id: materialId,
         term: concept.term,
         definition: concept.definition,
         embedding: `[${embedding.join(',')}]`, // pgvector format
       });
+
+      if (insertError) {
+        console.error(`[Material Processing] ⚠️ Failed to insert concept "${concept.term}": ${insertError.message}`);
+      } else {
+        insertedCount++;
+      }
     }
 
     // Update status to 'completed'
@@ -200,10 +213,12 @@ ${base64File.substring(0, 5000)}...
       .update({ parsed_status: 'completed' })
       .eq('id', materialId);
 
-    console.log(`[Material Processing] ✅ material_id=${materialId} — ${concepts.length} concepts extracted`);
-  } catch (err) {
-    console.error(`[Material Processing] ❌ material_id=${materialId}`, err);
-    // Reset to pending so it can be retried
+    console.log(`[Material Processing] ✅ material_id=${materialId} — ${insertedCount}/${concepts.length} concepts stored`);
+  } catch (err: any) {
+    const errorMessage = err?.message ?? String(err);
+    console.error(`[Material Processing] ❌ material_id=${materialId} — Error: ${errorMessage}`);
+    if (err?.stack) console.error(err.stack);
+    // Reset to pending so it can be retried on next server restart
     await supabaseAdmin
       .from('materials')
       .update({ parsed_status: 'pending' })

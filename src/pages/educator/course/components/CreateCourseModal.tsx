@@ -1,8 +1,15 @@
 import { useState } from 'react';
-import { X, ChevronRight, ChevronLeft, RefreshCw, Check, Copy } from 'lucide-react';
+import { X, ChevronRight, ChevronLeft, RefreshCw, Check, Copy, Loader2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-interface Props { isOpen: boolean; onClose: () => void; onCreate: (data: any) => void; }
+interface CourseCreateData {
+  course_title: string;
+  course_code?: string;
+  section?: string;
+  description?: string;
+}
+
+interface Props { isOpen: boolean; onClose: () => void; onCreate: (data: CourseCreateData) => Promise<void>; }
 
 function generateCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -17,12 +24,10 @@ export default function CreateCourseModal({ isOpen, onClose, onCreate }: Props) 
   const [title, setTitle] = useState('');
   const [section, setSection] = useState('');
   const [description, setDescription] = useState('');
-  const [tiedToUni, setTiedToUni] = useState(false);
-  const [university, setUniversity] = useState('');
-  const [isPublic, setIsPublic] = useState(true);
   const [courseCode, setCourseCode] = useState(generateCode());
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
   if (!isOpen) return null;
 
@@ -40,19 +45,24 @@ export default function CreateCourseModal({ isOpen, onClose, onCreate }: Props) 
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleCreate = () => {
-    const combinedTitle = `${subjectCode.trim().toUpperCase()} - ${title.trim()}`;
-    onCreate({
-      title: combinedTitle,
-      description,
-      tiedToUni,
-      university: tiedToUni ? university : undefined,
-      isPublic,
-      courseCode,
-      section: section.trim() || undefined
-    });
-    setStep(0); setSubjectCode(''); setTitle(''); setSection(''); setDescription('');
-    onClose();
+  const handleCreate = async () => {
+    const combinedTitle = subjectCode.trim()
+      ? `${subjectCode.trim().toUpperCase()} - ${title.trim()}`
+      : title.trim();
+    setIsCreating(true);
+    try {
+      await onCreate({
+        course_title: combinedTitle,
+        course_code: subjectCode.trim().toUpperCase() || undefined,
+        section: section.trim() || undefined,
+        description: description.trim() || undefined,
+      });
+      // Reset and close only on success
+      setStep(0); setSubjectCode(''); setTitle(''); setSection(''); setDescription('');
+      onClose();
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return createPortal(
@@ -183,9 +193,11 @@ export default function CreateCourseModal({ isOpen, onClose, onCreate }: Props) 
               Next <ChevronRight className="w-4 h-4" />
             </button>
           ) : (
-            <button onClick={handleCreate}
-              className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] hover:shadow-[0_0_30px_rgba(0,218,243,0.5)] transition-all">
-              <Check className="w-4 h-4" /> Create Course
+            <button onClick={handleCreate} disabled={isCreating}
+              className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] hover:shadow-[0_0_30px_rgba(0,218,243,0.5)] transition-all disabled:opacity-60 disabled:cursor-not-allowed">
+              {isCreating
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating...</>
+                : <><Check className="w-4 h-4" /> Create Course</>}
             </button>
           )}
         </div>

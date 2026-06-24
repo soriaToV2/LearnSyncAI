@@ -1,51 +1,98 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useParams, Link, useNavigate } from 'react-router-dom';
-import { ChevronRight, Users as UsersIcon, Copy, Check, Archive } from 'lucide-react';
+import { ChevronRight, Users as UsersIcon, Copy, Check, Archive, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
-import { getCourseById } from '../../data/mockEducatorData';
-import Modal from '../ui/Modal';
+import { api } from '../../lib/api';
+
+// Database Course Type
+interface Course {
+  id: string;
+  course_title: string;
+  course_code: string | null;
+  section: string | null;
+  description: string | null;
+  join_code: string;
+  status: 'active' | 'archived' | 'draft';
+  student_count?: number;
+}
+
+// Helper for consistent colors
+const COURSE_COLORS = ['#00DAF3', '#818CF8', '#34D399', '#F59E0B', '#F472B6', '#A78BFA'];
+function getCourseColor(id: string) {
+  const hash = id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return COURSE_COLORS[hash % COURSE_COLORS.length];
+}
 
 export default function CourseLayout({ children }: { children: React.ReactNode }) {
   const { courseId } = useParams();
   const navigate = useNavigate();
-  const [updater, setUpdater] = React.useState(0);
+  
+  const [course, setCourse] = useState<Course | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+  
+  const [copied, setCopied] = useState(false);
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
 
-  React.useEffect(() => {
-    const handleUpdate = () => setUpdater(prev => prev + 1);
-    window.addEventListener('learnSyncAI_courseUpdated', handleUpdate);
-    return () => window.removeEventListener('learnSyncAI_courseUpdated', handleUpdate);
-  }, []);
-
-  const course = getCourseById(courseId || '');
-  const [copied, setCopied] = React.useState(false);
-  const [isArchiveOpen, setIsArchiveOpen] = React.useState(false);
+  useEffect(() => {
+    async function loadCourse() {
+      if (!courseId) return;
+      setIsLoading(true);
+      try {
+        const res = await api.get<Course>(`/courses/${courseId}`);
+        setCourse(res.data);
+      } catch (err: any) {
+        setError(err.message || 'Course not found');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadCourse();
+  }, [courseId]);
 
   const handleCopy = () => {
     if (course) {
-      navigator.clipboard.writeText(course.courseCode);
+      navigator.clipboard.writeText(course.join_code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
   };
 
-  if (!course) {
-    return <div className="p-10 text-white">Course not found.</div>;
+  const handleArchive = async () => {
+    if (!course) return;
+    try {
+      await api.put(`/courses/${course.id}`, { status: 'archived' });
+      navigate('/educator/courses');
+    } catch (err) {
+      console.error('Failed to archive:', err);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] text-slate-400 gap-3">
+        <Loader2 className="w-6 h-6 animate-spin" />
+        <span className="font-sans">Loading course...</span>
+      </div>
+    );
   }
 
-  const titleParts = course.title.split(' - ');
+  if (error || !course) {
+    return <div className="p-10 text-white font-sans text-center mt-10">Course not found or access denied.</div>;
+  }
+
+  const titleParts = course.course_title.split(' - ');
   let displayCode = '';
   let displayTitle = '';
   if (titleParts.length > 1) {
     displayCode = titleParts[0];
     displayTitle = titleParts.slice(1).join(' - ');
   } else {
-    displayCode = course.id.toUpperCase();
-    displayTitle = course.title;
+    displayCode = course.course_code || 'COURSE';
+    displayTitle = course.course_title;
   }
 
-  const handleArchive = () => {
-    setIsArchiveOpen(true);
-  };
+  const color = getCourseColor(course.id);
 
   return (
     <>
@@ -69,25 +116,25 @@ export default function CourseLayout({ children }: { children: React.ReactNode }
                 </span>
               )}
               <span className="px-2.5 py-1 rounded-full font-sans font-semibold text-[11px] tracking-[0.1em] border uppercase"
-                style={{ backgroundColor: `${course.color}15`, color: course.color, borderColor: `${course.color}30` }}>
+                style={{ backgroundColor: `${color}15`, color: color, borderColor: `${color}30` }}>
                 {course.status === 'active' ? 'Active Term' : course.status}
               </span>
             </div>
             <h1 className="font-display text-2xl sm:text-3xl md:text-[38px] font-bold text-on-surface mb-1 tracking-tight leading-tight break-words">{displayTitle}</h1>
-            <p className="font-sans text-sm text-on-surface-variant max-w-2xl leading-relaxed">{course.description}</p>
+            <p className="font-sans text-sm text-on-surface-variant max-w-2xl leading-relaxed">{course.description || 'No description provided.'}</p>
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto shrink-0 flex-wrap">
             <button onClick={handleCopy} title="Copy Class Invite Code" className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 font-sans text-xs hover:bg-white/10 transition-all active:scale-[0.98]">
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
-              <span>Class Code: <span className="font-mono font-bold text-white tracking-wider">{course.courseCode}</span></span>
+              <span>Class Code: <span className="font-mono font-bold text-white tracking-wider">{course.join_code}</span></span>
             </button>
             <div className="w-full sm:w-auto flex items-center justify-center gap-2 text-on-surface-variant font-sans text-xs bg-surface-container-high px-4 py-2.5 rounded-xl border border-white/5">
               <UsersIcon className="w-4 h-4 text-indigo-400" />
-              <span>{course.students ? course.students.length : course.studentCount} Students</span>
+              <span>{course.student_count ?? 0} Students</span>
             </div>
             {course.status === 'active' && (
-              <button onClick={handleArchive} title="Archive Course" className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 font-sans text-xs font-bold hover:bg-amber-500/20 transition-all active:scale-[0.98]">
+              <button onClick={() => setIsArchiveOpen(true)} title="Archive Course" className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 font-sans text-xs font-bold hover:bg-amber-500/20 transition-all active:scale-[0.98]">
                 <Archive className="w-3.5 h-3.5" />
                 <span>Archive</span>
               </button>
@@ -172,14 +219,7 @@ export default function CourseLayout({ children }: { children: React.ReactNode }
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (course) {
-                    course.status = 'archived';
-                    course.archivedAt = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    setIsArchiveOpen(false);
-                    navigate('/educator/courses');
-                  }
-                }}
+                onClick={handleArchive}
                 className="flex-1 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-sans text-xs font-bold uppercase transition-all shadow-lg shadow-amber-600/20"
               >
                 Archive
