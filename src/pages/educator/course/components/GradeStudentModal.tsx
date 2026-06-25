@@ -380,7 +380,7 @@ export default function GradeStudentModal({ isOpen, onClose, assessment, submiss
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-white/5 shrink-0 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-surface-container-high">
+        <div className="px-6 py-4 border-t border-white/5 shrink-0 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-surface-container-lowest">
           <button
             type="button"
             onClick={onClose}

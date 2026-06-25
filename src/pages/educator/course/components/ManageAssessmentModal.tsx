@@ -118,24 +118,52 @@ interface Props {
   onClose: () => void;
   assessmentTitle: string;
   questions: Question[];
-  onSave: (questions: Question[], saveMode: 'draft' | 'ready') => void;
+  setQuestionsMap?: Record<string, Question[]>;
+  onSave: (questions: Question[], saveMode: 'draft' | 'ready', setQuestionsMap?: Record<string, Question[]>) => void;
 }
 
 // Component
-export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle, questions, onSave }: Props) {
-  const [qs, setQs] = useState<GenQuestion[]>(() => questions.map(toGen));
+export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle, questions, setQuestionsMap, onSave }: Props) {
+  const [setQsMap, setSetQsMap] = useState<Record<string, GenQuestion[]>>(() => {
+    if (setQuestionsMap && Object.keys(setQuestionsMap).length > 0) {
+      const map: Record<string, GenQuestion[]> = {};
+      Object.keys(setQuestionsMap).forEach(k => {
+        map[k] = (setQuestionsMap[k] || []).map(toGen);
+      });
+      return map;
+    }
+    return { 'Set A': questions.map(toGen) };
+  });
+  const [activeSet, setActiveSet] = useState<string>('Set A');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   if (!isOpen) return null;
 
-  // Helpers
-  const updateQ = (id: string, patch: Partial<GenQuestion>) =>
-    setQs((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+  const activeQs = setQsMap[activeSet] || [];
 
-  const deleteQ = (id: string) => setQs((prev) => prev.filter((q) => q.id !== id));
+  // Helpers
+  const updateQ = (id: string, patch: Partial<GenQuestion>) => {
+    setSetQsMap((prev) => {
+      const currentList = prev[activeSet] || [];
+      const updatedList = currentList.map((q) => (q.id === id ? { ...q, ...patch } : q));
+      return { ...prev, [activeSet]: updatedList };
+    });
+  };
+
+  const deleteQ = (id: string) => {
+    setSetQsMap((prev) => {
+      const currentList = prev[activeSet] || [];
+      const updatedList = currentList.filter((q) => q.id !== id);
+      return { ...prev, [activeSet]: updatedList };
+    });
+  };
 
   const addQuestion = () => {
-    setQs((prev) => [...prev, makeBlank(prev.length)]);
+    const newQ = makeBlank(activeQs.length);
+    setSetQsMap((prev) => {
+      const currentList = prev[activeSet] || [];
+      return { ...prev, [activeSet]: [...currentList, newQ] };
+    });
     setTimeout(() => {
       if (scrollRef.current) {
         scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -144,7 +172,12 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
   };
 
   const handleSave = (saveMode: 'draft' | 'ready') => {
-    onSave(qs.map(fromGen), saveMode);
+    const finalSetMap: Record<string, Question[]> = {};
+    Object.keys(setQsMap).forEach(k => {
+      finalSetMap[k] = (setQsMap[k] || []).map(fromGen);
+    });
+    const mainQuestions = finalSetMap['Set A'] || [];
+    onSave(mainQuestions, saveMode, finalSetMap);
     onClose();
   };
 
@@ -164,33 +197,58 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
     >
       <div className="flex flex-col max-h-[75vh] landscape:max-h-[60vh] sm:max-h-[80vh] md:max-h-[85vh]">
         {/* Scrollable body */}
-        <div ref={scrollRef} className="p-6 overflow-y-auto flex-1 no-scrollbar scroll-smooth relative min-h-0">
+        <div ref={scrollRef} className="px-6 pb-6 pt-0 overflow-y-auto flex-1 no-scrollbar scroll-smooth relative min-h-0">
           <div className="space-y-4">
 
             {/* Sticky sub-header */}
             {(() => {
-              const totalPoints = qs.reduce((sum, q) => sum + (q.points || 2), 0);
+              const totalPoints = activeQs.reduce((sum, q) => sum + (q.points || 2), 0);
+              const setKeys = Object.keys(setQsMap);
               return (
-                <div className="sticky top-[-24px] z-20 bg-surface-container-high py-4 -mx-6 px-6 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
-                  <div>
-                    <p className="font-sans text-sm text-slate-300 font-medium">Review &amp; Edit Questions</p>
-                    <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">
-                      {qs.length} questions · <span className="text-indigo-400 font-bold">{totalPoints} Points Total</span>
-                    </p>
+                <div className="sticky top-0 z-20 bg-surface-container-lowest pt-2.5 pb-3.5 -mx-6 px-6 border-b border-white/10 flex flex-col gap-3 mb-2 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <p className="font-sans text-sm text-slate-300 font-medium">Review &amp; Edit Questions</p>
+                      <p className="font-sans text-[10px] text-slate-500 uppercase tracking-widest">
+                        {activeQs.length} questions · <span className="text-indigo-400 font-bold">{totalPoints} Points Total</span> {setKeys.length > 1 && `(${activeSet})`}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                      {/* Set Tabs Selector */}
+                      {setKeys.length > 1 && (
+                        <div className="flex gap-1 bg-white/5 p-1 rounded-xl border border-white/10 overflow-x-auto no-scrollbar shrink-0">
+                          {setKeys.map(setLabel => (
+                            <button
+                              key={setLabel}
+                              type="button"
+                              onClick={() => setActiveSet(setLabel)}
+                              className={`px-3 py-1.5 rounded-lg font-sans text-xs font-bold transition-all ${activeSet === setLabel
+                                ? 'bg-primary-fixed-dim text-on-primary-fixed shadow-md'
+                                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                                }`}
+                            >
+                              {setLabel}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={addQuestion}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim text-xs font-bold hover:bg-primary-fixed-dim/20 transition-all active:scale-95 shadow-lg shadow-primary-fixed-dim/5"
+                      >
+                        <Plus className="w-4 h-4" /> Add Question
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={addQuestion}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim text-xs font-bold hover:bg-primary-fixed-dim/20 transition-all active:scale-95 shadow-lg shadow-primary-fixed-dim/5"
-                  >
-                    <Plus className="w-4 h-4" /> Add Question
-                  </button>
                 </div>
               );
             })()}
 
             {/* Empty state */}
-            {qs.length === 0 && (
+            {activeQs.length === 0 && (
               <div className="text-center py-14 border-2 border-dashed border-white/10 rounded-2xl">
                 <p className="text-slate-500 font-sans text-sm">No questions yet.</p>
                 <p className="text-slate-600 font-sans text-xs mt-1">Click "Add Question" to get started.</p>
@@ -199,15 +257,15 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
 
             {/* Question cards */}
             <div className="space-y-3 pb-6">
-              {qs.map((q, idx) => (
+              {activeQs.map((q, idx) => (
                 <div key={q.id} className="bg-surface-container rounded-xl border border-white/5 overflow-hidden">
 
                   {q.editing ? (
-                    <div className="p-4 space-y-3">
+                    <div key="edit" className="p-4 space-y-3 animate-fade-in">
                       {/* Row: Q-badge + type select + points input */}
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">
+                      <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                          <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded shrink-0">
                             Q{idx + 1}
                           </span>
                           <Dropdown
@@ -227,18 +285,18 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                               });
                             }}
                             options={Q_TYPES.map(qt => ({ label: qt.label, value: qt.id }))}
-                            className="w-44 text-left"
+                            className="w-full max-w-[130px] sm:max-w-[176px] text-left text-xs shrink-0"
                           />
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="font-sans text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Points:</span>
+                          <span className="font-sans text-[10px] sm:text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Points:</span>
                           <input
                             type="number"
                             min={1}
                             max={100}
                             value={q.points || 2}
                             onChange={e => updateQ(q.id, { points: Math.max(1, Number(e.target.value)) })}
-                            className="w-16 px-2 py-1 rounded bg-white/5 border border-white/10 text-white font-sans text-xs text-center outline-none focus:border-primary-fixed-dim"
+                            className="w-12 sm:w-16 px-1.5 py-1 rounded bg-white/5 border border-white/10 text-white font-sans text-xs text-center outline-none focus:border-primary-fixed-dim"
                           />
                         </div>
                       </div>
@@ -382,7 +440,7 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
                     </div>
 
                   ) : (
-                    <div className="p-4 flex items-start gap-3 group">
+                    <div key="preview" className="p-4 flex items-start gap-3 group animate-fade-in">
                       <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded shrink-0 mt-0.5">
                         Q{idx + 1}
                       </span>
@@ -447,7 +505,7 @@ export default function ManageAssessmentModal({ isOpen, onClose, assessmentTitle
         </div>
 
         {/* Footer */}
-        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-t border-white/5 shrink-0 bg-surface-container-high">
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-t border-white/5 shrink-0 bg-surface-container-lowest">
           <button
             type="button"
             onClick={onClose}

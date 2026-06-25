@@ -24,9 +24,12 @@ import StudySpace from './pages/student/StudySpace';
 import PlayMeGames from './pages/student/PlayMeGames';
 import CourseCatalog from './pages/student/Course';
 
+import OrientationGate from './components/common/OrientationGate';
+
 export default function App() {
   return (
     <BrowserRouter>
+      <OrientationGate />
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/register" element={<CreateAccount />} />

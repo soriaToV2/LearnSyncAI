@@ -135,9 +135,9 @@ export default function CourseAssessments() {
   };
 
   // Questions
-  const handleQuestionsSave = (assessmentId: string, questions: Question[]) => {
+  const handleQuestionsSave = (assessmentId: string, questions: Question[], setQuestionsMap?: Record<string, Question[]>) => {
     if (!courseId) return;
-    updateAssessmentQuestions(courseId, assessmentId, questions);
+    updateAssessmentQuestions(courseId, assessmentId, questions, setQuestionsMap);
     refresh();
   };
 
@@ -402,8 +402,9 @@ export default function CourseAssessments() {
           onClose={() => setManagingAssessment(null)}
           assessmentTitle={managingAssessment.title}
           questions={managingAssessment.questions}
-          onSave={(questions, saveMode) => {
-            handleQuestionsSave(managingAssessment.id, questions);
+          setQuestionsMap={managingAssessment.setQuestionsMap as Record<string, Question[]>}
+          onSave={(questions, saveMode, setMap) => {
+            handleQuestionsSave(managingAssessment.id, questions, setMap);
             if (saveMode === 'ready') {
               updateAssessmentStatus(courseId!, managingAssessment.id, 'ready');
               showToast('Questions saved and assessment marked as Ready!');

@@ -340,12 +340,15 @@ export const updateAssessmentStatus = (courseId: string, assessmentId: string, s
   if (assessment) assessment.status = status;
 };
 
-export const updateAssessmentQuestions = (courseId: string, assessmentId: string, questions: Question[]) => {
+export const updateAssessmentQuestions = (courseId: string, assessmentId: string, questions: Question[], setQuestionsMap?: Record<string, Question[]>) => {
   const course = getCourseById(courseId);
   const assessment = course?.assessments.find(a => a.id === assessmentId);
   if (assessment) {
     assessment.questions = questions;
     assessment.questionCount = questions.length;
+    if (setQuestionsMap) {
+      assessment.setQuestionsMap = setQuestionsMap;
+    }
   }
 };
 

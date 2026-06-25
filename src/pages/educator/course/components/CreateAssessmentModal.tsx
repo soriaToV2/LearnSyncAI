@@ -650,22 +650,22 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
                     <div key={q.id} className="bg-surface-container rounded-xl border border-white/5 overflow-hidden">
                       {q.editing ? (
                         <div key="edit" className="p-3 sm:p-4 space-y-3 animate-fade-in">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2">
-                              <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded">Q{idx + 1}</span>
-                              <span className="font-sans text-xs font-semibold text-slate-400 bg-white/5 border border-white/10 px-3 py-1 rounded-xl">
+                          <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                              <span className="font-sans text-xs font-semibold text-primary-fixed-dim bg-primary-fixed-dim/10 px-2 py-1 rounded shrink-0">Q{idx + 1}</span>
+                              <span className="font-sans text-xs font-semibold text-slate-400 bg-white/5 border border-white/10 px-2.5 py-1 rounded-xl truncate">
                                 {Q_TYPES.find(qt => qt.id === q.type)?.label || q.type}
                               </span>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <span className="font-sans text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Points:</span>
+                              <span className="font-sans text-[10px] sm:text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Points:</span>
                               <input
                                 type="number"
                                 min={1}
                                 max={100}
                                 value={q.points || 2}
                                 onChange={e => updateQ(q.id, { points: Math.max(1, Number(e.target.value)) })}
-                                className="w-16 px-2 py-1 rounded bg-white/5 border border-white/10 text-white font-sans text-xs text-center outline-none focus:border-primary-fixed-dim"
+                                className="w-12 sm:w-16 px-1.5 py-1 rounded bg-white/5 border border-white/10 text-white font-sans text-xs text-center outline-none focus:border-primary-fixed-dim"
                               />
                             </div>
                           </div>
@@ -788,27 +788,27 @@ export default function CreateAssessmentModal({ isOpen, onClose, courseResources
         </div>
 
         {/* Footer */}
-        <div className="flex flex-row items-center justify-between gap-3 pt-4 border-t border-white/10 mt-2 shrink-0">
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-t border-white/10 shrink-0 bg-surface-container-lowest">
           <button onClick={() => step === 0 ? onClose() : setStep(s => s - 1)}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors">
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors">
             <ChevronLeft className="w-4 h-4" /> {step === 0 ? 'Cancel' : 'Back'}
           </button>
 
           {isLastStep ? (
-            <div className="flex items-center gap-2 flex-[2] sm:flex-initial w-full sm:w-auto">
+            <div className="flex items-center justify-end gap-3 w-full sm:w-auto">
               <button onClick={() => handleSave('draft')}
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl font-sans text-xs sm:text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all">
-                <Save className="w-3.5 h-3.5 shrink-0" /> Draft
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-sans text-sm font-bold border border-white/20 text-slate-300 hover:bg-white/5 transition-all">
+                <Save className="w-4 h-4 shrink-0" /> Draft
               </button>
               <button onClick={() => handleSave('ready')}
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all hover:opacity-90">
-                <Sparkles className="w-3.5 h-3.5 shrink-0" /> Save Ready
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px_rgba(0,218,243,0.3)] transition-all hover:opacity-90">
+                <Sparkles className="w-4 h-4 shrink-0" /> Save Ready
               </button>
             </div>
           ) : (
             <button onClick={isGenerateStep ? handleNextFromReview : () => setStep(s => s + 1)}
               disabled={(step === 0 && !canProceed0) || (step === 1 && !canProceed1) || (step === 2 && !canProceed2)}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-40 disabled:cursor-not-allowed">
               {isGenerateStep ? <><Sparkles className="w-4 h-4" /> Generate</> : <>Next <ChevronRight className="w-4 h-4" /></>}
             </button>
           )}

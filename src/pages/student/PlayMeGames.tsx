@@ -700,7 +700,7 @@ export default function PlayMeGames() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       {/* Header / Stats Panel */}
-      <header className="sticky top-16 md:top-0 w-full border-b border-white/10 bg-page-80 backdrop-blur-md shadow-sm z-40 px-4 md:px-8 py-5 flex flex-col gap-6">
+      <header className="relative md:sticky md:top-0 w-full border-b border-white/10 bg-page-80 backdrop-blur-md shadow-sm z-40 px-4 md:px-8 py-5 flex flex-col gap-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="flex items-start gap-4">
             <Gamepad2 className="w-9 h-9 text-primary-fixed-dim mt-1 shrink-0" />
@@ -715,18 +715,22 @@ export default function PlayMeGames() {
           </div>
 
           {/* Gamification stats */}
-          <div className="flex items-center gap-4 bg-surface-container-high/40 p-2.5 rounded-xl border border-white/5 shadow-inner">
-            <div className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/5 rounded-lg">
-              <Trophy className="w-4 h-4 text-amber-400" />
-              <span className="font-display text-sm font-semibold text-white">{totalXp} XP</span>
+          <div className="grid grid-cols-3 sm:flex sm:items-center gap-2 sm:gap-4 bg-surface-container-high/40 p-2 sm:p-2.5 rounded-xl border border-white/5 shadow-inner w-full sm:w-auto">
+            <div className="flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-1 bg-white/5 border border-white/5 rounded-lg">
+              <Trophy className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
+              <span className="font-display text-xs sm:text-sm font-semibold text-white whitespace-nowrap">{totalXp} XP</span>
             </div>
-            <div className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/5 rounded-lg">
-              <Zap className="w-4 h-4 text-cyan-400" />
-              <span className="font-display text-sm font-semibold text-white">{streak} Day Streak</span>
+            <div className="flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-1 bg-white/5 border border-white/5 rounded-lg">
+              <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400 shrink-0" />
+              <span className="font-display text-xs sm:text-sm font-semibold text-white whitespace-nowrap">
+                {streak} Day<span className="hidden sm:inline"> Streak</span>
+              </span>
             </div>
-            <div className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/5 rounded-lg">
-              <Award className="w-4 h-4 text-indigo-400" />
-              <span className="font-display text-sm font-semibold text-white">Level {gameLevel}</span>
+            <div className="flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-1 bg-white/5 border border-white/5 rounded-lg">
+              <Award className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-400 shrink-0" />
+              <span className="font-display text-xs sm:text-sm font-semibold text-white whitespace-nowrap">
+                <span className="sm:hidden">Lvl </span><span className="hidden sm:inline">Level </span>{gameLevel}
+              </span>
             </div>
           </div>
         </div>
