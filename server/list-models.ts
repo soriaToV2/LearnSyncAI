@@ -19,7 +19,7 @@ const genai = new GoogleGenAI({ apiKey });
 async function listAvailableModels() {
   try {
     console.log("Fetching available models...");
-    const response = await genai.models.list({ pageSize: 50 });
+    const response = await genai.models.list({ config: { pageSize: 50 } });
     const models = [];
     for await (const model of response) {
       if (model.name.includes("gemini")) {

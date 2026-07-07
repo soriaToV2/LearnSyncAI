@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Home, Layers, Gamepad2, BrainCircuit, LogOut, Compass, Settings as SettingsIcon, Menu, X } from 'lucide-react';
+import { Home, Layers, Gamepad2, BrainCircuit, LogOut, Settings as SettingsIcon, Menu, X } from 'lucide-react';
 import { MOCK_STUDENTS } from '../../data/mockStudents';
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 
@@ -12,7 +12,6 @@ function StudentLayoutInner() {
   const { theme } = useStudentTheme();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  const isCourseActive = location.pathname.includes('/student/course/');
   const isSpaceActive = location.pathname.includes('/student/space/');
 
   useEffect(() => {
@@ -43,10 +42,10 @@ function StudentLayoutInner() {
       <NavLink
         to="/student/dashboard"
         className={({ isActive }) =>
-          `${navBase} ${(isActive && !isCourseActive && !isSpaceActive) ? '' : inactiveClass}`
+          `${navBase} ${(isActive && !isSpaceActive) ? '' : inactiveClass}`
         }
         style={({ isActive }) =>
-          isActive && !isCourseActive && !isSpaceActive ? activeStyle : {}
+          isActive && !isSpaceActive ? activeStyle : {}
         }
       >
         <Home className="w-5 h-5" />
@@ -66,14 +65,6 @@ function StudentLayoutInner() {
         Spaces
       </NavLink>
 
-      <NavLink
-        to="/student/catalog"
-        className={({ isActive }) => `${navBase} ${isActive ? '' : inactiveClass}`}
-        style={({ isActive }) => (isActive ? activeStyle : {})}
-      >
-        <Compass className="w-5 h-5" />
-        Courses
-      </NavLink>
 
       <NavLink
         to="/student/games"

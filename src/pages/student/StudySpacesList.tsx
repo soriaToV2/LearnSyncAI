@@ -3,19 +3,11 @@ import { Layers, Plus, Folder, Clock, Star, Sparkles, X, Share2, Pencil, Trash2,
 import { useNavigate } from 'react-router-dom';
 import { MOCK_PUBLIC_SPACES } from '../../data/mockPublicSpaces';
 import { api } from '../../lib/api';
-import Dropdown from '../../components/ui/Dropdown';
+
 import Modal from '../../components/ui/Modal';
 
 
-interface CourseData {
-  id: string;
-  courseCode?: string;
-  section?: string;
-  title: string;
-  instructor: string;
-  isEnrolled: boolean;
-  accentColor: string;
-}
+
 
 interface StudySpaceData {
   id: string;
@@ -36,29 +28,20 @@ const colorPalettes = [
   { color: 'from-rose-500/25 to-pink-500/10', borderColor: 'border-rose-500/30' },
 ];
 
-const formatCourseLabel = (courseCode?: string, title?: string) => {
-  if (!title) return 'Untitled Course';
-  if (!courseCode) return title;
-  const titleClean = title.trim();
-  const codeClean = courseCode.trim();
-  if (titleClean.toLowerCase().startsWith(codeClean.toLowerCase())) {
-    return titleClean;
-  }
-  return `${codeClean} - ${titleClean}`;
-};
+
 
 export default function StudySpacesList() {
   const navigate = useNavigate();
 
   const [spaces, setSpaces] = useState<StudySpaceData[]>([]);
-  const [courses, setCourses] = useState<CourseData[]>([]);
+
   const [isLoading, setIsLoading] = useState(true);
   const [cloneToast, setCloneToast] = useState<string | null>(null);
 
   // Modals & Forms State
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newSpaceTitle, setNewSpaceTitle] = useState('');
-  const [newSpaceCourse, setNewSpaceCourse] = useState('');
+
 
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [selectedSpaceToRename, setSelectedSpaceToRename] = useState<StudySpaceData | null>(null);
@@ -77,39 +60,11 @@ export default function StudySpacesList() {
     }
   };
 
-  const fetchCourses = async () => {
-    try {
-      const res = await api.get<any[]>('/courses');
-      const mapped = (res.data || []).map((c: any, index: number) => {
-        const colors = ['primary-fixed-dim', 'indigo-400', 'emerald-400'];
-        return {
-          id: c.id,
-          courseCode: c.course_code,
-          section: c.section,
-          title: (() => {
-            const rawTitle = c.course_title || c.title || 'Untitled Course';
-            const code = c.course_code;
-            if (code && rawTitle.toUpperCase().startsWith(`${code.toUpperCase()} - `)) {
-              return rawTitle.substring(code.length + 3);
-            } else if (code && rawTitle.toUpperCase().startsWith(`${code.toUpperCase()}-`)) {
-              return rawTitle.substring(code.length + 1);
-            }
-            return rawTitle;
-          })(),
-          instructor: c.profiles ? `${c.profiles.first_name} ${c.profiles.last_name}` : 'Unknown Instructor',
-          isEnrolled: true,
-          accentColor: colors[index % colors.length]
-        };
-      });
-      setCourses(mapped);
-    } catch (err) {
-      console.error('Failed to load enrolled courses', err);
-    }
-  };
+
 
   const initData = async () => {
     setIsLoading(true);
-    await Promise.all([fetchSpaces(), fetchCourses()]);
+    await fetchSpaces();
     setIsLoading(false);
   };
 
@@ -216,13 +171,11 @@ export default function StudySpacesList() {
 
     try {
       await api.post('/spaces', {
-        title: newSpaceTitle.trim(),
-        course_id: newSpaceCourse || null
+        title: newSpaceTitle.trim()
       });
       await fetchSpaces();
       setIsCreateModalOpen(false);
       setNewSpaceTitle('');
-      setNewSpaceCourse('');
     } catch (err) {
       console.error('Failed to create study space', err);
     }
@@ -333,8 +286,7 @@ export default function StudySpacesList() {
             {spaces.map((space, index) => {
               const palette = colorPalettes[index % colorPalettes.length];
               const isCloned = !!(space.cloned_from_id || space.original_author_name);
-              const course = courses.find(c => c.id === space.course_id);
-              const courseText = course ? formatCourseLabel(course.courseCode, course.title) : 'Independent Study';
+              const courseText = 'Independent Study';
 
               return (
                 <div
@@ -428,23 +380,7 @@ export default function StudySpacesList() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2 font-sans">
-                Link to Enrolled Course
-              </label>
-              <Dropdown
-                value={newSpaceCourse}
-                onChange={setNewSpaceCourse}
-                options={[
-                  { label: 'Independent Study (No Course Link)', value: '' },
-                  ...courses.map(c => ({
-                    label: formatCourseLabel(c.courseCode, c.title),
-                    value: c.id
-                  }))
-                ]}
-                className="w-full text-left"
-              />
-            </div>
+
           </div>
 
           <div className="flex gap-3 pt-4 border-t border-white/5 mt-2 shrink-0">

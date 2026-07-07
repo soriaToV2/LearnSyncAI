@@ -37,7 +37,7 @@ Rules:
 
   try {
     console.log("Sending to Gemini API...");
-    const concepts = await generateJsonFromDocument(prompt, mimeType, base64File);
+    const concepts = await generateJsonFromDocument<{ term: string; definition: string }[]>(prompt, mimeType, base64File);
     console.log(`Success! Extracted ${concepts.length} concepts.`);
   } catch (error: any) {
     console.error("Gemini API Error:");
