@@ -86,8 +86,6 @@ export const THEMES: ThemeDefinition[] = [
 
 // Storage Keys
 const STUDENT_STORAGE_KEY = 'learnsyncai_student_theme';
-const EDUCATOR_STORAGE_KEY = 'learnsyncai_educator_theme';
-export const LAST_ROLE_KEY = 'learnsyncai_last_role';
 
 // Apply theme to element
 export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
@@ -120,10 +118,6 @@ export function StudentThemeProvider({ children }: { children: React.ReactNode }
     return THEMES.find(t => t.id === saved) ?? THEMES[0];
   });
 
-  useEffect(() => {
-    localStorage.setItem(LAST_ROLE_KEY, 'student');
-  }, []);
-
   const setTheme = (id: string) => {
     const found = THEMES.find(t => t.id === id);
     if (found) {
@@ -143,56 +137,17 @@ export function useStudentTheme() {
   return useContext(StudentThemeContext);
 }
 
-// Educator Theme Context
-const EducatorThemeContext = createContext<ThemeContextValue>({
-  theme: THEMES[0],
-  setTheme: () => { },
-});
-
-export function EducatorThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeDefinition>(() => {
-    const saved = localStorage.getItem(EDUCATOR_STORAGE_KEY);
-    return THEMES.find(t => t.id === saved) ?? THEMES[0];
-  });
-
-  useEffect(() => {
-    localStorage.setItem(LAST_ROLE_KEY, 'educator');
-  }, []);
-
-  const setTheme = (id: string) => {
-    const found = THEMES.find(t => t.id === id);
-    if (found) {
-      setThemeState(found);
-      localStorage.setItem(EDUCATOR_STORAGE_KEY, id);
-    }
-  };
-
-  return (
-    <EducatorThemeContext.Provider value={{ theme, setTheme }}>
-      {children}
-    </EducatorThemeContext.Provider>
-  );
-}
-
-export function useEducatorTheme() {
-  return useContext(EducatorThemeContext);
-}
-
 // Auth-page helper: returns the theme for whichever role was last active
 export function getAuthTheme(): ThemeDefinition {
-  const lastRole = localStorage.getItem(LAST_ROLE_KEY);
-  const key = lastRole === 'educator' ? EDUCATOR_STORAGE_KEY : STUDENT_STORAGE_KEY;
-  const saved = localStorage.getItem(key);
+  const saved = localStorage.getItem(STUDENT_STORAGE_KEY);
   return THEMES.find(t => t.id === saved) ?? THEMES[0];
 }
 
 // Legacy alias so any component using useTheme() still compiles
-// Student pages use this; educators should use useEducatorTheme() instead.
 export function useTheme() {
   return useContext(StudentThemeContext);
 }
 
-// deprecated use StudentThemeProvider or EducatorThemeProvider instead
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   return <StudentThemeProvider>{children}</StudentThemeProvider>;
 }

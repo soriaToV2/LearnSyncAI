@@ -8,14 +8,11 @@ import morgan from 'morgan';
 
 // Route imports
 import authRoutes from './routes/auth.routes';
-import courseRoutes from './routes/courses.routes';
 import materialRoutes from './routes/materials.routes';
-import assessmentRoutes from './routes/assessments.routes';
 import studySpaceRoutes from './routes/studyspaces.routes';
 import cognitiveRoutes from './routes/cognitive.routes';
 import practiceRoutes from './routes/practice.routes';
 import gamificationRoutes from './routes/gamification.routes';
-import notificationRoutes from './routes/notifications.routes';
 import bktRoutes from './routes/bkt.routes';
 
 const app = express();
@@ -41,14 +38,11 @@ app.get('/api/health', (_req, res) => {
 // API Routes
 // ─────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
-app.use('/api/courses', courseRoutes);
 app.use('/api/materials', materialRoutes);
-app.use('/api/assessments', assessmentRoutes);
 app.use('/api/spaces', studySpaceRoutes);
 app.use('/api/cognitive', cognitiveRoutes);
 app.use('/api/practice', practiceRoutes);
 app.use('/api/gamification', gamificationRoutes);
-app.use('/api/notifications', notificationRoutes);
 app.use('/api/bkt', bktRoutes);
 
 // ─────────────────────────────────────────────

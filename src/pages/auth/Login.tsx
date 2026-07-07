@@ -37,18 +37,8 @@ export default function Login() {
         throw new Error(authError?.message || 'Authentication failed');
       }
 
-      // 2. Fetch the user's role from the backend
-      const profileRes = await api.get<{ role: string }>('/auth/me');
-      const userRole = profileRes.data.role;
-
-      // 3. Redirect based on role
-      if (userRole === 'instructor' || userRole === 'admin') {
-        navigate('/dashboard');
-      } else if (userRole === 'student') {
-        navigate('/student/dashboard');
-      } else {
-        throw new Error('Unknown user role: ' + userRole);
-      }
+      // 3. Navigate to student dashboard (only one role now)
+      navigate('/student/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to login. Please check your credentials.');
       setIsLoading(false);
@@ -112,7 +102,7 @@ export default function Login() {
 
               <div className="mb-6">
                 <h2 className="hidden lg:block font-display text-2xl font-bold text-white mb-1">Sign In</h2>
-                <p className="hidden lg:block font-sans text-sm text-slate-400">Authenticate via Supabase Gateway to access your assigned role.</p>
+                <p className="hidden lg:block font-sans text-sm text-slate-400">Authenticate via Supabase Gateway to access your study space.</p>
               </div>
 
               <form className="flex flex-col gap-5" onSubmit={handleLogin}>

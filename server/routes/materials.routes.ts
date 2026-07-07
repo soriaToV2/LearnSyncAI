@@ -39,7 +39,7 @@ router.get('/course/:courseId', async (req: Request, res: Response): Promise<voi
  */
 router.post(
   '/',
-  requireRole('instructor'),
+  requireRole('student'),
   upload.single('file'),
   async (req: Request, res: Response): Promise<void> => {
     const parsed = CreateMaterialSchema.safeParse(req.body);
@@ -98,7 +98,7 @@ router.post(
  * DELETE /api/materials/:id
  * Deletes a material and its storage file. Instructors only.
  */
-router.delete('/:id', requireRole('instructor'), async (req: Request, res: Response): Promise<void> => {
+router.delete('/:id', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   // Get storage path first
   const { data: material, error: fetchError } = await supabaseAdmin
     .from('materials')

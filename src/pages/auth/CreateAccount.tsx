@@ -81,27 +81,12 @@ export default function CreateAccount() {
 
               <div className="mb-6 text-center lg:text-left">
                 <h2 className="font-display text-2xl font-bold text-white mb-1">Create Account</h2>
-                <p className="font-sans text-sm text-slate-400">Select your role to access your study space or instructor dashboard.</p>
+                <p className="font-sans text-sm text-slate-400">Create your student account to access your study space.</p>
               </div>
 
               <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
 
-                <div className="flex gap-3 w-full">
-                  <label className="flex-1 cursor-pointer group">
-                    <input type="radio" name="role" value="student" className="peer sr-only" defaultChecked />
-                    <div className="h-full rounded-2xl border-2 border-white/10 bg-surface-container/30 py-3 px-3 flex items-center justify-center gap-2 font-display font-semibold text-sm text-slate-400 peer-checked:bg-primary-fixed-dim/10 peer-checked:border-primary-fixed-dim peer-checked:text-primary-fixed-dim transition-all duration-300 hover:border-white/20 hover:bg-white/5 peer-checked:shadow-[0_0_20px_rgba(0,218,243,0.1)]">
-                      <User className="w-5 h-5" />
-                      Student
-                    </div>
-                  </label>
-                  <label className="flex-1 cursor-pointer group">
-                    <input type="radio" name="role" value="educator" className="peer sr-only" />
-                    <div className="h-full rounded-2xl border-2 border-white/10 bg-surface-container/30 py-3 px-3 flex items-center justify-center gap-2 font-display font-semibold text-sm text-slate-400 peer-checked:bg-indigo-500/10 peer-checked:border-indigo-500 peer-checked:text-indigo-400 transition-all duration-300 hover:border-white/20 hover:bg-white/5 peer-checked:shadow-[0_0_20px_rgba(99,102,241,0.1)]">
-                      <BrainCircuit className="w-5 h-5" />
-                      Educator
-                    </div>
-                  </label>
-                </div>
+                {/* Role selection removed - all users are students now */}
 
                 <div className="space-y-4">
                   <div className="flex gap-3">
