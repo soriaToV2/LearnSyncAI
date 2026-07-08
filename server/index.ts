@@ -10,6 +10,7 @@ import morgan from 'morgan';
 import authRoutes from './routes/auth.routes';
 import materialRoutes from './routes/materials.routes';
 import studySpaceRoutes from './routes/studyspaces.routes';
+import flashcardRoutes from './routes/flashcards.routes';
 import cognitiveRoutes from './routes/cognitive.routes';
 import practiceRoutes from './routes/practice.routes';
 import gamificationRoutes from './routes/gamification.routes';
@@ -40,6 +41,7 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/materials', materialRoutes);
 app.use('/api/spaces', studySpaceRoutes);
+app.use('/api/flashcards', flashcardRoutes);
 app.use('/api/cognitive', cognitiveRoutes);
 app.use('/api/practice', practiceRoutes);
 app.use('/api/gamification', gamificationRoutes);

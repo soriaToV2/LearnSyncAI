@@ -44,11 +44,7 @@ export default function StudySpace() {
   const [showVisibilityToast, setShowVisibilityToast] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
-  const [availableResources, setAvailableResources] = useState<string[]>([
-    'Synaptic_Pathways_Ch4.pdf',
-    'Lecture_03_Action_Potentials.pptx',
-    'Study_Guide_Midterm.docx'
-  ]);
+  const [availableResources, setAvailableResources] = useState<{ id: string; title: string }[]>([]);
 
   const fetchSpaceData = async () => {
     if (!spaceId) return;
@@ -58,19 +54,21 @@ export default function StudySpace() {
       setCurrentSpace(space);
       setSpaceIsPublic(!!space.is_published);
 
-      if (space.course_id) {
-        setCourseConnected(true);
-        try {
-          const resMaterials = await api.get<any>(`/materials?course_id=${space.course_id}`);
-          const materials = resMaterials.data || [];
-          if (materials.length > 0) {
-            setAvailableResources(materials.map((m: any) => m.title || m.name));
-          }
-        } catch (err) {
-          console.error('Failed to load course materials', err);
+      // Since courses are removed, study spaces act as the primary container.
+      // Set courseConnected to true to bypass any legacy 'connect course' UI prompts.
+      setCourseConnected(true);
+      
+      try {
+        const resMaterials = await api.get<any>(`/materials/space/${spaceId}`);
+        const materials = resMaterials.data?.data || resMaterials.data || [];
+        if (materials.length > 0) {
+          setAvailableResources(materials.map((m: any) => ({ id: m.id, title: m.title || m.name })));
+        } else {
+          setAvailableResources([]);
         }
-      } else {
-        setCourseConnected(false);
+      } catch (err) {
+        console.error('Failed to load space materials', err);
+        setAvailableResources([]);
       }
 
       const resDecks = await api.get<any>(`/spaces/${spaceId}/decks`);

@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { generateEmbedding, generateContent } from '../lib/gemini';
-import { FreeRecallSchema } from '../types/api';
+import { CognitiveReviewSchema } from '../types/api';
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
@@ -23,7 +23,7 @@ router.use(authenticate, requireRole('student'));
  * Body: { concept_id, space_id, mode: 'free_recall'|'feynman', user_input }
  */
 router.post('/recall', async (req: Request, res: Response): Promise<void> => {
-  const parsed = FreeRecallSchema.safeParse(req.body);
+  const parsed = CognitiveReviewSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
     return;

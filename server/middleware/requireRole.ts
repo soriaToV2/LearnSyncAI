@@ -1,46 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
-import { supabaseAdmin } from '../lib/supabase';
-import { UserRole } from '../types/database';
 
 /**
- * Role-based access control middleware factory.
+ * Authentication guard: ensures the request comes from an authenticated student.
  *
  * Must be used AFTER the `authenticate` middleware (which populates `req.user`).
- * Queries the `profiles` table to check the user's role and rejects with 403
- * if it doesn't match the required role.
+ * Since the application is now student-only, this middleware simply confirms
+ * the user is logged in. Returns 401 if not authenticated.
  *
  * Usage:
- *   router.post('/courses', authenticate, requireRole('instructor'), handler);
- *   router.post('/submit', authenticate, requireRole('student'), handler);
- *
- * @param role - The required role: 'instructor' or 'student'
+ *   router.post('/spaces', authenticate, requireStudent, handler);
  */
-export function requireRole(role: UserRole) {
+export function requireRole(_role: string) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (!req.user) {
       res.status(401).json({ error: 'Unauthorized', message: 'Not authenticated' });
       return;
     }
-
-    const { data: profile, error } = await supabaseAdmin
-      .from('profiles')
-      .select('role')
-      .eq('id', req.user.id)
-      .single();
-
-    if (error || !profile) {
-      res.status(403).json({ error: 'Forbidden', message: 'Profile not found' });
-      return;
-    }
-
-    if (profile.role !== role) {
-      res.status(403).json({
-        error: 'Forbidden',
-        message: `This action requires the '${role}' role. Your role is '${profile.role}'.`,
-      });
-      return;
-    }
-
+    // All authenticated users are students — no role check needed
     next();
   };
 }

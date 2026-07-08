@@ -50,15 +50,13 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
     return;
   }
 
-  const { title, course_id, cloned_from_id, original_author_name } = parsed.data;
+  const { title, description } = parsed.data;
 
   const { data: newSpace, error: spaceError } = await supabaseAdmin
     .from('study_spaces')
     .insert({
       title,
-      course_id: course_id || null,
-      cloned_from_id: cloned_from_id || null,
-      original_author_name: original_author_name || null,
+      description: description || null,
       student_id: req.user!.id,
       is_published: false,
       share_token: generateShareToken(),
@@ -72,6 +70,7 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
   }
 
   // If this is a cloned space, clone all its decks and flashcards
+  const cloned_from_id: string | undefined = req.body.cloned_from_id;
   if (cloned_from_id) {
     const { data: originalDecks } = await supabaseAdmin
       .from('flashcard_decks')

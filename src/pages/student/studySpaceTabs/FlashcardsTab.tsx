@@ -34,7 +34,7 @@ interface FlashcardsTabProps {
   onRefresh: () => void;
   spaceIsPublic: boolean;
   onToggleDeckVisibility: (deckId: string) => void;
-  availableResources: string[];
+  availableResources: { id: string; title: string }[];
 }
 
 export default function FlashcardsTab({
@@ -547,7 +547,6 @@ export default function FlashcardsTab({
               })()
             : null
         }
-        courseConnected={courseConnected}
         availableResources={availableResources}
       />
 

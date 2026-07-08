@@ -3,7 +3,8 @@ import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { generateEmbedding, generateJsonFromDocument } from '../lib/gemini';
-import { CreateMaterialSchema } from '../types/api';
+import { generateFlashcardsFromConcepts } from '../lib/groq';
+import { CreateMaterialSchema, GenerateFlashcardsSchema } from '../types/api';
 import multer from 'multer';
 
 const router = Router();
@@ -12,14 +13,14 @@ const upload = multer({ storage: multer.memoryStorage() }); // Store file in mem
 router.use(authenticate);
 
 /**
- * GET /api/materials/course/:courseId
- * Lists all materials for a course.
+ * GET /api/materials/space/:spaceId
+ * Lists all materials for a study space.
  */
-router.get('/course/:courseId', async (req: Request, res: Response): Promise<void> => {
+router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('materials')
     .select('*')
-    .eq('course_id', req.params.courseId)
+    .eq('space_id', req.params.spaceId)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -53,8 +54,8 @@ router.post(
       return;
     }
 
-    const { course_id, title } = parsed.data;
-    const fileName = `${course_id}/${Date.now()}-${req.file.originalname}`;
+    const { space_id, title } = parsed.data;
+    const fileName = `${space_id}/${Date.now()}-${req.file.originalname}`;
 
     // 1. Upload to Supabase Storage bucket "materials"
     const { error: storageError } = await supabaseAdmin.storage
@@ -70,7 +71,7 @@ router.post(
     const { data: material, error: dbError } = await supabaseAdmin
       .from('materials')
       .insert({
-        course_id,
+        space_id,
         uploader_id: req.user!.id,
         title,
         storage_path: fileName,
@@ -85,7 +86,6 @@ router.post(
     }
 
     // 3. Trigger background concept extraction (non-blocking)
-    // Note: The trigger_new_material DB trigger auto-notifies enrolled students.
     processMaterialAsync(material.id, req.file.buffer, req.file.mimetype).catch((err) =>
       console.error(`[Material Processing Error] material_id=${material.id}`, err)
     );
@@ -141,6 +141,69 @@ router.get('/:id/concepts', async (req: Request, res: Response): Promise<void> =
   }
 
   res.json({ data });
+});
+
+/**
+ * POST /api/materials/generate-flashcards
+ *
+ * Generates AI flashcard pairs from the pre-extracted concepts of the selected materials.
+ *
+ * Flow:
+ * 1. Validate the request body (material_ids)
+ * 2. Fetch all concepts from the concepts table WHERE material_id IN (...)
+ * 3. Pass concepts to Groq llama-3.3-70b-versatile via generateFlashcardsFromConcepts()
+ * 4. Return { title, description, cards: [{ front, back }] } to the frontend
+ *
+ * Body: { material_ids: string[] }
+ */
+router.post('/generate-flashcards', async (req: Request, res: Response): Promise<void> => {
+  const parsed = GenerateFlashcardsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+    return;
+  }
+
+  const { material_ids, format } = parsed.data;
+
+  // 1. Fetch all concepts for the selected materials
+  const { data: concepts, error: conceptsError } = await supabaseAdmin
+    .from('concepts')
+    .select('term, definition')
+    .in('material_id', material_ids)
+    .order('created_at', { ascending: true });
+
+  if (conceptsError) {
+    res.status(500).json({ error: 'Failed to fetch concepts', message: conceptsError.message });
+    return;
+  }
+
+  if (!concepts || concepts.length === 0) {
+    res.status(422).json({
+      error: 'No concepts found',
+      message: 'The selected materials have no extracted concepts yet. Please wait for processing to complete.',
+    });
+    return;
+  }
+
+  console.log(`[Flashcard Generation] 🃏 Generating flashcards from ${concepts.length} concepts across ${material_ids.length} material(s)`);
+
+  // 2. Generate flashcards using Groq
+  try {
+    const result = await generateFlashcardsFromConcepts(concepts, format);
+
+    console.log(`[Flashcard Generation] ✅ Generated ${result.cards.length} flashcards`);
+
+    res.status(200).json({
+      data: result,
+      message: `Generated ${result.cards.length} flashcards from ${concepts.length} concepts`,
+    });
+  } catch (err: any) {
+    console.error('[Flashcard Generation] ❌ Error:', err.message);
+    res.status(500).json({
+      error: 'Flashcard generation failed',
+      message: err.message ?? 'Unknown error from Groq',
+    });
+  }
 });
 
 // ── Background Processing ──────────────────────────────────

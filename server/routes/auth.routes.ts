@@ -20,7 +20,7 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  const { email, password, first_name, last_name, role, institution_id } = parsed.data;
+  const { email, password, first_name, last_name } = parsed.data;
 
   // 1. Create the user in Supabase Auth
   const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
@@ -41,8 +41,7 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
       id: authData.user.id,
       first_name,
       last_name,
-      role,
-      institution_id: institution_id ?? null,
+      role: 'student',
     })
     .select()
     .single();
