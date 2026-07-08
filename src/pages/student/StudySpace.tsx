@@ -409,6 +409,7 @@ export default function StudySpace() {
 
         {activeTab === 'resources' && (
           <ResourcesTab
+            spaceId={spaceId!}
             courseConnected={courseConnected}
             selectedDoc={selectedDoc}
             handleConnectCourse={handleConnectCourse}

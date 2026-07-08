@@ -140,3 +140,21 @@ export const BktRecalculateSchema = z.object({
   concept_ids: z.array(z.string().uuid()).min(1).optional(),
 });
 export type BktRecalculateInput = z.infer<typeof BktRecalculateSchema>;
+
+// ── Chat (Study Assistant) ────────────────────────────────
+
+export const ChatMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1),
+});
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+
+export const ChatRequestSchema = z.object({
+  space_id: z.string().uuid(),
+  message: z.string().min(1),
+  material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
+  history: z.array(ChatMessageSchema).optional().default([]),
+  /** 'rag' uses embedding search for specific questions. 'full' fetches all concepts (for summaries). */
+  mode: z.enum(['rag', 'full']).optional().default('rag'),
+});
+export type ChatRequestInput = z.infer<typeof ChatRequestSchema>;

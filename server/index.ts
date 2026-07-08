@@ -15,6 +15,7 @@ import cognitiveRoutes from './routes/cognitive.routes';
 import practiceRoutes from './routes/practice.routes';
 import gamificationRoutes from './routes/gamification.routes';
 import bktRoutes from './routes/bkt.routes';
+import chatRoutes from './routes/chat.routes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -46,6 +47,7 @@ app.use('/api/cognitive', cognitiveRoutes);
 app.use('/api/practice', practiceRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/bkt', bktRoutes);
+app.use('/api/chat', chatRoutes);
 
 // ─────────────────────────────────────────────
 // 404 Handler (must come after all routes)

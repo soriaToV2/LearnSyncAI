@@ -34,7 +34,7 @@ CREATE TABLE study_spaces (
 -- 3. DOCUMENT PARSING & SEMANTIC STORAGE
 -- ==========================================
 
-CREATE TYPE parsed_status AS ENUM ('pending', 'processing', 'completed');
+CREATE TYPE parsed_status AS ENUM ('pending', 'processing', 'completed', 'failed');
 
 -- Student-uploaded learning resources (PDFs, etc.) linked to their study space
 CREATE TABLE materials (
@@ -57,6 +57,31 @@ CREATE TABLE concepts (
     parent_concept_id UUID REFERENCES concepts(id), -- For hierarchical concept maps
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Semantic search function: retrieves top-N concepts closest to a query vector
+-- Used by the Study Assistant chatbot for Retrieval-Augmented Generation (RAG)
+CREATE OR REPLACE FUNCTION match_concepts(
+  query_embedding vector(3072),
+  material_ids    uuid[],
+  match_count     int DEFAULT 8
+)
+RETURNS TABLE (
+  term        text,
+  definition  text,
+  similarity  float
+)
+LANGUAGE sql STABLE
+AS $$
+  SELECT
+    term,
+    definition,
+    1 - (embedding <=> query_embedding) AS similarity
+  FROM concepts
+  WHERE material_id = ANY(material_ids)
+    AND embedding IS NOT NULL
+  ORDER BY embedding <=> query_embedding
+  LIMIT match_count;
+$$;
 
 -- ==========================================
 -- 4. FLASHCARDS (Spaced Repetition + BKT)

@@ -104,4 +104,23 @@ ${conceptList}`;
   return parsed;
 }
 
+/**
+ * Streams a chat completion from Groq using llama-3.1-8b-instant.
+ * Returns an async iterable of token chunks for SSE streaming to the client.
+ *
+ * @param messages   Full conversation (system + history + user message)
+ * @returns          Async iterable stream of Groq chunks
+ */
+export async function streamChatCompletion(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+) {
+  return groq.chat.completions.create({
+    model: 'llama-3.1-8b-instant',
+    messages,
+    stream: true,
+    temperature: 0.6,
+    max_tokens: 2048,
+  });
+}
+
 export { groq };

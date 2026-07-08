@@ -5,7 +5,7 @@
 /** Only one role exists: student. Instructor role has been removed. */
 export type UserRole = 'student';
 
-export type ParsedStatus = 'pending' | 'processing' | 'completed';
+export type ParsedStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 export type PracticeStatus = 'in_progress' | 'completed';
 

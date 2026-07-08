@@ -8,7 +8,17 @@ import { CreateMaterialSchema, GenerateFlashcardsSchema } from '../types/api';
 import multer from 'multer';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() }); // Store file in memory for upload to Supabase Storage
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF files are allowed'));
+    }
+  },
+});
 
 router.use(authenticate);
 
@@ -41,7 +51,14 @@ router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void>
 router.post(
   '/',
   requireRole('student'),
-  upload.single('file'),
+  (req: Request, res: Response, next: import('express').NextFunction) => {
+    upload.single('file')(req, res, (err: any) => {
+      if (err) {
+        return res.status(400).json({ error: err.message });
+      }
+      next();
+    });
+  },
   async (req: Request, res: Response): Promise<void> => {
     const parsed = CreateMaterialSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -137,6 +154,25 @@ router.get('/:id/concepts', async (req: Request, res: Response): Promise<void> =
 
   if (error) {
     res.status(500).json({ error: 'Failed to fetch concepts', message: error.message });
+    return;
+  }
+
+  res.json({ data });
+});
+
+/**
+ * GET /api/materials/:id/status
+ * Returns the current parsed_status of a material.
+ */
+router.get('/:id/status', async (req: Request, res: Response): Promise<void> => {
+  const { data, error } = await supabaseAdmin
+    .from('materials')
+    .select('parsed_status')
+    .eq('id', req.params.id)
+    .single();
+
+  if (error || !data) {
+    res.status(404).json({ error: 'Material not found', message: error?.message });
     return;
   }
 
@@ -281,10 +317,10 @@ Rules:
     const errorMessage = err?.message ?? String(err);
     console.error(`[Material Processing] ❌ material_id=${materialId} — Error: ${errorMessage}`);
     if (err?.stack) console.error(err.stack);
-    // Reset to pending so it can be retried on next server restart
+    // Mark as failed so UI knows it's unrecoverable right now
     await supabaseAdmin
       .from('materials')
-      .update({ parsed_status: 'pending' })
+      .update({ parsed_status: 'failed' })
       .eq('id', materialId);
   }
 }
