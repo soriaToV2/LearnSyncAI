@@ -1,313 +1,311 @@
 import React, { useState } from 'react';
-import { Brain, Sparkles, BookOpen, PenTool, RefreshCw, AlertTriangle, CheckCircle2, Lightbulb, ChevronRight } from 'lucide-react';
+import { Brain, History, PenTool, RefreshCw, ChevronLeft, Calendar, Target, Plus, CheckCircle2, XCircle } from 'lucide-react';
 import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
 
 interface FreeRecallTabProps {
-  availableResources: string[];
+  availableResources: { id: string; title: string }[];
 }
 
+interface CognitiveLog {
+  id: string;
+  mode: 'free_recall';
+  user_input: string;
+  similarity_score: number;
+  ai_feedback: string[]; // List of missed keywords/concepts
+  created_at: string;
+}
+
+// Mock initial history data
+const MOCK_HISTORY: CognitiveLog[] = [
+  {
+    id: '1',
+    mode: 'free_recall',
+    user_input: 'Synaptic transmission starts when an action potential arrives at the presynaptic terminal. This causes neurotransmitters to be released into the cleft and bind to receptors on the postsynaptic side.',
+    similarity_score: 0.65,
+    ai_feedback: [
+      'Voltage-gated Calcium Channels',
+      'Calcium Influx',
+      'Synaptic Vesicle Exocytosis'
+    ],
+    created_at: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
+  }
+];
+
 export default function FreeRecallTab({ availableResources }: FreeRecallTabProps) {
+  const resourceOptions = availableResources.map(r => r.title);
+
+  const [viewMode, setViewMode] = useState<'study' | 'history'>('study');
   const [selectedDocs, setSelectedDocs] = useState<string[]>(
-    availableResources.length > 0 ? [availableResources[0]] : []
+    resourceOptions.length > 0 ? [resourceOptions[0]] : []
   );
+  
+  // Study State
   const [recallText, setRecallText] = useState('');
   const [isEvaluating, setIsEvaluating] = useState(false);
-  const [evaluationResult, setEvaluationResult] = useState<any | null>(null);
+  
+  // History / Logs State
+  const [historyLogs, setHistoryLogs] = useState<CognitiveLog[]>(MOCK_HISTORY);
+  const [activeLogId, setActiveLogId] = useState<string | null>(null);
+
+  const activeLog = historyLogs.find(log => log.id === activeLogId);
 
   const handleEvaluate = () => {
     if (!recallText.trim()) return;
     setIsEvaluating(true);
 
-    // Simulate AI analysis
+    // Simulate AI analysis and database vector similarity check
     setTimeout(() => {
-      // Mock keyword scoring
       const textLower = recallText.toLowerCase();
       const hasCalcium = textLower.includes('calcium') || textLower.includes('ca2+');
-      const hasSynaptic = textLower.includes('synaptic') || textLower.includes('cleft');
-      const hasNeuro = textLower.includes('neurotransmitter') || textLower.includes('vesicle');
-      const hasPost = textLower.includes('postsynaptic') || textLower.includes('receptor');
-      const hasAction = textLower.includes('action potential') || textLower.includes('depolarization');
-
-      let score = 25;
-      const mastered = [];
-      const missing = [];
-
-      if (hasAction) {
-        score += 15;
-        mastered.push({ concept: 'Action Potential Propagation', desc: 'Described action potential arrival at the presynaptic terminal.' });
-      } else {
-        missing.push({ concept: 'Action Potential Arrival', desc: 'Mention the depolarization that triggers the voltage-gated channels.' });
-      }
+      const hasVesicle = textLower.includes('vesicle');
+      
+      let score = 0.45;
+      const missedConcepts: string[] = [];
 
       if (hasCalcium) {
-        score += 15;
-        mastered.push({ concept: 'Calcium Influx', desc: 'Linked Ca2+ entry to vesicle fusion and neurotransmitter release.' });
+        score += 0.25;
       } else {
-        missing.push({ concept: 'Voltage-gated Calcium Channels', desc: 'Specify that Calcium ions enter the terminal to trigger exocytosis.' });
+        missedConcepts.push('Voltage-gated Calcium Channels');
+        missedConcepts.push('Calcium Influx');
       }
 
-      if (hasNeuro || hasSynaptic) {
-        score += 15;
-        mastered.push({ concept: 'Neurotransmitter Exocytosis', desc: 'Identified synaptic vesicles releasing chemicals into the synaptic cleft.' });
+      if (hasVesicle) {
+        score += 0.25;
       } else {
-        missing.push({ concept: 'Synaptic Vesicle Exocytosis', desc: 'Explain how vesicles fuse with the membrane to release chemicals.' });
-      }
-
-      if (hasPost) {
-        score += 15;
-        mastered.push({ concept: 'Postsynaptic Receptor Binding', desc: 'Identified transmitters binding to postsynaptic membrane receptors.' });
-      } else {
-        missing.push({ concept: 'Receptor Activation', desc: 'Clarify that neurotransmitters bind to specific receptors to trigger potential changes.' });
+        missedConcepts.push('Synaptic Vesicle Exocytosis');
       }
 
       // Bonus for length
-      score += Math.min(15, Math.floor(recallText.length / 50));
-      score = Math.min(95, score);
+      score += Math.min(0.05, (recallText.length / 500) * 0.05);
+      
+      const finalScore = Math.min(1.0, Number(score.toFixed(2)));
 
-      setEvaluationResult({
-        score,
-        mastered,
-        missing,
-        wordCount: recallText.split(/\s+/).filter(Boolean).length,
-        feedback: score >= 70 
-          ? "Excellent coverage of the core process. You have a solid grasp of presynaptic and postsynaptic events."
-          : score >= 45 
-            ? "Good initial attempt. You've captured the main concepts but missed critical steps in the synaptic transmission sequence."
-            : "Review the material and try again. Focus on detailing the step-by-step sequence of neurotransmitter release."
-      });
+      const newLog: CognitiveLog = {
+        id: Date.now().toString(),
+        mode: 'free_recall',
+        user_input: recallText,
+        similarity_score: finalScore,
+        ai_feedback: missedConcepts,
+        created_at: new Date().toISOString(),
+      };
+
+      setHistoryLogs(prev => [newLog, ...prev]);
+      setActiveLogId(newLog.id);
+      setViewMode('history');
+      setRecallText('');
       setIsEvaluating(false);
-    }, 2000);
+    }, 1500);
   };
 
-  const handleReset = () => {
-    setRecallText('');
-    setEvaluationResult(null);
+  const formatDate = (isoString: string) => {
+    const d = new Date(isoString);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-300">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-6">
+    <div className="animate-in fade-in duration-300 h-[calc(100vh-140px)] flex flex-col">
+      {/* ─── Header & Top Controls ───────────────────────────── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-5 shrink-0">
         <div>
-          <h2 className="font-display text-2xl font-semibold text-white flex items-center gap-2.5">
+          <h2 className="font-display text-2xl font-semibold text-white flex items-center gap-2.5 tracking-tight">
             <Brain className="w-6 h-6 text-primary-fixed-dim" />
-            Free Recall AI Evaluation
+            Free Recall
           </h2>
           <p className="font-sans text-sm text-slate-400 mt-1">
-            Write down everything you remember about a resource. AI compares your recall against reference vectors to spot gaps.
+            Type everything you remember from memory. AI computes the similarity gap.
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <span className="font-sans text-xs font-semibold text-slate-400">Reference Materials:</span>
-          <MultiSelectDropdown
-            selectedValues={selectedDocs}
-            onChange={setSelectedDocs}
-            options={availableResources}
-            placeholder="Select resources..."
-          />
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="font-sans text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Context:</span>
+            <div className="w-[200px]">
+              <MultiSelectDropdown
+                selectedValues={selectedDocs}
+                onChange={setSelectedDocs}
+                options={resourceOptions}
+                placeholder="Select materials..."
+              />
+            </div>
+          </div>
+          
+          <div className="h-8 w-px bg-white/10 mx-2" />
+          
+          <button
+            onClick={() => {
+              setViewMode(viewMode === 'study' ? 'history' : 'study');
+              setActiveLogId(null);
+            }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 hover:bg-surface-container transition-colors text-slate-300 font-sans text-sm font-medium"
+          >
+            {viewMode === 'study' ? (
+              <><History className="w-4 h-4" /> Past Recalls</>
+            ) : (
+              <><PenTool className="w-4 h-4" /> Write New Recall</>
+            )}
+          </button>
         </div>
       </div>
 
-      {!evaluationResult ? (
-        <div key="editor" className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-500">
-          {/* Editor Area */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="relative bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-5 backdrop-blur-md">
-              <div className="flex justify-between items-center mb-3">
-                <span className="font-sans text-xs font-semibold text-primary-fixed-dim flex items-center gap-1.5">
-                  <PenTool className="w-3.5 h-3.5" /> Write Your Summary
-                </span>
-                <span className="font-sans text-xs text-slate-500">
-                  {recallText.length} characters
-                </span>
-              </div>
-              <textarea
-                value={recallText}
-                onChange={(e) => setRecallText(e.target.value)}
-                placeholder="Type everything you can remember about this topic here... (e.g. 'Action potential arrives at terminal. Voltage calcium channels open. Calcium influx causes vesicle fusion...')"
-                className="w-full min-h-[280px] bg-transparent text-white placeholder-slate-600 focus:outline-none text-sm leading-relaxed resize-y font-sans"
-              />
-            </div>
-            
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setRecallText('')}
-                disabled={!recallText || isEvaluating}
-                className="px-5 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-400 hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                Clear
-              </button>
+      {/* ─── Main Content Area ─────────────────────────────── */}
+      <div className="flex-1 min-h-0 pt-6">
+        {viewMode === 'study' ? (
+          // STUDY MODE (Minimalist Editor)
+          <div className="h-full flex flex-col max-w-4xl mx-auto animate-in fade-in">
+            <textarea
+              value={recallText}
+              onChange={(e) => setRecallText(e.target.value)}
+              placeholder="Start typing your recall here..."
+              className="flex-1 w-full bg-transparent border-none outline-none font-sans text-lg text-slate-200 placeholder:text-slate-600 resize-none no-scrollbar py-4"
+              autoFocus
+            />
+            <div className="py-4 border-t border-white/5 flex items-center justify-between shrink-0">
+              <span className="font-sans text-xs text-slate-500 font-medium">
+                {recallText.split(/\s+/).filter(Boolean).length} words
+              </span>
               <button
                 onClick={handleEvaluate}
                 disabled={!recallText.trim() || isEvaluating || selectedDocs.length === 0}
-                className="px-6 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-8 py-3 bg-white text-black hover:bg-slate-200 rounded-full font-sans text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm"
               >
                 {isEvaluating ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" /> Evaluating Recall...
-                  </>
+                  <><RefreshCw className="w-4 h-4 animate-spin" /> Analyzing vectors...</>
                 ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" /> Evaluate Recall
-                  </>
+                  'Evaluate Recall'
                 )}
               </button>
             </div>
           </div>
-
-          {/* Instructions panel */}
-          <div className="space-y-6">
-            <div className="bg-surface-container/30 border border-white/5 rounded-2xl p-6 space-y-4">
-              <h4 className="font-display text-sm font-bold text-white uppercase tracking-wider">How to Practice Free Recall</h4>
-              <ul className="space-y-3 font-sans text-xs text-slate-400 leading-relaxed">
-                <li className="flex gap-2">
-                  <span className="text-primary-fixed-dim font-bold">1.</span>
-                  <span>Close your notes and slides. Select your target documents from the dropdown.</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-primary-fixed-dim font-bold">2.</span>
-                  <span>Write down the core pathway, key vocabulary, and steps in your own words.</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-primary-fixed-dim font-bold">3.</span>
-                  <span>Click Evaluate. The AI model checks vector overlaps with the textbook reference.</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-primary-fixed-dim font-bold">4.</span>
-                  <span>Missing concepts will be flagged so you know exactly what to review next.</span>
-                </li>
-              </ul>
-              <div className="pt-3 border-t border-white/5 flex items-center gap-2 text-[10px] text-emerald-400/80 font-mono">
-                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                <span>BKT Vector Synchronization Enabled</span>
+        ) : (
+          // HISTORY MODE
+          <div className="h-full flex gap-6 animate-in fade-in">
+            {/* Sidebar List */}
+            <div className="w-[320px] flex flex-col border-r border-white/5 pr-6 h-full shrink-0">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-sans font-semibold text-slate-200 text-sm">Past Attempts</h3>
+                <span className="bg-surface-container text-slate-400 text-xs px-2 py-0.5 rounded-full font-medium">
+                  {historyLogs.length}
+                </span>
               </div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* Results view */
-        <div key="results" className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-500">
-          <div className="lg:col-span-2 space-y-6">
-            {/* Score Card */}
-            <div className="bg-surface-container-lowest/30 border border-white/10 rounded-2xl p-6 backdrop-blur-md space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="font-display text-lg font-semibold text-white">Semantic Match Analysis</h3>
-                  <p className="font-sans text-xs text-slate-500 mt-1">Based on semantic vector similarity thresholds (`pgvector` cosine similarity)</p>
-                  {selectedDocs.length > 0 && (
-                    <p className="font-sans text-xs text-slate-400 mt-2">
-                      Reference Materials: <strong className="text-white">{selectedDocs.join(', ')}</strong>
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-4 bg-white/5 px-4 py-2.5 rounded-xl border border-white/5 shrink-0">
-                  <div className="text-right">
-                    <span className="block font-sans text-[10px] text-slate-400 uppercase font-semibold">Word Count</span>
-                    <span className="font-mono text-sm font-bold text-white">{evaluationResult.wordCount}</span>
-                  </div>
-                  <div className="w-px h-8 bg-white/10"></div>
-                  <div className="text-right">
-                    <span className="block font-sans text-[10px] text-slate-400 uppercase font-semibold">BKT Status</span>
-                    <span className="font-mono text-xs font-bold text-emerald-400">LOGGED</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Progress and Score */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-end">
-                  <span className="font-sans text-sm font-semibold text-slate-300">Concept Coverage Score</span>
-                  <span className="font-mono text-3xl font-black text-primary-fixed-dim">{evaluationResult.score}%</span>
-                </div>
-                <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden border border-white/10">
-                  <div
-                    className="h-full bg-gradient-to-r from-primary-fixed-dim to-indigo-500 transition-all duration-1000"
-                    style={{ width: `${evaluationResult.score}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 bg-primary-fixed-dim/5 border border-primary-fixed-dim/10 p-4 rounded-xl">
-                <Lightbulb className="w-5 h-5 text-primary-fixed-dim shrink-0" />
-                <p className="font-sans text-xs text-slate-300 leading-relaxed">
-                  <strong>Evaluator Feedback:</strong> {evaluationResult.feedback}
-                </p>
-              </div>
-            </div>
-
-            {/* Concept lists */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Mastered concepts */}
-              <div className="bg-surface-container/30 border border-white/5 rounded-2xl p-6 space-y-4">
-                <h4 className="font-display text-sm font-bold text-emerald-400 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" /> Mastered Concepts ({evaluationResult.mastered.length})
-                </h4>
-                {evaluationResult.mastered.length > 0 ? (
-                  <div className="space-y-3">
-                    {evaluationResult.mastered.map((c: any, i: number) => (
-                      <div key={i} className="bg-emerald-500/5 border border-emerald-500/10 p-3 rounded-xl space-y-1">
-                        <span className="block font-sans text-xs font-bold text-emerald-300">{c.concept}</span>
-                        <p className="font-sans text-[10px] text-slate-400">{c.desc}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="font-sans text-xs text-slate-500">No core concepts successfully matched yet.</p>
-                )}
-              </div>
-
-              {/* Missing concepts */}
-              <div className="bg-surface-container/30 border border-white/5 rounded-2xl p-6 space-y-4">
-                <h4 className="font-display text-sm font-bold text-amber-400 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0" /> Missing Concepts ({evaluationResult.missing.length})
-                </h4>
-                {evaluationResult.missing.length > 0 ? (
-                  <div className="space-y-3">
-                    {evaluationResult.missing.map((c: any, i: number) => (
-                      <div key={i} className="bg-amber-500/5 border border-amber-500/10 p-3 rounded-xl space-y-1">
-                        <span className="block font-sans text-xs font-bold text-amber-300">{c.concept}</span>
-                        <p className="font-sans text-[10px] text-slate-400">{c.desc}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="font-sans text-xs text-slate-500">Incredible! You captured all major concepts.</p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Right sidebar results panel */}
-          <div className="space-y-6">
-            <div className="bg-surface-container/30 border border-white/5 rounded-2xl p-6 space-y-4">
-              <h4 className="font-display text-sm font-bold text-white uppercase tracking-wider">Review Action Path</h4>
-              <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                Your BKT mastery vectors have been updated. Your missing concepts suggest focusing your study efforts on these target flashcards:
-              </p>
               
-              <div className="space-y-2 pt-2">
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 cursor-pointer group transition-colors">
-                  <span className="font-sans text-xs text-white truncate pr-2">Presynaptic Calcium Influx</span>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-primary-fixed-dim transition-colors shrink-0" />
-                </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 cursor-pointer group transition-colors">
-                  <span className="font-sans text-xs text-white truncate pr-2">Neurotransmitter Vesicle Fusion</span>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-primary-fixed-dim transition-colors shrink-0" />
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-white/5">
-                <button
-                  onClick={handleReset}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white font-sans text-xs font-bold transition-all active:scale-95"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Try Free Recall Again
-                </button>
+              <div className="flex-1 overflow-y-auto space-y-2 pr-2 no-scrollbar">
+                {historyLogs.length === 0 ? (
+                  <p className="text-sm text-slate-500 font-sans text-center mt-10">No past attempts yet.</p>
+                ) : (
+                  historyLogs.map(log => (
+                    <button
+                      key={log.id}
+                      onClick={() => setActiveLogId(log.id)}
+                      className={`w-full text-left p-4 rounded-xl transition-all border ${
+                        activeLogId === log.id 
+                          ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/30' 
+                          : 'bg-surface-container/30 border-transparent hover:bg-surface-container'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                          <Calendar className="w-3 h-3" />
+                          {formatDate(log.created_at)}
+                        </span>
+                        <span className={`text-xs font-bold ${log.similarity_score >= 0.75 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                          {Math.round(log.similarity_score * 100)}%
+                        </span>
+                      </div>
+                      <p className="font-sans text-sm text-slate-300 line-clamp-2 leading-relaxed">
+                        {log.user_input}
+                      </p>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
+
+            {/* Detail View */}
+            <div className="flex-1 h-full overflow-y-auto no-scrollbar pb-10">
+              {activeLog ? (
+                <div className="max-w-3xl animate-in fade-in slide-in-from-right-4 duration-300 space-y-8">
+                  
+                  {/* Score Overview */}
+                  <div className="bg-surface-container/30 border border-white/5 rounded-2xl p-6 flex items-center gap-6">
+                    <div className="relative shrink-0 flex items-center justify-center w-24 h-24">
+                      {/* Circle indicator */}
+                      <svg className="absolute inset-0 w-full h-full -rotate-90">
+                        <circle cx="48" cy="48" r="40" fill="none" stroke="currentColor" strokeWidth="8" className="text-surface-container-high" />
+                        <circle 
+                          cx="48" cy="48" r="40" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          strokeWidth="8" 
+                          strokeLinecap="round"
+                          strokeDasharray={251.2}
+                          strokeDashoffset={251.2 - (251.2 * activeLog.similarity_score)}
+                          className={activeLog.similarity_score >= 0.75 ? 'text-emerald-400' : 'text-amber-400'} 
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="font-display text-2xl font-bold text-white">
+                          {Math.round(activeLog.similarity_score * 100)}<span className="text-sm text-slate-400">%</span>
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="font-sans text-lg font-semibold text-white flex items-center gap-2">
+                        <Target className="w-5 h-5 text-primary-fixed-dim" />
+                        Cosine Similarity Score
+                      </h3>
+                      <p className="font-sans text-sm text-slate-400 mt-1">
+                        {activeLog.similarity_score >= 0.75 
+                          ? 'Excellent semantic coverage. Your response aligns closely with the reference materials.' 
+                          : 'Semantic gap detected. Your response is missing some core concepts from the text.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Missing Terms (Minimalist List) */}
+                  <div>
+                    <h4 className="font-sans text-sm font-semibold text-slate-200 uppercase tracking-widest mb-4">
+                      Missed Concepts
+                    </h4>
+                    {activeLog.ai_feedback.length === 0 ? (
+                      <div className="flex items-center gap-2 text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-4 py-3 rounded-xl w-fit">
+                        <CheckCircle2 className="w-5 h-5" />
+                        <span className="font-sans text-sm font-medium">No missing concepts detected.</span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {activeLog.ai_feedback.map((concept, i) => (
+                          <div key={i} className="flex items-center gap-3 p-4 rounded-xl border border-red-500/10 bg-red-500/5">
+                            <XCircle className="w-5 h-5 text-red-400 shrink-0" />
+                            <span className="font-sans text-sm text-slate-200 font-medium">{concept}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Original Input */}
+                  <div>
+                    <h4 className="font-sans text-sm font-semibold text-slate-200 uppercase tracking-widest mb-4">
+                      Your Recall
+                    </h4>
+                    <div className="bg-surface-container-lowest/50 border border-white/5 rounded-2xl p-6">
+                      <p className="font-sans text-base leading-loose text-slate-300 whitespace-pre-wrap">
+                        {activeLog.user_input}
+                      </p>
+                    </div>
+                  </div>
+                  
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center text-slate-500">
+                  <History className="w-12 h-12 mb-4 opacity-20" />
+                  <p className="font-sans text-sm">Select a past attempt to view its similarity score and missing terms.</p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
