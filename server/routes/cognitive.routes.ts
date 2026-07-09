@@ -2,25 +2,265 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateEmbedding, generateContent } from '../lib/gemini';
-import { CognitiveReviewSchema } from '../types/api';
+import { generateEmbedding, generateJson, generateContent } from '../lib/gemini';
+import { FreeRecallSchema, CognitiveReviewSchema } from '../types/api';
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
 
+// ─── Helper: Cosine similarity between two equal-length vectors ───────────
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0, magA = 0, magB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    magA += a[i] * a[i];
+    magB += b[i] * b[i];
+  }
+  return magA && magB ? dot / (Math.sqrt(magA) * Math.sqrt(magB)) : 0;
+}
+
 /**
- * POST /api/cognitive/recall
+ * Supabase returns pgvector columns as a JSON string like "[0.1, 0.2, ...]" or
+ * a PostgreSQL vector string like "[-0.013,0.024,...]".
+ * This helper normalises either format into a proper number[].
+ */
+function parseVector(raw: unknown): number[] {
+  if (Array.isArray(raw)) return raw as number[];
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as number[];
+    } catch {
+      // Fallback: strip brackets and split
+      const stripped = raw.replace(/^\[|\]$/g, '');
+      return stripped.split(',').map(Number);
+    }
+  }
+  return [];
+}
+
+
+/**
+ * POST /api/cognitive/free-recall
  *
- * Scores a Free Recall or Feynman Technique submission.
+ * Evaluates a Free Recall submission using the Concept-Extraction Pipeline.
  *
  * Flow:
- * 1. Embed the student's user_input using Gemini text-embedding-004
- * 2. Run a pgvector cosine similarity query against the concept's stored embedding
- * 3. Generate AI coaching feedback using Gemini Flash
- * 4. Save the log to cognitive_logs
- * 5. Return the score and feedback to the UI
+ * 1. Fetch ALL concepts (with embeddings) for the selected material_ids from DB.
+ * 2. Send student's raw text to Gemini to extract discrete concepts they discussed.
+ * 3. Embed each extracted student concept individually (gemini-embedding-001).
+ * 4. For each true DB concept, compute its highest cosine similarity against the student's concept vectors.
+ * 5. Grade: "Missed" if highest match < 0.70, "Covered" otherwise.
+ * 6. Compute overall similarity score (avg of all best-match scores).
+ * 7. Save the result to cognitive_logs.
+ * 8. Return { similarity_score, missed_concepts[], overall_verdict }.
  *
- * Body: { concept_id, space_id, mode: 'free_recall'|'feynman', user_input }
+ * Body: { space_id, material_ids[], user_input }
+ */
+router.post('/free-recall', async (req: Request, res: Response): Promise<void> => {
+  const parsed = FreeRecallSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+    return;
+  }
+
+  const { space_id, material_ids, user_input } = parsed.data;
+
+  try {
+    // ── 1. Fetch all reference concepts for the selected materials ────────
+    const { data: allConcepts, error: conceptsError } = await supabaseAdmin
+      .from('concepts')
+      .select('id, term, definition, embedding')
+      .in('material_id', material_ids);
+
+    if (conceptsError) {
+      res.status(500).json({ error: 'Failed to fetch concepts', message: conceptsError.message });
+      return;
+    }
+
+    if (!allConcepts || allConcepts.length === 0) {
+      res.status(400).json({ error: 'No processed concepts found for the selected materials. Ensure documents have finished parsing.' });
+      return;
+    }
+
+    // Filter to only concepts that have embeddings
+    const conceptsWithEmbeddings = allConcepts.filter(c => {
+      const vec = parseVector(c.embedding);
+      return vec.length > 0;
+    });
+
+    if (conceptsWithEmbeddings.length === 0) {
+      res.status(400).json({ error: 'Concept embeddings are not ready yet. Please wait for material processing to complete.' });
+      return;
+    }
+
+    // ── 2. Extract discrete concepts from the student's text via Gemini ───
+    interface ExtractedConcept { term: string; explanation: string }
+
+    const extractionPrompt = `
+You are an expert academic assistant. Extract the distinct concepts and/or definitions that the student has discussed in their response.
+
+Student Response:
+"""
+${user_input}
+"""
+
+Return a JSON array of objects. Each object must have:
+- "term": the concept or topic name (e.g. "Action Potential", "Calcium Influx")
+- "explanation": the student's brief explanation or description of that concept
+
+If the student mentioned no distinct concepts, return an empty array [].
+
+Example output:
+[
+  { "term": "Mitochondria", "explanation": "The student described it as the powerhouse of the cell that generates ATP." },
+  { "term": "Cellular Respiration", "explanation": "The student explained this is how cells convert glucose into energy." }
+]
+`;
+
+    const extractedConcepts = await generateJson<ExtractedConcept[]>(extractionPrompt);
+
+    // ── 3. Handle edge case: student wrote nothing recognizable ───────────
+    if (!Array.isArray(extractedConcepts) || extractedConcepts.length === 0) {
+      // Score is 0 — all concepts are missed
+      const missedConcepts = conceptsWithEmbeddings.map(c => c.term);
+      const { data: log } = await supabaseAdmin.from('cognitive_logs').insert({
+        space_id,
+        concept_id: null,
+        mode: 'free_recall',
+        user_input,
+        similarity_score: 0,
+        ai_feedback: JSON.stringify({ missed_concepts: missedConcepts, overall_verdict: 'needs_review' }),
+      }).select().single();
+
+      res.status(201).json({
+        data: {
+          log_id: log?.id,
+          similarity_score: 0,
+          score_percent: 0,
+          missed_concepts: missedConcepts,
+          overall_verdict: 'needs_review',
+        },
+      });
+      return;
+    }
+
+    // ── 4. Embed each student-extracted concept individually ──────────────
+    const studentEmbeddings: { term: string; embedding: number[] }[] = [];
+    for (const ec of extractedConcepts) {
+      const textToEmbed = `${ec.term}: ${ec.explanation}`;
+      const rawEmbedding = await generateEmbedding(textToEmbed);
+      // generateEmbedding already returns number[] but normalise just in case
+      const embedding = parseVector(rawEmbedding);
+      studentEmbeddings.push({ term: ec.term, embedding });
+    }
+
+    // ── 5. Grade each reference concept by its best match ─────────────────
+    const COVERAGE_THRESHOLD = 0.70;
+    const missedConcepts: string[] = [];
+    let coveredCount = 0;
+
+    for (const refConcept of conceptsWithEmbeddings) {
+      const refEmbedding = parseVector(refConcept.embedding);
+      if (refEmbedding.length === 0) continue;
+
+      // Find highest similarity score against any of the student's concept vectors
+      let bestScore = 0;
+      for (const sc of studentEmbeddings) {
+        const sim = cosineSimilarity(refEmbedding, sc.embedding);
+        if (sim > bestScore) bestScore = sim;
+      }
+
+      if (bestScore >= COVERAGE_THRESHOLD) {
+        coveredCount++;
+      } else {
+        missedConcepts.push(refConcept.term);
+      }
+    }
+
+    // ── 6. Compute score as coverage ratio ────────────────────────────────
+    // Score = covered / total. This avoids the "hubness" problem where random
+    // vector overlap inflates scores for concepts the student never discussed.
+    const totalConcepts = conceptsWithEmbeddings.length;
+    const similarityScore = totalConcepts > 0 ? coveredCount / totalConcepts : 0;
+    const scorePercent = Math.round(similarityScore * 100);
+
+    const overallVerdict: 'strong' | 'partial' | 'needs_review' =
+      similarityScore >= 0.75 ? 'strong' :
+      similarityScore >= 0.40 ? 'partial' :
+      'needs_review';
+
+    // ── 7. Save to cognitive_logs ─────────────────────────────────────────
+    const feedbackPayload = JSON.stringify({ missed_concepts: missedConcepts, overall_verdict: overallVerdict });
+
+    const { data: log, error: logError } = await supabaseAdmin
+      .from('cognitive_logs')
+      .insert({
+        space_id,
+        concept_id: null,
+        mode: 'free_recall',
+        user_input,
+        similarity_score: similarityScore,
+        ai_feedback: feedbackPayload,
+      })
+      .select()
+      .single();
+
+    if (logError) {
+      res.status(500).json({ error: 'Failed to save cognitive log', message: logError.message });
+      return;
+    }
+
+    // ── 8. Return results to the frontend ────────────────────────────────
+    res.status(201).json({
+      data: {
+        log_id: log.id,
+        similarity_score: similarityScore,
+        score_percent: scorePercent,
+        missed_concepts: missedConcepts,
+        overall_verdict: overallVerdict,
+        created_at: log.created_at,
+      },
+      message: 'Free recall scored successfully',
+    });
+
+  } catch (err: any) {
+    console.error('[FreeRecall] Error:', err);
+    res.status(500).json({ error: 'Failed to process free recall submission', message: err.message });
+  }
+});
+
+/**
+ * GET /api/cognitive/history/:spaceId
+ *
+ * Returns the last 20 cognitive log sessions for a given study space.
+ * Ordered by most recent first.
+ */
+router.get('/history/:spaceId', async (req: Request, res: Response): Promise<void> => {
+  const { spaceId } = req.params;
+
+  const { data: logs, error } = await supabaseAdmin
+    .from('cognitive_logs')
+    .select('id, mode, user_input, similarity_score, ai_feedback, created_at')
+    .eq('space_id', spaceId)
+    .eq('mode', 'free_recall')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to fetch history', message: error.message });
+    return;
+  }
+
+  res.json({ data: logs ?? [] });
+});
+
+/**
+ * POST /api/cognitive/recall  (LEGACY — kept for Feynman Technique)
+ *
+ * Scores a Feynman Technique submission against a single concept.
+ * Body: { concept_id, space_id, mode: 'feynman', user_input }
  */
 router.post('/recall', async (req: Request, res: Response): Promise<void> => {
   const parsed = CognitiveReviewSchema.safeParse(req.body);
@@ -50,39 +290,19 @@ router.post('/recall', async (req: Request, res: Response): Promise<void> => {
 
   // 2. Embed the student's input
   const userEmbedding = await generateEmbedding(user_input);
-  const embeddingStr = `[${userEmbedding.join(',')}]`;
-
-  // 3. Cosine similarity via pgvector — lower value = higher similarity (cosine distance)
-  const { data: similarityResult, error: simError } = await supabaseAdmin
-    .rpc('match_concept_similarity', {
-      concept_embedding: concept.embedding,
-      query_embedding: embeddingStr,
-    });
-
-  // Fallback: manual dot-product similarity if the RPC isn't available yet
-  let similarityScore: number;
-  if (simError || !similarityResult) {
-    // Simple cosine similarity in JS as a fallback
-    const a = concept.embedding as number[];
-    const b = userEmbedding;
-    const dot = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
-    const magA = Math.sqrt(a.reduce((sum, ai) => sum + ai * ai, 0));
-    const magB = Math.sqrt(b.reduce((sum, bi) => sum + bi * bi, 0));
-    similarityScore = magA && magB ? dot / (magA * magB) : 0;
-  } else {
-    similarityScore = similarityResult as number;
-  }
-
+  const refEmbedding = parseVector(concept.embedding);
+  const studentEmbedding = parseVector(userEmbedding);
+  const similarityScore = cosineSimilarity(refEmbedding, studentEmbedding);
   const scorePercent = Math.round(Math.max(0, Math.min(1, similarityScore)) * 100);
 
-  // 4. Generate coaching feedback with Gemini
+  // 3. Generate coaching feedback with Gemini
   const feedbackPrompt = `
-You are a supportive academic tutor giving feedback on a student's explanation.
+You are a supportive academic tutor giving feedback on a student's Feynman Technique explanation.
 
 Concept: "${concept.term}"
 True Definition: "${concept.definition}"
 
-Student's Explanation (${mode === 'feynman' ? 'Feynman Technique' : 'Free Recall'}):
+Student's Explanation:
 "${user_input}"
 
 Similarity Score: ${scorePercent}%
@@ -97,7 +317,7 @@ Keep it friendly and academic.
 
   const aiFeedback = await generateContent(feedbackPrompt);
 
-  // 5. Save to cognitive_logs
+  // 4. Save to cognitive_logs
   const { data: log, error: logError } = await supabaseAdmin
     .from('cognitive_logs')
     .insert({
@@ -116,7 +336,6 @@ Keep it friendly and academic.
     return;
   }
 
-  // 6. Return results to the UI
   res.status(201).json({
     data: {
       log_id: log.id,

@@ -392,7 +392,7 @@ export default function StudySpace() {
         )}
 
         {activeTab === 'free-recall' && (
-          <FreeRecallTab availableResources={availableResources} />
+          <FreeRecallTab availableResources={availableResources} spaceId={spaceId!} />
         )}
 
         {activeTab === 'feynman' && (

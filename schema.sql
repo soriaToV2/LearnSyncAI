@@ -27,6 +27,8 @@ CREATE TABLE study_spaces (
     description TEXT,
     is_published BOOLEAN DEFAULT false, -- Triggers CollabShare (peer read-only access)
     share_token TEXT UNIQUE,            -- Secure sync key for CollabShare
+    cloned_from_id UUID,
+    original_author_name TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -164,7 +166,6 @@ CREATE TABLE practice_tests (
     student_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     source_material_ids UUID[], -- Materials selected by the student for this test
-    question_types TEXT[],      -- e.g., ['multiple_choice', 'true_or_false']
     questions_payload JSONB NOT NULL, -- The adaptive AI-generated questions
     student_answers JSONB, -- Stores progress so they can pause and resume
     score NUMERIC,

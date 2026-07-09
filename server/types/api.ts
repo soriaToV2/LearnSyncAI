@@ -94,6 +94,14 @@ export type RateFlashcardInput = z.infer<typeof RateFlashcardSchema>;
 
 // ── Cognitive Review ──────────────────────────────────────
 
+export const FreeRecallSchema = z.object({
+  space_id: z.string().uuid(),
+  material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
+  user_input: z.string().min(10, 'Response must be at least 10 characters'),
+});
+export type FreeRecallInput = z.infer<typeof FreeRecallSchema>;
+
+// Kept for legacy Feynman Technique usage
 export const CognitiveReviewSchema = z.object({
   space_id: z.string().uuid(),
   concept_id: z.string().uuid().optional().nullable(),  // Optional for whole-material evaluation
@@ -101,6 +109,7 @@ export const CognitiveReviewSchema = z.object({
   user_input: z.string().min(1),
 });
 export type CognitiveReviewInput = z.infer<typeof CognitiveReviewSchema>;
+
 
 // ── Practice Tests ────────────────────────────────────────
 
