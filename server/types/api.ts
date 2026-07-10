@@ -115,6 +115,56 @@ export const CognitiveReviewSchema = z.object({
 });
 export type CognitiveReviewInput = z.infer<typeof CognitiveReviewSchema>;
 
+// ── Feynman Technique ─────────────────────────────────────
+
+export const FEYNMAN_AUDIENCES = ['10yr_old', 'self'] as const;
+
+/**
+ * A Feynman submission explains one or more concepts to a chosen audience.
+ * Only `concept_id` is accepted — the authoritative `term` and `definition`
+ * are looked up server-side so a client cannot grade itself against a
+ * definition it invented.
+ */
+export const FeynmanEvaluationSchema = z.object({
+  space_id: z.string().uuid(),
+  material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
+  audience: z.enum(FEYNMAN_AUDIENCES),
+  explanations: z
+    .array(
+      z.object({
+        concept_id: z.string().uuid(),
+        explanation: z.string().min(10, 'Explanation must be at least 10 characters'),
+      })
+    )
+    .min(1, 'At least one concept must be explained'),
+});
+export type FeynmanEvaluationInput = z.infer<typeof FeynmanEvaluationSchema>;
+
+export type FeynmanAudience = (typeof FEYNMAN_AUDIENCES)[number];
+export type FeynmanVerdict = 'correct' | 'needs_improvement' | 'incorrect';
+
+/** Per-concept grading result, nested inside the `ai_feedback` JSON string. */
+export interface FeynmanConceptResult {
+  concept_id: string;
+  term: string;
+  accuracy_score: number;    // 0–100, graded against the stored definition
+  simplicity_score: number;  // 0–100, graded against the audience rubric
+  verdict: FeynmanVerdict;
+  jargon_found: string[];
+  feedback: string;
+  analogy_idea: string;
+}
+
+/** Full payload stored in `cognitive_logs.ai_feedback` (as a JSON string). */
+export interface FeynmanFeedback {
+  audience: FeynmanAudience;
+  accuracy_score: number;    // mean across concepts
+  simplicity_score: number;  // mean across concepts
+  overall_feedback: string;
+  jargon_found: string[];    // union across concepts
+  concepts: FeynmanConceptResult[];
+}
+
 
 // ── Practice Tests ────────────────────────────────────────
 

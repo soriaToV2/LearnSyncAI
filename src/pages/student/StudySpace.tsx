@@ -396,7 +396,7 @@ export default function StudySpace() {
         )}
 
         {activeTab === 'feynman' && (
-          <FeynmanTab availableResources={availableResources} />
+          <FeynmanTab availableResources={availableResources} spaceId={spaceId!} />
         )}
 
         {activeTab === 'adaptive-test' && (

@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { Award, History, PenTool, RefreshCw, AlertCircle, CheckCircle2, MessageSquare, Heart, Target, ChevronDown } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Award, History, PenTool, RefreshCw, AlertCircle, CheckCircle2, MessageSquare, Heart, Target, ChevronDown, XCircle, AlertTriangle } from 'lucide-react';
 import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
 import { api } from '../../../lib/api';
 
 interface FeynmanTabProps {
   availableResources: { id: string; title: string }[];
+  spaceId: string;
 }
 
 interface Concept {
@@ -12,54 +13,132 @@ interface Concept {
   term: string;
 }
 
-interface MockFeynmanLog {
-  id: string;
-  user_input: string;
-  audience: '10yr_old' | 'self';
+type Audience = '10yr_old' | 'self';
+type Verdict = 'correct' | 'needs_improvement' | 'incorrect';
+
+interface ConceptResult {
+  concept_id: string;
+  term: string;
+  accuracy_score: number;
   simplicity_score: number;
+  verdict: Verdict;
   jargon_found: string[];
   feedback: string;
   analogy_idea: string;
+}
+
+interface FeynmanFeedback {
+  audience: Audience;
+  accuracy_score: number;
+  simplicity_score: number;
+  overall_feedback: string;
+  jargon_found: string[];
+  concepts: ConceptResult[];
+}
+
+interface CognitiveLog {
+  id: string;
+  mode: string;
+  user_input: string;
+  similarity_score: number;
+  ai_feedback: string;
   created_at: string;
 }
 
-const MOCK_HISTORY: MockFeynmanLog[] = [
-  {
-    id: '1',
-    user_input: 'The action potential travels down the axon and causes depolarization at the terminal. This triggers calcium influx, which forces the synaptic vesicles to undergo exocytosis, releasing neurotransmitters into the cleft.',
-    audience: '10yr_old',
-    simplicity_score: 30,
-    jargon_found: ['action potential', 'depolarization', 'calcium influx', 'synaptic vesicles', 'exocytosis', 'neurotransmitters'],
-    feedback: 'Your explanation has a lot of big words! A 10-year-old would get confused by terms like action potential and depolarization. Try using a simple story or analogy.',
-    analogy_idea: 'Think of the process like a row of falling dominoes that eventually hits a button, opening a gate to let a bunch of bouncy balls spill out into a small river.',
-    created_at: new Date(Date.now() - 86400000).toISOString(),
+/** `ai_feedback` is stored as a JSON string — parse defensively. */
+function parseFeedback(raw: string): FeynmanFeedback | null {
+  try {
+    const parsed = JSON.parse(raw) as FeynmanFeedback;
+    if (!Array.isArray(parsed?.concepts)) return null;
+    return parsed;
+  } catch {
+    return null;
   }
-];
+}
 
-export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
+const MIN_EXPLANATION_LENGTH = 10;
+
+const VERDICT_STYLES: Record<Verdict, { label: string; className: string; Icon: typeof CheckCircle2 }> = {
+  correct: {
+    label: 'Correct',
+    className: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20',
+    Icon: CheckCircle2,
+  },
+  needs_improvement: {
+    label: 'Needs Improvement',
+    className: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
+    Icon: AlertTriangle,
+  },
+  incorrect: {
+    label: 'Incorrect',
+    className: 'text-red-400 bg-red-400/10 border-red-400/20',
+    Icon: XCircle,
+  },
+};
+
+function scoreColor(score: number) {
+  return score >= 80 ? 'text-emerald-400' : score >= 60 ? 'text-amber-400' : 'text-red-400';
+}
+
+function ScoreRing({ score, label }: { score: number; label: string }) {
+  const CIRCUMFERENCE = 251.2;
+  return (
+    <div className="flex items-center gap-4">
+      <div className="relative shrink-0 flex items-center justify-center w-24 h-24">
+        <svg className="absolute inset-0 w-full h-full -rotate-90">
+          <circle cx="48" cy="48" r="40" fill="none" stroke="currentColor" strokeWidth="8" className="text-surface-container-high" />
+          <circle
+            cx="48" cy="48" r="40"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeDasharray={CIRCUMFERENCE}
+            strokeDashoffset={CIRCUMFERENCE - CIRCUMFERENCE * (score / 100)}
+            className={scoreColor(score)}
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="font-display text-2xl font-bold text-white">{score}</span>
+        </div>
+      </div>
+      <div>
+        <h3 className="font-sans text-base font-semibold text-white flex items-center gap-2">
+          <Target className="w-4 h-4 text-primary-fixed-dim" />
+          {label}
+        </h3>
+      </div>
+    </div>
+  );
+}
+
+export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabProps) {
   const resourceOptions = availableResources.map(r => r.title);
 
   const [viewMode, setViewMode] = useState<'study' | 'history'>('study');
   const [selectedDocs, setSelectedDocs] = useState<string[]>(
     resourceOptions.length > 0 ? [resourceOptions[0]] : []
   );
-  
+
   // Concept Fetching State
   const [availableConcepts, setAvailableConcepts] = useState<Concept[]>([]);
   const [selectedConceptTerms, setSelectedConceptTerms] = useState<string[]>([]);
   const [isFetchingConcepts, setIsFetchingConcepts] = useState(false);
 
-  // Study State
+  // Study State — explanations are keyed by concept_id, which is what the API grades against.
   const [explanations, setExplanations] = useState<Record<string, string>>({});
-  const [audience, setAudience] = useState<'10yr_old' | 'self'>('10yr_old');
+  const [audience, setAudience] = useState<Audience>('10yr_old');
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [evalError, setEvalError] = useState<string | null>(null);
   const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
-  
+
   // History State
-  const [historyLogs, setHistoryLogs] = useState<MockFeynmanLog[]>(MOCK_HISTORY);
+  const [historyLogs, setHistoryLogs] = useState<CognitiveLog[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeLogId, setActiveLogId] = useState<string | null>(null);
 
   const activeLog = historyLogs.find(log => log.id === activeLogId);
+  const activeFeedback = activeLog ? parseFeedback(activeLog.ai_feedback) : null;
 
   const audiences = [
     { id: '10yr_old', name: '10-Year-Old', desc: 'No jargon, simple analogies' },
@@ -73,6 +152,27 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
     .filter(r => selectedDocs.includes(r.title))
     .map(r => r.id);
 
+  // Map selected terms back to concept records
+  const selectedConcepts = selectedConceptTerms
+    .map(term => availableConcepts.find(c => c.term === term))
+    .filter((c): c is Concept => Boolean(c));
+
+  // ── Load history on mount ─────────────────────────────────
+  useEffect(() => {
+    async function fetchHistory() {
+      setIsLoadingHistory(true);
+      try {
+        const res = await api.get<CognitiveLog[]>(`/cognitive/history/${spaceId}?mode=feynman`);
+        setHistoryLogs(res.data ?? []);
+      } catch (err) {
+        console.error('[Feynman] Failed to load history:', err);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    }
+    fetchHistory();
+  }, [spaceId]);
+
   // Fetch concepts when selected materials change
   useEffect(() => {
     async function fetchConcepts() {
@@ -81,7 +181,7 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
         setSelectedConceptTerms([]);
         return;
       }
-      
+
       setIsFetchingConcepts(true);
       try {
         const res = await api.post<Concept[]>('/materials/concepts/batch', {
@@ -94,75 +194,63 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
         setIsFetchingConcepts(false);
       }
     }
-    
+
     fetchConcepts();
   }, [JSON.stringify(selectedMaterialIds)]);
 
   const handleConceptChange = (newSelectedTerms: string[]) => {
     setSelectedConceptTerms(newSelectedTerms);
+    setEvalError(null);
   };
 
-  const getCombinedText = () => {
-    if (selectedConceptTerms.length === 0) {
-      return explanations['__general__'] || '';
-    }
-    return selectedConceptTerms
-      .map(t => `Concept: ${t}\nExplanation: ${explanations[t] || ''}`)
-      .join('\n\n');
-  };
+  const wordCount = selectedConcepts
+    .map(c => explanations[c.id] || '')
+    .join(' ')
+    .split(/\s+/)
+    .filter(Boolean).length;
 
-  const handleEvaluate = () => {
-    const combinedText = getCombinedText();
-    if (!combinedText.trim()) return;
+  // Every selected concept needs a real explanation before we can submit.
+  const incompleteConcepts = selectedConcepts.filter(
+    c => (explanations[c.id] || '').trim().length < MIN_EXPLANATION_LENGTH
+  );
+  const canEvaluate =
+    selectedMaterialIds.length > 0 &&
+    selectedConcepts.length > 0 &&
+    incompleteConcepts.length === 0 &&
+    !isEvaluating;
+
+  const handleEvaluate = async () => {
+    if (!canEvaluate) return;
     setIsEvaluating(true);
+    setEvalError(null);
 
-    // Simulate AI analysis
-    setTimeout(() => {
-      const textLower = combinedText.toLowerCase();
-      
-      const jargonFound = [];
-      if (textLower.includes('exocytosis')) jargonFound.push('Exocytosis');
-      if (textLower.includes('postsynaptic')) jargonFound.push('Postsynaptic');
-      if (textLower.includes('depolarization')) jargonFound.push('Depolarization');
-      if (textLower.includes('calcium')) jargonFound.push('Calcium');
-      if (textLower.includes('action potential')) jargonFound.push('Action potential');
-      if (textLower.includes('presynaptic')) jargonFound.push('Presynaptic');
-
-      let simplicityScore = 90;
-      let feedback = "";
-      let analogyIdea = "";
-
-      if (audience === '10yr_old') {
-        simplicityScore -= jargonFound.length * 15;
-        if (jargonFound.length > 2) {
-          simplicityScore = Math.max(30, simplicityScore);
-          feedback = "Your explanation has a lot of big words! Try using a simple story or analogy.";
-          analogyIdea = "Think of neurotransmitter release like bubble packages carrying letters across a small river to mailboxes on the other side.";
-        } else if (jargonFound.length > 0) {
-          simplicityScore = Math.max(65, simplicityScore);
-          feedback = "Very close! Just explain " + jargonFound[0] + " in a simpler way.";
-          analogyIdea = "Compare synaptic vesicles to tiny cargo ships unloading cargo at a dock.";
-        } else {
-          simplicityScore = 95;
-          feedback = "Excellent! You explained this concept beautifully without using scary jargon.";
-          analogyIdea = "";
+    try {
+      const res = await api.post<{ log_id: string; created_at: string } & FeynmanFeedback>(
+        '/cognitive/feynman',
+        {
+          space_id: spaceId,
+          material_ids: selectedMaterialIds,
+          audience,
+          explanations: selectedConcepts.map(c => ({
+            concept_id: c.id,
+            explanation: explanations[c.id].trim(),
+          })),
         }
-      } else {
-        // Self
-        simplicityScore = Math.max(80, 100 - jargonFound.length * 5);
-        feedback = "Good self-reflection. You've detailed the steps, but make sure you aren't just reciting memorized jargon without understanding the 'why'.";
-        analogyIdea = "Try breaking down the mechanics of the process one level deeper to prove to yourself you know how it works.";
-      }
+      );
 
-      const newLog: MockFeynmanLog = {
-        id: Date.now().toString(),
-        user_input: combinedText,
-        audience: audience,
-        simplicity_score: Math.max(0, Math.min(100, simplicityScore)),
-        jargon_found: jargonFound,
-        feedback,
-        analogy_idea: analogyIdea,
-        created_at: new Date().toISOString(),
+      const { log_id, created_at, ...feedback } = res.data;
+
+      const userInput = selectedConcepts
+        .map(c => `Concept: ${c.term}\nExplanation: ${explanations[c.id].trim()}`)
+        .join('\n\n');
+
+      const newLog: CognitiveLog = {
+        id: log_id,
+        mode: 'feynman',
+        user_input: userInput,
+        similarity_score: feedback.accuracy_score / 100,
+        ai_feedback: JSON.stringify(feedback),
+        created_at,
       };
 
       setHistoryLogs(prev => [newLog, ...prev]);
@@ -170,8 +258,17 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
       setViewMode('history');
       setExplanations({});
       setSelectedConceptTerms([]);
+    } catch (err) {
+      console.error('[Feynman] Evaluation failed:', err);
+      const raw = err instanceof Error ? err.message : '';
+      // Never show a raw upstream payload to the student.
+      const message = raw && !raw.trim().startsWith('{')
+        ? raw
+        : 'Failed to evaluate your explanation. Please try again.';
+      setEvalError(message);
+    } finally {
       setIsEvaluating(false);
-    }, 1500);
+    }
   };
 
   const formatDate = (isoString: string) => {
@@ -205,9 +302,9 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
               />
             </div>
           </div>
-          
+
           <div className="h-8 w-px bg-white/10 mx-2" />
-          
+
           <button
             onClick={() => {
               setViewMode(viewMode === 'study' ? 'history' : 'study');
@@ -241,7 +338,7 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
                     {currentAudienceObj?.name}
                     <ChevronDown className="w-4 h-4 text-slate-400" />
                   </button>
-                  
+
                   {isAudienceDropdownOpen && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setIsAudienceDropdownOpen(false)} />
@@ -285,31 +382,34 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
               </div>
             </div>
 
-            {selectedConceptTerms.length === 0 ? (
-              <textarea
-                value={explanations['__general__'] || ''}
-                onChange={(e) => setExplanations({ ...explanations, __general__: e.target.value })}
-                placeholder={
-                  audience === '10yr_old'
-                    ? "Select concepts above, or explain as if teaching a 10-year-old. Use everyday analogies and completely avoid jargon..."
-                    : "Select concepts above, or explain the concept to yourself. Break down the true mechanics to prove you aren't just reciting memorized words..."
-                }
-                className="flex-1 w-full bg-transparent border-none outline-none font-sans text-lg text-slate-200 placeholder:text-slate-600 resize-none no-scrollbar py-4"
-                autoFocus
-              />
+            {selectedConcepts.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
+                <PenTool className="w-12 h-12 mb-4 opacity-20" />
+                <p className="font-sans text-sm max-w-md">
+                  {selectedMaterialIds.length === 0
+                    ? 'Select a learning material to load its concepts.'
+                    : availableConcepts.length === 0 && !isFetchingConcepts
+                      ? 'No concepts found. Make sure the material has finished processing.'
+                      : 'Select one or more concepts above to start explaining them.'}
+                </p>
+              </div>
             ) : (
               <div className="flex-1 w-full overflow-y-auto no-scrollbar py-4 space-y-6">
-                {selectedConceptTerms.map((term, index) => (
-                  <div key={term} className="bg-surface-container-lowest/50 border border-white/5 rounded-2xl p-6 space-y-4">
+                {selectedConcepts.map((concept, index) => (
+                  <div key={concept.id} className="bg-surface-container-lowest/50 border border-white/5 rounded-2xl p-6 space-y-4">
                     <div className="font-sans text-sm font-semibold text-primary-fixed-dim tracking-wider uppercase">
-                      Concept: <span className="text-white normal-case text-base ml-1">{term}</span>
+                      Concept: <span className="text-white normal-case text-base ml-1">{concept.term}</span>
                     </div>
                     <div className="flex flex-col gap-2">
                       <span className="font-sans text-xs font-semibold text-slate-400 uppercase tracking-wider">Explanation:</span>
                       <textarea
-                        value={explanations[term] || ''}
-                        onChange={(e) => setExplanations({ ...explanations, [term]: e.target.value })}
-                        placeholder="Type your explanation here..."
+                        value={explanations[concept.id] || ''}
+                        onChange={(e) => setExplanations({ ...explanations, [concept.id]: e.target.value })}
+                        placeholder={
+                          audience === '10yr_old'
+                            ? 'Explain as if teaching a 10-year-old. Use everyday analogies and avoid jargon...'
+                            : "Explain it to yourself. Break down the mechanics to prove you aren't just reciting memorized words..."
+                        }
                         className="w-full bg-transparent border-none outline-none font-sans text-lg text-slate-200 placeholder:text-slate-600 resize-none no-scrollbar min-h-[120px]"
                         autoFocus={index === 0}
                       />
@@ -318,14 +418,26 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
                 ))}
               </div>
             )}
-            
+
+            {evalError && (
+              <div className="flex items-center gap-2 text-red-400 bg-red-400/10 border border-red-400/20 px-4 py-3 rounded-xl mb-3">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span className="font-sans text-sm">{evalError}</span>
+              </div>
+            )}
+
             <div className="py-4 border-t border-white/5 flex items-center justify-between shrink-0">
               <span className="font-sans text-xs text-slate-500 font-medium">
-                {getCombinedText().split(/\s+/).filter(Boolean).length} words
+                {wordCount} words
+                {selectedConcepts.length > 0 && incompleteConcepts.length > 0 && (
+                  <span className="text-amber-400/80 ml-3">
+                    {incompleteConcepts.length} concept{incompleteConcepts.length > 1 ? 's' : ''} still need{incompleteConcepts.length === 1 ? 's' : ''} an explanation
+                  </span>
+                )}
               </span>
               <button
                 onClick={handleEvaluate}
-                disabled={!getCombinedText().trim() || isEvaluating || selectedDocs.length === 0}
+                disabled={!canEvaluate}
                 className="px-8 py-3 bg-white text-black hover:bg-slate-200 rounded-full font-sans text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm"
               >
                 {isEvaluating ? (
@@ -347,122 +459,156 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
                   {historyLogs.length}
                 </span>
               </div>
-              
+
               <div className="flex-1 overflow-y-auto space-y-2 pr-2 no-scrollbar">
-                {historyLogs.length === 0 ? (
+                {isLoadingHistory ? (
+                  <div className="flex items-center justify-center gap-2 text-slate-500 mt-10">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span className="font-sans text-sm">Loading history...</span>
+                  </div>
+                ) : historyLogs.length === 0 ? (
                   <p className="text-sm text-slate-500 font-sans text-center mt-10">No past explanations yet.</p>
                 ) : (
-                  historyLogs.map(log => (
-                    <button
-                      key={log.id}
-                      onClick={() => setActiveLogId(log.id)}
-                      className={`w-full text-left p-4 rounded-xl transition-all border ${
-                        activeLogId === log.id 
-                          ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/30' 
-                          : 'bg-surface-container/30 border-transparent hover:bg-surface-container'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                          {formatDate(log.created_at)}
-                        </span>
-                        <span className={`text-xs font-bold ${log.simplicity_score >= 80 ? 'text-emerald-400' : log.simplicity_score >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
-                          {log.simplicity_score}/100
-                        </span>
-                      </div>
-                      <div className="text-[10px] font-semibold uppercase text-primary-fixed-dim/80 mb-2">
-                        Target: {log.audience}
-                      </div>
-                      <p className="font-sans text-sm text-slate-300 line-clamp-2 leading-relaxed">
-                        {log.user_input}
-                      </p>
-                    </button>
-                  ))
+                  historyLogs.map(log => {
+                    const feedback = parseFeedback(log.ai_feedback);
+                    const accuracy = feedback?.accuracy_score ?? Math.round((log.similarity_score ?? 0) * 100);
+                    return (
+                      <button
+                        key={log.id}
+                        onClick={() => setActiveLogId(log.id)}
+                        className={`w-full text-left p-4 rounded-xl transition-all border ${
+                          activeLogId === log.id
+                            ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/30'
+                            : 'bg-surface-container/30 border-transparent hover:bg-surface-container'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                            {formatDate(log.created_at)}
+                          </span>
+                          <span className={`text-xs font-bold ${scoreColor(accuracy)}`}>
+                            {accuracy}/100
+                          </span>
+                        </div>
+                        <div className="text-[10px] font-semibold uppercase text-primary-fixed-dim/80 mb-2">
+                          Target: {feedback?.audience ?? '—'}
+                        </div>
+                        <p className="font-sans text-sm text-slate-300 line-clamp-2 leading-relaxed">
+                          {log.user_input}
+                        </p>
+                      </button>
+                    );
+                  })
                 )}
               </div>
             </div>
 
             {/* Detail View */}
             <div className="flex-1 h-full overflow-y-auto no-scrollbar pb-10">
-              {activeLog ? (
+              {activeLog && activeFeedback ? (
                 <div className="max-w-3xl animate-in fade-in slide-in-from-right-4 duration-300 space-y-8">
-                  
-                  {/* Score Overview */}
-                  <div className="bg-surface-container/30 border border-white/5 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center gap-6">
-                    <div className="relative shrink-0 flex items-center justify-center w-24 h-24">
-                      {/* Circle indicator */}
-                      <svg className="absolute inset-0 w-full h-full -rotate-90">
-                        <circle cx="48" cy="48" r="40" fill="none" stroke="currentColor" strokeWidth="8" className="text-surface-container-high" />
-                        <circle 
-                          cx="48" cy="48" r="40" 
-                          fill="none" 
-                          stroke="currentColor" 
-                          strokeWidth="8" 
-                          strokeLinecap="round"
-                          strokeDasharray={251.2}
-                          strokeDashoffset={251.2 - (251.2 * (activeLog.simplicity_score / 100))}
-                          className={activeLog.simplicity_score >= 80 ? 'text-emerald-400' : activeLog.simplicity_score >= 60 ? 'text-amber-400' : 'text-red-400'} 
-                        />
-                      </svg>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="font-display text-2xl font-bold text-white">
-                          {activeLog.simplicity_score}
-                        </span>
-                      </div>
+
+                  {/* Score Overview — two independent axes */}
+                  <div className="bg-surface-container/30 border border-white/5 rounded-2xl p-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-8">
+                      <ScoreRing score={activeFeedback.accuracy_score} label="Accuracy" />
+                      <div className="hidden sm:block h-16 w-px bg-white/10" />
+                      <ScoreRing score={activeFeedback.simplicity_score} label="Simplicity Index" />
                     </div>
-                    <div>
-                      <h3 className="font-sans text-lg font-semibold text-white flex items-center gap-2">
-                        <Target className="w-5 h-5 text-primary-fixed-dim" />
-                        Simplicity Index
-                      </h3>
-                      <p className="font-sans text-sm text-slate-400 mt-1">
-                        Audience: <strong className="text-white uppercase">{activeLog.audience}</strong>
-                      </p>
-                    </div>
+                    <p className="font-sans text-sm text-slate-400 mt-5 pt-5 border-t border-white/5">
+                      Audience: <strong className="text-white uppercase">{activeFeedback.audience}</strong>
+                    </p>
                   </div>
 
-                  {/* Feedback Area */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Overall Feedback */}
+                  {activeFeedback.overall_feedback && (
                     <div className="bg-primary-fixed-dim/5 border border-primary-fixed-dim/20 p-5 rounded-2xl">
                       <h4 className="font-sans text-xs font-semibold text-primary-fixed-dim uppercase tracking-wider mb-2 flex items-center gap-2">
-                        <MessageSquare className="w-4 h-4" /> AI Feedback
+                        <MessageSquare className="w-4 h-4" /> Overall Feedback
                       </h4>
                       <p className="font-sans text-sm text-slate-200 leading-relaxed">
-                        {activeLog.feedback}
+                        {activeFeedback.overall_feedback}
                       </p>
                     </div>
+                  )}
 
-                    {activeLog.analogy_idea && (
-                      <div className="bg-emerald-400/5 border border-emerald-400/20 p-5 rounded-2xl">
-                        <h4 className="font-sans text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                          <Heart className="w-4 h-4" /> Analogy Idea
-                        </h4>
-                        <p className="font-sans text-sm text-slate-200 leading-relaxed">
-                          {activeLog.analogy_idea}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Jargon Flags */}
+                  {/* Jargon Flags (aggregate) */}
                   <div>
                     <h4 className="font-sans text-sm font-semibold text-slate-200 uppercase tracking-widest mb-4 flex items-center gap-2">
                       <AlertCircle className="w-4 h-4 text-amber-400" /> Academic Jargon Flagged
                     </h4>
-                    {activeLog.jargon_found.length === 0 ? (
+                    {activeFeedback.jargon_found.length === 0 ? (
                       <div className="flex items-center gap-2 text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-4 py-3 rounded-xl w-fit">
                         <CheckCircle2 className="w-5 h-5" />
                         <span className="font-sans text-sm font-medium">No complex jargon detected!</span>
                       </div>
                     ) : (
                       <div className="flex flex-wrap gap-2">
-                        {activeLog.jargon_found.map((word, i) => (
+                        {activeFeedback.jargon_found.map((word, i) => (
                           <div key={i} className="px-3 py-1.5 rounded-xl border border-amber-500/20 bg-amber-500/10 text-amber-300 font-sans text-sm font-medium">
                             {word}
                           </div>
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  {/* Per-Concept Breakdown */}
+                  <div>
+                    <h4 className="font-sans text-sm font-semibold text-slate-200 uppercase tracking-widest mb-4">
+                      Concept Breakdown
+                    </h4>
+                    <div className="space-y-4">
+                      {activeFeedback.concepts.map((c) => {
+                        const verdict = VERDICT_STYLES[c.verdict];
+                        const VerdictIcon = verdict.Icon;
+                        return (
+                          <div key={c.concept_id} className="bg-surface-container-lowest/50 border border-white/5 rounded-2xl p-6 space-y-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <span className="font-sans text-base font-semibold text-white">{c.term}</span>
+                              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border font-sans text-xs font-semibold ${verdict.className}`}>
+                                <VerdictIcon className="w-3.5 h-3.5" />
+                                {verdict.label}
+                              </div>
+                            </div>
+
+                            <div className="flex gap-6">
+                              <div>
+                                <span className="font-sans text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Accuracy</span>
+                                <p className={`font-display text-lg font-bold ${scoreColor(c.accuracy_score)}`}>{c.accuracy_score}</p>
+                              </div>
+                              <div>
+                                <span className="font-sans text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Simplicity</span>
+                                <p className={`font-display text-lg font-bold ${scoreColor(c.simplicity_score)}`}>{c.simplicity_score}</p>
+                              </div>
+                            </div>
+
+                            {c.feedback && (
+                              <p className="font-sans text-sm text-slate-300 leading-relaxed">{c.feedback}</p>
+                            )}
+
+                            {c.jargon_found.length > 0 && (
+                              <div className="flex flex-wrap gap-2">
+                                {c.jargon_found.map((word, i) => (
+                                  <span key={i} className="px-2.5 py-1 rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-300 font-sans text-xs font-medium">
+                                    {word}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {c.analogy_idea && (
+                              <div className="bg-emerald-400/5 border border-emerald-400/20 p-4 rounded-xl">
+                                <h5 className="font-sans text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-1.5 flex items-center gap-2">
+                                  <Heart className="w-3.5 h-3.5" /> Analogy Idea
+                                </h5>
+                                <p className="font-sans text-sm text-slate-200 leading-relaxed">{c.analogy_idea}</p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* Original Input */}
@@ -476,12 +622,17 @@ export default function FeynmanTab({ availableResources }: FeynmanTabProps) {
                       </p>
                     </div>
                   </div>
-                  
+
+                </div>
+              ) : activeLog ? (
+                <div className="h-full flex flex-col items-center justify-center text-center text-slate-500">
+                  <AlertCircle className="w-12 h-12 mb-4 opacity-20" />
+                  <p className="font-sans text-sm">This log's feedback could not be read.</p>
                 </div>
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-center text-slate-500">
                   <History className="w-12 h-12 mb-4 opacity-20" />
-                  <p className="font-sans text-sm">Select a past explanation to view your simplicity score and feedback.</p>
+                  <p className="font-sans text-sm">Select a past explanation to view your scores and feedback.</p>
                 </div>
               )}
             </div>
