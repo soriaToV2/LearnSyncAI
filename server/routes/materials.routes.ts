@@ -161,6 +161,35 @@ router.get('/:id/concepts', async (req: Request, res: Response): Promise<void> =
 });
 
 /**
+ * POST /api/materials/concepts/batch
+ * Returns all extracted concepts for an array of materials.
+ */
+import { FetchConceptsBatchSchema } from '../types/api';
+
+router.post('/concepts/batch', async (req: Request, res: Response): Promise<void> => {
+  const parsed = FetchConceptsBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+    return;
+  }
+
+  const { material_ids } = parsed.data;
+
+  const { data, error } = await supabaseAdmin
+    .from('concepts')
+    .select('id, term, definition, parent_concept_id, material_id, created_at')
+    .in('material_id', material_ids)
+    .order('created_at');
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to fetch batch concepts', message: error.message });
+    return;
+  }
+
+  res.json({ data });
+});
+
+/**
  * GET /api/materials/:id/status
  * Returns the current parsed_status of a material.
  */

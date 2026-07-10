@@ -27,7 +27,7 @@ Student selects a material and types recall → POST /api/cognitive/free-recall
    → "Missed" = highest similarity score is BELOW threshold (< 0.70)
    → "Covered" = highest similarity score is ABOVE threshold (>= 0.70)
         ↓
-6. Compute overall similarity score (average of all true concept match scores)
+6. Compute overall score as a Coverage Ratio (Number of Covered Concepts / Total DB Concepts)
         ↓
 7. Save the session to cognitive_logs
         ↓
@@ -60,7 +60,7 @@ Completely rewrite the `/recall` endpoint to:
 - Fetch the **full** concept list for selected materials from the DB.
 - Loop through the DB concepts, comparing each against the student's embedded concepts using the cosine similarity formula `1 - (A <=> B)`.
 - If the highest match for a DB concept is `< 0.70`, add it to the `missed_concepts` list.
-- Calculate the `similarity_score` as the average of the highest matches.
+- Calculate the `similarity_score` as a **Coverage Ratio** (`Covered Concepts / Total DB Concepts`) to avoid "hubness" score inflation.
 - Save the result to `cognitive_logs`.
 
 Add a new GET endpoint to retrieve history:
@@ -100,13 +100,13 @@ The `overall_verdict` will be one of: `"strong"`, `"partial"`, or `"needs_review
 
 ---
 
-## Similarity Score Logic
+## Similarity Score Logic (Coverage Ratio)
 
 | Score Range | Verdict | Meaning |
 |---|---|---|
-| ≥ 0.78 | `strong` | Student covered most concepts well |
-| 0.55 – 0.77 | `partial` | Student covered some, but missed key areas |
-| < 0.55 | `needs_review` | Student's recall is significantly incomplete |
+| ≥ 0.75 | `strong` | Student covered most concepts well |
+| 0.40 – 0.74 | `partial` | Student covered some, but missed key areas |
+| < 0.40 | `needs_review` | Student's recall is significantly incomplete |
 
 ---
 

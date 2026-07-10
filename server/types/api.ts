@@ -48,6 +48,11 @@ export const CreateMaterialSchema = z.object({
 });
 export type CreateMaterialInput = z.infer<typeof CreateMaterialSchema>;
 
+export const FetchConceptsBatchSchema = z.object({
+  material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
+});
+export type FetchConceptsBatchInput = z.infer<typeof FetchConceptsBatchSchema>;
+
 // ── Study Spaces ──────────────────────────────────────────
 
 export const CreateStudySpaceSchema = z.object({

@@ -1,7 +1,7 @@
 LearnSync AI: Backend Architecture & Logic Guide
 
 Target Audience: AI Developer Agents, Backend Engineers, Full-Stack Developers.
-Purpose: To explain the logical data flow, AI integration points, and database interactions for every major feature in the LearnSync AI application based on the established supabase_schema.sql.
+Purpose: To explain the logical data flow, AI integration points, and database interactions for every major feature in the LearnSync AI application based on the established schema.sql
 
 ---
 
@@ -93,15 +93,15 @@ Logic Flow:
 6. Feynman Technique
 
 Core Tables: cognitive_logs
-AI Integration: Gemini (Text Generation)
+AI Integration: Gemini embeddings & LLM
 
 Logic Flow:
   - Student is prompted to explain a concept from their uploaded materials in their own words, as if teaching a 5-year-old or explaining it to themselves.
   - Student submits their explanation text.
-  - AI Evaluation: Backend sends the student's explanation along with the reference concept definition to Gemini, prompting it to evaluate:
+  - AI Evaluation: Backend sends the student's explanation along with the reference concept definition to an LLM, prompting it to evaluate:
       * Whether the student has correctly understood the core concept.
       * Where the explanation is vague, incorrect, or missing important details.
-  - Gemini returns structured feedback indicating the quality of the student's conceptual understanding.
+  - LLM returns structured feedback indicating the quality of the student's conceptual understanding.
   - The ai_feedback is stored in cognitive_logs and surfaced to the student.
 
 ---
