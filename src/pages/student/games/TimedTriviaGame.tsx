@@ -8,10 +8,14 @@ import {
   HudStat,
   ResultScreen,
   ScreenFlash,
+  SessionDetail,
   TimerRing,
   useGameContent,
   useGameFlash,
 } from './gameUi';
+import { useGameAudio } from './gameAudio';
+
+type TriviaReviewItem = Extract<SessionDetail, { type: 'trivia' }>['items'][number];
 
 const QUESTION_COUNT = 10;
 const QUESTION_MS = 15_000;
@@ -19,22 +23,20 @@ const TICK_MS = 100;
 const TIMEOUT_SENTINEL = '__timeout__';
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 
-type EndReason = 'complete' | 'wrong' | 'timeout';
-
-const END_COPY: Record<EndReason, { title: string; message: string }> = {
-  complete: {
-    title: 'Perfect Run!',
-    message: 'You cleared every question without a single miss. Flawless recall.',
-  },
-  wrong: {
-    title: 'Run Ended',
-    message: 'That answer broke the streak. Review the material and go again.',
-  },
-  timeout: {
-    title: "Time's Up!",
-    message: 'The clock ran out on that one. Speed comes with familiarity — try again.',
-  },
-};
+// The run always plays to the end; the summary copy reflects how well it went.
+function summaryFor(score: number, total: number): { title: string; message: string } {
+  const pct = total > 0 ? score / total : 0;
+  if (total > 0 && score === total) {
+    return { title: 'Perfect Run!', message: 'You cleared every question without a single miss. Flawless recall.' };
+  }
+  if (pct >= 0.7) {
+    return { title: 'Strong Run!', message: 'Great recall — most answers landed. Review the misses and push for a clean sweep.' };
+  }
+  if (pct >= 0.4) {
+    return { title: 'Good Effort!', message: 'A solid showing with room to grow. Another pass will sharpen the shaky spots.' };
+  }
+  return { title: 'Run Complete', message: 'Every question is practice. Revisit the material and go again — it climbs fast.' };
+}
 
 const DIFFICULTY_STYLES: Record<Question['difficulty'], string> = {
   easy: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
@@ -43,9 +45,11 @@ const DIFFICULTY_STYLES: Record<Question['difficulty'], string> = {
 };
 
 export default function TimedTriviaGame() {
-  const { data: targetData, resources, loading, error, regenerate, regenerating } = useGameContent();
+  const { data: targetData, resources, loading, error, regenerate, regenerating, recordSession } =
+    useGameContent();
 
   const { flash, fire } = useGameFlash();
+  const { play } = useGameAudio();
 
   const [queue, setQueue] = useState<Question[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -55,9 +59,12 @@ export default function TimedTriviaGame() {
   const [bestStreak, setBestStreak] = useState(0);
   const [timeLeftMs, setTimeLeftMs] = useState(QUESTION_MS);
   const [finished, setFinished] = useState(false);
-  const [endReason, setEndReason] = useState<EndReason>('complete');
 
   const timers = useRef<number[]>([]);
+  const startedAt = useRef(Date.now());
+  const recorded = useRef(false);
+  // Per-question outcome log for the post-game review view.
+  const answerLog = useRef<TriviaReviewItem[]>([]);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach(window.clearTimeout);
@@ -77,7 +84,9 @@ export default function TimedTriviaGame() {
     setBestStreak(0);
     setTimeLeftMs(QUESTION_MS);
     setFinished(false);
-    setEndReason('complete');
+    startedAt.current = Date.now();
+    recorded.current = false;
+    answerLog.current = [];
 
     const pool = targetData?.trivia ?? [];
     if (pool.length === 0) {
@@ -96,10 +105,17 @@ export default function TimedTriviaGame() {
   const answered = selected !== null;
   const timedOut = selected === TIMEOUT_SENTINEL;
 
-  const endGame = useCallback((reason: EndReason) => {
-    setEndReason(reason);
-    setFinished(true);
-  }, []);
+  // Advance to the next question, or end the run once the last one is answered.
+  // A miss no longer stops the run — it just breaks the streak and moves on.
+  const goNext = useCallback(() => {
+    if (currentIdx < queue.length - 1) {
+      setCurrentIdx((prev) => prev + 1);
+      setSelected(null);
+      setTimeLeftMs(QUESTION_MS);
+    } else {
+      setFinished(true);
+    }
+  }, [currentIdx, queue.length]);
 
   // Countdown ticks in milliseconds so the ring sweeps smoothly.
   useEffect(() => {
@@ -124,19 +140,37 @@ export default function TimedTriviaGame() {
     setSelected(TIMEOUT_SENTINEL);
     setStreak(0);
     fire('wrong');
-    schedule(() => endGame('timeout'), 1400);
-  }, [timeLeftMs, finished, answered, queue.length, fire, schedule, endGame]);
+    play('wrong');
+    if (current) {
+      answerLog.current.push({
+        question: current.question,
+        options: current.options,
+        correct: current.correct,
+        selected: null,
+        outcome: 'timeout',
+      });
+    }
+    schedule(goNext, 1400);
+  }, [timeLeftMs, finished, answered, queue.length, current, fire, play, schedule, goNext]);
 
   const handleAnswer = useCallback(
     (option: string) => {
       if (selected !== null || !current) return;
 
       setSelected(option);
+      answerLog.current.push({
+        question: current.question,
+        options: current.options,
+        correct: current.correct,
+        selected: option,
+        outcome: option === current.correct ? 'correct' : 'wrong',
+      });
 
       if (option !== current.correct) {
         setStreak(0);
         fire('wrong');
-        schedule(() => endGame('wrong'), 1400);
+        play('wrong');
+        schedule(goNext, 1400);
         return;
       }
 
@@ -147,18 +181,11 @@ export default function TimedTriviaGame() {
         return next;
       });
       fire('correct');
+      play('correct', streak); // pitch climbs with the streak
 
-      schedule(() => {
-        if (currentIdx < queue.length - 1) {
-          setCurrentIdx((prev) => prev + 1);
-          setSelected(null);
-          setTimeLeftMs(QUESTION_MS);
-        } else {
-          endGame('complete');
-        }
-      }, 900);
+      schedule(goNext, 900);
     },
-    [selected, current, currentIdx, queue.length, fire, schedule, endGame]
+    [selected, current, streak, fire, play, schedule, goNext]
   );
 
   // Answer with A–D or 1–4 without reaching for the mouse.
@@ -185,6 +212,28 @@ export default function TimedTriviaGame() {
   const isUrgent = timeLeftMs <= 5000 && !answered;
   const answeredWrong = answered && !timedOut && selected !== current?.correct;
 
+  // Clock tick on every second of a live question's countdown.
+  useEffect(() => {
+    if (finished || answered || queue.length === 0) return;
+    if (secondsLeft > 0) play('tick');
+  }, [secondsLeft, finished, answered, queue.length, play]);
+
+  // Victory sting when a run finishes flawlessly.
+  useEffect(() => {
+    if (finished && queue.length > 0 && score === queue.length) play('victory');
+  }, [finished, score, queue.length, play]);
+
+  // Log the finished run once. Accuracy = correct / total.
+  useEffect(() => {
+    if (!finished || recorded.current || queue.length === 0) return;
+    recorded.current = true;
+    recordSession({
+      accuracy: score / queue.length,
+      timeMs: Date.now() - startedAt.current,
+      detail: { type: 'trivia', items: answerLog.current },
+    });
+  }, [finished, score, queue.length, recordSession]);
+
   if (loading || !targetData) {
     return (
       <div className="max-w-3xl mx-auto animate-in fade-in duration-300">
@@ -194,14 +243,16 @@ export default function TimedTriviaGame() {
   }
 
   if (finished) {
+    const summary = summaryFor(score, queue.length);
+    const perfect = queue.length > 0 && score === queue.length;
     return (
       <div className="max-w-3xl mx-auto animate-in fade-in duration-300">
         <ScreenFlash flash={flash} />
         <ResultScreen
           tone="cyan"
           icon={Trophy}
-          title={END_COPY[endReason].title}
-          message={END_COPY[endReason].message}
+          title={summary.title}
+          message={summary.message}
           headline={`${score}`}
           headlineLabel={`of ${queue.length} correct`}
           stats={[
@@ -211,7 +262,7 @@ export default function TimedTriviaGame() {
           onReplay={startGame}
           onRegenerate={regenerate}
           regenerating={regenerating}
-          celebrate={endReason === 'complete'}
+          celebrate={perfect}
         />
       </div>
     );
@@ -339,12 +390,12 @@ export default function TimedTriviaGame() {
                 </span>
               ) : answeredWrong ? (
                 <span className="font-bold uppercase tracking-widest text-rose-400">
-                  Incorrect — run over
+                  Incorrect — on to the next
                 </span>
               ) : (
                 <>
                   <Zap className="w-3 h-3" />
-                  <span>Sudden death — one wrong answer ends the run</span>
+                  <span>Answer before the timer runs out to keep your streak</span>
                 </>
               )}
             </div>

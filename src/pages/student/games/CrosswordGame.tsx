@@ -20,6 +20,7 @@ import {
   useGameContent,
   useGameFlash,
 } from './gameUi';
+import { useGameAudio } from './gameAudio';
 
 type Direction = 'across' | 'down';
 interface Coord {
@@ -42,7 +43,8 @@ const keyOf = (r: number, c: number) => `${r}-${c}`;
 const sameCoord = (a: Coord, b: Coord) => a.r === b.r && a.c === b.c;
 
 export default function CrosswordGame() {
-  const { data: targetData, resources, loading, error, regenerate, regenerating } = useGameContent();
+  const { data: targetData, resources, loading, error, regenerate, regenerating, recordSession } =
+    useGameContent();
   const cells = useMemo(() => targetData?.crossword ?? [], [targetData]);
   const crosswordClues = useMemo(() => targetData?.crosswordClues ?? [], [targetData]);
 
@@ -53,6 +55,7 @@ export default function CrosswordGame() {
   );
 
   const { flash, fire } = useGameFlash();
+  const { play } = useGameAudio();
 
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [checked, setChecked] = useState(false);
@@ -65,6 +68,10 @@ export default function CrosswordGame() {
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const popTimer = useRef<number | null>(null);
+  const startedAt = useRef(Date.now());
+  const recorded = useRef(false);
+  // Cell keys the student revealed via AI Assist, for the post-game review.
+  const hintedCells = useRef<Set<string>>(new Set());
 
   const cellMap = useMemo(() => {
     const map = new Map<string, (typeof cells)[number]>();
@@ -160,6 +167,9 @@ export default function CrosswordGame() {
     setPoppedKey(null);
     setDirection('across');
     setActive(acrossWords[0]?.cells[0] ?? { r: 0, c: 0 });
+    startedAt.current = Date.now();
+    recorded.current = false;
+    hintedCells.current = new Set();
   }, [acrossWords]);
 
   useEffect(() => {
@@ -180,9 +190,33 @@ export default function CrosswordGame() {
   useEffect(() => {
     if (isComplete && !victory) {
       fire('correct');
+      play('victory');
       setVictory(true);
     }
-  }, [isComplete, victory, fire]);
+  }, [isComplete, victory, fire, play]);
+
+  // Log the solved grid once. Accuracy = squares solved unaided (fewer hints →
+  // higher). The review lists each word's answer and how many letters were
+  // revealed via AI Assist.
+  useEffect(() => {
+    if (!victory || recorded.current || cells.length === 0) return;
+    recorded.current = true;
+    const unaided = Math.max(0, cells.length - hintsUsed) / cells.length;
+    const items = clues.map((clue) => ({
+      number: clue.num,
+      direction: clue.dir,
+      clue: clue.text,
+      answer: clue.word.cells
+        .map((cell) => cellMap.get(keyOf(cell.r, cell.c))?.correctLetter ?? '')
+        .join(''),
+      hintedLetters: clue.word.cells.filter((cell) => hintedCells.current.has(keyOf(cell.r, cell.c))).length,
+    }));
+    recordSession({
+      accuracy: unaided,
+      timeMs: Date.now() - startedAt.current,
+      detail: { type: 'crossword', items },
+    });
+  }, [victory, cells.length, hintsUsed, clues, cellMap, recordSession]);
 
   const focusCell = (coord: Coord) => {
     setActive(coord);
@@ -231,6 +265,7 @@ export default function CrosswordGame() {
 
     if (letter) {
       popCell(key);
+      play('click');
       advanceWithinWord({ r, c }, 1);
     }
   };
@@ -296,16 +331,19 @@ export default function CrosswordGame() {
     const key = keyOf(target.r, target.c);
     const cell = cellMap.get(key)!;
     setAnswers((prev) => ({ ...prev, [key]: cell.correctLetter }));
+    hintedCells.current.add(key);
     setHintsUsed((prev) => prev + 1);
     setChecked(false);
     setStatus(null);
     popCell(key);
+    play('hint');
   };
 
   const checkAnswers = () => {
     if (filledCount < cells.length) {
       setStatus('Fill every square before checking.');
       fire('wrong');
+      play('wrong');
       return;
     }
 
@@ -315,6 +353,7 @@ export default function CrosswordGame() {
     if (wrong > 0) {
       setStatus(`${wrong} letter${wrong === 1 ? '' : 's'} need${wrong === 1 ? 's' : ''} another look.`);
       fire('wrong');
+      play('wrong');
     }
     // An all-correct grid is caught by the completion effect, which triggers victory.
   };

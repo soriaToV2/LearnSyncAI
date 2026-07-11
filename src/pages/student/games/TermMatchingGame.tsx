@@ -10,6 +10,7 @@ import {
   useGameContent,
   useGameFlash,
 } from './gameUi';
+import { useGameAudio } from './gameAudio';
 
 interface CardItem {
   id: string;
@@ -28,9 +29,11 @@ const shuffle = <T,>(items: T[]): T[] => {
 };
 
 export default function TermMatchingGame() {
-  const { data: targetData, resources, loading, error, regenerate, regenerating } = useGameContent();
+  const { data: targetData, resources, loading, error, regenerate, regenerating, recordSession } =
+    useGameContent();
 
   const { flash, fire } = useGameFlash();
+  const { play } = useGameAudio();
 
   const [termCards, setTermCards] = useState<CardItem[]>([]);
   const [defCards, setDefCards] = useState<CardItem[]>([]);
@@ -39,11 +42,15 @@ export default function TermMatchingGame() {
   const [recentMatchIds, setRecentMatchIds] = useState<string[]>([]);
   const [failedPair, setFailedPair] = useState<[string, string] | null>(null);
   const [hintId, setHintId] = useState<string | null>(null);
+  // Wrong attempts per term (keyed by matchId) — the AI hint unlocks at 2.
+  const [wrongCounts, setWrongCounts] = useState<Record<string, number>>({});
   const [moves, setMoves] = useState(0);
   const [combo, setCombo] = useState(0);
   const [victory, setVictory] = useState(false);
 
   const timers = useRef<number[]>([]);
+  const startedAt = useRef(Date.now());
+  const recorded = useRef(false);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach(window.clearTimeout);
@@ -61,9 +68,12 @@ export default function TermMatchingGame() {
     setRecentMatchIds([]);
     setFailedPair(null);
     setHintId(null);
+    setWrongCounts({});
     setMoves(0);
     setCombo(0);
     setVictory(false);
+    startedAt.current = Date.now();
+    recorded.current = false;
 
     const terms: CardItem[] = [];
     const defs: CardItem[] = [];
@@ -86,12 +96,31 @@ export default function TermMatchingGame() {
   const matchedPairs = matchedIds.length / 2;
   const accuracy = moves === 0 ? 100 : Math.round((matchedPairs / moves) * 100);
 
+  // Log the finished game once. Accuracy = pairs / attempts; the review shows
+  // how many wrong attempts each pair took before it was matched.
+  useEffect(() => {
+    if (!victory || recorded.current) return;
+    recorded.current = true;
+    const ratio = moves > 0 ? totalPairs / moves : 1;
+    const items = (targetData?.terms ?? []).map((t, idx) => ({
+      term: t.term,
+      definition: t.definition,
+      wrongAttempts: wrongCounts[`pair-${idx}`] ?? 0,
+    }));
+    recordSession({
+      accuracy: ratio,
+      timeMs: Date.now() - startedAt.current,
+      detail: { type: 'term_matcher', items },
+    });
+  }, [victory, moves, totalPairs, wrongCounts, targetData, recordSession]);
+
   const handleCardClick = (card: CardItem) => {
     if (matchedIds.includes(card.id) || failedPair) return;
 
     if (!selectedCardId) {
       setSelectedCardId(card.id);
       setHintId(null);
+      play('click');
       return;
     }
 
@@ -119,11 +148,15 @@ export default function TermMatchingGame() {
       setHintId(null);
       setCombo((prev) => prev + 1);
       fire('correct');
+      play('correct', combo); // pitch climbs with the combo
 
       schedule(() => setRecentMatchIds([]), 600);
 
       if (newMatched.length === totalPairs * 2) {
-        schedule(() => setVictory(true), 700);
+        schedule(() => {
+          setVictory(true);
+          play('victory');
+        }, 700);
       }
       return;
     }
@@ -131,10 +164,19 @@ export default function TermMatchingGame() {
     setFailedPair([first.id, card.id]);
     setCombo(0);
     fire('wrong');
+    play('wrong');
 
-    // Surface the correct partner of the first pick as an AI hint.
-    const partner = allCards.find((c) => c.matchId === first.matchId && c.id !== first.id)!;
-    setHintId(partner.id);
+    // Count this miss against the anchored term, and only surface the AI hint
+    // (its correct partner) once that term has been missed twice.
+    const nextCount = (wrongCounts[first.matchId] ?? 0) + 1;
+    setWrongCounts((prev) => ({ ...prev, [first.matchId]: nextCount }));
+
+    if (nextCount >= 2) {
+      const partner = allCards.find((c) => c.matchId === first.matchId && c.id !== first.id)!;
+      setHintId(partner.id);
+    } else {
+      setHintId(null);
+    }
 
     schedule(() => {
       setFailedPair(null);

@@ -155,8 +155,8 @@ Session Logging:
 
 Database Autopilot (Triggers):
   - An AFTER INSERT PostgreSQL trigger intercepts the new game session.
-  - It updates gamification_profiles (XP, total hours studied).
-  - Streak Logic: If the student's last active timestamp was less than 48 hours ago, current_streak += 1 (day streak increments). If more than 48 hours have elapsed, current_streak resets to 1.
+  - It updates gamification_profiles (day streak, total hours studied).
+  - Streak Logic: If the student's last active timestamp was less than 48 hours ago, day_streak += 1 (day streak increments). If more than 48 hours have elapsed, day_streak resets to 1.
   - The trigger also accumulates total hours studied across all activity types (flashcards, games, recall sessions, etc.).
 
 Streaks:

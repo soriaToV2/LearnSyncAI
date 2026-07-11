@@ -10,26 +10,85 @@ import {
   FileText,
   Check,
   Loader2,
+  History,
+  Sparkles,
+  CheckCircle2,
+  XCircle,
+  Lightbulb,
+  ChevronRight,
+  LucideIcon,
 } from 'lucide-react';
 import clsx from 'clsx';
 import Modal from '../../../components/ui/Modal';
 import { api } from '../../../lib/api';
 import { getCourseDisplayInfo } from './gamesData';
+import { SessionDetail } from './gameUi';
 
 type GameTypeUi = 'matching' | 'crossword' | 'trivia';
+type GameTypeApi = 'term_matcher' | 'crossword' | 'timed_trivia';
 
 // Maps the UI game label to the backend game_type enum.
-const GAME_TYPE_API: Record<GameTypeUi, 'term_matcher' | 'crossword' | 'timed_trivia'> = {
+const GAME_TYPE_API: Record<GameTypeUi, GameTypeApi> = {
   matching: 'term_matcher',
   crossword: 'crossword',
   trivia: 'timed_trivia',
 };
 
-const GAME_TITLE: Record<GameTypeUi, string> = {
-  matching: 'Term Matching',
-  crossword: 'Crossword',
-  trivia: 'Timed Trivia',
+// Per-game presentation, shared by the launch cards and the history list.
+const GAME_META: Record<
+  GameTypeApi,
+  { title: string; description: string; icon: LucideIcon; accent: string; iconWrap: string }
+> = {
+  term_matcher: {
+    title: 'Term Matching',
+    description: 'Link each course term to its exact definition — clear the board with no mistakes.',
+    icon: BrainCircuit,
+    accent: 'text-primary-fixed-dim',
+    iconWrap: 'bg-primary-fixed-dim/10 border-primary-fixed-dim/20 text-primary-fixed-dim',
+  },
+  crossword: {
+    title: 'Crossword',
+    description: 'Solve interlocking clues in an interactive grid built from your material.',
+    icon: HelpCircle,
+    accent: 'text-amber-400',
+    iconWrap: 'bg-amber-400/10 border-amber-400/20 text-amber-400',
+  },
+  timed_trivia: {
+    title: 'Timed Trivia',
+    description: 'Answer rapid-fire questions against the clock and chase your best streak.',
+    icon: Hourglass,
+    accent: 'text-cyan-400',
+    iconWrap: 'bg-cyan-400/10 border-cyan-400/20 text-cyan-400',
+  },
 };
+
+// Per-tone hover treatment for the launch cards. Kept as full literal class
+// strings so Tailwind's JIT can see them (it can't scan built-up strings).
+const GAME_FX: Record<
+  GameTypeApi,
+  { cardHover: string; glow: string; playIdle: string; playHover: string }
+> = {
+  term_matcher: {
+    cardHover: 'hover:border-primary-fixed-dim/40 hover:shadow-[0_14px_44px_-14px_rgba(0,218,243,0.45)]',
+    glow: 'bg-primary-fixed-dim/10 group-hover:bg-primary-fixed-dim/25',
+    playIdle: 'bg-primary-fixed-dim/10 text-primary-fixed-dim',
+    playHover: 'group-hover:bg-primary-fixed-dim group-hover:text-on-primary-fixed',
+  },
+  crossword: {
+    cardHover: 'hover:border-amber-400/40 hover:shadow-[0_14px_44px_-14px_rgba(251,191,36,0.45)]',
+    glow: 'bg-amber-400/10 group-hover:bg-amber-400/25',
+    playIdle: 'bg-amber-400/10 text-amber-400',
+    playHover: 'group-hover:bg-amber-400 group-hover:text-black',
+  },
+  timed_trivia: {
+    cardHover: 'hover:border-cyan-400/40 hover:shadow-[0_14px_44px_-14px_rgba(34,211,238,0.45)]',
+    glow: 'bg-cyan-400/10 group-hover:bg-cyan-400/25',
+    playIdle: 'bg-cyan-400/10 text-cyan-400',
+    playHover: 'group-hover:bg-cyan-400 group-hover:text-black',
+  },
+};
+
+const LAUNCH_ORDER: GameTypeUi[] = ['matching', 'crossword', 'trivia'];
 
 interface StudySpace {
   id: string;
@@ -41,6 +100,29 @@ interface Material {
   id: string;
   title: string;
   parsed_status: string;
+}
+
+interface GameSession {
+  id: string;
+  game_type: GameTypeApi;
+  accuracy: number | null;
+  time_spent_ms: number | null;
+  detail: SessionDetail | null;
+  completed_at: string;
+  materials: { title: string } | null;
+}
+
+/** Compact "2h ago" / "3d ago" formatting for the history list. */
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 export default function GamesLanding() {
@@ -59,6 +141,31 @@ export default function GamesLanding() {
 
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+
+  const [sessions, setSessions] = useState<GameSession[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [reviewSession, setReviewSession] = useState<GameSession | null>(null);
+
+  // Load recent game history on mount (refreshes whenever this page remounts,
+  // e.g. after returning from a finished game).
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryLoading(true);
+    api
+      .get<GameSession[]>('/gamification/sessions')
+      .then((res) => {
+        if (!cancelled) setSessions(res.data ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setSessions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Load the student's study spaces once the modal is first opened.
   useEffect(() => {
@@ -87,6 +194,7 @@ export default function GamesLanding() {
 
   // Load materials whenever the selected space changes. Only parsed materials
   // have extracted concepts, so those are the only ones eligible for generation.
+  // Nothing is pre-selected — the student picks what the game draws from.
   useEffect(() => {
     if (!isBuildModalOpen || !selectedSpaceId) return;
 
@@ -99,7 +207,7 @@ export default function GamesLanding() {
         if (cancelled) return;
         const completed = (res.data ?? []).filter((m) => m.parsed_status === 'completed');
         setMaterials(completed);
-        setSelectedMaterialIds(completed.map((m) => m.id));
+        setSelectedMaterialIds([]);
       })
       .catch((err: unknown) => {
         if (!cancelled) setGenError(err instanceof Error ? err.message : 'Failed to load materials');
@@ -148,78 +256,166 @@ export default function GamesLanding() {
   const allSelected = materials.length > 0 && selectedMaterialIds.length === materials.length;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-300">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Game 1: Term Matching */}
-        <div className="glass-card rounded-2xl border border-white/5 hover:border-primary-fixed-dim/30 transition-all duration-300 p-6 flex flex-col justify-between group hover:shadow-lg hover:shadow-primary-fixed-dim/5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-primary-fixed-dim/5 rounded-full blur-2xl group-hover:bg-primary-fixed-dim/10 transition-all duration-300 -mr-10 -mt-10 pointer-events-none" />
-          <div className="relative z-10">
-            <div className="w-12 h-12 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center border border-primary-fixed-dim/20 text-primary-fixed-dim mb-4 group-hover:scale-110 transition-transform">
-              <BrainCircuit className="w-6 h-6" />
-            </div>
-            <h3 className="font-display text-xl font-bold text-white mb-2">Term Matching</h3>
-            <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
-              Connect core course terms to their exact scientific definitions. Match them all with zero errors to win!
-            </p>
-          </div>
-          <button
-            onClick={() => openBuildModal('matching')}
-            className="w-full py-3 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/30 text-primary-fixed-dim font-display font-semibold hover:bg-primary-fixed-dim hover:text-on-primary-fixed transition-all duration-300 flex items-center justify-center gap-2 active:scale-95"
-          >
-            Play Game <ArrowRight className="w-4 h-4" />
-          </button>
+    <div className="space-y-10 animate-in fade-in duration-300">
+      {/* Game launchers */}
+      <section className="space-y-4">
+        <h2 className="font-sans text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
+          Choose a game
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {LAUNCH_ORDER.map((ui, i) => {
+            const type = GAME_TYPE_API[ui];
+            const meta = GAME_META[type];
+            const fx = GAME_FX[type];
+            return (
+              <button
+                key={ui}
+                type="button"
+                onClick={() => openBuildModal(ui)}
+                style={{ animationDelay: `${i * 80}ms` }}
+                className={clsx(
+                  'group relative overflow-hidden glass-card rounded-2xl border border-white/5 p-5 text-left flex flex-col gap-4',
+                  'transition-all duration-300 ease-out will-change-transform',
+                  'hover:-translate-y-1.5 active:translate-y-0 active:scale-[0.98]',
+                  'focus:outline-none focus-visible:border-white/25',
+                  'animate-in fade-in slide-in-from-bottom-3 fill-mode-both',
+                  fx.cardHover
+                )}
+              >
+                {/* Corner glow — brightens on hover */}
+                <div
+                  aria-hidden
+                  className={clsx(
+                    'pointer-events-none absolute -top-12 -right-12 w-36 h-36 rounded-full blur-3xl transition-all duration-500',
+                    fx.glow
+                  )}
+                />
+                {/* Light sheen that sweeps across on hover */}
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 -translate-x-[130%] group-hover:translate-x-[130%] transition-transform duration-[900ms] ease-out bg-gradient-to-r from-transparent via-white/[0.07] to-transparent"
+                />
+
+                <div
+                  className={clsx(
+                    'relative w-11 h-11 rounded-xl border flex items-center justify-center',
+                    'transition-transform duration-300 ease-out group-hover:scale-110 group-hover:-rotate-6',
+                    meta.iconWrap
+                  )}
+                >
+                  <meta.icon className="w-5 h-5" />
+                </div>
+                <div className="relative flex-1">
+                  <h3 className="font-display text-lg font-bold text-white">{meta.title}</h3>
+                  <p className="font-sans text-sm text-slate-400 leading-relaxed mt-1.5">
+                    {meta.description}
+                  </p>
+                </div>
+                <span
+                  className={clsx(
+                    'relative self-start inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5',
+                    'font-sans text-sm font-semibold transition-all duration-300 ease-out',
+                    fx.playIdle,
+                    fx.playHover
+                  )}
+                >
+                  Play
+                  <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Recent activity */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2">
+          <History className="w-4 h-4 text-slate-500" />
+          <h2 className="font-sans text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
+            Recent activity
+          </h2>
         </div>
 
-        {/* Game 2: Crossword */}
-        <div className="glass-card rounded-2xl border border-white/5 hover:border-amber-400/30 transition-all duration-300 p-6 flex flex-col justify-between group hover:shadow-lg hover:shadow-amber-400/5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-amber-400/5 rounded-full blur-2xl group-hover:bg-amber-400/10 transition-all duration-300 -mr-10 -mt-10 pointer-events-none" />
-          <div className="relative z-10">
-            <div className="w-12 h-12 rounded-xl bg-amber-400/10 flex items-center justify-center border border-amber-400/20 text-amber-400 mb-4 group-hover:scale-110 transition-transform">
-              <HelpCircle className="w-6 h-6" />
+        <div className="glass-card rounded-2xl border border-white/5 divide-y divide-white/[0.04]">
+          {historyLoading ? (
+            <div className="flex items-center gap-2 p-5 text-slate-500 font-sans text-sm">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading your history…
             </div>
-            <h3 className="font-display text-xl font-bold text-white mb-2">Crossword</h3>
-            <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
-              Solve course cross-clues inside an interactive grid. Read horizontal and vertical hints to identify core structures.
-            </p>
-          </div>
-          <button
-            onClick={() => openBuildModal('crossword')}
-            className="w-full py-3 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-400 font-display font-semibold hover:bg-amber-400 hover:text-black transition-all duration-300 flex items-center justify-center gap-2 active:scale-95"
-          >
-            Play Game <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
+          ) : sessions.length === 0 ? (
+            <div className="flex flex-col items-center text-center gap-1.5 px-6 py-12">
+              <div className="w-11 h-11 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-1">
+                <Sparkles className="w-5 h-5 text-slate-500" />
+              </div>
+              <p className="font-display text-sm font-bold text-white">No games played yet</p>
+              <p className="font-sans text-xs text-slate-500 max-w-xs">
+                Finish a game and your results — game, material, and accuracy — will show up here.
+              </p>
+            </div>
+          ) : (
+            sessions.map((s) => {
+              const meta = GAME_META[s.game_type];
+              const accuracyPct =
+                s.accuracy === null ? null : Math.round(Math.max(0, Math.min(1, s.accuracy)) * 100);
+              const reviewable = !!s.detail && s.detail.items.length > 0;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  disabled={!reviewable}
+                  onClick={() => reviewable && setReviewSession(s)}
+                  className={clsx(
+                    'w-full flex items-center gap-3 px-4 py-3 text-left transition-colors',
+                    reviewable ? 'hover:bg-white/[0.03] cursor-pointer' : 'cursor-default'
+                  )}
+                >
+                  <div
+                    className={clsx(
+                      'w-9 h-9 shrink-0 rounded-lg border flex items-center justify-center',
+                      meta.iconWrap
+                    )}
+                  >
+                    <meta.icon className="w-4 h-4" />
+                  </div>
 
-        {/* Game 3: Timed Trivia */}
-        <div className="glass-card rounded-2xl border border-white/5 hover:border-cyan-400/30 transition-all duration-300 p-6 flex flex-col justify-between group hover:shadow-lg hover:shadow-cyan-400/5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-400/5 rounded-full blur-2xl group-hover:bg-cyan-400/10 transition-all duration-300 -mr-10 -mt-10 pointer-events-none" />
-          <div className="relative z-10">
-            <div className="w-12 h-12 rounded-xl bg-cyan-400/10 flex items-center justify-center border border-cyan-400/20 text-cyan-400 mb-4 group-hover:scale-110 transition-transform">
-              <Hourglass className="w-6 h-6" />
-            </div>
-            <h3 className="font-display text-xl font-bold text-white mb-2">Timed Trivia</h3>
-            <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
-              Test your knowledge under time pressure with rapid-fire questions covering course modules. Answer before the clock runs out!
-            </p>
-          </div>
-          <button
-            onClick={() => openBuildModal('trivia')}
-            className="w-full py-3 rounded-xl bg-cyan-400/10 border border-cyan-400/30 text-cyan-400 font-display font-semibold hover:bg-cyan-400 hover:text-black transition-all duration-300 flex items-center justify-center gap-2 active:scale-95"
-          >
-            Play Game <ArrowRight className="w-4 h-4" />
-          </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-sans text-sm font-semibold text-white truncate">{meta.title}</p>
+                    <p className="font-sans text-[11px] text-slate-500 truncate">
+                      {s.materials?.title ?? 'Study material'} · {relativeTime(s.completed_at)}
+                    </p>
+                  </div>
+
+                  {accuracyPct !== null && (
+                    <div className="text-right shrink-0">
+                      <p className="font-display text-sm font-bold text-white tabular-nums">{accuracyPct}%</p>
+                      <p className="font-sans text-[9px] uppercase tracking-widest text-slate-500">accuracy</p>
+                    </div>
+                  )}
+
+                  {reviewable ? (
+                    <span className="flex items-center gap-1 shrink-0 font-sans text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                      Review <ChevronRight className="w-3.5 h-3.5" />
+                    </span>
+                  ) : (
+                    <span className="w-3.5 shrink-0" aria-hidden />
+                  )}
+                </button>
+              );
+            })
+          )}
         </div>
-      </div>
+      </section>
 
       {/* Game Build Modal */}
       <Modal
         isOpen={isBuildModalOpen && !!selectedGameType}
         onClose={() => !generating && setIsBuildModalOpen(false)}
-        title={selectedGameType ? `Build ${GAME_TITLE[selectedGameType]} Game` : 'Build Game'}
+        title={selectedGameType ? `Build ${GAME_META[GAME_TYPE_API[selectedGameType]].title} Game` : 'Build Game'}
         maxWidth="max-w-lg"
       >
         <div className="flex flex-col gap-6 max-h-[70vh] overflow-y-auto pr-1 no-scrollbar">
-          <div className="flex items-start justify-between mb-2">
+          <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center">
                 <Gamepad2 className="w-5 h-5 text-primary-fixed-dim" />
@@ -228,7 +424,9 @@ export default function GamesLanding() {
                 <p className="font-sans text-xs text-slate-400 uppercase tracking-widest font-semibold">
                   Setup Game Content
                 </p>
-                <p className="font-sans text-xs text-slate-500">Connect reference materials to formulate custom game content.</p>
+                <p className="font-sans text-xs text-slate-500">
+                  Connect reference materials to formulate custom game content.
+                </p>
               </div>
             </div>
           </div>
@@ -328,10 +526,12 @@ export default function GamesLanding() {
                           : 'bg-transparent border-transparent text-slate-400 hover:bg-white/5 hover:text-white'
                       )}
                     >
-                      <div className={clsx(
-                        'w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0',
-                        isChecked ? 'bg-primary-fixed-dim border-primary-fixed-dim text-black' : 'border-white/20 bg-white/5'
-                      )}>
+                      <div
+                        className={clsx(
+                          'w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0',
+                          isChecked ? 'bg-primary-fixed-dim border-primary-fixed-dim text-black' : 'border-white/20 bg-white/5'
+                        )}
+                      >
                         {isChecked && <Check className="w-3.5 h-3.5 font-bold" />}
                       </div>
                       <FileText className="w-4 h-4 text-slate-400 shrink-0" />
@@ -343,9 +543,9 @@ export default function GamesLanding() {
             </div>
 
             {materials.length > 0 && selectedMaterialIds.length === 0 && (
-              <div className="flex items-center gap-1.5 text-xs text-rose-400 bg-rose-500/5 border border-rose-500/10 p-2.5 rounded-xl mt-2">
+              <div className="flex items-center gap-1.5 text-xs text-slate-500 p-2.5 font-sans">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>Please select at least one learning material to launch the game.</span>
+                <span>Select at least one material to build the game.</span>
               </div>
             )}
           </div>
@@ -383,6 +583,193 @@ export default function GamesLanding() {
           </div>
         </div>
       </Modal>
+
+      {/* Session Review Modal */}
+      <SessionReviewModal session={reviewSession} onClose={() => setReviewSession(null)} />
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   Session review — per-item breakdown of a finished game
+   --------------------------------------------------------------- */
+
+function SessionReviewModal({
+  session,
+  onClose,
+}: {
+  session: GameSession | null;
+  onClose: () => void;
+}) {
+  const detail = session?.detail ?? null;
+  const meta = session ? GAME_META[session.game_type] : null;
+
+  return (
+    <Modal
+      isOpen={!!session && !!detail}
+      onClose={onClose}
+      title={meta ? `${meta.title} — Review` : 'Review'}
+      maxWidth="max-w-lg"
+    >
+      <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto pr-1 no-scrollbar">
+        {session && (
+          <p className="font-sans text-xs text-slate-500">
+            {session.materials?.title ?? 'Study material'} · {relativeTime(session.completed_at)}
+          </p>
+        )}
+
+        {detail?.type === 'trivia' && <TriviaReview items={detail.items} />}
+        {detail?.type === 'term_matcher' && <TermMatchReview items={detail.items} />}
+        {detail?.type === 'crossword' && <CrosswordReview items={detail.items} />}
+      </div>
+    </Modal>
+  );
+}
+
+function ReviewOutcomeBadge({ tone, label }: { tone: 'good' | 'bad' | 'warn'; label: string }) {
+  const styles =
+    tone === 'good'
+      ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+      : tone === 'bad'
+        ? 'bg-rose-500/10 border-rose-500/25 text-rose-400'
+        : 'bg-amber-400/10 border-amber-400/25 text-amber-400';
+  return (
+    <span
+      className={clsx(
+        'shrink-0 rounded-md border px-2 py-0.5 font-sans text-[10px] font-bold uppercase tracking-widest',
+        styles
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function TriviaReview({ items }: { items: Extract<SessionDetail, { type: 'trivia' }>['items'] }) {
+  const correct = items.filter((i) => i.outcome === 'correct').length;
+  return (
+    <>
+      <p className="font-sans text-[11px] font-bold uppercase tracking-widest text-slate-500">
+        {correct} of {items.length} correct
+      </p>
+      <div className="space-y-2.5">
+        {items.map((item, idx) => {
+          const wrong = item.outcome !== 'correct';
+          return (
+            <div
+              key={idx}
+              className={clsx(
+                'rounded-xl border p-3',
+                wrong ? 'bg-rose-500/[0.04] border-rose-500/15' : 'bg-emerald-500/[0.04] border-emerald-500/15'
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-sans text-sm font-semibold text-white leading-snug">
+                  {idx + 1}. {item.question}
+                </p>
+                {item.outcome === 'correct' ? (
+                  <ReviewOutcomeBadge tone="good" label="Correct" />
+                ) : item.outcome === 'timeout' ? (
+                  <ReviewOutcomeBadge tone="warn" label="Timed out" />
+                ) : (
+                  <ReviewOutcomeBadge tone="bad" label="Wrong" />
+                )}
+              </div>
+
+              <div className="mt-2 space-y-1">
+                {wrong && (
+                  <p className="flex items-center gap-1.5 font-sans text-xs text-rose-300">
+                    <XCircle className="w-3.5 h-3.5 shrink-0" />
+                    Your answer: {item.selected ?? '— (no answer)'}
+                  </p>
+                )}
+                <p className="flex items-center gap-1.5 font-sans text-xs text-emerald-300">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  Correct answer: {item.correct}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function TermMatchReview({ items }: { items: Extract<SessionDetail, { type: 'term_matcher' }>['items'] }) {
+  const clean = items.filter((i) => i.wrongAttempts === 0).length;
+  return (
+    <>
+      <p className="font-sans text-[11px] font-bold uppercase tracking-widest text-slate-500">
+        {clean} of {items.length} matched first try
+      </p>
+      <div className="space-y-2">
+        {items.map((item, idx) => {
+          const struggled = item.wrongAttempts > 0;
+          return (
+            <div
+              key={idx}
+              className={clsx(
+                'rounded-xl border p-3',
+                struggled ? 'bg-amber-400/[0.04] border-amber-400/15' : 'bg-white/[0.02] border-white/[0.06]'
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-display text-sm font-bold text-white">{item.term}</p>
+                {struggled ? (
+                  <ReviewOutcomeBadge
+                    tone="warn"
+                    label={`${item.wrongAttempts} miss${item.wrongAttempts === 1 ? '' : 'es'}`}
+                  />
+                ) : (
+                  <ReviewOutcomeBadge tone="good" label="Clean" />
+                )}
+              </div>
+              <p className="mt-1 font-sans text-xs text-slate-400 leading-relaxed">{item.definition}</p>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function CrosswordReview({ items }: { items: Extract<SessionDetail, { type: 'crossword' }>['items'] }) {
+  const unaided = items.filter((i) => i.hintedLetters === 0).length;
+  return (
+    <>
+      <p className="font-sans text-[11px] font-bold uppercase tracking-widest text-slate-500">
+        {unaided} of {items.length} solved without hints
+      </p>
+      <div className="space-y-2">
+        {items.map((item, idx) => {
+          const hinted = item.hintedLetters > 0;
+          return (
+            <div
+              key={idx}
+              className={clsx(
+                'rounded-xl border p-3',
+                hinted ? 'bg-amber-400/[0.04] border-amber-400/15' : 'bg-white/[0.02] border-white/[0.06]'
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-sans text-xs text-slate-400 leading-snug">
+                  <span className="font-bold text-slate-300 uppercase">
+                    {item.number} {item.direction}
+                  </span>{' '}
+                  {item.clue}
+                </p>
+                {hinted && (
+                  <span className="flex items-center gap-1 shrink-0 rounded-md border border-amber-400/25 bg-amber-400/10 px-2 py-0.5 font-sans text-[10px] font-bold uppercase tracking-widest text-amber-400">
+                    <Lightbulb className="w-3 h-3" /> {item.hintedLetters}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1.5 font-display text-sm font-bold tracking-[0.15em] text-white">{item.answer}</p>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }

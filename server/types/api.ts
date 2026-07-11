@@ -189,12 +189,21 @@ export type SubmitAnswerInput = z.infer<typeof SubmitAnswerSchema>;
 
 // ── Gamification ──────────────────────────────────────────
 
+// Per-item response log stored on the session for post-game review. Shape
+// varies by game (trivia questions / matched pairs / crossword words), so it's
+// validated loosely as { type, items[] } and rendered by the frontend.
+export const GameSessionDetailSchema = z.object({
+  type: z.enum(['trivia', 'term_matcher', 'crossword']),
+  items: z.array(z.record(z.string(), z.unknown())),
+});
+
+// XP was removed as a feature (not in the official spec).
 export const CreateGameSessionSchema = z.object({
   material_id: z.string().uuid(),
   game_type: z.enum(['term_matcher', 'crossword', 'timed_trivia']),
-  xp_earned: z.number().int().nonnegative(),
   accuracy: z.number().min(0).max(1).optional(),
   time_spent_ms: z.number().int().nonnegative().optional(),
+  detail: GameSessionDetailSchema.optional(),
 });
 export type CreateGameSessionInput = z.infer<typeof CreateGameSessionSchema>;
 

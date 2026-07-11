@@ -141,7 +141,6 @@ export interface BktMastery {
 /** public.gamification_profiles */
 export interface GamificationProfile {
   student_id: string;              // Primary key
-  total_xp: number | null;
   day_streak: number | null;        // Consecutive days with any study activity
   total_study_hours: number | null; // Cumulative study time across all modules
   last_active_at: string | null;
@@ -153,9 +152,9 @@ export interface GameSession {
   student_id: string | null;
   material_id: string | null;
   game_type: GameType;
-  xp_earned: number;
   accuracy: number | null;
   time_spent_ms: number | null;
+  detail: Record<string, unknown> | null; // Per-item response log for review
   completed_at: string | null;
 }
 

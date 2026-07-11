@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, FileText, Loader2, AlertTriangle, LucideIcon } from 'lucide-react';
+import { ArrowLeft, FileText, Loader2, AlertTriangle, Volume2, VolumeX, LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { api } from '../../../lib/api';
+import { useMuted, setMuted } from './gameAudio';
 import { MOCK_COURSES } from '../../../data/mockCourses';
 import {
   COURSE_DATABASE,
@@ -50,6 +51,25 @@ const TONE_STYLES: Record<GameTone, ToneStyles> = {
 };
 
 export const toneStyles = (tone: GameTone) => TONE_STYLES[tone];
+
+/* ---------------------------------------------------------------
+   Audio mute toggle
+   --------------------------------------------------------------- */
+
+/** Header speaker button — mutes/unmutes all game audio (persisted). */
+export function AudioToggle() {
+  const muted = useMuted();
+  return (
+    <button
+      onClick={() => setMuted(!muted)}
+      aria-label={muted ? 'Unmute game audio' : 'Mute game audio'}
+      aria-pressed={muted}
+      className="w-9 h-9 shrink-0 rounded-xl border border-white/10 bg-white/[0.03] text-slate-400 flex items-center justify-center hover:bg-white/[0.06] hover:text-white transition-all active:scale-95"
+    >
+      {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+    </button>
+  );
+}
 
 /* ---------------------------------------------------------------
    Screen flash
@@ -299,7 +319,10 @@ export function GameStage({
           </div>
         </div>
 
-        {hud && <div className="flex items-center gap-2">{hud}</div>}
+        <div className="flex items-center gap-2">
+          {hud}
+          <AudioToggle />
+        </div>
       </header>
 
       {/* Playfield */}
@@ -478,6 +501,39 @@ interface GameContentResponse extends GameSource {
   payload: CourseGameData;
 }
 
+/**
+ * Per-item response log persisted with a session so the student can review
+ * their answers afterward. Shape is discriminated by the game type.
+ */
+export type SessionDetail =
+  | {
+      type: 'trivia';
+      items: {
+        question: string;
+        options: string[];
+        correct: string;
+        selected: string | null;
+        outcome: 'correct' | 'wrong' | 'timeout';
+      }[];
+    }
+  | {
+      type: 'term_matcher';
+      items: { term: string; definition: string; wrongAttempts: number }[];
+    }
+  | {
+      type: 'crossword';
+      items: { number: number; direction: 'across' | 'down'; clue: string; answer: string; hintedLetters: number }[];
+    };
+
+/** Outcome of a finished game, persisted to the student's session history. */
+export interface GameResult {
+  /** 0 → 1. */
+  accuracy: number;
+  timeMs?: number;
+  /** Per-item breakdown for the post-game review view. */
+  detail?: SessionDetail;
+}
+
 interface GameContentState {
   data: CourseGameData | null;
   resources: string[];
@@ -486,6 +542,8 @@ interface GameContentState {
   /** Generates a brand-new game from the same materials ("Play Again"). Undefined in mock mode. */
   regenerate?: () => void;
   regenerating: boolean;
+  /** Logs a finished game to the student's history. No-op in mock mode (no source). */
+  recordSession: (result: GameResult) => void;
 }
 
 /**
@@ -581,6 +639,28 @@ export function useGameContent(): GameContentState {
     }
   }, [source, searchParams, setSearchParams]);
 
+  const recordSession = useCallback(
+    (result: GameResult) => {
+      if (!source) return; // mock mode — nothing to persist
+      const accuracy = Number.isFinite(result.accuracy)
+        ? Math.max(0, Math.min(1, result.accuracy))
+        : undefined;
+      // Best-effort: a failed log must never disrupt the result screen.
+      void api
+        .post('/gamification/session', {
+          material_id: source.material_ids[0],
+          game_type: source.game_type,
+          accuracy,
+          time_spent_ms: result.timeMs,
+          detail: result.detail,
+        })
+        .catch(() => {
+          /* swallow — history logging is non-critical */
+        });
+    },
+    [source]
+  );
+
   return {
     data,
     resources,
@@ -588,6 +668,7 @@ export function useGameContent(): GameContentState {
     error,
     regenerate: contentId ? regenerate : undefined,
     regenerating,
+    recordSession,
   };
 }
 

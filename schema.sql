@@ -203,10 +203,9 @@ CREATE TABLE bkt_mastery (
 -- Note: 'boggle' and 'trivia_blast' are deprecated; only use the 3 active types above
 CREATE TYPE game_type AS ENUM ('term_matcher', 'crossword', 'trivia_blast', 'timed_trivia');
 
--- Student gamification profile (XP, streaks, hours)
+-- Student gamification profile (streaks, hours)
 CREATE TABLE gamification_profiles (
     student_id UUID PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
-    total_xp INTEGER DEFAULT 0,
     day_streak INTEGER DEFAULT 0,          -- Consecutive days with any study activity
     total_study_hours NUMERIC DEFAULT 0,   -- Cumulative study time across all modules
     last_active_at TIMESTAMPTZ DEFAULT now()
@@ -218,9 +217,9 @@ CREATE TABLE game_sessions (
     student_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
     material_id UUID REFERENCES materials(id) ON DELETE CASCADE,
     game_type game_type NOT NULL,
-    xp_earned INTEGER NOT NULL,
     accuracy NUMERIC,
     time_spent_ms INTEGER,
+    detail JSONB,                          -- Per-item response log for post-game review
     completed_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -354,18 +353,18 @@ CREATE INDEX idx_chatbot_logs_student ON chatbot_logs(student_id);
 -- ==========================================
 
 -- 48-hour Streak Logic (PlayMe Module)
--- Fires after every game session to update day_streak and total_xp in gamification_profiles
+-- Fires after every game session to update day_streak in gamification_profiles
 CREATE OR REPLACE FUNCTION update_study_streak()
 RETURNS TRIGGER AS $$
 BEGIN
     -- If last active was more than 48 hours ago, reset streak to 1; else increment
     IF (NEW.completed_at - (SELECT last_active_at FROM gamification_profiles WHERE student_id = NEW.student_id)) > interval '48 hours' THEN
         UPDATE gamification_profiles
-        SET day_streak = 1, last_active_at = NEW.completed_at, total_xp = total_xp + NEW.xp_earned
+        SET day_streak = 1, last_active_at = NEW.completed_at
         WHERE student_id = NEW.student_id;
     ELSE
         UPDATE gamification_profiles
-        SET day_streak = day_streak + 1, last_active_at = NEW.completed_at, total_xp = total_xp + NEW.xp_earned
+        SET day_streak = day_streak + 1, last_active_at = NEW.completed_at
         WHERE student_id = NEW.student_id;
     END IF;
     RETURN NEW;

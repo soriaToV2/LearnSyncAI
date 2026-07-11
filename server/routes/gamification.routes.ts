@@ -22,10 +22,10 @@ router.get('/profile', async (req: Request, res: Response): Promise<void> => {
     .single();
 
   if (error && error.code === 'PGRST116') {
-    // Row not found — create a default profile
+    // Row not found — create a default profile (day_streak defaults to 0).
     const { data: created, error: createError } = await supabaseAdmin
       .from('gamification_profiles')
-      .insert({ student_id: studentId, total_xp: 0, current_streak: 0 })
+      .insert({ student_id: studentId })
       .select()
       .single();
 
@@ -47,11 +47,12 @@ router.get('/profile', async (req: Request, res: Response): Promise<void> => {
  * Logs a completed game session.
  *
  * The DB trigger `trigger_update_streak` automatically:
- *  - Adds xp_earned to gamification_profiles.total_xp
  *  - Increments or resets the streak (48-hour window)
  *  - Updates last_active_at
  *
- * Body: { material_id, game_type, xp_earned, accuracy?, time_spent_ms? }
+ * XP was removed as a feature; the `xp_earned` column has been dropped.
+ *
+ * Body: { material_id, game_type, accuracy?, time_spent_ms? }
  */
 router.post('/session', async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateGameSessionSchema.safeParse(req.body);
@@ -75,6 +76,27 @@ router.post('/session', async (req: Request, res: Response): Promise<void> => {
   // `trigger_update_streak` PostgreSQL trigger — no additional code needed.
 
   res.status(201).json({ data, message: 'Game session logged. XP and streak updated.' });
+});
+
+/**
+ * GET /api/gamification/sessions
+ * Returns the authenticated student's most recent game sessions (newest first),
+ * with the source material's title embedded for display.
+ */
+router.get('/sessions', async (req: Request, res: Response): Promise<void> => {
+  const { data, error } = await supabaseAdmin
+    .from('game_sessions')
+    .select('id, game_type, accuracy, time_spent_ms, detail, completed_at, materials(title)')
+    .eq('student_id', req.user!.id)
+    .order('completed_at', { ascending: false })
+    .limit(15);
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to fetch game sessions', message: error.message });
+    return;
+  }
+
+  res.json({ data });
 });
 
 /**
