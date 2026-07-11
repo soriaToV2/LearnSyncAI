@@ -72,6 +72,7 @@ CREATE OR REPLACE FUNCTION match_concepts(
   match_threshold float DEFAULT 0.0
 )
 RETURNS TABLE (
+  id          uuid,
   term        text,
   definition  text,
   similarity  float
@@ -79,6 +80,7 @@ RETURNS TABLE (
 LANGUAGE sql STABLE
 AS $$
   SELECT
+    id,
     term,
     definition,
     1 - (embedding <=> query_embedding) AS similarity

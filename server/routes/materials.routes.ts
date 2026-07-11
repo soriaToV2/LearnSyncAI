@@ -142,6 +142,36 @@ router.delete('/:id', requireRole('student'), async (req: Request, res: Response
 });
 
 /**
+ * GET /api/materials/:id/view
+ * Returns a short-lived signed URL for viewing the material's file directly
+ * from the private "materials" storage bucket. The file exists in storage from
+ * the moment of upload, so this works regardless of parsed_status.
+ */
+router.get('/:id/view', async (req: Request, res: Response): Promise<void> => {
+  const { data: material, error: fetchError } = await supabaseAdmin
+    .from('materials')
+    .select('storage_path')
+    .eq('id', req.params.id)
+    .single();
+
+  if (fetchError || !material) {
+    res.status(404).json({ error: 'Material not found' });
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin.storage
+    .from('materials')
+    .createSignedUrl(material.storage_path, 3600); // 1-hour expiry
+
+  if (error || !data) {
+    res.status(500).json({ error: 'Failed to create view URL', message: error?.message });
+    return;
+  }
+
+  res.json({ data: { url: data.signedUrl } });
+});
+
+/**
  * GET /api/materials/:id/concepts
  * Returns all extracted concepts for a material.
  */

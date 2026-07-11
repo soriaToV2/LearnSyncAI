@@ -23,6 +23,51 @@ router.use(authenticate);
 const RAG_MATCH_THRESHOLD = 0.60;
 
 /**
+ * Lower relevance gate applied to document-level requests (see below).
+ *
+ * A generic "summarize this file" has no topical keywords, so its best concept
+ * match lands around ~0.53–0.60 — below RAG_MATCH_THRESHOLD but still clearly
+ * anchored to the material. An off-topic request that merely *looks* like a
+ * summary ("summarize the life lessons from Reply 1988") scores ~0.46–0.50,
+ * because its real subject is external. This threshold sits in the gap: clear it
+ * and the request is treated as a genuine whole-document summary; fall below and
+ * it is refused. Set slightly below the legit-request floor so borderline real
+ * summaries are never wrongly refused — the off-topic cases the gate might miss
+ * are still caught by the strict grounding rules in the system prompt.
+ */
+const DOC_LEVEL_MATCH_THRESHOLD = 0.51;
+
+/**
+ * Detects "document-level" requests — ones that ask about the material as a whole
+ * (summarize, explain the file, overview, key points, TL;DR, …) rather than about
+ * a specific concept.
+ *
+ * These phrases carry no topical keywords, so their embeddings are generic and
+ * score poorly against individual concept vectors — they'd be wrongly refused by
+ * the strict RAG gate. But they ARE on-topic and, like the Summarize / Explain /
+ * Key Terms quick-action buttons, belong in 'full' mode (whole document) rather
+ * than RAG top-k — provided they actually clear DOC_LEVEL_MATCH_THRESHOLD against
+ * the material. We route them there so a typed "summarize this file" behaves the
+ * same as clicking the Summarize button.
+ */
+function isDocumentLevelRequest(message: string): boolean {
+  const m = message.toLowerCase();
+  return [
+    /\bsummar(y|ise|ize|ies)\b/,
+    /\btl;?dr\b/,
+    /\boverview\b/,
+    /\brecap\b/,
+    /\bgist\b/,
+    /\b(key|main)\s+(points?|ideas?|concepts?|terms?|topics?|takeaways?)\b/,
+    /\bexplain\s+(this|it|the)\b.*\b(file|document|material|pdf|reading|content|note|whole|entire|everything)\b/,
+    /\bexplain\s+(this|it|everything)\b/,
+    /\bwhat('?s| is| are)\s+(this|it|these)\b.*\b(about|cover|covered)\b/,
+    /\bwhat\s+(does|do)\s+(this|it|the|these)\b.*\b(file|document|material|pdf|reading|content|cover)\b/,
+    /\b(go over|walk me through|break down|tell me about)\b.*\b(this|it|the (file|document|material|pdf|reading|content|whole|everything))\b/,
+  ].some((re) => re.test(m));
+}
+
+/**
  * POST /api/chat
  *
  * Study Assistant chatbot endpoint.
@@ -50,40 +95,64 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   const { space_id, message, material_ids, history, mode } = parsed.data;
   const userId = req.user?.id;
 
-  // ── 2. Retrieve context from the concepts table ────────────────────────────
-  let contextConcepts: Array<{ term: string; definition: string }> = [];
-  // In RAG mode, whether the query cleared the relevance gate for the material(s).
-  let ragOnTopic = true;
+  // A typed "summarize this file" arrives as mode 'rag' but is really a
+  // whole-document request. We still verify it is anchored to the material below.
+  const docLevel = mode === 'rag' && isDocumentLevelRequest(message);
+
+  // ── 2. Retrieve context + decide how to answer ─────────────────────────────
+  // Concepts fed to the LLM, and the ids that informed the answer (for logging).
+  let contextConcepts: Array<{ id: string; term: string; definition: string }> = [];
+  let useFullMode = mode === 'full'; // answer from the whole document?
+  let refuse = false;                // out-of-scope → deterministic refusal
 
   try {
-    if (mode === 'full') {
-      // FULL MODE: fetch ALL concepts for selected materials (for summaries)
-      const { data, error } = await supabaseAdmin
-        .from('concepts')
-        .select('term, definition')
-        .in('material_id', material_ids)
-        .order('created_at');
-
-      if (error) throw new Error(`Failed to fetch concepts: ${error.message}`);
-      contextConcepts = data ?? [];
-      console.log(`[Chat] Full mode — loaded ${contextConcepts.length} concepts for summary`);
-    } else {
-      // RAG MODE: embed the query and do a threshold-gated vector similarity
-      // search. match_concepts only returns concepts scoring >= RAG_MATCH_THRESHOLD,
-      // so an empty result means the question is off-topic for these materials.
+    if (mode === 'rag') {
+      // Embed once; the same scores gate both specific and document-level requests.
       const queryEmbedding = await generateEmbedding(message);
 
       const { data, error } = await supabaseAdmin.rpc('match_concepts', {
         query_embedding: queryEmbedding,
         material_ids,
         match_count: 8,
-        match_threshold: RAG_MATCH_THRESHOLD,
+        match_threshold: 0, // fetch raw scores; gating happens in code below
       });
-
       if (error) throw new Error(`Vector search failed: ${error.message}`);
+
+      const rows = (data ?? []) as Array<{ id: string; term: string; definition: string; similarity: number }>;
+      const topSim = rows[0]?.similarity ?? 0;
+
+      if (docLevel) {
+        // Whole-document request: answer from the full material only if it is
+        // actually about the material. An external subject ("summarize Reply
+        // 1988") scores below the gate and is refused.
+        if (topSim >= DOC_LEVEL_MATCH_THRESHOLD) {
+          useFullMode = true;
+        } else {
+          refuse = true;
+        }
+      } else {
+        // Specific question: keep only concepts clearing the strict relevance gate.
+        const hits = rows.filter(r => r.similarity >= RAG_MATCH_THRESHOLD);
+        if (hits.length > 0) {
+          contextConcepts = hits.map(({ id, term, definition }) => ({ id, term, definition }));
+        } else {
+          refuse = true;
+        }
+      }
+      console.log(`[Chat] RAG — topSim=${topSim.toFixed(3)} docLevel=${docLevel} full=${useFullMode} refuse=${refuse}`);
+    }
+
+    if (useFullMode) {
+      // FULL MODE: fetch ALL concepts for the selected material (for summaries).
+      const { data, error } = await supabaseAdmin
+        .from('concepts')
+        .select('id, term, definition')
+        .in('material_id', material_ids)
+        .order('created_at');
+
+      if (error) throw new Error(`Failed to fetch concepts: ${error.message}`);
       contextConcepts = data ?? [];
-      ragOnTopic = contextConcepts.length > 0;
-      console.log(`[Chat] RAG mode — retrieved ${contextConcepts.length} relevant concepts (threshold ${RAG_MATCH_THRESHOLD})`);
+      console.log(`[Chat] Full mode — loaded ${contextConcepts.length} concepts`);
     }
   } catch (err: any) {
     console.error('[Chat] Context retrieval error:', err.message);
@@ -92,11 +161,11 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   }
 
   // ── 2b. Off-topic guard ────────────────────────────────────────────────────
-  // If a free-typed (RAG) question matched nothing above the relevance threshold,
-  // the student is asking about something not covered by their selected materials.
-  // Refuse deterministically instead of letting the LLM answer from world knowledge.
-  if (!ragOnTopic) {
-    console.log('[Chat] RAG query below relevance threshold — refusing (off-topic).');
+  // The query matched nothing relevant in the selected materials — the student is
+  // asking about something they don't cover. Refuse deterministically instead of
+  // letting the LLM answer from its own world knowledge.
+  if (refuse) {
+    console.log('[Chat] Query below relevance threshold — refusing (off-topic).');
     const refusal =
       "I couldn't find anything in your selected materials related to that question. " +
       "I can only help with the content of the materials you've uploaded and selected here. " +
@@ -182,12 +251,15 @@ Guidelines:
 
     // ── 5. Save exchange to chatbot_logs ─────────────────────────────────────
     if (userId && fullResponse) {
+      // Record which concepts grounded this answer: the retrieved top-k in RAG
+      // mode, or every loaded concept in full mode.
+      const sourceConceptIds = contextConcepts.length > 0 ? contextConcepts.map(c => c.id) : null;
       const { error: logError } = await supabaseAdmin.from('chatbot_logs').insert({
         space_id,
         student_id: userId,
         message,
         response: fullResponse,
-        source_concept_ids: null, // Could be enriched later with concept UUIDs
+        source_concept_ids: sourceConceptIds,
       });
 
       if (logError) {

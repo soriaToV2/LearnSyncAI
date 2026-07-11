@@ -1,14 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  UploadCloud, FileText, Trash2, Send, Bot, User,
-  File as FileIcon, FileImage, FileSpreadsheet, Sparkles,
-  CheckCircle2, Circle, Loader2, AlertCircle, BookOpen,
-  MessageSquare, Lightbulb, HelpCircle, RefreshCw
+  UploadCloud, FileText, Trash2, Send, Sparkles,
+  Loader2, AlertCircle, BookOpen, MessageSquare, Lightbulb, HelpCircle, X,
+  File as FileIcon, FileImage, FileSpreadsheet
 } from 'lucide-react';
-import { api, apiFetch } from '../../../lib/api';
+import { api } from '../../../lib/api';
 import type { Material } from '../../../../server/types/database';
 import { supabase } from '../../../lib/supabase';
 import Modal from '../../../components/ui/Modal';
+import Markdown from '../../../components/ui/Markdown';
+import PdfViewer from '../../../components/ui/PdfViewer';
 
 interface ResourcesTabProps {
   spaceId: string;
@@ -70,8 +71,14 @@ export default function ResourcesTab({
   const [isStreaming, setIsStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // ─── Document viewer state ─────────────────────────────────
+  const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerError, setViewerError] = useState<string | null>(null);
 
   // ─── Delete Confirmation state ──────────────────────────────
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -81,11 +88,40 @@ export default function ResourcesTab({
   // ─── Derived state ─────────────────────────────────────────
   const selectedCompletedFiles = files.filter(f => f.selected && f.parsed_status === 'completed');
   const canChat = selectedCompletedFiles.length > 0 && !isStreaming;
+  // The single active material drives both the document viewer and the chat context.
+  const activeFile = files.find(f => f.selected) ?? null;
 
   // ─── Auto-scroll chat ──────────────────────────────────────
   useEffect(() => {
+    if (!isChatOpen) return;
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isStreaming]);
+  }, [messages, isStreaming, isChatOpen]);
+
+  // ─── Load the signed view URL whenever the active material changes ──
+  const loadViewerUrl = useCallback(async (fileId: string) => {
+    setViewerLoading(true);
+    setViewerError(null);
+    try {
+      const res = await api.get<{ url: string }>(`/materials/${fileId}/view`);
+      setViewerUrl(res.data.url);
+    } catch (err: any) {
+      console.error('Failed to load document URL:', err);
+      setViewerUrl(null);
+      setViewerError(err.message ?? 'Could not load this document. Please try again.');
+    } finally {
+      setViewerLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeFile) {
+      setViewerUrl(null);
+      setViewerError(null);
+      setViewerLoading(false);
+      return;
+    }
+    loadViewerUrl(activeFile.id);
+  }, [activeFile?.id, loadViewerUrl]);
 
   // ─── 1. Fetch materials on mount ───────────────────────────
   useEffect(() => {
@@ -389,31 +425,21 @@ export default function ResourcesTab({
     e.target.style.height = `${Math.min(e.target.scrollHeight, 150)}px`;
   };
 
-  // ─── Render markdown-ish content simply (bold, line breaks) ─
-  const renderContent = (content: string) => {
-    return content;
-  };
-
   return (
-    <div className="animate-in fade-in duration-500 h-[calc(100vh-140px)] flex flex-col xl:flex-row gap-6 p-2 lg:p-4">
+    <div className="relative animate-in fade-in duration-500 h-[calc(100vh-140px)] flex flex-col xl:flex-row gap-4">
 
-      {/* ─── LEFT PANEL: Materials Management ─────────────────── */}
-      <div className="w-full xl:w-[380px] flex-shrink-0 flex flex-col gap-4 h-[50vh] xl:h-full">
-        {/* Header */}
-        <div className="bg-surface-container-lowest border border-white/5 rounded-2xl p-5 shadow-sm shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center border border-primary-fixed-dim/20">
-              <UploadCloud className="w-5 h-5 text-primary-fixed-dim" />
-            </div>
-            <div>
-              <h2 className="font-display font-semibold text-lg text-white leading-tight">Learning Materials</h2>
-              <p className="font-sans text-xs text-slate-400 mt-0.5">Upload PDFs to power the AI assistant</p>
-            </div>
-          </div>
+      {/* ─── LEFT: Materials ─────────────────────────────────── */}
+      <aside className="w-full xl:w-[300px] shrink-0 flex flex-col gap-3 h-[38vh] xl:h-full bg-surface-container-lowest border border-white/5 rounded-2xl shadow-sm p-3">
+        {/* Title + count */}
+        <div className="flex items-center justify-between px-1 shrink-0">
+          <h2 className="font-display font-semibold text-[15px] text-white">Materials</h2>
+          <span className="font-mono text-[11px] text-slate-500 tabular-nums bg-white/5 px-1.5 py-0.5 rounded">
+            {files.length}
+          </span>
         </div>
 
-        {/* Upload Button */}
-        <div className="shrink-0 space-y-2">
+        {/* Upload */}
+        <div className="shrink-0 space-y-1.5">
           <input
             type="file"
             multiple
@@ -425,267 +451,228 @@ export default function ResourcesTab({
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="w-full py-3.5 bg-surface-container border border-white/10 hover:border-primary-fixed-dim/50 hover:bg-primary-fixed-dim/10 rounded-xl flex items-center justify-center gap-2 transition-all group shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full py-2.5 rounded-xl border border-dashed border-white/12 hover:border-primary-fixed-dim/40 hover:bg-primary-fixed-dim/5 flex items-center justify-center gap-2 text-slate-400 hover:text-white transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isUploading ? (
-              <Loader2 className="w-5 h-5 text-primary-fixed-dim animate-spin" />
-            ) : (
-              <UploadCloud className="w-5 h-5 text-slate-400 group-hover:text-primary-fixed-dim transition-colors" />
-            )}
-            <span className="font-sans text-sm font-semibold text-slate-300 group-hover:text-white transition-colors">
-              {isUploading ? 'Uploading...' : 'Upload PDF Materials'}
-            </span>
+            {isUploading
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <UploadCloud className="w-4 h-4" />}
+            {isUploading ? 'Uploading…' : 'Upload PDF'}
           </button>
           {uploadError && (
-            <p className="text-red-400 text-xs text-center flex items-center justify-center gap-1">
-              <AlertCircle className="w-3 h-3" /> {uploadError}
+            <p className="text-red-400 text-[11px] flex items-center gap-1 px-1">
+              <AlertCircle className="w-3 h-3 shrink-0" /> {uploadError}
             </p>
           )}
         </div>
 
-        {/* Files List */}
-        <div className="flex-1 bg-surface-container-lowest border border-white/5 rounded-2xl overflow-hidden flex flex-col min-h-0 shadow-sm">
-          <div className="px-5 py-4 border-b border-white/5 bg-surface-container/30 flex items-center justify-between shrink-0">
-            <h3 className="font-sans font-semibold text-sm text-slate-200">Uploaded Files</h3>
-            <span className="font-sans text-xs font-medium bg-white/10 px-2 py-0.5 rounded-full text-slate-400">
-              {files.length}
-            </span>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-3 space-y-2 no-scrollbar">
-            {files.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
-                <FileText className="w-8 h-8 mb-3 opacity-20" />
-                <p className="font-sans text-sm">No materials uploaded yet.</p>
-                <p className="font-sans text-xs opacity-70 mt-1">Upload PDF files above to begin studying.</p>
-              </div>
-            ) : (
-              files.map(file => (
-                <div
-                  key={file.id}
-                  onClick={() => toggleFileSelection(file.id)}
-                  className={`group flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border ${file.selected
-                    ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/30 shadow-sm shadow-primary-fixed-dim/5'
-                    : 'bg-surface-container/30 border-transparent hover:bg-surface-container-high'
-                    }`}
-                >
-                  <button className="shrink-0 text-primary-fixed-dim transition-transform group-active:scale-90">
-                    {file.selected ? <CheckCircle2 className="w-5 h-5" /> : <Circle className="w-5 h-5 opacity-30 group-hover:opacity-100" />}
-                  </button>
-
-                  <div className="relative w-10 h-10 rounded-lg bg-surface-container-high border border-white/5 flex items-center justify-center shrink-0">
-                    {getFileIcon(file.type)}
-                  </div>
-
-                  <div className="flex-1 min-w-0 flex flex-col justify-center">
-                    <p className="font-sans text-sm font-medium text-slate-200 truncate leading-tight">{file.name}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      {(file.parsed_status === 'pending' || file.parsed_status === 'processing') && (
-                        <span className="flex items-center gap-1.5 text-[10px] font-medium text-yellow-400 bg-yellow-400/10 px-1.5 py-0.5 rounded-md">
-                          <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
-                          Processing
-                        </span>
-                      )}
-                      {file.parsed_status === 'failed' && (
-                        <span className="flex items-center gap-1 text-[10px] font-medium text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded-md">
-                          <AlertCircle className="w-3 h-3" />
-                          Failed
-                        </span>
-                      )}
-                      {file.parsed_status === 'completed' && (
-                        <span className="flex items-center gap-1.5 text-[10px] font-medium text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded-md">
-                          <CheckCircle2 className="w-3 h-3" />
-                          Ready
-                        </span>
-                      )}
-                      {file.parsed_status === 'completed' && file.conceptCount !== undefined && (
-                        <span className="text-[10px] text-slate-400 font-medium">
-                          {file.conceptCount} concepts
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={(e) => deleteFile(e, file.id)}
-                    className="shrink-0 p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ─── RIGHT PANEL: AI Chatbot ────────────────────────────── */}
-      <div className="flex-1 bg-surface-container-lowest border border-white/5 rounded-2xl flex flex-col overflow-hidden shadow-xl relative min-h-[50vh]">
-        {/* Background glow */}
-        <div className="absolute top-0 inset-x-0 h-64 bg-gradient-to-b from-primary-fixed-dim/5 to-transparent pointer-events-none" />
-
-        {/* Chat Header */}
-        <div className="px-6 py-5 border-b border-white/5 bg-surface-container/20 flex items-center justify-between backdrop-blur-md shrink-0 relative z-10">
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-fixed-dim to-violet-600 flex items-center justify-center shadow-lg shadow-primary-fixed-dim/20">
-                <Sparkles className="w-6 h-6 text-white" />
-              </div>
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-surface-container-lowest rounded-full" />
-            </div>
-            <div>
-              <h2 className="font-display font-semibold text-lg text-white leading-tight">Study Assistant</h2>
-              <p className="font-sans text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                {isStreaming ? 'Thinking...' : 'Ready to help'}
-              </p>
-            </div>
-          </div>
-
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/5">
-            <span className="font-sans text-[10px] uppercase tracking-widest text-slate-400 font-semibold">Context:</span>
-            <span className={`font-sans text-xs font-bold px-2 py-0.5 rounded ml-1 ${selectedCompletedFiles.length > 0
-              ? 'text-primary-fixed-dim bg-primary-fixed-dim/10'
-              : 'text-slate-500 bg-white/5'
-              }`}>
-              {selectedCompletedFiles.length} File{selectedCompletedFiles.length !== 1 ? 's' : ''}
-            </span>
-          </div>
-        </div>
-
-        {/* Quick Actions Bar */}
-        <div className="px-4 py-3 border-b border-white/5 bg-surface-container/10 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0 relative z-10">
-          <span className="font-sans text-[10px] text-slate-500 uppercase tracking-widest font-semibold shrink-0">Quick actions:</span>
-          {QUICK_ACTIONS.map(action => (
-            <button
-              key={action.label}
-              onClick={() => handleSendMessage(action.prompt, action.mode)}
-              disabled={!canChat}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-primary-fixed-dim/10 hover:border-primary-fixed-dim/30 text-slate-400 hover:text-white transition-all text-xs font-medium whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-            >
-              <action.icon className="w-3 h-3" />
-              {action.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Chat Messages */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth relative z-10 no-scrollbar">
-          {!historyLoaded ? (
-            <div className="h-full flex items-center justify-center">
-              <Loader2 className="w-6 h-6 text-primary-fixed-dim animate-spin" />
+        {/* File list */}
+        <div className="flex-1 overflow-y-auto -mx-1 px-1 space-y-0.5 no-scrollbar min-h-0">
+          {files.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center px-4 text-slate-600">
+              <FileText className="w-7 h-7 mb-2 opacity-30" />
+              <p className="font-sans text-xs">No materials yet</p>
             </div>
           ) : (
-            messages.map(msg => (
+            files.map(file => (
               <div
-                key={msg.id}
-                className={`flex items-start gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-in fade-in slide-in-from-bottom-2 duration-300`}
+                key={file.id}
+                onClick={() => toggleFileSelection(file.id)}
+                className={`group flex items-center gap-2.5 pl-2.5 pr-1.5 py-2 rounded-lg cursor-pointer transition-colors border-l-2 ${file.selected
+                  ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim'
+                  : 'border-transparent hover:bg-white/5'
+                  }`}
               >
-                {/* Avatar */}
-                <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm ${msg.role === 'user'
-                  ? 'bg-surface-container-high border border-white/10'
-                  : 'bg-primary-fixed-dim/20 border border-primary-fixed-dim/30'
-                  }`}>
-                  {msg.role === 'user'
-                    ? <User className="w-4 h-4 text-slate-300" />
-                    : <Bot className="w-4 h-4 text-primary-fixed-dim" />
-                  }
+                <div className="shrink-0 opacity-90">{getFileIcon(file.type)}</div>
+
+                <div className="flex-1 min-w-0">
+                  <p className={`font-sans text-[13px] font-medium truncate leading-tight ${file.selected ? 'text-white' : 'text-slate-300'}`}>
+                    {file.name}
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-0.5 text-[10.5px] leading-none">
+                    {(file.parsed_status === 'pending' || file.parsed_status === 'processing') && (
+                      <span className="flex items-center gap-1 text-amber-400/90">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" /> Processing
+                      </span>
+                    )}
+                    {file.parsed_status === 'failed' && (
+                      <span className="text-red-400/90">Failed to process</span>
+                    )}
+                    {file.parsed_status === 'completed' && (
+                      <span className="text-emerald-400/80">Ready</span>
+                    )}
+                    {file.parsed_status === 'completed' && file.conceptCount !== undefined && (
+                      <span className="text-slate-500">· {file.conceptCount} concepts</span>
+                    )}
+                  </div>
                 </div>
 
-                {/* Bubble */}
-                <div className={`max-w-[85%] sm:max-w-[78%] rounded-2xl px-5 py-3.5 shadow-sm ${msg.role === 'user'
-                  ? 'bg-surface-container-high text-white rounded-tr-sm border border-white/5'
-                  : 'bg-primary-fixed-dim/10 text-slate-200 rounded-tl-sm border border-primary-fixed-dim/20'
-                  }`}>
-                  {msg.content ? (
-                    <p className="font-sans text-[15px] leading-relaxed whitespace-pre-wrap">{msg.content}</p>
-                  ) : (
-                    // Streaming typing indicator
-                    <div className="flex items-center gap-1.5 py-1">
-                      <div className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim animate-bounce" style={{ animationDelay: '300ms' }} />
-                    </div>
-                  )}
-                  {/* Streaming cursor */}
-                  {msg.isStreaming && msg.content && (
-                    <span className="inline-block w-0.5 h-4 bg-primary-fixed-dim ml-0.5 animate-pulse align-middle" />
-                  )}
-                </div>
+                <button
+                  onClick={(e) => deleteFile(e, file.id)}
+                  aria-label="Delete material"
+                  className="shrink-0 p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
             ))
           )}
-          <div ref={chatEndRef} />
         </div>
+      </aside>
 
-        {/* Chat Error */}
-        {chatError && (
-          <div className="mx-4 mb-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-red-400 text-sm z-10 relative">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span className="flex-1 font-sans text-xs">{chatError}</span>
-            <button onClick={() => setChatError(null)} className="text-red-400/50 hover:text-red-400">✕</button>
-          </div>
-        )}
+      {/* ─── RIGHT: Document Viewer ──────────────────────────── */}
+      <PdfViewer
+        url={viewerUrl}
+        title={activeFile?.name}
+        loading={viewerLoading}
+        error={viewerError}
+        onRetry={activeFile ? () => loadViewerUrl(activeFile.id) : undefined}
+      />
 
-        {/* No materials warning */}
-        {selectedCompletedFiles.length === 0 && historyLoaded && (
-          <div className="mx-4 mb-2 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl flex items-center gap-2 text-yellow-400 text-sm z-10 relative">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span className="font-sans text-xs">
-              {files.filter(f => f.selected).length > 0
-                ? 'Selected materials are still processing. Please wait for them to finish.'
-                : 'Please select at least one fully processed material from the left panel to start chatting.'
-              }
-            </span>
-          </div>
-        )}
-
-        {/* Chat Input */}
-        <div className="p-4 bg-surface-container/30 border-t border-white/5 backdrop-blur-md shrink-0 relative z-10">
-          <form
-            onSubmit={(e) => { e.preventDefault(); handleSendMessage(); }}
-            className="flex items-end gap-3 bg-surface-container-lowest border border-white/10 rounded-2xl p-2 shadow-inner focus-within:border-primary-fixed-dim/50 focus-within:ring-1 focus-within:ring-primary-fixed-dim/50 transition-all"
-          >
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => { setInput(e.target.value); handleAutoResize(e); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage();
-                }
-              }}
-              disabled={isStreaming}
-              placeholder={
-                isStreaming
-                  ? 'AI is responding...'
-                  : selectedCompletedFiles.length > 0
-                    ? 'Ask anything about your selected materials...'
-                    : 'Select a processed material to start chatting...'
-              }
-              className="flex-1 bg-transparent border-none outline-none font-sans text-[15px] text-white placeholder:text-slate-500 min-h-[44px] max-h-[150px] resize-none py-3 px-3 scrollbar-thin overflow-hidden disabled:opacity-50"
-              rows={1}
-            />
+      {/* ─── Study Assistant drawer ──────────────────────────── */}
+      {isChatOpen && (
+        <div className="absolute z-40 top-3 bottom-3 right-3 lg:top-4 lg:bottom-4 lg:right-4 left-3 sm:left-auto sm:w-[min(400px,calc(100vw-1.5rem))] bg-surface-container-lowest border border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-2xl animate-drawer-in">
+          {/* Header */}
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-white/5 shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-primary-fixed-dim/15 flex items-center justify-center shrink-0">
+                <Sparkles className="w-4 h-4 text-primary-fixed-dim" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-display font-semibold text-sm text-white leading-tight">Study Assistant</h3>
+                <p className="font-sans text-[11px] text-slate-500 truncate">
+                  {isStreaming ? 'Thinking…' : activeFile ? activeFile.name : 'No material selected'}
+                </p>
+              </div>
+            </div>
             <button
-              type="submit"
-              disabled={!input.trim() || isStreaming || selectedCompletedFiles.length === 0}
-              className="shrink-0 w-11 h-11 bg-primary-fixed-dim text-on-primary-fixed rounded-xl flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary-container transition-all shadow-md shadow-primary-fixed-dim/20 mb-0.5 mr-0.5"
+              onClick={() => setIsChatOpen(false)}
+              aria-label="Close Study Assistant"
+              className="shrink-0 p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
             >
-              {isStreaming
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Send className="w-4 h-4 ml-0.5" />
-              }
+              <X className="w-4 h-4" />
             </button>
-          </form>
-          <div className="mt-3 text-center">
-            <p className="font-sans text-[10px] text-slate-500 flex items-center justify-center gap-1.5">
-              <Sparkles className="w-3 h-3 text-primary-fixed-dim" />
-              AI answers are based only on your uploaded study materials. Always verify with your source.
+          </div>
+
+          {/* Quick actions */}
+          <div className="flex items-center gap-1.5 px-3 py-2 border-b border-white/5 overflow-x-auto no-scrollbar shrink-0">
+            {QUICK_ACTIONS.map(action => (
+              <button
+                key={action.label}
+                onClick={() => handleSendMessage(action.prompt, action.mode)}
+                disabled={!canChat}
+                className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 hover:bg-primary-fixed-dim/10 text-slate-400 hover:text-white transition-colors text-[11px] font-medium whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              >
+                <action.icon className="w-3 h-3" />
+                {action.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-3 scroll-smooth no-scrollbar">
+            {!historyLoaded ? (
+              <div className="h-full flex items-center justify-center">
+                <Loader2 className="w-6 h-6 text-primary-fixed-dim animate-spin" />
+              </div>
+            ) : (
+              messages.map(msg => (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-1 duration-300`}
+                >
+                  <div className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 ${msg.role === 'user'
+                    ? 'bg-primary-fixed-dim text-on-primary-fixed rounded-br-md'
+                    : 'bg-surface-container-high text-slate-200 rounded-bl-md'
+                    }`}>
+                    {msg.content ? (
+                      msg.role === 'ai'
+                        ? <Markdown content={msg.content} />
+                        : <p className="font-sans text-[13.5px] leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                    ) : (
+                      <div className="flex items-center gap-1.5 py-0.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
+                    )}
+                    {msg.isStreaming && msg.content && (
+                      <span className="inline-block w-0.5 h-4 bg-primary-fixed-dim ml-0.5 animate-pulse align-middle" />
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Inline status hints */}
+          {chatError && (
+            <div className="flex items-center gap-1.5 px-4 py-1.5 text-[11px] text-red-400 shrink-0">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span className="flex-1">{chatError}</span>
+              <button onClick={() => setChatError(null)} className="text-red-400/60 hover:text-red-400">✕</button>
+            </div>
+          )}
+          {!chatError && selectedCompletedFiles.length === 0 && historyLoaded && (
+            <p className="px-4 py-1.5 text-[11px] text-amber-400/80 shrink-0">
+              {files.some(f => f.selected)
+                ? 'This material is still processing…'
+                : 'Select a processed material to start chatting.'}
             </p>
+          )}
+
+          {/* Input */}
+          <div className="p-3 border-t border-white/5 shrink-0">
+            <form
+              onSubmit={(e) => { e.preventDefault(); handleSendMessage(); }}
+              className="flex items-end gap-2 bg-surface-container border border-white/10 rounded-xl px-2 py-1.5 focus-within:border-primary-fixed-dim/40 transition-colors"
+            >
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => { setInput(e.target.value); handleAutoResize(e); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+                disabled={isStreaming}
+                placeholder={
+                  isStreaming
+                    ? 'AI is responding…'
+                    : selectedCompletedFiles.length > 0
+                      ? 'Ask about this material…'
+                      : 'Select a processed material…'
+                }
+                className="flex-1 bg-transparent border-none outline-none font-sans text-[13.5px] text-white placeholder:text-slate-500 min-h-[36px] max-h-[150px] resize-none py-2 px-1.5 scrollbar-thin overflow-hidden disabled:opacity-50"
+                rows={1}
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || isStreaming || selectedCompletedFiles.length === 0}
+                className="shrink-0 w-9 h-9 bg-primary-fixed-dim text-on-primary-fixed rounded-lg flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary-container transition-colors"
+              >
+                {isStreaming
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Send className="w-4 h-4 ml-0.5" />}
+              </button>
+            </form>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* ─── Chat toggle (FAB) ───────────────────────────────── */}
+      {!isChatOpen && (
+        <button
+          onClick={() => setIsChatOpen(true)}
+          aria-label="Open Study Assistant"
+          className="absolute z-40 bottom-5 right-5 lg:bottom-6 lg:right-6 w-14 h-14 rounded-2xl bg-primary-fixed-dim text-on-primary-fixed flex items-center justify-center shadow-lg shadow-primary-fixed-dim/25 hover:brightness-110 active:scale-95 transition-all"
+        >
+          <Sparkles className="w-6 h-6" />
+          <span className={`absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-surface-container-lowest ${isStreaming ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500'}`} />
+        </button>
+      )}
 
       {/* ─── Delete Confirmation Modal ──────────────────────── */}
       <Modal
