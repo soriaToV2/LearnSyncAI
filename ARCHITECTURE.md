@@ -139,7 +139,7 @@ BKT Recalculation Loop:
 8. Gamification (PlayMe Module)
 
 Core Tables: game_sessions, gamification_profiles, user_badges
-AI Integration: Gemini (Content Generation for game content)
+AI Integration: Gemini or Groq LLM's
 
 Games Available:
   - Crossword: AI generates a crossword puzzle from vocabulary and key terms extracted from the student's uploaded materials.
@@ -151,7 +151,7 @@ BKT-Adaptive Difficulty:
   - When a student's mastery for a concept is at or below 50%, the game generates content calibrated to that knowledge level, reinforcing foundational understanding before advancing difficulty.
 
 Session Logging:
-  - When a game session concludes, the frontend posts final stats (game_type, xp_earned, accuracy, time_spent_ms) to game_sessions.
+  - When a game session concludes, the frontend posts final stats (game_type, accuracy, time_spent_ms) to game_sessions.
 
 Database Autopilot (Triggers):
   - An AFTER INSERT PostgreSQL trigger intercepts the new game session.

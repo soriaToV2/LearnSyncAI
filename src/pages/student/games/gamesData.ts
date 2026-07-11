@@ -19,16 +19,18 @@ export interface CrosswordCell {
   label?: string;
 }
 
+export interface CrosswordClue {
+  number: number;
+  direction: 'across' | 'down';
+  clue: string;
+}
+
 export interface CourseGameData {
   courseName: string;
   terms: TermItem[];
   trivia: Question[];
   crossword: CrosswordCell[];
-  crosswordClues: {
-    across1: string;
-    across2: string;
-    down1: string;
-  };
+  crosswordClues: CrosswordClue[];
 }
 
 export const COURSE_DATABASE: Record<string, CourseGameData> = {
@@ -61,11 +63,11 @@ export const COURSE_DATABASE: Record<string, CourseGameData> = {
       { r: 2, c: 2, correctLetter: 'O' },
       { r: 2, c: 3, correctLetter: 'N' }
     ],
-    crosswordClues: {
-      across1: 'The cell body of a neuron containing the nucleus. (4 letters)',
-      across2: 'Long cable-like projection carrying electrical impulses away. (4 letters)',
-      down1: 'The tiny gaps/pathways where neurotransmitters flow. (5 letters)'
-    },
+    crosswordClues: [
+      { number: 1, direction: 'across', clue: 'The cell body of a neuron containing the nucleus. (4 letters)' },
+      { number: 2, direction: 'across', clue: 'Long cable-like projection carrying electrical impulses away. (4 letters)' },
+      { number: 1, direction: 'down', clue: 'The tiny gaps/pathways where neurotransmitters flow. (5 letters)' }
+    ],
   },
   chemistry: {
     courseName: 'Organic Chemistry I',
@@ -96,11 +98,11 @@ export const COURSE_DATABASE: Record<string, CourseGameData> = {
       { r: 2, c: 2, correctLetter: 'L' },
       { r: 2, c: 3, correctLetter: 'T' }
     ],
-    crosswordClues: {
-      across1: 'A chemical connection formed by sharing or transferring electrons. (4 letters)',
-      across2: 'An ionic compound formed by neutralization of an acid and a base. (4 letters)',
-      down1: 'Chemical species that donate electrons or accept protons. (5 letters)'
-    },
+    crosswordClues: [
+      { number: 1, direction: 'across', clue: 'A chemical connection formed by sharing or transferring electrons. (4 letters)' },
+      { number: 2, direction: 'across', clue: 'An ionic compound formed by neutralization of an acid and a base. (4 letters)' },
+      { number: 1, direction: 'down', clue: 'Chemical species that donate electrons or accept protons. (5 letters)' }
+    ],
   },
   physics: {
     courseName: 'General Physics II',
@@ -131,11 +133,11 @@ export const COURSE_DATABASE: Record<string, CourseGameData> = {
       { r: 2, c: 2, correctLetter: 'T' },
       { r: 2, c: 3, correctLetter: 'E' }
     ],
-    crosswordClues: {
-      across1: 'A disturbance that transfers energy through matter or space. (4 letters)',
-      across2: 'Amount of energy output or speed measured in watts. (4 letters)',
-      down1: 'Activities where force creates physical displacement. (5 letters)'
-    },
+    crosswordClues: [
+      { number: 1, direction: 'across', clue: 'A disturbance that transfers energy through matter or space. (4 letters)' },
+      { number: 2, direction: 'across', clue: 'Amount of energy output or speed measured in watts. (4 letters)' },
+      { number: 1, direction: 'down', clue: 'Activities where force creates physical displacement. (5 letters)' }
+    ],
   },
   webdev: {
     courseName: 'Full-Stack Web Development',
@@ -166,11 +168,11 @@ export const COURSE_DATABASE: Record<string, CourseGameData> = {
       { r: 2, c: 2, correctLetter: 'S' },
       { r: 2, c: 3, correctLetter: 'T' }
     ],
-    crosswordClues: {
-      across1: 'The standard markup language for creating web pages. (4 letters)',
-      across2: 'An evaluation validation block or API testing interface. (4 letters)',
-      down1: 'Secure transfer protocols executing on port 443. (5 letters)'
-    },
+    crosswordClues: [
+      { number: 1, direction: 'across', clue: 'The standard markup language for creating web pages. (4 letters)' },
+      { number: 2, direction: 'across', clue: 'An evaluation validation block or API testing interface. (4 letters)' },
+      { number: 1, direction: 'down', clue: 'Secure transfer protocols executing on port 443. (5 letters)' }
+    ],
   }
 };
 

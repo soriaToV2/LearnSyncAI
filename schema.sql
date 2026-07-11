@@ -233,6 +233,22 @@ CREATE TABLE user_badges (
     UNIQUE(student_id, badge_name)
 );
 
+-- AI-generated game content (crossword grids, term/definition sets, trivia questions).
+-- payload holds the full CourseGameData JSON the frontend renders. Difficulty is a
+-- prompt-time seam for future BKT calibration; it does not affect BKT mastery scores.
+CREATE TABLE game_content (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    student_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    space_id UUID REFERENCES study_spaces(id) ON DELETE CASCADE,
+    material_ids UUID[] NOT NULL,          -- Source materials the content was generated from
+    game_type game_type NOT NULL,
+    difficulty TEXT NOT NULL DEFAULT 'medium',
+    payload JSONB NOT NULL,                -- Full CourseGameData payload for this game_type
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_game_content_student ON game_content(student_id);
+
 -- ==========================================
 -- 8. ROW-LEVEL SECURITY (RLS) POLICIES
 -- ==========================================

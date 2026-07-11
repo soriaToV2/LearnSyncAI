@@ -166,3 +166,15 @@ export interface UserBadge {
   badge_name: string;
   awarded_at: string | null;
 }
+
+/** public.game_content — AI-generated game content (crossword/term/trivia payloads) */
+export interface GameContent {
+  id: string;
+  student_id: string | null;
+  space_id: string | null;
+  material_ids: string[];
+  game_type: GameType;
+  difficulty: string;                 // 'easy' | 'medium' | 'hard' — BKT calibration seam
+  payload: Record<string, unknown>;   // JSONB — full CourseGameData for this game_type
+  created_at: string | null;
+}

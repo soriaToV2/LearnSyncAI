@@ -198,6 +198,16 @@ export const CreateGameSessionSchema = z.object({
 });
 export type CreateGameSessionInput = z.infer<typeof CreateGameSessionSchema>;
 
+// AI generation of game content from a study space's materials.
+// `difficulty` is a seam for future BKT calibration; it currently only tunes the prompt.
+export const GenerateGameContentSchema = z.object({
+  space_id: z.string().uuid(),
+  material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
+  game_type: z.enum(['term_matcher', 'crossword', 'timed_trivia']),
+  difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
+});
+export type GenerateGameContentInput = z.infer<typeof GenerateGameContentSchema>;
+
 // ── BKT ───────────────────────────────────────────────────
 
 export const BktRecalculateSchema = z.object({

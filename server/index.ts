@@ -14,6 +14,7 @@ import flashcardRoutes from './routes/flashcards.routes';
 import cognitiveRoutes from './routes/cognitive.routes';
 import practiceRoutes from './routes/practice.routes';
 import gamificationRoutes from './routes/gamification.routes';
+import gamesRoutes from './routes/games.routes';
 import bktRoutes from './routes/bkt.routes';
 import chatRoutes from './routes/chat.routes';
 
@@ -46,6 +47,7 @@ app.use('/api/flashcards', flashcardRoutes);
 app.use('/api/cognitive', cognitiveRoutes);
 app.use('/api/practice', practiceRoutes);
 app.use('/api/gamification', gamificationRoutes);
+app.use('/api/games', gamesRoutes);
 app.use('/api/bkt', bktRoutes);
 app.use('/api/chat', chatRoutes);
 
