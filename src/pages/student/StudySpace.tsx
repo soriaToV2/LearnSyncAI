@@ -261,6 +261,13 @@ export default function StudySpace() {
         <div className="relative w-full mb-2">
           <div className="hidden sm:flex gap-4 md:gap-8 overflow-x-auto pb-px scrollbar-none pr-8">
             <button
+              onClick={() => setActiveTab('resources')}
+              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'resources' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+            >
+              <BookOpen className="w-4 h-4" />
+              <span className="hidden sm:inline">Learning Resources</span>
+            </button>            
+            <button
               onClick={() => setActiveTab('flashcards')}
               className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'flashcards' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
@@ -287,13 +294,6 @@ export default function StudySpace() {
             >
               <BrainCircuit className="w-4 h-4" />
               Test Mode
-            </button>
-            <button
-              onClick={() => setActiveTab('resources')}
-              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'resources' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
-            >
-              <BookOpen className="w-4 h-4" />
-              <span className="hidden sm:inline">Course </span>Resources
             </button>
           </div>
 

@@ -1,16 +1,25 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Home, Layers, Gamepad2, BrainCircuit, LogOut, Settings as SettingsIcon, Menu, X } from 'lucide-react';
+import { Home, Layers, Gamepad2, BrainCircuit, LogOut, Settings as SettingsIcon, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { MOCK_STUDENTS } from '../../data/mockStudents';
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
+
+const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-sidebar-collapsed';
 
 function StudentLayoutInner() {
   const location = useLocation();
   const [showLogout, setShowLogout] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(
+    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
+  );
   const currentStudent = MOCK_STUDENTS[0];
   const { theme } = useStudentTheme();
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isCollapsed));
+  }, [isCollapsed]);
 
   const isSpaceActive = location.pathname.includes('/student/space/');
 
@@ -37,70 +46,79 @@ function StudentLayoutInner() {
   const navBase =
     'flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95 font-display text-sm tracking-wide';
 
-  const renderNavLinks = () => (
+  const collapsedNavClass = (collapsed: boolean) =>
+    collapsed ? 'justify-center px-0 gap-0' : '';
+
+  const renderNavLinks = (collapsed = false) => (
     <div className="flex flex-col gap-2 font-display text-sm tracking-wide">
       <NavLink
         to="/student/dashboard"
+        title="Dashboard"
         className={({ isActive }) =>
-          `${navBase} ${(isActive && !isSpaceActive) ? '' : inactiveClass}`
+          `${navBase} ${collapsedNavClass(collapsed)} ${(isActive && !isSpaceActive) ? '' : inactiveClass}`
         }
         style={({ isActive }) =>
           isActive && !isSpaceActive ? activeStyle : {}
         }
       >
-        <Home className="w-5 h-5" />
-        Dashboard
+        <Home className="w-5 h-5 shrink-0" />
+        {!collapsed && 'Dashboard'}
       </NavLink>
 
       <NavLink
         to="/student/spaces"
+        title="Spaces"
         className={({ isActive }) =>
-          `${navBase} ${(isActive || isSpaceActive) ? '' : inactiveClass}`
+          `${navBase} ${collapsedNavClass(collapsed)} ${(isActive || isSpaceActive) ? '' : inactiveClass}`
         }
         style={({ isActive }) =>
           isActive || isSpaceActive ? activeStyle : {}
         }
       >
-        <Layers className="w-5 h-5" />
-        Spaces
+        <Layers className="w-5 h-5 shrink-0" />
+        {!collapsed && 'Spaces'}
       </NavLink>
 
 
       <NavLink
         to="/student/games"
-        className={({ isActive }) => `${navBase} ${isActive ? '' : inactiveClass}`}
+        title="Games"
+        className={({ isActive }) => `${navBase} ${collapsedNavClass(collapsed)} ${isActive ? '' : inactiveClass}`}
         style={({ isActive }) => (isActive ? activeStyle : {})}
       >
-        <Gamepad2 className="w-5 h-5" />
-        Games
+        <Gamepad2 className="w-5 h-5 shrink-0" />
+        {!collapsed && 'Games'}
       </NavLink>
     </div>
   );
 
-  const renderFooter = () => (
+  const renderFooter = (collapsed = false) => (
     <div className="mt-auto flex flex-col gap-2 relative">
       <NavLink
         to="/student/settings"
-        className={({ isActive }) => `${navBase} mb-1 ${isActive ? '' : inactiveClass}`}
+        title="Settings"
+        className={({ isActive }) => `${navBase} ${collapsedNavClass(collapsed)} mb-1 ${isActive ? '' : inactiveClass}`}
         style={({ isActive }) => (isActive ? activeStyle : {})}
       >
-        <SettingsIcon className="w-5 h-5" />
-        Settings
+        <SettingsIcon className="w-5 h-5 shrink-0" />
+        {!collapsed && 'Settings'}
       </NavLink>
 
       {showLogout && (
         <NavLink
           to="/login"
-          className="flex items-center gap-4 px-4 py-3 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide"
+          title="Logout"
+          className={`flex items-center gap-4 px-4 py-3 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide ${collapsedNavClass(collapsed)}`}
         >
-          <LogOut className="w-5 h-5" />
-          Logout
+          <LogOut className="w-5 h-5 shrink-0" />
+          {!collapsed && 'Logout'}
         </NavLink>
       )}
 
       <button
         onClick={() => setShowLogout(!showLogout)}
-        className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-all duration-300 border border-white/5 w-full text-left group active:scale-98 focus:outline-none"
+        title={currentStudent.name}
+        className={`flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-all duration-300 border border-white/5 w-full text-left group active:scale-98 focus:outline-none ${collapsed ? 'justify-center' : ''}`}
       >
         <div className="relative shrink-0">
           <img
@@ -113,17 +131,19 @@ function StudentLayoutInner() {
             style={{ backgroundColor: theme.accent }}
           />
         </div>
-        <div className="flex-1 min-w-0">
-          <p
-            className="font-display text-sm font-bold text-white transition-colors truncate"
-            style={{ color: showLogout ? theme.accent : undefined }}
-          >
-            {currentStudent.name}
-          </p>
-          <p className="font-sans text-[11px] text-slate-400 truncate">
-            {currentStudent.university}
-          </p>
-        </div>
+        {!collapsed && (
+          <div className="flex-1 min-w-0">
+            <p
+              className="font-display text-sm font-bold text-white transition-colors truncate"
+              style={{ color: showLogout ? theme.accent : undefined }}
+            >
+              {currentStudent.name}
+            </p>
+            <p className="font-sans text-[11px] text-slate-400 truncate">
+              {currentStudent.university}
+            </p>
+          </div>
+        )}
       </button>
     </div>
   );
@@ -211,11 +231,23 @@ function StudentLayoutInner() {
       </aside>
 
       {/* Desktop SideNavBar */}
-      <nav className="fixed left-0 top-0 flex flex-col p-6 z-50 h-screen w-64 border-r border-white/10 shadow-2xl bg-page-80 backdrop-blur-xl hidden md:flex">
+      <nav
+        className={`fixed left-0 top-0 flex flex-col p-6 z-50 h-screen border-r border-white/10 shadow-2xl bg-page-80 backdrop-blur-xl hidden md:flex transition-all duration-300 ease-in-out ${isCollapsed ? 'w-20' : 'w-64'
+          }`}
+      >
+        {/* Toggle Button */}
+        <button
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="absolute -right-3 top-9 w-6 h-6 rounded-full bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg"
+        >
+          {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
+        </button>
+
         {/* Logo */}
-        <div className="mb-12 flex items-center gap-3">
+        <div className={`mb-12 flex items-center gap-3 ${isCollapsed ? 'justify-center' : ''}`}>
           <div
-            className="w-10 h-10 rounded-full flex items-center justify-center border"
+            className="w-10 h-10 rounded-full flex items-center justify-center border shrink-0"
             style={{
               backgroundColor: `${theme.accent}20`,
               borderColor: `${theme.accent}40`,
@@ -224,30 +256,35 @@ function StudentLayoutInner() {
           >
             <BrainCircuit style={{ color: theme.accent }} className="w-6 h-6" />
           </div>
-          <div>
-            <h1
-              className="text-xl font-bold tracking-tighter font-display"
-              style={{ color: theme.accent }}
-            >
-              LearnSyncAI
-            </h1>
-            <p className="font-semibold text-xs text-slate-400 mt-1 uppercase tracking-widest text-[10px]">
-              Student Dashboard
-            </p>
-          </div>
+          {!isCollapsed && (
+            <div className="min-w-0">
+              <h1
+                className="text-xl font-bold tracking-tighter font-display truncate"
+                style={{ color: theme.accent }}
+              >
+                LearnSyncAI
+              </h1>
+              <p className="font-semibold text-xs text-slate-400 mt-1 uppercase tracking-widest text-[10px] truncate">
+                Student Dashboard
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Nav Items */}
         <div className="flex-1">
-          {renderNavLinks()}
+          {renderNavLinks(isCollapsed)}
         </div>
 
         {/* Footer */}
-        {renderFooter()}
+        {renderFooter(isCollapsed)}
       </nav>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col md:ml-64 min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden">
+      <div
+        className={`flex-1 flex flex-col min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'
+          }`}
+      >
         <div key={location.pathname} className="flex-1 flex flex-col animate-page-fade">
           <Outlet />
         </div>
