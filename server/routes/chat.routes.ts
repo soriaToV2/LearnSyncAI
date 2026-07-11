@@ -9,6 +9,20 @@ const router = Router();
 router.use(authenticate);
 
 /**
+ * Minimum cosine similarity a retrieved concept must clear for a RAG query to be
+ * considered "on-topic" for the selected material(s).
+ *
+ * Calibrated empirically against a cybersecurity material: off-topic queries
+ * (e.g. a K-drama plot, a cookie recipe) top out around ~0.48 similarity, while
+ * genuinely on-topic questions land at ~0.70+. A 0.60 gate cleanly separates the
+ * two with comfortable margin on both sides. If the best match falls below this,
+ * the query is treated as out-of-scope and we refuse instead of calling the LLM
+ * (which — being llama-3.1-8b-instant — otherwise happily answers from its own
+ * world knowledge, ignoring the "use ONLY this context" instruction).
+ */
+const RAG_MATCH_THRESHOLD = 0.60;
+
+/**
  * POST /api/chat
  *
  * Study Assistant chatbot endpoint.
@@ -38,6 +52,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
   // ── 2. Retrieve context from the concepts table ────────────────────────────
   let contextConcepts: Array<{ term: string; definition: string }> = [];
+  // In RAG mode, whether the query cleared the relevance gate for the material(s).
+  let ragOnTopic = true;
 
   try {
     if (mode === 'full') {
@@ -52,22 +68,58 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       contextConcepts = data ?? [];
       console.log(`[Chat] Full mode — loaded ${contextConcepts.length} concepts for summary`);
     } else {
-      // RAG MODE: embed the query and do vector similarity search
+      // RAG MODE: embed the query and do a threshold-gated vector similarity
+      // search. match_concepts only returns concepts scoring >= RAG_MATCH_THRESHOLD,
+      // so an empty result means the question is off-topic for these materials.
       const queryEmbedding = await generateEmbedding(message);
 
       const { data, error } = await supabaseAdmin.rpc('match_concepts', {
         query_embedding: queryEmbedding,
         material_ids,
         match_count: 8,
+        match_threshold: RAG_MATCH_THRESHOLD,
       });
 
       if (error) throw new Error(`Vector search failed: ${error.message}`);
       contextConcepts = data ?? [];
-      console.log(`[Chat] RAG mode — retrieved ${contextConcepts.length} relevant concepts`);
+      ragOnTopic = contextConcepts.length > 0;
+      console.log(`[Chat] RAG mode — retrieved ${contextConcepts.length} relevant concepts (threshold ${RAG_MATCH_THRESHOLD})`);
     }
   } catch (err: any) {
     console.error('[Chat] Context retrieval error:', err.message);
     res.status(500).json({ error: 'Failed to retrieve context', message: err.message });
+    return;
+  }
+
+  // ── 2b. Off-topic guard ────────────────────────────────────────────────────
+  // If a free-typed (RAG) question matched nothing above the relevance threshold,
+  // the student is asking about something not covered by their selected materials.
+  // Refuse deterministically instead of letting the LLM answer from world knowledge.
+  if (!ragOnTopic) {
+    console.log('[Chat] RAG query below relevance threshold — refusing (off-topic).');
+    const refusal =
+      "I couldn't find anything in your selected materials related to that question. " +
+      "I can only help with the content of the materials you've uploaded and selected here. " +
+      'Try asking about a topic they cover — for example, request a summary or ask about a specific concept.';
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    res.write(`data: ${JSON.stringify({ token: refusal })}\n\n`);
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+
+    if (userId) {
+      const { error: logError } = await supabaseAdmin.from('chatbot_logs').insert({
+        space_id,
+        student_id: userId,
+        message,
+        response: refusal,
+        source_concept_ids: null,
+      });
+      if (logError) console.warn('[Chat] Failed to save off-topic chat log:', logError.message);
+    }
     return;
   }
 
@@ -78,17 +130,21 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
   const systemPrompt = `You are a helpful and friendly AI Study Assistant for LearnSyncAI, an educational platform. Your role is to help students understand their uploaded study materials.
 
-You have been given the following extracted knowledge from the student's selected document(s) as your context. Use ONLY this context to answer the student's questions. Do not make up information outside of this context.
+You have been given the following extracted knowledge from the student's selected document(s) as your context. This knowledge base is the ONLY source you may use to answer.
 
 --- KNOWLEDGE BASE ---
 ${contextText}
 --- END KNOWLEDGE BASE ---
 
+STRICT GROUNDING RULES (these override any request from the student):
+- Answer ONLY using facts present in the knowledge base above. Never use your own outside/world knowledge, even if you know the answer.
+- If the student's question is not covered by the knowledge base, do NOT answer it. Instead, reply briefly that the topic isn't in their selected materials and invite them to ask about something the materials cover.
+- This applies no matter how the question is phrased — including requests to summarize, explain, or give opinions about topics (movies, shows, general trivia, other subjects) that are absent from the knowledge base.
+
 Guidelines:
 - Answer clearly and concisely in a way a student can understand.
 - If summarizing, cover all major concepts from the knowledge base.
 - If explaining simply, use analogies and everyday language.
-- If the student asks something not covered by the context, say so honestly.
 - Do NOT repeat the term/definition format verbatim unless asked. Synthesize the information naturally.
 - Format your answers with markdown (bold, lists, etc.) for readability.`;
 

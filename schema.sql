@@ -61,11 +61,15 @@ CREATE TABLE concepts (
 );
 
 -- Semantic search function: retrieves top-N concepts closest to a query vector
--- Used by the Study Assistant chatbot for Retrieval-Augmented Generation (RAG)
+-- Used by the Study Assistant chatbot for Retrieval-Augmented Generation (RAG).
+-- match_threshold gates results by minimum cosine similarity: concepts scoring
+-- below it are excluded, so an empty result signals an off-topic query. The chat
+-- route passes ~0.60 here to keep the assistant grounded in the selected material.
 CREATE OR REPLACE FUNCTION match_concepts(
   query_embedding vector(3072),
   material_ids    uuid[],
-  match_count     int DEFAULT 8
+  match_count     int DEFAULT 8,
+  match_threshold float DEFAULT 0.0
 )
 RETURNS TABLE (
   term        text,
@@ -81,6 +85,7 @@ AS $$
   FROM concepts
   WHERE material_id = ANY(material_ids)
     AND embedding IS NOT NULL
+    AND 1 - (embedding <=> query_embedding) >= match_threshold
   ORDER BY embedding <=> query_embedding
   LIMIT match_count;
 $$;
