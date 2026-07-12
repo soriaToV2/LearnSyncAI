@@ -52,8 +52,10 @@ export default function MultiSelectDropdown({
       ? 'All resources'
       : `${selectedValues.length} resource${selectedValues.length > 1 ? 's' : ''} selected`;
 
+  // w-fit stops a flex/grid parent from stretching the root. The panel below is anchored
+  // with `right-0`, so a stretched root would fling it out to the container's right edge.
   return (
-    <div className={`relative inline-block text-left font-sans ${className}`} ref={containerRef}>
+    <div className={`relative inline-block w-fit text-left font-sans ${className}`} ref={containerRef}>
       <div className="relative">
         <button
           type="button"

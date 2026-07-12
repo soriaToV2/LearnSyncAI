@@ -119,9 +119,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
   const resourceOptions = availableResources.map(r => r.title);
 
   const [viewMode, setViewMode] = useState<'study' | 'history'>('study');
-  const [selectedDocs, setSelectedDocs] = useState<string[]>(
-    resourceOptions.length > 0 ? [resourceOptions[0]] : []
-  );
+  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
 
   // Concept Fetching State
   const [availableConcepts, setAvailableConcepts] = useState<Concept[]>([]);
