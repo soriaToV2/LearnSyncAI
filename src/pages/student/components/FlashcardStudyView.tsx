@@ -67,7 +67,7 @@ const RATING_CONFIG: Record<EaseRating, {
   },
   easy: {
     label: 'Easy',
-    sublabel: 'Review in 4 days',
+    sublabel: 'Review in 7 days',
     days: 4,
     icon: <Zap className="w-5 h-5" />,
     containerClass: 'bg-emerald-500/10',
