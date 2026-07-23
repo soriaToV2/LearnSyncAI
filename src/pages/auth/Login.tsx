@@ -37,8 +37,22 @@ export default function Login() {
         throw new Error(authError?.message || 'Authentication failed');
       }
 
-      // 3. Navigate to student dashboard (only one role now)
-      navigate('/student/dashboard');
+      // 3. Fetch the user's role from profiles and navigate to the correct portal
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', authData.user.id)
+        .single();
+
+      if (profileError || !profile) {
+        throw new Error('Could not load your account profile. Please contact support.');
+      }
+
+      if (profile.role === 'educator' || profile.role === 'admin') {
+        navigate('/educator/dashboard');
+      } else {
+        navigate('/student/dashboard');
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to login. Please check your credentials.');
       setIsLoading(false);

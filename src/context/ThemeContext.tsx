@@ -84,8 +84,9 @@ export const THEMES: ThemeDefinition[] = [
   },
 ];
 
-// Storage Keys
+// Storage Keys — one per portal, so an educator's choice never overwrites a student's
 const STUDENT_STORAGE_KEY = 'learnsyncai_student_theme';
+const EDUCATOR_STORAGE_KEY = 'learnsyncai_educator_theme';
 
 // Apply theme to element
 export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
@@ -101,7 +102,7 @@ export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
   el.style.setProperty('--color-primary-container', t.accent);
 }
 
-// Student Theme Context
+// Theme Context
 interface ThemeContextValue {
   theme: ThemeDefinition;
   setTheme: (id: string) => void;
@@ -112,9 +113,26 @@ const StudentThemeContext = createContext<ThemeContextValue>({
   setTheme: () => { },
 });
 
-export function StudentThemeProvider({ children }: { children: React.ReactNode }) {
+const EducatorThemeContext = createContext<ThemeContextValue>({
+  theme: THEMES[0],
+  setTheme: () => { },
+});
+
+/**
+ * Shared provider body. Each portal passes its own storage key so the two
+ * preferences are stored independently.
+ */
+function PortalThemeProvider({
+  storageKey,
+  Context,
+  children,
+}: {
+  storageKey: string;
+  Context: React.Context<ThemeContextValue>;
+  children: React.ReactNode;
+}) {
   const [theme, setThemeState] = useState<ThemeDefinition>(() => {
-    const saved = localStorage.getItem(STUDENT_STORAGE_KEY);
+    const saved = localStorage.getItem(storageKey);
     return THEMES.find(t => t.id === saved) ?? THEMES[0];
   });
 
@@ -122,19 +140,39 @@ export function StudentThemeProvider({ children }: { children: React.ReactNode }
     const found = THEMES.find(t => t.id === id);
     if (found) {
       setThemeState(found);
-      localStorage.setItem(STUDENT_STORAGE_KEY, id);
+      localStorage.setItem(storageKey, id);
     }
   };
 
   return (
-    <StudentThemeContext.Provider value={{ theme, setTheme }}>
+    <Context.Provider value={{ theme, setTheme }}>
       {children}
-    </StudentThemeContext.Provider>
+    </Context.Provider>
+  );
+}
+
+export function StudentThemeProvider({ children }: { children: React.ReactNode }) {
+  return (
+    <PortalThemeProvider storageKey={STUDENT_STORAGE_KEY} Context={StudentThemeContext}>
+      {children}
+    </PortalThemeProvider>
   );
 }
 
 export function useStudentTheme() {
   return useContext(StudentThemeContext);
+}
+
+export function EducatorThemeProvider({ children }: { children: React.ReactNode }) {
+  return (
+    <PortalThemeProvider storageKey={EDUCATOR_STORAGE_KEY} Context={EducatorThemeContext}>
+      {children}
+    </PortalThemeProvider>
+  );
+}
+
+export function useEducatorTheme() {
+  return useContext(EducatorThemeContext);
 }
 
 // Auth-page helper: returns the theme for whichever role was last active

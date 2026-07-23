@@ -15,6 +15,15 @@ import TermMatchingGame from './pages/student/games/TermMatchingGame';
 import CrosswordGame from './pages/student/games/CrosswordGame';
 import TimedTriviaGame from './pages/student/games/TimedTriviaGame';
 
+// Educator
+import EducatorLayout from './components/layout/EducatorLayout';
+import EducatorDashboard from './pages/educator/EducatorDashboard';
+import MaterialsLibrary from './pages/educator/MaterialsLibrary';
+import MaterialDetail from './pages/educator/MaterialDetail';
+import StudentsRoster from './pages/educator/StudentsRoster';
+import StudentMasteryDetail from './pages/educator/StudentMasteryDetail';
+import EducatorSettings from './pages/educator/EducatorSettings';
+
 import OrientationGate from './components/common/OrientationGate';
 
 export default function App() {
@@ -41,6 +50,17 @@ export default function App() {
           </Route>
           
           <Route path="/dashboard" element={<Navigate to="/student/dashboard" replace />} />
+        </Route>
+
+        {/* Educator Routes */}
+        <Route element={<EducatorLayout />}>
+          <Route path="/educator" element={<Navigate to="/educator/dashboard" replace />} />
+          <Route path="/educator/dashboard" element={<EducatorDashboard />} />
+          <Route path="/educator/materials" element={<MaterialsLibrary />} />
+          <Route path="/educator/materials/:materialId" element={<MaterialDetail />} />
+          <Route path="/educator/students" element={<StudentsRoster />} />
+          <Route path="/educator/students/:studentId" element={<StudentMasteryDetail />} />
+          <Route path="/educator/settings" element={<EducatorSettings />} />
         </Route>
 
       </Routes>
