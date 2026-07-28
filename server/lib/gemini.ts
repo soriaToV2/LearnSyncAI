@@ -60,11 +60,13 @@ async function withRetry<T>(fn: () => Promise<T>, label: string, maxAttempts = 4
 }
 
 /**
- * Generates a 768-dimensional embedding vector for the given text.
- * Uses the `text-embedding-004` model — matches the vector(768) column in the concepts table.
+ * Generates an embedding vector for the given text.
+ * Uses the `gemini-embedding-001` model (3072 dimensions) — matches the
+ * vector(3072) column in the concepts table. Do not change the model: all stored
+ * vectors depend on it.
  *
  * @param text - The text to embed
- * @returns A float array of 768 dimensions
+ * @returns A float array of 3072 dimensions
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const response = await withRetry(

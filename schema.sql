@@ -242,6 +242,7 @@ CREATE TABLE concepts (
     definition        TEXT NOT NULL,
     embedding         vector(3072),   -- gemini-embedding-001; do not change the model
     parent_concept_id UUID REFERENCES concepts(id),
+    source_pages      SMALLINT[],     -- source PDF page(s) this concept was drawn from (educator traceability)
     created_at        TIMESTAMPTZ DEFAULT now()
 );
 

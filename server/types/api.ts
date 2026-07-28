@@ -42,9 +42,30 @@ export type RegisterInput = z.infer<typeof RegisterSchema>;
 
 // ── Materials ─────────────────────────────────────────────
 
+/**
+ * Validates an educator's material upload. The file itself is handled by multer;
+ * this guards the accompanying form fields. `grade_levels` arrives as a multipart
+ * string (e.g. "[7,8]"), so it is JSON-parsed before the array is validated.
+ * Mirrors the CHECK constraints on public.materials: grades ⊆ {7,8,9,10}, ≥ 1.
+ */
 export const CreateMaterialSchema = z.object({
-  space_id: z.string().uuid(),    // Now linked to study_spaces, not courses
-  title: z.string().min(1),
+  title: z.string().trim().min(1, 'Title is required'),
+  subject: z.string().trim().min(1, 'Subject is required'),
+  description: z.string().trim().optional().nullable(),
+  grade_levels: z.preprocess(
+    (value) => {
+      if (typeof value !== 'string') return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    },
+    z
+      .array(z.coerce.number().int().min(7).max(10))
+      .min(1, 'Select at least one grade level')
+      .max(4)
+  ),
 });
 export type CreateMaterialInput = z.infer<typeof CreateMaterialSchema>;
 
@@ -52,6 +73,31 @@ export const FetchConceptsBatchSchema = z.object({
   material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
 });
 export type FetchConceptsBatchInput = z.infer<typeof FetchConceptsBatchSchema>;
+
+/**
+ * An educator manually adding a concept the extractor missed. The definition is
+ * embedded server-side (gemini-embedding-001) so the concept behaves exactly like
+ * an extracted one in Free Recall, the chatbot, and generated assessments.
+ * `source_pages` is optional — a hand-added concept may have no page provenance.
+ */
+export const CreateConceptSchema = z.object({
+  term: z.string().trim().min(1, 'Term is required'),
+  definition: z.string().trim().min(1, 'Definition is required'),
+  source_pages: z.array(z.number().int().positive()).optional().nullable(),
+});
+export type CreateConceptInput = z.infer<typeof CreateConceptSchema>;
+
+/** Editing a concept. Any subset of fields; at least one must be present. */
+export const UpdateConceptSchema = z
+  .object({
+    term: z.string().trim().min(1, 'Term cannot be empty').optional(),
+    definition: z.string().trim().min(1, 'Definition cannot be empty').optional(),
+    source_pages: z.array(z.number().int().positive()).optional().nullable(),
+  })
+  .refine((v) => v.term !== undefined || v.definition !== undefined || v.source_pages !== undefined, {
+    message: 'Provide at least one field to update',
+  });
+export type UpdateConceptInput = z.infer<typeof UpdateConceptSchema>;
 
 // ── Study Spaces ──────────────────────────────────────────
 

@@ -1,23 +1,20 @@
 import { useState, useRef, FormEvent, DragEvent } from 'react';
-import { UploadCloud, FileText, X, AlertCircle, Info } from 'lucide-react';
+import { UploadCloud, FileText, X, AlertCircle, Info, Loader2 } from 'lucide-react';
 import Modal from '../../../components/ui/Modal';
 import Dropdown from '../../../components/ui/Dropdown';
 import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
 import SubjectBadge from '../../../components/educator/SubjectBadge';
-import {
-  SUBJECTS, formatFileSize, ALL_GRADE_LEVELS,
-  EDUCATOR, type EducatorMaterial,
-} from '../../../data/mockEducator';
+import { SUBJECTS, formatFileSize, ALL_GRADE_LEVELS } from '../../../data/mockEducator';
+import { api } from '../../../lib/api';
 
-/** Documented platform limits (ARCHITECTURE.md §3), mirrored by CHECKs on public.materials. */
+/** Documented platform limit (Scope & Limitations): plain-text PDF, ≤ 20 MB. */
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
-const MAX_SCANNED_PAGES = 20;
 
 interface UploadMaterialModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Receives the optimistic material row. No network call happens in this phase. */
-  onUploaded: (material: EducatorMaterial) => void;
+  /** Called after a successful upload so the library can refetch from the server. */
+  onUploaded: () => void;
 }
 
 const gradeLabel = (g: number) => `Grade ${g}`;
@@ -32,17 +29,12 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
   const [description, setDescription] = useState('');
   const [subject, setSubject] = useState(subjects[0]?.code ?? '');
   const [grades, setGrades] = useState<string[]>([]);
-  const [isScanned, setIsScanned] = useState(false);
-  const [pageCount, setPageCount] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /**
-   * Grade access is the educator's own decision, so all four JHS grades are
-   * offered. Only the subject is constrained, by
-   * enforce_material_publish_scope() on the database side.
-   */
+  /** Grade access is the educator's own decision, so all four JHS grades are offered. */
   const gradeOptions = ALL_GRADE_LEVELS.map(gradeLabel);
 
   const reset = () => {
@@ -51,12 +43,12 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     setDescription('');
     setSubject(subjects[0]?.code ?? '');
     setGrades([]);
-    setIsScanned(false);
-    setPageCount('');
     setError(null);
+    setIsUploading(false);
   };
 
   const handleClose = () => {
+    if (isUploading) return; // don't drop an in-flight upload
     reset();
     onClose();
   };
@@ -75,6 +67,8 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     if (!title.trim()) {
       setTitle(candidate.name.replace(/\.pdf$/i, '').replace(/[-_]+/g, ' '));
     }
+    // Whether the PDF is scanned/text is decided authoritatively on the server,
+    // which saves a scanned file marked as unsupported with a clear reason.
   };
 
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -84,44 +78,34 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     if (dropped) acceptFile(dropped);
   };
 
-  const handleSubjectChange = (code: string) => setSubject(code);
-
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (isUploading) return;
 
     if (!file) return setError('Choose a PDF to upload.');
     if (!title.trim()) return setError('Give the material a title.');
     if (grades.length === 0) return setError('Select at least one grade level.');
 
-    const pages = pageCount.trim() ? Number(pageCount) : null;
-    if (pages !== null && (!Number.isFinite(pages) || pages < 1)) {
-      return setError('Page count must be a whole number of at least 1.');
-    }
-    if (isScanned && pages !== null && pages > MAX_SCANNED_PAGES) {
-      return setError(`Scanned documents are limited to ${MAX_SCANNED_PAGES} pages. This one has ${pages}.`);
-    }
+    const gradeNumbers = grades.map(gradeValue).sort((a, b) => a - b);
 
-    const now = new Date().toISOString();
-    onUploaded({
-      id: `mat-local-${Date.now()}`,
-      educator_id: EDUCATOR.id,
-      title: title.trim(),
-      description: description.trim() || null,
-      subject,
-      grade_levels: grades.map(gradeValue).sort((a, b) => a - b),
-      storage_path: `${EDUCATOR.id}/${Date.now()}-${file.name}`,
-      file_size_bytes: file.size,
-      page_count: pages,
-      is_scanned: isScanned,
-      parsed_status: 'pending',
-      parse_error: null,
-      is_archived: false,
-      created_at: now,
-      updated_at: now,
-    });
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('title', title.trim());
+    formData.append('subject', subject);
+    if (description.trim()) formData.append('description', description.trim());
+    formData.append('grade_levels', JSON.stringify(gradeNumbers));
 
-    reset();
-    onClose();
+    setError(null);
+    setIsUploading(true);
+    try {
+      await api.upload('/materials', formData);
+      onUploaded();
+      reset();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
+      setIsUploading(false);
+    }
   };
 
   return (
@@ -141,7 +125,8 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
             <button
               type="button"
               onClick={() => setFile(null)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+              disabled={isUploading}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0 disabled:opacity-40"
               aria-label="Remove file"
             >
               <X className="w-4 h-4" />
@@ -166,7 +151,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
               Drop a PDF here, or click to browse
             </p>
             <p className="font-sans text-xs text-slate-500 mt-1">
-              PDF only · up to 20 MB · scanned documents up to {MAX_SCANNED_PAGES} pages
+              Text-based PDF · up to 20 MB
             </p>
             <input
               ref={fileInputRef}
@@ -225,7 +210,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
             <label className="block font-sans text-sm font-medium text-slate-300 mb-1.5">Subject</label>
             <Dropdown
               value={subject}
-              onChange={handleSubjectChange}
+              onChange={setSubject}
               options={subjects.map((s) => ({ label: s.name, value: s.code }))}
               className="w-full"
             />
@@ -247,57 +232,32 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
             Subject and grade access are both your call. Students in the grades you select will find
             this
             <SubjectBadge code={subject} className="mx-1 align-middle" />
-            material when adding materials to a study space, and those grades then appear in your
-            Students roster.
+            material, and those grades then appear in your Students roster.
           </p>
-        </div>
-
-        {/* Scanned document */}
-        <div className="flex flex-col gap-3 px-4 py-3.5 rounded-xl bg-white/[0.02] border border-white/5">
-          <label className="flex items-center gap-2.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isScanned}
-              onChange={(e) => setIsScanned(e.target.checked)}
-              className="w-4 h-4 rounded border-white/20 bg-surface-container accent-primary-fixed-dim"
-            />
-            <span className="font-sans text-sm text-slate-300">
-              This is a scanned or image-based PDF
-            </span>
-          </label>
-
-          {isScanned && (
-            <div className="pl-6.5">
-              <label htmlFor="page-count" className="block font-sans text-xs text-slate-400 mb-1.5">
-                Page count — scanned documents are limited to {MAX_SCANNED_PAGES} pages
-              </label>
-              <input
-                id="page-count"
-                type="number"
-                min={1}
-                value={pageCount}
-                onChange={(e) => setPageCount(e.target.value)}
-                placeholder="e.g. 16"
-                className="w-32 bg-surface-container border border-white/10 rounded-xl px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50"
-              />
-            </div>
-          )}
         </div>
 
         <div className="flex gap-3 pt-4 border-t border-white/5 shrink-0">
           <button
             type="button"
             onClick={handleClose}
-            className="flex-1 px-4 py-3 rounded-xl border border-white/10 text-white font-sans text-sm font-medium hover:bg-white/5 transition-colors"
+            disabled={isUploading}
+            className="flex-1 px-4 py-3 rounded-xl border border-white/10 text-white font-sans text-sm font-medium hover:bg-white/5 transition-colors disabled:opacity-40"
           >
             Cancel
           </button>
           <button
             type="submit"
-            disabled={!file || !title.trim() || grades.length === 0}
-            className="flex-1 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!file || !title.trim() || grades.length === 0 || isUploading}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Upload Material
+            {isUploading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Uploading…
+              </>
+            ) : (
+              'Upload Material'
+            )}
           </button>
         </div>
       </form>

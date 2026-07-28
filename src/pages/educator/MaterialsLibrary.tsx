@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText, Plus, Search, Trash2, Archive, ArchiveRestore,
-  AlertTriangle, Eye, Layers,
+  AlertTriangle, Eye, Layers, Loader2,
 } from 'lucide-react';
 import Modal from '../../components/ui/Modal';
 import Dropdown from '../../components/ui/Dropdown';
@@ -11,10 +11,14 @@ import GradeChips from '../../components/educator/GradeChips';
 import ParseStatusPill from '../../components/educator/ParseStatusPill';
 import UploadMaterialModal from './components/UploadMaterialModal';
 import {
-  MATERIALS, SUBJECTS, ALL_GRADE_LEVELS, conceptCount,
+  SUBJECTS, ALL_GRADE_LEVELS,
   formatFileSize, formatRelativeTime,
   type EducatorMaterial, type ParsedStatus,
 } from '../../data/mockEducator';
+import { api } from '../../lib/api';
+
+/** A material row as returned by GET /api/materials — the DB row plus a joined count. */
+type MaterialRow = EducatorMaterial & { concept_count: number };
 
 const STATUS_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Any status', value: 'all' },
@@ -27,7 +31,10 @@ const STATUS_OPTIONS: Array<{ label: string; value: string }> = [
 export default function MaterialsLibrary() {
   const navigate = useNavigate();
 
-  const [materials, setMaterials] = useState<EducatorMaterial[]>(MATERIALS);
+  const [materials, setMaterials] = useState<MaterialRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [search, setSearch] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('all');
   const [gradeFilter, setGradeFilter] = useState('all');
@@ -35,10 +42,35 @@ export default function MaterialsLibrary() {
   const [showArchived, setShowArchived] = useState(false);
 
   const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<EducatorMaterial | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<MaterialRow | null>(null);
 
-  // The full catalogue and every JHS grade. An educator is not restricted to a
-  // subset of either, so neither is the filter.
+  // ── Data loading ────────────────────────────────────────────
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get<MaterialRow[]>('/materials');
+      setMaterials(data);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load materials.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // While any material is still being processed, poll so the educator watches
+  // Pending → Processing → Completed without a manual refresh.
+  const hasInFlight = materials.some(
+    (m) => m.parsed_status === 'pending' || m.parsed_status === 'processing'
+  );
+  useEffect(() => {
+    if (!hasInFlight) return;
+    const id = setInterval(() => void load(), 3000);
+    return () => clearInterval(id);
+  }, [hasInFlight, load]);
+
+  // The full catalogue and every JHS grade — neither is restricted per educator.
   const subjectOptions = [
     { label: 'All subjects', value: 'all' },
     ...SUBJECTS.map((s) => ({ label: s.name, value: s.code })),
@@ -67,6 +99,9 @@ export default function MaterialsLibrary() {
 
   const archivedCount = materials.filter((m) => m.is_archived).length;
 
+  // Archive is presentation-only for now (there is no archive endpoint yet, and it
+  // is outside this task's scope). A poll refetch while a material is processing
+  // will reset an optimistic toggle.
   const toggleArchive = (id: string) => {
     setMaterials((prev) =>
       prev.map((m) =>
@@ -75,10 +110,16 @@ export default function MaterialsLibrary() {
     );
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!pendingDelete) return;
-    setMaterials((prev) => prev.filter((m) => m.id !== pendingDelete.id));
+    const target = pendingDelete;
     setPendingDelete(null);
+    try {
+      await api.delete(`/materials/${target.id}`);
+      setMaterials((prev) => prev.filter((m) => m.id !== target.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete material.');
+    }
   };
 
   return (
@@ -107,6 +148,13 @@ export default function MaterialsLibrary() {
             Upload Material
           </button>
         </header>
+
+        {error && (
+          <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 mb-6">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <p className="font-sans text-xs text-rose-300">{error}</p>
+          </div>
+        )}
 
         {/* Filters */}
         <section className="flex flex-col lg:flex-row lg:items-center gap-3 mb-6">
@@ -146,24 +194,35 @@ export default function MaterialsLibrary() {
         </section>
 
         {/* Grid */}
-        {visible.length === 0 ? (
+        {loading ? (
+          <div className="flex flex-col items-center text-center py-20">
+            <Loader2 className="w-6 h-6 text-primary-fixed-dim animate-spin mb-3" />
+            <p className="font-sans text-sm text-slate-400">Loading your materials…</p>
+          </div>
+        ) : visible.length === 0 ? (
           <div className="flex flex-col items-center text-center py-20 px-6 rounded-2xl border-2 border-dashed border-white/10">
             <div className="w-14 h-14 rounded-full bg-surface-container flex items-center justify-center mb-4">
               <Layers className="w-6 h-6 text-slate-400" />
             </div>
             <h3 className="font-display text-lg font-semibold text-white mb-1.5">
-              {showArchived ? 'Nothing archived' : 'No materials match these filters'}
+              {showArchived
+                ? 'Nothing archived'
+                : materials.length === 0
+                  ? 'No materials yet'
+                  : 'No materials match these filters'}
             </h3>
             <p className="font-sans text-sm text-slate-400 max-w-sm">
               {showArchived
                 ? 'Archived materials stay out of students’ study spaces but keep their extracted concepts.'
-                : 'Try clearing a filter, or upload a new PDF learning module.'}
+                : materials.length === 0
+                  ? 'Upload a PDF learning module to get started — the system will extract its key terms and definitions for you.'
+                  : 'Try clearing a filter, or upload a new PDF learning module.'}
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {visible.map((m) => {
-              const concepts = conceptCount(m.id);
+              const concepts = m.concept_count;
 
               return (
                 <article
@@ -250,7 +309,7 @@ export default function MaterialsLibrary() {
       <UploadMaterialModal
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
-        onUploaded={(material) => setMaterials((prev) => [material, ...prev])}
+        onUploaded={() => void load()}
       />
 
       {/* Delete confirmation */}

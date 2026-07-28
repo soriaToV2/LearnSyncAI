@@ -2,8 +2,12 @@
 // ENUMS (mirroring the PostgreSQL ENUM types in schema.sql)
 // ============================================================
 
-/** Only one role exists: student. Instructor role has been removed. */
-export type UserRole = 'student';
+/** The three platform roles. Admin manages accounts; educators upload materials
+ *  and view analytics; students use the learning features. */
+export type UserRole = 'student' | 'educator' | 'admin';
+
+/** Account lifecycle state, from the account_status enum. */
+export type AccountStatus = 'active' | 'disabled';
 
 export type ParsedStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -24,7 +28,10 @@ export interface Profile {
   role: UserRole;
   first_name: string;
   last_name: string;
+  grade_level: number | null;  // 7–10 for students; null for educators/admins
+  status: AccountStatus;
   created_at: string;
+  updated_at: string;
 }
 
 /** public.study_spaces — student-owned learning environments */
@@ -38,15 +45,23 @@ export interface StudySpace {
   created_at: string;
 }
 
-/** public.materials — student-uploaded resources inside a study space */
+/** public.materials — educator-uploaded learning resources, scoped by grade level */
 export interface Material {
   id: string;
-  space_id: string | null;         // Linked to study_spaces (not courses)
-  uploader_id: string | null;
+  educator_id: string;             // Owner (FK → profiles.id)
   title: string;
-  storage_path: string;            // Path within Supabase Storage bucket
+  description: string | null;
+  subject: string;                 // FK → subjects.code
+  grade_levels: number[];          // smallint[] — which JHS grades may access it
+  storage_path: string;            // Path within the private "materials" bucket
+  file_size_bytes: number | null;
+  page_count: number | null;
+  is_scanned: boolean;
   parsed_status: ParsedStatus | null;
+  parse_error: string | null;
+  is_archived: boolean;
   created_at: string;
+  updated_at: string;
 }
 
 /** public.concepts */
@@ -57,6 +72,7 @@ export interface Concept {
   definition: string;
   embedding: number[] | null;      // vector(3072) — 3072-dimensional float array
   parent_concept_id: string | null;
+  source_pages: number[] | null;   // source PDF page(s) — educator traceability
   created_at: string;
 }
 

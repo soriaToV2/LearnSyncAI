@@ -2,9 +2,14 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateEmbedding, generateJsonFromDocument } from '../lib/gemini';
 import { generateFlashcardsFromConcepts } from '../lib/groq';
-import { CreateMaterialSchema, GenerateFlashcardsSchema } from '../types/api';
+import { generateEmbedding } from '../lib/gemini';
+import {
+  CreateMaterialSchema, GenerateFlashcardsSchema,
+  CreateConceptSchema, UpdateConceptSchema,
+} from '../types/api';
+import { extractPdfPages, type PdfPage } from '../lib/pdfText';
+import { extractConcepts } from '../lib/conceptExtraction';
 import multer from 'multer';
 
 const router = Router();
@@ -25,6 +30,11 @@ router.use(authenticate);
 /**
  * GET /api/materials/space/:spaceId
  * Lists all materials for a study space.
+ *
+ * NOTE: this targets the dropped `space_id` column and belongs to the student
+ * study-space read path, which is outside the scope of the upload rebuild. Left
+ * as-is intentionally; it should be reworked to join through
+ * `study_space_materials` when the student side is revisited.
  */
 router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
@@ -41,20 +51,41 @@ router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void>
   res.json({ data });
 });
 
+const SCANNED_NOT_SUPPORTED =
+  'Scanned documents are not supported yet. This module has no readable text layer; ' +
+  'OCR for image-based PDFs is a later phase. Please upload a text-based PDF.';
+
+/** Builds a filesystem-safe storage key under the educator's own folder. */
+function storageKey(educatorId: string, title: string): string {
+  const safeTitle =
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'material';
+  return `${educatorId}/${Date.now()}-${safeTitle}.pdf`;
+}
+
 /**
  * POST /api/materials
- * Uploads a file to Supabase Storage and inserts a material record.
- * Instructors only. Triggers background concept extraction.
+ * Uploads a plain-text PDF learning module and inserts a material record.
+ * Educators only. A text PDF starts background concept extraction; a scanned
+ * (image-only) PDF is stored and marked failed with a plain-language reason.
  *
- * Form data: file (binary), course_id, title
+ * Form data: file (PDF binary), title, subject, description?, grade_levels (JSON array)
  */
 router.post(
   '/',
-  requireRole('student'),
+  requireRole('educator'),
   (req: Request, res: Response, next: import('express').NextFunction) => {
     upload.single('file')(req, res, (err: any) => {
       if (err) {
-        return res.status(400).json({ error: err.message });
+        // Multer's own errors (file too large, wrong type) are user-facing 400s.
+        const message =
+          err?.code === 'LIMIT_FILE_SIZE'
+            ? 'That file is larger than the 20 MB limit.'
+            : err?.message ?? 'File upload failed';
+        return res.status(400).json({ error: 'Upload rejected', message });
       }
       next();
     });
@@ -67,43 +98,94 @@ router.post(
     }
 
     if (!req.file) {
-      res.status(400).json({ error: 'No file uploaded' });
+      res.status(400).json({ error: 'No file uploaded', message: 'Choose a PDF to upload.' });
       return;
     }
 
-    const { space_id, title } = parsed.data;
-    const fileName = `${space_id}/${Date.now()}-${req.file.originalname}`;
+    const { title, subject, description, grade_levels } = parsed.data;
+    const educatorId = req.user!.id;
 
-    // 1. Upload to Supabase Storage bucket "materials"
+    // Validate the subject up front so a bad code returns a readable 400 rather
+    // than a foreign-key 500 after the file is already in storage.
+    const { data: subjectRow } = await supabaseAdmin
+      .from('subjects')
+      .select('code')
+      .eq('code', subject)
+      .maybeSingle();
+    if (!subjectRow) {
+      res.status(400).json({
+        error: 'Unknown subject',
+        message: `"${subject}" is not a recognised subject.`,
+      });
+      return;
+    }
+
+    // Read the PDF once: page count, per-page text, and whether it is scanned.
+    let pdf;
+    try {
+      pdf = await extractPdfPages(req.file.buffer);
+    } catch {
+      res.status(400).json({
+        error: 'Unreadable PDF',
+        message: 'This file could not be read as a PDF. Please upload a valid PDF.',
+      });
+      return;
+    }
+
+    if (pdf.pageCount < 1) {
+      res.status(400).json({ error: 'Empty PDF', message: 'This PDF has no pages.' });
+      return;
+    }
+
+    // Store the raw file (private bucket). The leading educator folder is what
+    // storage RLS keys on.
+    const fileName = storageKey(educatorId, title);
     const { error: storageError } = await supabaseAdmin.storage
       .from('materials')
-      .upload(fileName, req.file.buffer, { contentType: req.file.mimetype });
+      .upload(fileName, req.file.buffer, { contentType: 'application/pdf' });
 
     if (storageError) {
       res.status(500).json({ error: 'File upload failed', message: storageError.message });
       return;
     }
 
-    // 2. Insert material record with status 'pending'
+    // Insert the material row. Scanned files are marked failed immediately and
+    // never sent to extraction; text PDFs start as pending.
     const { data: material, error: dbError } = await supabaseAdmin
       .from('materials')
       .insert({
-        space_id,
-        uploader_id: req.user!.id,
+        educator_id: educatorId,
         title,
+        description: description ?? null,
+        subject,
+        grade_levels,
         storage_path: fileName,
-        parsed_status: 'pending',
+        file_size_bytes: req.file.size,
+        page_count: pdf.pageCount,
+        is_scanned: pdf.isScanned,
+        parsed_status: pdf.isScanned ? 'failed' : 'pending',
+        parse_error: pdf.isScanned ? SCANNED_NOT_SUPPORTED : null,
       })
       .select()
       .single();
 
     if (dbError) {
+      // Roll back the orphaned storage object so a failed insert leaves nothing behind.
+      await supabaseAdmin.storage.from('materials').remove([fileName]);
       res.status(500).json({ error: 'Failed to save material record', message: dbError.message });
       return;
     }
 
-    // 3. Trigger background concept extraction (non-blocking)
-    processMaterialAsync(material.id, req.file.buffer, req.file.mimetype).catch((err) =>
+    if (pdf.isScanned) {
+      res.status(201).json({
+        data: material,
+        message: 'Scanned document detected — saved but not processed (OCR is a later phase).',
+      });
+      return;
+    }
+
+    // Fire-and-forget background extraction, reusing the text we already parsed.
+    processMaterialAsync(material.id, pdf.pages).catch((err) =>
       console.error(`[Material Processing Error] material_id=${material.id}`, err)
     );
 
@@ -112,26 +194,87 @@ router.post(
 );
 
 /**
- * DELETE /api/materials/:id
- * Deletes a material and its storage file. Instructors only.
+ * GET /api/materials
+ * Lists the calling educator's own materials, each with its concept count.
  */
-router.delete('/:id', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
-  // Get storage path first
+router.get('/', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
+  const { data: materials, error } = await supabaseAdmin
+    .from('materials')
+    .select('*')
+    .eq('educator_id', req.user!.id)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to fetch materials', message: error.message });
+    return;
+  }
+
+  const ids = (materials ?? []).map((m) => m.id);
+  const counts: Record<string, number> = {};
+  if (ids.length) {
+    const { data: conceptRows } = await supabaseAdmin
+      .from('concepts')
+      .select('material_id')
+      .in('material_id', ids);
+    for (const row of conceptRows ?? []) {
+      counts[row.material_id] = (counts[row.material_id] ?? 0) + 1;
+    }
+  }
+
+  res.json({ data: (materials ?? []).map((m) => ({ ...m, concept_count: counts[m.id] ?? 0 })) });
+});
+
+/**
+ * GET /api/materials/:id
+ * Returns one of the calling educator's own materials (with its concept count).
+ */
+router.get('/:id', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
+  const { data: material, error } = await supabaseAdmin
+    .from('materials')
+    .select('*')
+    .eq('id', req.params.id)
+    .eq('educator_id', req.user!.id)
+    .maybeSingle();
+
+  if (error || !material) {
+    res.status(404).json({ error: 'Material not found' });
+    return;
+  }
+
+  const { count } = await supabaseAdmin
+    .from('concepts')
+    .select('*', { count: 'exact', head: true })
+    .eq('material_id', material.id);
+
+  res.json({ data: { ...material, concept_count: count ?? 0 } });
+});
+
+/**
+ * DELETE /api/materials/:id
+ * Deletes one of the calling educator's own materials and its storage file.
+ * Educators only; ownership is checked explicitly because the service role
+ * bypasses RLS.
+ */
+router.delete('/:id', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const { data: material, error: fetchError } = await supabaseAdmin
     .from('materials')
-    .select('storage_path')
+    .select('storage_path, educator_id')
     .eq('id', req.params.id)
-    .single();
+    .maybeSingle();
 
   if (fetchError || !material) {
     res.status(404).json({ error: 'Material not found' });
     return;
   }
 
-  // Delete from storage
+  if (material.educator_id !== req.user!.id) {
+    res.status(403).json({ error: 'Forbidden', message: 'You can only delete your own materials.' });
+    return;
+  }
+
+  // Delete from storage (best effort), then the DB record (cascade removes concepts).
   await supabaseAdmin.storage.from('materials').remove([material.storage_path]);
 
-  // Delete DB record (cascade removes concepts)
   const { error } = await supabaseAdmin.from('materials').delete().eq('id', req.params.id);
   if (error) {
     res.status(500).json({ error: 'Failed to delete material', message: error.message });
@@ -178,7 +321,7 @@ router.get('/:id/view', async (req: Request, res: Response): Promise<void> => {
 router.get('/:id/concepts', async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('concepts')
-    .select('id, term, definition, parent_concept_id, created_at')
+    .select('id, term, definition, parent_concept_id, source_pages, created_at')
     .eq('material_id', req.params.id)
     .order('created_at');
 
@@ -189,6 +332,150 @@ router.get('/:id/concepts', async (req: Request, res: Response): Promise<void> =
 
   res.json({ data });
 });
+
+// ── Concept editing (educator-curated knowledge base) ──────────
+//
+// Concepts are the exclusive knowledge base for every AI-assisted feature, so an
+// educator can correct or supplement what the extractor produced. A hand-added or
+// edited definition is embedded the same way an extracted one is, so it works in
+// Free Recall, the chatbot, and generated assessments — otherwise it would be dead
+// weight the similarity search never matches.
+
+const CONCEPT_RETURN = 'id, term, definition, parent_concept_id, source_pages, created_at';
+
+/** Returns the material if it exists AND belongs to the caller, else null. */
+async function ownedMaterial(userId: string, materialId: string) {
+  const { data } = await supabaseAdmin
+    .from('materials')
+    .select('id, educator_id')
+    .eq('id', materialId)
+    .maybeSingle();
+  if (!data || data.educator_id !== userId) return null;
+  return data;
+}
+
+/**
+ * POST /api/materials/:id/concepts
+ * Adds a concept the extractor missed. Educators only, own materials only.
+ */
+router.post('/:id/concepts', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
+  const parsed = CreateConceptSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+    return;
+  }
+  if (!(await ownedMaterial(req.user!.id, req.params.id))) {
+    res.status(404).json({ error: 'Material not found' });
+    return;
+  }
+
+  const { term, definition, source_pages } = parsed.data;
+
+  let embedding: number[];
+  try {
+    embedding = await generateEmbedding(definition);
+  } catch (err: any) {
+    res.status(502).json({ error: 'Embedding failed', message: err?.message ?? 'Could not embed the definition.' });
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('concepts')
+    .insert({
+      material_id: req.params.id,
+      term,
+      definition,
+      embedding: `[${embedding.join(',')}]`,
+      source_pages: source_pages ?? null,
+    })
+    .select(CONCEPT_RETURN)
+    .single();
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to add concept', message: error.message });
+    return;
+  }
+  res.status(201).json({ data });
+});
+
+/**
+ * PUT /api/materials/:materialId/concepts/:conceptId
+ * Edits a concept's term and/or definition. Re-embeds when the definition changes.
+ */
+router.put(
+  '/:materialId/concepts/:conceptId',
+  requireRole('educator'),
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = UpdateConceptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+      return;
+    }
+    if (!(await ownedMaterial(req.user!.id, req.params.materialId))) {
+      res.status(404).json({ error: 'Material not found' });
+      return;
+    }
+
+    const { term, definition, source_pages } = parsed.data;
+    const update: Record<string, unknown> = {};
+    if (term !== undefined) update.term = term;
+    if (source_pages !== undefined) update.source_pages = source_pages;
+    if (definition !== undefined) {
+      update.definition = definition;
+      try {
+        const embedding = await generateEmbedding(definition);
+        update.embedding = `[${embedding.join(',')}]`;
+      } catch (err: any) {
+        res.status(502).json({ error: 'Embedding failed', message: err?.message ?? 'Could not embed the definition.' });
+        return;
+      }
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('concepts')
+      .update(update)
+      .eq('id', req.params.conceptId)
+      .eq('material_id', req.params.materialId)
+      .select(CONCEPT_RETURN)
+      .maybeSingle();
+
+    if (error) {
+      res.status(500).json({ error: 'Failed to update concept', message: error.message });
+      return;
+    }
+    if (!data) {
+      res.status(404).json({ error: 'Concept not found' });
+      return;
+    }
+    res.json({ data });
+  }
+);
+
+/**
+ * DELETE /api/materials/:materialId/concepts/:conceptId
+ * Removes a concept from a material the educator owns.
+ */
+router.delete(
+  '/:materialId/concepts/:conceptId',
+  requireRole('educator'),
+  async (req: Request, res: Response): Promise<void> => {
+    if (!(await ownedMaterial(req.user!.id, req.params.materialId))) {
+      res.status(404).json({ error: 'Material not found' });
+      return;
+    }
+    const { error } = await supabaseAdmin
+      .from('concepts')
+      .delete()
+      .eq('id', req.params.conceptId)
+      .eq('material_id', req.params.materialId);
+
+    if (error) {
+      res.status(500).json({ error: 'Failed to delete concept', message: error.message });
+      return;
+    }
+    res.json({ message: 'Concept deleted' });
+  }
+);
 
 /**
  * POST /api/materials/concepts/batch
@@ -303,83 +590,54 @@ router.post('/generate-flashcards', async (req: Request, res: Response): Promise
 
 // ── Background Processing ──────────────────────────────────
 
+/** Insert concepts in modest batches so one large document doesn't send a huge payload. */
+const CONCEPT_INSERT_BATCH = 25;
+
 /**
- * Extracts concepts from a file buffer using Gemini, generates embeddings,
- * and inserts them into the concepts table. Runs asynchronously after upload.
+ * Runs windowed concept extraction over the already-parsed page text, then
+ * inserts each concept (with its embedding and source pages). Runs asynchronously
+ * after upload. Any failure lands in `parsed_status = 'failed'` with a readable
+ * `parse_error`, so the educator sees a reason rather than a document stuck on
+ * Processing.
  */
-async function processMaterialAsync(
-  materialId: string,
-  fileBuffer: Buffer,
-  mimeType: string
-): Promise<void> {
-  // Update status to 'processing'
+async function processMaterialAsync(materialId: string, pages: PdfPage[]): Promise<void> {
   await supabaseAdmin
     .from('materials')
-    .update({ parsed_status: 'processing' })
+    .update({ parsed_status: 'processing', parse_error: null })
     .eq('id', materialId);
 
   try {
-    // Convert buffer to base64 for Gemini
-    const base64File = fileBuffer.toString('base64');
+    const concepts = await extractConcepts(pages);
 
-    const prompt = `
-You are an expert academic concept extractor.
-Analyze the attached document and extract the most important terms and their definitions.
+    const rows = concepts.map((c) => ({
+      material_id: materialId,
+      term: c.term,
+      definition: c.definition,
+      embedding: `[${c.embedding.join(',')}]`, // pgvector text format
+      source_pages: c.source_pages,
+    }));
 
-Return a JSON array of objects with this exact shape:
-[{ "term": "string", "definition": "string" }]
-
-Rules:
-- Extract all key concepts without missing important details
-- Definitions should be concise (1–3 sentences)
-- Focus on domain-specific terminology
-`;
-
-    const concepts = await generateJsonFromDocument<Array<{ term: string; definition: string }>>(
-      prompt,
-      mimeType,
-      base64File
-    );
-
-    // Generate embeddings and insert concepts
-    let insertedCount = 0;
-    for (const concept of concepts) {
-      const embedding = await generateEmbedding(concept.definition);
-
-      // Log the dimension count on the first concept to verify it matches the DB
-      if (insertedCount === 0) {
-        console.log(`[Material Processing] 🔢 Embedding dimensions: ${embedding.length}`);
-      }
-
-      const { error: insertError } = await supabaseAdmin.from('concepts').insert({
-        material_id: materialId,
-        term: concept.term,
-        definition: concept.definition,
-        embedding: `[${embedding.join(',')}]`, // pgvector format
-      });
-
+    for (let i = 0; i < rows.length; i += CONCEPT_INSERT_BATCH) {
+      const chunk = rows.slice(i, i + CONCEPT_INSERT_BATCH);
+      const { error: insertError } = await supabaseAdmin.from('concepts').insert(chunk);
       if (insertError) {
-        console.error(`[Material Processing] ⚠️ Failed to insert concept "${concept.term}": ${insertError.message}`);
-      } else {
-        insertedCount++;
+        throw new Error(`Saving extracted concepts failed: ${insertError.message}`);
       }
     }
 
-    // Update status to 'completed'
     await supabaseAdmin
       .from('materials')
       .update({ parsed_status: 'completed' })
       .eq('id', materialId);
 
-    console.log(`[Material Processing] ✅ material_id=${materialId} — ${insertedCount}/${concepts.length} concepts stored`);
+    console.log(`[Material Processing] ✅ material_id=${materialId} — ${rows.length} concepts stored`);
   } catch (err: any) {
-    const errorMessage = err?.message ?? String(err);
-    console.error(`[Material Processing] ❌ material_id=${materialId} — Error: ${errorMessage}`);
+    const errorMessage = (err?.message ?? String(err)).slice(0, 500);
+    console.error(`[Material Processing] ❌ material_id=${materialId} — ${errorMessage}`);
     if (err?.stack) console.error(err.stack);
-    // Mark as failed so UI knows it's unrecoverable right now
     await supabaseAdmin
       .from('materials')
-      .update({ parsed_status: 'failed' })
+      .update({ parsed_status: 'failed', parse_error: errorMessage })
       .eq('id', materialId);
   }
 }
