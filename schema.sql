@@ -112,17 +112,28 @@ CREATE TRIGGER trg_profiles_updated_at
 -- ============================================================================
 -- A study space is a private, student-owned learning environment hosting the
 -- five study tabs (Flashcards, Free Recall, Feynman, Test Mode, Course Resources).
+--
+-- Each space covers exactly one subject, fixed at creation. That is what makes
+-- its contents derivable: a space holds every non-archived material published to
+-- (space.subject, owner's grade_level), so a new space arrives pre-filled and the
+-- Resources tab can count materials the student does not have yet. The FK to
+-- subjects is added in section 5, once that table exists.
 
 CREATE TABLE study_spaces (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id  UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     title       TEXT NOT NULL,
     description TEXT,
+    subject     TEXT NOT NULL,
     created_at  TIMESTAMPTZ DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+COMMENT ON COLUMN study_spaces.subject IS
+    'Subject this space covers, from the subjects catalogue. Fixed at creation — the space''s materials are derived from it.';
+
 CREATE INDEX idx_study_spaces_student ON study_spaces (student_id);
+CREATE INDEX idx_study_spaces_subject ON study_spaces (subject);
 
 CREATE TRIGGER trg_study_spaces_updated_at
     BEFORE UPDATE ON study_spaces
@@ -161,6 +172,12 @@ INSERT INTO subjects (code, name, sort_order) VALUES
     ('TLE',   'Technology and Livelihood Education',        7),
     ('MAPEH', 'Music, Arts, Physical Education and Health',  8),
     ('CL',    'Christian Living',                           9);
+
+-- Declared here rather than inline in section 4, since study_spaces is created
+-- before this table exists.
+ALTER TABLE study_spaces
+    ADD CONSTRAINT study_spaces_subject_fkey
+        FOREIGN KEY (subject) REFERENCES subjects(code) ON DELETE RESTRICT;
 
 -- ============================================================================
 -- 6. MATERIALS & CONCEPT EXTRACTION

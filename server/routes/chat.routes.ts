@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth';
 import { generateEmbedding } from '../lib/gemini';
 import { streamChatCompletion } from '../lib/groq';
 import { ChatRequestSchema } from '../types/api';
+import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 
 const router = Router();
 router.use(authenticate);
@@ -94,6 +95,29 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
   const { space_id, message, material_ids, history, mode } = parsed.data;
   const userId = req.user?.id;
+
+  // ── 1a. Ownership and access ──────────────────────────────────────────────
+  // The reply streams back the text of the selected materials, so this is a read
+  // of those materials and is gated the same way. Without it, a student could
+  // pass any material id and have the assistant recite another grade's content.
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized', message: 'Not authenticated' });
+    return;
+  }
+
+  const { data: ownedSpace } = await supabaseAdmin
+    .from('study_spaces')
+    .select('id')
+    .eq('id', space_id)
+    .eq('student_id', userId)
+    .maybeSingle();
+
+  if (!ownedSpace) {
+    res.status(404).json({ error: 'Study space not found' });
+    return;
+  }
+
+  if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
   // A typed "summarize this file" arrives as mode 'rag' but is really a
   // whole-document request. We still verify it is anchored to the material below.
@@ -283,10 +307,13 @@ Guidelines:
  * Returns last 20 exchanges ordered by time.
  */
 router.get('/history/:spaceId', async (req: Request, res: Response): Promise<void> => {
+  // Scoped to the caller as well as the space: without student_id, passing another
+  // student's space id returned their conversation verbatim.
   const { data, error } = await supabaseAdmin
     .from('chatbot_logs')
     .select('id, message, response, created_at')
     .eq('space_id', req.params.spaceId)
+    .eq('student_id', req.user!.id)
     .order('created_at', { ascending: true })
     .limit(20);
 

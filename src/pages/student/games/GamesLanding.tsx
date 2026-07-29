@@ -202,10 +202,10 @@ export default function GamesLanding() {
     setMaterialsLoading(true);
     setGenError(null);
     api
-      .get<Material[]>(`/materials/space/${selectedSpaceId}`)
+      .get<{ materials: Material[] }>(`/spaces/${selectedSpaceId}/materials`)
       .then((res) => {
         if (cancelled) return;
-        const completed = (res.data ?? []).filter((m) => m.parsed_status === 'completed');
+        const completed = (res.data?.materials ?? []).filter((m) => m.parsed_status === 'completed');
         setMaterials(completed);
         setSelectedMaterialIds([]);
       })

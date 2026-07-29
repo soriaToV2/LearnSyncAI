@@ -101,18 +101,38 @@ export type UpdateConceptInput = z.infer<typeof UpdateConceptSchema>;
 
 // ── Study Spaces ──────────────────────────────────────────
 
+/**
+ * A study space covers exactly one subject. The subject is what makes the space's
+ * contents derivable — every non-archived material published to that subject at
+ * the student's grade level — so it is required, not optional.
+ * The code is re-checked against public.subjects in the route.
+ */
 export const CreateStudySpaceSchema = z.object({
-  title: z.string().min(1),
+  title: z.string().trim().min(1, 'Title is required'),
   description: z.string().optional().nullable(),
+  subject: z.string().trim().min(1, 'Choose a subject for this study space'),
 });
 export type CreateStudySpaceInput = z.infer<typeof CreateStudySpaceSchema>;
 
+/**
+ * `subject` is deliberately absent: a space's decks, practice tests and mastery
+ * are all built from its materials, so re-pointing it at another subject would
+ * strand that work. Create a second space instead.
+ */
 export const UpdateStudySpaceSchema = z.object({
-  title: z.string().min(1).optional(),
+  title: z.string().trim().min(1).optional(),
   description: z.string().optional().nullable(),
-  is_published: z.boolean().optional(),
 });
 export type UpdateStudySpaceInput = z.infer<typeof UpdateStudySpaceSchema>;
+
+/**
+ * Pulling newly published materials into a space. The set to add is derived
+ * server-side from (space.subject, student's grade level) — a client cannot name
+ * which materials to attach — so the body carries nothing. Validated anyway so
+ * the endpoint follows the same rule as every other POST.
+ */
+export const SyncSpaceMaterialsSchema = z.object({}).passthrough();
+export type SyncSpaceMaterialsInput = z.infer<typeof SyncSpaceMaterialsSchema>;
 
 export const CreateDeckSchema = z.object({
   title: z.string().min(1),

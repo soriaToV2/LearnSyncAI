@@ -7,15 +7,175 @@ import {
   UpdateStudySpaceSchema,
   CreateDeckSchema,
   CreateFlashcardSchema,
+  SyncSpaceMaterialsSchema,
 } from '../types/api';
-import { randomBytes } from 'crypto';
+import { publishedMaterialIds } from '../lib/materialAccess';
+import type { SpaceMaterial } from '../types/database';
 
 const router = Router();
 router.use(authenticate);
 
-/** Generates a secure shareable token for CollabShare */
-function generateShareToken(): string {
-  return randomBytes(16).toString('hex');
+// ── Study space contents ──────────────────────────────────
+//
+// A space's materials live in study_space_materials, not in a query run fresh on
+// every page load. That is deliberate: the stored list is what lets the Resources
+// tab say "2 new materials are available" — you cannot diff against a set that is
+// recomputed each time. Nothing is added to the list without the student asking.
+//
+// Reads still filter the stored list against the live rules (not archived, still
+// published to the student's grade, still this space's subject), so an educator
+// archiving a material removes it from every student's view immediately while the
+// link row survives — un-archive and it comes back on its own.
+
+/** Columns the student side is allowed to see. No educator_id, no storage_path. */
+const SPACE_MATERIAL_COLUMNS =
+  'id, title, description, subject, file_size_bytes, page_count, is_scanned, parsed_status, parse_error';
+
+interface SpaceOwner {
+  id: string;
+  title: string;
+  subject: string;
+  gradeLevel: number;
+}
+
+/**
+ * Loads the space plus its owner's grade level, but only for the owner.
+ *
+ * 404 rather than 403 for someone else's space, so a student cannot probe which
+ * space ids exist. Returns null on any failure; the caller sends the 404.
+ */
+async function loadOwnedSpace(spaceId: string, userId: string): Promise<SpaceOwner | null> {
+  const { data: space } = await supabaseAdmin
+    .from('study_spaces')
+    .select('id, title, subject, student_id')
+    .eq('id', spaceId)
+    .maybeSingle();
+
+  if (!space || space.student_id !== userId) return null;
+
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('grade_level, status, role')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (!profile || profile.status !== 'active' || profile.role !== 'student') return null;
+  if (profile.grade_level === null || profile.grade_level === undefined) return null;
+
+  return {
+    id: space.id,
+    title: space.title,
+    subject: space.subject,
+    gradeLevel: profile.grade_level,
+  };
+}
+
+/** Material ids currently linked to a space, in the order they were added. */
+async function linkedMaterialIds(spaceId: string): Promise<string[]> {
+  const { data } = await supabaseAdmin
+    .from('study_space_materials')
+    .select('material_id, added_at')
+    .eq('space_id', spaceId)
+    .order('added_at');
+
+  return (data ?? []).map((row) => row.material_id as string);
+}
+
+/**
+ * The space's visible materials plus the count of published ones it does not have
+ * yet — everything the Resources tab renders, in one round trip.
+ *
+ * `available_count` is a set subtraction: everything published to
+ * (space.subject, student's grade) that is not archived, minus everything already
+ * linked. Zero means no "new materials" notice at all.
+ */
+async function buildSpaceMaterials(space: SpaceOwner): Promise<{
+  space: { id: string; title: string; subject: string };
+  materials: SpaceMaterial[];
+  available_count: number;
+}> {
+  const published = await publishedMaterialIds(space.subject, space.gradeLevel);
+  const linked = await linkedMaterialIds(space.id);
+  const linkedSet = new Set(linked);
+
+  // Linked AND still published — the filter that hides archived / regraded
+  // materials without deleting the link row.
+  const visibleIds = linked.filter((id) => published.includes(id));
+  const availableCount = published.filter((id) => !linkedSet.has(id)).length;
+
+  if (visibleIds.length === 0) {
+    return {
+      space: { id: space.id, title: space.title, subject: space.subject },
+      materials: [],
+      available_count: availableCount,
+    };
+  }
+
+  const [{ data: rows }, { data: conceptRows }, { data: linkRows }] = await Promise.all([
+    supabaseAdmin.from('materials').select(SPACE_MATERIAL_COLUMNS).in('id', visibleIds),
+    supabaseAdmin.from('concepts').select('material_id').in('material_id', visibleIds),
+    supabaseAdmin
+      .from('study_space_materials')
+      .select('material_id, added_at')
+      .eq('space_id', space.id)
+      .in('material_id', visibleIds),
+  ]);
+
+  const counts: Record<string, number> = {};
+  for (const row of conceptRows ?? []) {
+    counts[row.material_id] = (counts[row.material_id] ?? 0) + 1;
+  }
+
+  const addedAt: Record<string, string> = {};
+  for (const row of linkRows ?? []) {
+    addedAt[row.material_id] = row.added_at;
+  }
+
+  const byId = new Map((rows ?? []).map((row) => [row.id as string, row]));
+
+  // visibleIds is already in added_at order, so the list reads oldest-first.
+  const materials = visibleIds
+    .map((id) => byId.get(id))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .map((row) => ({
+      ...row,
+      concept_count: counts[row.id] ?? 0,
+      added_at: addedAt[row.id] ?? '',
+    })) as SpaceMaterial[];
+
+  return {
+    space: { id: space.id, title: space.title, subject: space.subject },
+    materials,
+    available_count: availableCount,
+  };
+}
+
+/**
+ * Links every material published to (subject, grade) that the space is missing.
+ * `ignoreDuplicates` on the composite primary key makes this idempotent, so
+ * running it twice never produces a second copy of anything.
+ */
+async function attachPublishedMaterials(
+  spaceId: string,
+  subject: string,
+  gradeLevel: number
+): Promise<number> {
+  const published = await publishedMaterialIds(subject, gradeLevel);
+  if (published.length === 0) return 0;
+
+  const linked = new Set(await linkedMaterialIds(spaceId));
+  const missing = published.filter((id) => !linked.has(id));
+  if (missing.length === 0) return 0;
+
+  const { error } = await supabaseAdmin
+    .from('study_space_materials')
+    .upsert(
+      missing.map((material_id) => ({ space_id: spaceId, material_id })),
+      { onConflict: 'space_id,material_id', ignoreDuplicates: true }
+    );
+
+  if (error) throw new Error(error.message);
+  return missing.length;
 }
 
 // ── Study Spaces ──────────────────────────────────────────
@@ -41,7 +201,13 @@ router.get('/', requireRole('student'), async (req: Request, res: Response): Pro
 
 /**
  * POST /api/spaces
- * Creates a new study space or clones an existing one. Students only.
+ * Creates a study space for one subject and immediately fills it with every
+ * material published to that subject at the student's grade level. Students only.
+ *
+ * The auto-fill is the point: the paper's ingestion core "makes the processed
+ * content available to students within the educator's selected grade level", so a
+ * new Science space should already hold the student's Science materials rather
+ * than sending them hunting.
  */
 router.post('/', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateStudySpaceSchema.safeParse(req.body);
@@ -50,7 +216,38 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
     return;
   }
 
-  const { title, description } = parsed.data;
+  const { title, description, subject } = parsed.data;
+
+  // Check the subject up front so an unknown code is a readable 400 rather than a
+  // foreign-key 500 after the row is half-built. Same pattern as material upload.
+  const { data: subjectRow } = await supabaseAdmin
+    .from('subjects')
+    .select('code')
+    .eq('code', subject)
+    .maybeSingle();
+
+  if (!subjectRow) {
+    res.status(400).json({
+      error: 'Unknown subject',
+      message: `"${subject}" is not a recognised subject.`,
+    });
+    return;
+  }
+
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('grade_level')
+    .eq('id', req.user!.id)
+    .maybeSingle();
+
+  const gradeLevel = profile?.grade_level ?? null;
+  if (gradeLevel === null) {
+    res.status(400).json({
+      error: 'No grade level',
+      message: 'Your account has no grade level set. Ask your administrator to assign one.',
+    });
+    return;
+  }
 
   const { data: newSpace, error: spaceError } = await supabaseAdmin
     .from('study_spaces')
@@ -58,8 +255,7 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
       title,
       description: description || null,
       student_id: req.user!.id,
-      is_published: false,
-      share_token: generateShareToken(),
+      subject,
     })
     .select()
     .single();
@@ -69,71 +265,36 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
     return;
   }
 
-  // If this is a cloned space, clone all its decks and flashcards
-  const cloned_from_id: string | undefined = req.body.cloned_from_id;
-  if (cloned_from_id) {
-    const { data: originalDecks } = await supabaseAdmin
-      .from('flashcard_decks')
-      .select('*')
-      .eq('space_id', cloned_from_id);
-
-    if (originalDecks && originalDecks.length > 0) {
-      for (const deck of originalDecks) {
-        const { data: newDeck } = await supabaseAdmin
-          .from('flashcard_decks')
-          .insert({
-            space_id: newSpace.id,
-            title: deck.title,
-            description: deck.description || ''
-          })
-          .select()
-          .single();
-
-        if (newDeck) {
-          const { data: originalCards } = await supabaseAdmin
-            .from('flashcards')
-            .select('*')
-            .eq('deck_id', deck.id);
-
-          if (originalCards && originalCards.length > 0) {
-            const cardsToInsert = originalCards.map(c => ({
-              deck_id: newDeck.id,
-              term: c.term,
-              definition: c.definition,
-              is_ai_generated: c.is_ai_generated || false
-            }));
-
-            await supabaseAdmin
-              .from('flashcards')
-              .insert(cardsToInsert);
-          }
-        }
-      }
-    }
+  // Pre-fill. A failure here leaves a usable (empty) space rather than losing it —
+  // the student can pull the same materials in from the Resources tab.
+  let attached = 0;
+  try {
+    attached = await attachPublishedMaterials(newSpace.id, subject, gradeLevel);
+  } catch (err: any) {
+    console.error(`[Study Space] Pre-fill failed for space_id=${newSpace.id}`, err?.message ?? err);
   }
 
-  res.status(201).json({ data: newSpace, message: 'Study space created' });
+  res.status(201).json({
+    data: { ...newSpace, material_count: attached },
+    message: 'Study space created',
+  });
 });
 
 /**
  * GET /api/spaces/:id
- * Returns a single study space. Owners get full access; public spaces are readable by all authenticated users.
+ * Returns a single study space. Owner only — study spaces are private, and
+ * migration 0003 removed peer sharing entirely.
  */
 router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('study_spaces')
     .select('*')
     .eq('id', req.params.id)
-    .single();
+    .eq('student_id', req.user!.id)
+    .maybeSingle();
 
   if (error || !data) {
     res.status(404).json({ error: 'Study space not found' });
-    return;
-  }
-
-  // Access control: must be owner or space must be published
-  if (data.student_id !== req.user!.id && !data.is_published) {
-    res.status(403).json({ error: 'This study space is private' });
     return;
   }
 
@@ -141,28 +302,70 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
 });
 
 /**
+ * GET /api/spaces/:id/materials
+ * The space's materials plus a count of newly published ones it does not hold yet.
+ * Owner only.
+ */
+router.get('/:id/materials', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
+  const space = await loadOwnedSpace(req.params.id, req.user!.id);
+  if (!space) {
+    res.status(404).json({ error: 'Study space not found' });
+    return;
+  }
+
+  try {
+    res.json({ data: await buildSpaceMaterials(space) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to load space materials', message: err?.message });
+  }
+});
+
+/**
+ * POST /api/spaces/:id/materials/sync
+ * Pulls every newly published material for this space's subject and the student's
+ * grade level into the space. Owner only.
+ *
+ * The client does not choose what to attach — the set is derived server-side — so
+ * there is nothing a student could pass to reach another subject or grade.
+ */
+router.post(
+  '/:id/materials/sync',
+  requireRole('student'),
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = SyncSpaceMaterialsSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+      return;
+    }
+
+    const space = await loadOwnedSpace(req.params.id, req.user!.id);
+    if (!space) {
+      res.status(404).json({ error: 'Study space not found' });
+      return;
+    }
+
+    try {
+      const added = await attachPublishedMaterials(space.id, space.subject, space.gradeLevel);
+      res.json({
+        data: { ...(await buildSpaceMaterials(space)), added_count: added },
+        message: added === 1 ? '1 material added' : `${added} materials added`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to add materials', message: err?.message });
+    }
+  }
+);
+
+/**
  * PUT /api/spaces/:id
- * Updates a study space (title, is_published). Owner only.
+ * Renames a study space or edits its description. Owner only.
+ * The subject cannot be changed — see UpdateStudySpaceSchema.
  */
 router.put('/:id', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = UpdateStudySpaceSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
     return;
-  }
-
-  // Prevent renaming cloned spaces
-  if (parsed.data.title !== undefined) {
-    const { data: spaceCheck } = await supabaseAdmin
-      .from('study_spaces')
-      .select('cloned_from_id')
-      .eq('id', req.params.id)
-      .single();
-
-    if (spaceCheck?.cloned_from_id) {
-      res.status(403).json({ error: 'Cannot rename a cloned study space' });
-      return;
-    }
   }
 
   const { data, error } = await supabaseAdmin

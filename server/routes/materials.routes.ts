@@ -10,6 +10,7 @@ import {
 } from '../types/api';
 import { extractPdfPages, type PdfPage } from '../lib/pdfText';
 import { extractConcepts } from '../lib/conceptExtraction';
+import { requireMaterialAccess, rejectInaccessibleMaterials } from '../lib/materialAccess';
 import multer from 'multer';
 
 const router = Router();
@@ -27,29 +28,10 @@ const upload = multer({
 
 router.use(authenticate);
 
-/**
- * GET /api/materials/space/:spaceId
- * Lists all materials for a study space.
- *
- * NOTE: this targets the dropped `space_id` column and belongs to the student
- * study-space read path, which is outside the scope of the upload rebuild. Left
- * as-is intentionally; it should be reworked to join through
- * `study_space_materials` when the student side is revisited.
- */
-router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void> => {
-  const { data, error } = await supabaseAdmin
-    .from('materials')
-    .select('*')
-    .eq('space_id', req.params.spaceId)
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    res.status(500).json({ error: 'Failed to fetch materials', message: error.message });
-    return;
-  }
-
-  res.json({ data });
-});
+// GET /api/materials/space/:spaceId was removed. It filtered on materials.space_id,
+// which migration 0003 dropped, so it had been failing for every caller. The
+// student read path now goes through GET /api/spaces/:id/materials, which joins
+// study_space_materials and applies the grade-level and subject filters.
 
 const SCANNED_NOT_SUPPORTED =
   'Scanned documents are not supported yet. This module has no readable text layer; ' +
@@ -289,8 +271,12 @@ router.delete('/:id', requireRole('educator'), async (req: Request, res: Respons
  * Returns a short-lived signed URL for viewing the material's file directly
  * from the private "materials" storage bucket. The file exists in storage from
  * the moment of upload, so this works regardless of parsed_status.
+ *
+ * Guarded: this hands out a URL to the actual PDF, so a student may only reach a
+ * non-archived material published to their own grade level. The educator who owns
+ * it, and admins, still pass.
  */
-router.get('/:id/view', async (req: Request, res: Response): Promise<void> => {
+router.get('/:id/view', requireMaterialAccess(), async (req: Request, res: Response): Promise<void> => {
   const { data: material, error: fetchError } = await supabaseAdmin
     .from('materials')
     .select('storage_path')
@@ -316,9 +302,10 @@ router.get('/:id/view', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * GET /api/materials/:id/concepts
- * Returns all extracted concepts for a material.
+ * Returns all extracted concepts for a material. Guarded — concepts are the
+ * material's content in text form, so reading them is reading the material.
  */
-router.get('/:id/concepts', async (req: Request, res: Response): Promise<void> => {
+router.get('/:id/concepts', requireMaterialAccess(), async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('concepts')
     .select('id, term, definition, parent_concept_id, source_pages, created_at')
@@ -492,6 +479,10 @@ router.post('/concepts/batch', async (req: Request, res: Response): Promise<void
 
   const { material_ids } = parsed.data;
 
+  // Every id must be one the caller may read — otherwise a single valid id could
+  // be used to smuggle another grade's material into the same batch.
+  if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
+
   const { data, error } = await supabaseAdmin
     .from('concepts')
     .select('id, term, definition, parent_concept_id, material_id, created_at')
@@ -508,9 +499,10 @@ router.post('/concepts/batch', async (req: Request, res: Response): Promise<void
 
 /**
  * GET /api/materials/:id/status
- * Returns the current parsed_status of a material.
+ * Returns the current parsed_status of a material. Guarded — an unguarded status
+ * probe confirms which material ids exist.
  */
-router.get('/:id/status', async (req: Request, res: Response): Promise<void> => {
+router.get('/:id/status', requireMaterialAccess(), async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('materials')
     .select('parsed_status')
@@ -546,6 +538,10 @@ router.post('/generate-flashcards', async (req: Request, res: Response): Promise
   }
 
   const { material_ids, format } = parsed.data;
+
+  // Flashcards are generated from concept text, so the same access rule applies
+  // as for reading the concepts directly.
+  if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
   // 1. Fetch all concepts for the selected materials
   const { data: concepts, error: conceptsError } = await supabaseAdmin

@@ -1,23 +1,23 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Layers, Plus, Folder, Clock, Star, Sparkles, X, Share2, Pencil, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Layers, Plus, Folder, Clock, Pencil, Trash2, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { MOCK_PUBLIC_SPACES } from '../../data/mockPublicSpaces';
 import { api } from '../../lib/api';
+import { SUBJECTS, subjectName } from '../../data/mockEducator';
+import SubjectBadge from '../../components/educator/SubjectBadge';
 
 import Modal from '../../components/ui/Modal';
 
-
-
-
+/**
+ * A study space covers exactly one subject, chosen at creation and fixed
+ * afterwards. On creation the server fills the space with every material the
+ * student's educators published for that subject at their grade level, so a new
+ * space is never empty by the time the student opens it.
+ */
 interface StudySpaceData {
   id: string;
   title: string;
-  course_id: string | null;
-  cloned_from_id: string | null;
-  original_author_name: string | null;
+  subject: string;
   created_at: string;
-  is_published: boolean;
-  share_token: string;
 }
 
 const colorPalettes = [
@@ -36,11 +36,13 @@ export default function StudySpacesList() {
   const [spaces, setSpaces] = useState<StudySpaceData[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
-  const [cloneToast, setCloneToast] = useState<string | null>(null);
 
   // Modals & Forms State
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newSpaceTitle, setNewSpaceTitle] = useState('');
+  const [newSpaceSubject, setNewSpaceSubject] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
 
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
@@ -72,112 +74,31 @@ export default function StudySpacesList() {
     initData();
   }, []);
 
-  // Cloning logic from query params
-  useEffect(() => {
-    const checkAndClone = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const cloneId = params.get('clone');
-      if (!cloneId) return;
-
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(cloneId);
-
-      if (isUuid) {
-        // Real Published Study Space
-        try {
-          // Fetch target space info to get title and creator details
-          const res = await api.get<StudySpaceData>(`/spaces/${cloneId}`);
-          const targetSpace = res.data;
-
-          if (targetSpace) {
-            // Check if already cloned
-            const exists = spaces.some((s) => s.cloned_from_id === cloneId);
-            if (exists) {
-              setCloneToast(`"${targetSpace.title}" is already in your Study Spaces.`);
-              setTimeout(() => setCloneToast(null), 4500);
-            } else {
-              await api.post('/spaces', {
-                title: targetSpace.title,
-                cloned_from_id: cloneId,
-                original_author_name: targetSpace.original_author_name || 'Peer'
-              });
-              await fetchSpaces();
-              setCloneToast(`Successfully cloned "${targetSpace.title}"!`);
-              setTimeout(() => setCloneToast(null), 4500);
-            }
-          }
-        } catch (err: any) {
-          setCloneToast(err.response?.data?.error || 'Failed to clone study space.');
-          setTimeout(() => setCloneToast(null), 4500);
-        }
-      } else {
-        // Mock Public Study Space
-        const publicSpace = MOCK_PUBLIC_SPACES[cloneId];
-        if (publicSpace) {
-          const exists = spaces.some((s) => s.title === publicSpace.title && s.original_author_name === publicSpace.authorName);
-          if (exists) {
-            setCloneToast(`"${publicSpace.title}" is already in your Study Spaces.`);
-            setTimeout(() => setCloneToast(null), 4500);
-          } else {
-            try {
-              // 1. Create Space
-              const resSpace = await api.post<StudySpaceData>('/spaces', {
-                title: publicSpace.title,
-                original_author_name: publicSpace.authorName
-              });
-
-              if (resSpace.data && resSpace.data.id) {
-                // 2. Create Deck
-                const resDeck = await api.post<any>(`/spaces/${resSpace.data.id}/decks`, {
-                  title: 'Main Deck',
-                  description: publicSpace.description || 'Cloned flashcard deck.'
-                });
-
-                if (resDeck.data && resDeck.data.id) {
-                  // 3. Create all flashcards
-                  for (const card of publicSpace.flashcards) {
-                    await api.post(`/spaces/${resSpace.data.id}/decks/${resDeck.data.id}/flashcards`, {
-                      term: card.front,
-                      definition: card.back
-                    });
-                  }
-                }
-              }
-
-              await fetchSpaces();
-              setCloneToast(`Successfully cloned "${publicSpace.title}" by ${publicSpace.authorName}!`);
-              setTimeout(() => setCloneToast(null), 4500);
-            } catch (err) {
-              console.error('Failed to clone mock space', err);
-              setCloneToast('Failed to clone public study space.');
-              setTimeout(() => setCloneToast(null), 4500);
-            }
-          }
-        }
-      }
-
-      // Clean URL params
-      const newUrl = window.location.pathname;
-      window.history.replaceState({}, document.title, newUrl);
-    };
-
-    if (!isLoading) {
-      checkAndClone();
-    }
-  }, [isLoading]);
+  // Peer study-space cloning (CollabShare) was removed by migration 0003 — it
+  // contradicts the paper's guarantee that each student's data stays isolated.
 
   const handleCreateSpace = async (e: FormEvent) => {
     e.preventDefault();
-    if (!newSpaceTitle.trim()) return;
+    if (!newSpaceTitle.trim() || !newSpaceSubject) return;
 
+    setIsCreating(true);
+    setCreateError(null);
     try {
+      // The server fills the new space with every material published to this
+      // subject at the student's grade level, so it opens ready to study.
       await api.post('/spaces', {
-        title: newSpaceTitle.trim()
+        title: newSpaceTitle.trim(),
+        subject: newSpaceSubject,
       });
       await fetchSpaces();
       setIsCreateModalOpen(false);
       setNewSpaceTitle('');
-    } catch (err) {
+      setNewSpaceSubject('');
+    } catch (err: any) {
       console.error('Failed to create study space', err);
+      setCreateError(err.message ?? 'Could not create the study space. Please try again.');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -238,17 +159,6 @@ export default function StudySpacesList() {
 
   return (
     <div className="flex-1 w-full bg-background p-6 md:p-12 overflow-y-auto relative">
-      {cloneToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[70] animate-in fade-in slide-in-from-top-3 duration-200">
-          <div className="flex items-center gap-3 bg-surface-container-high border border-teal-500/35 px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-md">
-            <Sparkles className="w-4 h-4 text-teal-400" />
-            <span className="font-sans text-sm text-white font-medium">
-              {cloneToast}
-            </span>
-          </div>
-        </div>
-      )}
-
       <div className="max-w-6xl mx-auto">
         <header className="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-6">
           <div>
@@ -259,7 +169,8 @@ export default function StudySpacesList() {
               <h1 className="font-display text-3xl font-semibold text-on-surface">Study Spaces</h1>
             </div>
             <p className="font-sans text-on-surface-variant max-w-2xl text-sm">
-              Your private, self-paced workspaces featuring cognitive AI study tools and secure peer synchronization.
+              One space per subject. Each opens with the materials your teachers published for your
+              grade level, ready for the AI study tools.
             </p>
           </div>
         </header>
@@ -285,8 +196,6 @@ export default function StudySpacesList() {
 
             {spaces.map((space, index) => {
               const palette = colorPalettes[index % colorPalettes.length];
-              const isCloned = !!(space.cloned_from_id || space.original_author_name);
-              const courseText = 'Independent Study';
 
               return (
                 <div
@@ -297,35 +206,25 @@ export default function StudySpacesList() {
                   <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${palette.color} blur-3xl opacity-50 group-hover:opacity-100 transition-opacity -z-10 rounded-full translate-x-1/2 -translate-y-1/2`}></div>
 
                   <div className="flex justify-between items-start mb-6">
-                    <div className={`w-12 h-12 rounded-xl border border-white/5 flex items-center justify-center ${isCloned ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim border-primary-fixed-dim/20' : 'bg-surface-container text-slate-300'}`}>
+                    <div className="w-12 h-12 rounded-xl border border-white/5 flex items-center justify-center bg-surface-container text-slate-300">
                       <Folder className="w-6 h-6" />
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {isCloned ? (
-                        <span className="flex items-center gap-1 px-2.5 py-1 rounded bg-teal-500/10 border border-teal-500/25 text-teal-400 text-[10px] font-sans font-bold uppercase tracking-wider shadow-sm shadow-teal-500/5">
-                          <Share2 className="w-3 h-3 shrink-0" /> Cloned from {space.original_author_name || 'Peer'}
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-500/10 border border-white/5 text-slate-400 text-[10px] font-sans font-bold uppercase tracking-wider">
-                          Created by you
-                        </span>
-                      )}
+                      <SubjectBadge code={space.subject} />
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                        {!isCloned && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRenameClick(space);
-                            }}
-                            className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all"
-                            title="Rename Space"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRenameClick(space);
+                          }}
+                          className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all"
+                          title="Rename Space"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -342,9 +241,7 @@ export default function StudySpacesList() {
 
                   <h2 className="font-display text-xl font-medium text-white mb-2">{space.title}</h2>
                   <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mb-2 font-sans">
-                    <span className="flex items-center gap-1">
-                      <Star className="w-3.5 h-3.5 text-primary-fixed-dim" /> {courseText}
-                    </span>
+                    <span>{subjectName(space.subject)}</span>
                     <span>•</span>
                     <span className="flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5" /> {getRelativeTime(space.created_at)}
@@ -374,13 +271,36 @@ export default function StudySpacesList() {
                 type="text"
                 value={newSpaceTitle}
                 onChange={(e) => setNewSpaceTitle(e.target.value)}
-                placeholder="e.g. Biology 101 Prep"
+                placeholder="e.g. Science Quarter 2"
                 className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50"
                 required
               />
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">
+                Subject
+              </label>
+              <select
+                value={newSpaceSubject}
+                onChange={(e) => setNewSpaceSubject(e.target.value)}
+                className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50"
+                required
+              >
+                <option value="" disabled>Choose a subject…</option>
+                {SUBJECTS.map((s) => (
+                  <option key={s.code} value={s.code}>{s.name}</option>
+                ))}
+              </select>
+              <p className="mt-1.5 font-sans text-[11px] text-slate-500 leading-relaxed">
+                Your space will open with the materials your teachers published for this subject at
+                your grade level. The subject can't be changed later.
+              </p>
+            </div>
 
+            {createError && (
+              <p className="font-sans text-[12px] text-red-400">{createError}</p>
+            )}
           </div>
 
           <div className="flex gap-3 pt-4 border-t border-white/5 mt-2 shrink-0">
@@ -393,10 +313,11 @@ export default function StudySpacesList() {
             </button>
             <button
               type="submit"
-              disabled={!newSpaceTitle.trim()}
-              className="flex-1 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-medium hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!newSpaceTitle.trim() || !newSpaceSubject || isCreating}
+              className="flex-1 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-medium hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              Create Space
+              {isCreating && <Loader2 className="w-4 h-4 animate-spin" />}
+              {isCreating ? 'Creating…' : 'Create Space'}
             </button>
           </div>
         </form>

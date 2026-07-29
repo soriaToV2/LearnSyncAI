@@ -34,15 +34,40 @@ export interface Profile {
   updated_at: string;
 }
 
-/** public.study_spaces — student-owned learning environments */
+/** public.study_spaces — student-owned learning environments, one subject each */
 export interface StudySpace {
   id: string;
-  student_id: string | null;
+  student_id: string;
   title: string;
   description: string | null;
-  is_published: boolean | null;   // true = CollabShare enabled (peer read-only)
-  share_token: string | null;
+  subject: string;                 // FK → subjects.code. Fixed at creation.
   created_at: string;
+  updated_at: string;
+}
+
+/** public.study_space_materials — which educator materials a space holds */
+export interface StudySpaceMaterial {
+  space_id: string;
+  material_id: string;
+  added_at: string;
+}
+
+/**
+ * A material as the student Resources tab sees it: the stored row plus the
+ * concept count, and without the educator-only columns (educator_id, storage_path).
+ */
+export interface SpaceMaterial {
+  id: string;
+  title: string;
+  description: string | null;
+  subject: string;
+  file_size_bytes: number | null;
+  page_count: number | null;
+  is_scanned: boolean;
+  parsed_status: ParsedStatus | null;
+  parse_error: string | null;
+  concept_count: number;
+  added_at: string;
 }
 
 /** public.materials — educator-uploaded learning resources, scoped by grade level */

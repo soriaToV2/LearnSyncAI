@@ -23,7 +23,7 @@ There are **three user roles**:
 - **Framework:** React 19 + TypeScript (Vite, port 3000)
 - **Routing:** React Router DOM v7
 - **Styling:** Tailwind CSS v4 — uses utility classes heavily. Design system tokens are defined in `src/index.css`.
-- **HTTP Client:** `axios` — wrapped in `src/lib/api.ts`. Always use `api.get(...)` / `api.post(...)` etc., never raw `fetch`.
+- **HTTP Client:** a typed `fetch` wrapper in `src/lib/api.ts` that attaches the Supabase JWT and unwraps the `{ data }` envelope. Always use `api.get(...)` / `api.post(...)` etc., never raw `fetch` — the one permitted exception is `POST /api/chat`, which streams Server-Sent Events the JSON wrapper cannot represent.
 - **UI Components:** Lucide React for icons, Motion for animations.
 
 ### Backend
@@ -82,6 +82,7 @@ LearnSyncAI/
 │   ├── lib/
 │   │   ├── gemini.ts              # Gemini AI helpers (embedding, generation, JSON)
 │   │   ├── groq.ts                # Groq AI helpers (chat streaming, flashcard gen)
+│   │   ├── materialAccess.ts      # Who may read which material (grade/ownership gate)
 │   │   └── supabase.ts            # Supabase admin client
 │   ├── middleware/
 │   │   ├── auth.ts                # JWT authentication middleware
@@ -144,6 +145,36 @@ The platform follows a **dual-portal, three-tier model**:
 3. Use `supabaseAdmin` for all DB operations — never the anon client.
 4. All routes must start with the appropriate auth middleware: `router.use(authenticate, requireRole('student'))` for student routes, `requireRole('educator')` for educator routes, `requireRole('admin')` for admin routes.
 5. Always `safeParse()` the request body and return a 400 if validation fails.
+6. **If the route accepts a material ID, gate it** — see below.
+
+### Material Access — Every Route Must Enforce It Itself
+The service role key bypasses Row-Level Security by design, so RLS policies do **nothing** for a request that reaches Express. Migration 0008 states this outright: "The API layer must still enforce role and ownership itself."
+
+`server/lib/materialAccess.ts` is the single answer to "may this caller read these materials?":
+- **student** → not archived, and `grade_levels` contains their `grade_level`
+- **educator** → their own uploads, archived or not
+- **admin** → all; **disabled account** → none
+
+Use it two ways:
+- `requireMaterialAccess()` — route guard for a material ID in the path (`/:id/view`, `/:id/concepts`, `/:id/status`). Answers **404, not 403**, because a 403 confirms the ID names a real material.
+- `rejectInaccessibleMaterials(req, res, ids)` — for `material_ids` in a body (`/concepts/batch`, `/generate-flashcards`, `POST /api/chat`). Returns `false` after sending a 403; the handler must return immediately. Every ID must pass, so one allowed ID cannot smuggle a forbidden one through in the same batch.
+
+### Study Spaces — One Subject, Auto-Filled
+A study space covers exactly one subject (`study_spaces.subject`, FK → `subjects.code`), chosen at creation and **immutable** afterwards — its decks, tests and mastery are all built from its materials, so re-pointing it would strand that work.
+
+A space's contents live in `study_space_materials`. It is a **stored list, not a live query**, which is what makes "N new materials available" possible — the count is a set subtraction:
+
+```
+available_count = (published to space.subject + student's grade, not archived) − (already linked)
+```
+
+- `POST /api/spaces` creates the space and immediately links every published material for that subject + grade. A new space is never empty.
+- `GET /api/spaces/:id/materials` returns `{ space, materials[], available_count }`. Owner only, 404 otherwise. Each material carries `concept_count`.
+- `POST /api/spaces/:id/materials/sync` links whatever is missing. Idempotent via `ignoreDuplicates` on the composite PK — re-running never duplicates.
+
+**Reads filter the stored list against the live rules** (not archived, still in the student's grade, still this space's subject). So an educator archiving a material hides it from every student's space instantly while the link row survives — un-archive and it returns on its own. There is no polling; `available_count` arrives with the material list the tab already fetches on open.
+
+Students cannot upload, delete, or remove materials. Pulling in newly published ones is their only write, and even that does not choose *what* arrives — the set is derived server-side.
 
 ### pgvector — Critical Notes
 - The `embedding` column in the `concepts` table is a PostgreSQL `vector(3072)` type.
@@ -197,6 +228,9 @@ APP_URL=http://localhost:3000
 - **Always run `npm run lint` after changes.** The project uses `tsc --noEmit` as its linting step.
 - **Three user roles exist: `student`, `educator`, and `admin`.** Use the appropriate `requireRole()` middleware for each endpoint. Admin manages accounts only. Educators manage materials and view analytics. Students access learning features.
 - **BKT is implemented directly in the backend.** Do NOT use pyBKT or any external BKT library. Do NOT implement Expectation Maximization (EM) parameter fitting. Use the default parameters specified in ARCHITECTURE.md.
-- **Only educators upload materials.** Students access materials uploaded by their educators. Students cannot upload instructional materials.
+- **Only educators upload materials.** Students access materials uploaded by their educators. Students cannot upload instructional materials, and the student UI must contain no upload control, no file picker, and no delete control.
+- **Every student-reachable route that takes a material ID must gate it** through `server/lib/materialAccess.ts`. RLS does not protect these routes — the service role bypasses it. Path IDs 404; body ID arrays 403.
+- **A study space's subject is fixed at creation.** `UpdateStudySpaceSchema` deliberately omits it.
+- **Peer sharing (CollabShare) is gone.** Migration 0003 removed it as contradicting the paper's data-isolation guarantee. Do not reintroduce `is_published`, `share_token`, `cloned_from_id`, or space cloning.
 - **`schema.sql` is the DB source of truth.** When DB changes are made, update `schema.sql` to reflect them.
 - **The `ai_feedback` column in `cognitive_logs` stores a JSON string.** Parse it with `JSON.parse()` before using it on the frontend.
