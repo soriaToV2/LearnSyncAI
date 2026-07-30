@@ -2,19 +2,58 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateEmbedding, generateJson, generateContent, GeminiUnavailableError } from '../lib/gemini';
+import { generateEmbedding, generateJson, GeminiUnavailableError } from '../lib/gemini';
+import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 import {
   FreeRecallSchema,
-  CognitiveReviewSchema,
   FeynmanEvaluationSchema,
   type FeynmanAudience,
   type FeynmanConceptResult,
   type FeynmanFeedback,
   type FeynmanVerdict,
+  type FreeRecallFeedback,
+  type FreeRecallWrittenFeedback,
 } from '../types/api';
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
+
+/**
+ * Confirms the caller owns the study space they named.
+ *
+ * `requireRole('student')` only proves the caller is *a* student. Every route
+ * here reads or writes that space's submissions, and the service-role key
+ * bypasses RLS (migration 0008: "The API layer must still enforce role and
+ * ownership itself"), so ownership has to be checked here.
+ *
+ * Answers 404 rather than 403 — a 403 would confirm the id names a real space.
+ * Returns the space id on success, or null after sending the response.
+ */
+async function requireOwnedSpace(
+  spaceId: string,
+  req: Request,
+  res: Response
+): Promise<string | null> {
+  const userId = req.user?.id;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized', message: 'Not authenticated' });
+    return null;
+  }
+
+  const { data: space } = await supabaseAdmin
+    .from('study_spaces')
+    .select('id')
+    .eq('id', spaceId)
+    .eq('student_id', userId)
+    .maybeSingle();
+
+  if (!space) {
+    res.status(404).json({ error: 'Study space not found' });
+    return null;
+  }
+
+  return userId;
+}
 
 // ─── Helper: Cosine similarity between two equal-length vectors ───────────
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -50,6 +89,130 @@ function parseVector(raw: unknown): number[] {
 
 
 /**
+ * Returns the feedback a previous identical attempt already received, or null.
+ *
+ * temperature: 0 pins the *scoring* pipeline — the extraction step returns a
+ * structured concept list, and the 0.70 coverage threshold quantises away what
+ * little variation remains, so an identical submission always scores the same.
+ * Free prose has no such quantisation: measured against the live model, the
+ * same input reliably produced the same score but reworded paragraphs.
+ *
+ * So reproducibility is guaranteed by reuse rather than by trusting the model.
+ * A resubmission is only treated as identical when the text, the materials AND
+ * the resulting score all match — if the educator has since changed the
+ * material, the score moves and fresh feedback is written instead of stale
+ * prose being served for a situation that no longer holds.
+ */
+async function findPreviousFeedback(params: {
+  studentId: string;
+  userInput: string;
+  materialIds: string[];
+  similarityScore: number;
+}): Promise<FreeRecallWrittenFeedback | null> {
+  const { studentId, userInput, materialIds, similarityScore } = params;
+
+  const { data: priors } = await supabaseAdmin
+    .from('cognitive_logs')
+    .select('material_ids, similarity_score, ai_feedback')
+    .eq('student_id', studentId)
+    .eq('mode', 'free_recall')
+    .eq('user_input', userInput)
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  if (!priors?.length) return null;
+
+  const wanted = [...materialIds].sort().join(',');
+
+  for (const prior of priors) {
+    const priorMaterials = [...((prior.material_ids as string[]) ?? [])].sort().join(',');
+    if (priorMaterials !== wanted) continue;
+    // NUMERIC round-trips through a string; compare with a tolerance rather
+    // than by identity.
+    if (Math.abs(Number(prior.similarity_score) - similarityScore) > 1e-9) continue;
+
+    try {
+      const parsed = JSON.parse((prior.ai_feedback as string) ?? '{}') as FreeRecallFeedback;
+      if (parsed.written_feedback?.strengths) return parsed.written_feedback;
+    } catch {
+      // Unparseable prior — fall through and generate fresh feedback.
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Writes coaching prose for a Free Recall attempt.
+ *
+ * Deliberately returns null instead of throwing. The caller invokes this
+ * BEFORE saving and outside the scoring try block, so a failure here costs the
+ * student their paragraphs and nothing else — the score, verdict and missed
+ * list are already computed and still get written.
+ */
+async function generateRecallFeedback(params: {
+  userInput: string;
+  studentPoints: string[];
+  coveredTerms: string[];
+  missedTerms: string[];
+  scorePercent: number;
+}): Promise<FreeRecallWrittenFeedback | null> {
+  const { userInput, studentPoints, coveredTerms, missedTerms, scorePercent } = params;
+
+  const prompt = `You are a supportive tutor giving feedback on a student's free recall attempt.
+They wrote down everything they could remember from a lesson, without notes.
+
+THE STUDENT'S ANSWER:
+"""
+${userInput}
+"""
+
+POINTS THEY RAISED (extracted from their answer):
+${studentPoints.length ? studentPoints.map(p => `- ${p}`).join('\n') : '(none identified)'}
+
+LESSON CONCEPTS THEY COVERED (${coveredTerms.length}):
+${coveredTerms.length ? coveredTerms.join(', ') : '(none)'}
+
+LESSON CONCEPTS THEY DID NOT COVER (${missedTerms.length}):
+${missedTerms.length ? missedTerms.join(', ') : '(none — they covered everything)'}
+
+Coverage score: ${scorePercent}%
+
+Write three short pieces of feedback. Rules:
+- Ground every sentence in what THIS student actually wrote. Refer to their specific points. Never write praise that would fit any answer ("good effort", "nice work").
+- The "did not cover" list is machine-generated from the whole document and includes minor supporting details nobody would recall from memory. Do NOT recite it. Choose only the 2-3 genuinely important ideas from it and name those.
+- ADDRESS THE STUDENT DIRECTLY as "you" and "your". Write "You explained..." or "Your answer covered...", never "The student explained". You are speaking to them, not reporting on them to someone else.
+- Speak to a Junior High School student. Plain language, warm, direct, no jargon about the scoring system itself. Never mention percentages, cosine similarity, or concept counts.
+- One to two sentences each. No bullet points, no markdown.
+
+Return ONLY a JSON object of this exact shape:
+{
+  "strengths": "Spoken to the student as 'you': what you genuinely got right, naming your actual points.",
+  "gaps": "Spoken to the student as 'you': the 2-3 important ideas you left out, described in plain language rather than listed as terms.",
+  "next_steps": "Spoken to the student as 'you': one concrete thing to review or try next time."
+}`;
+
+  try {
+    const raw = await generateJson<Record<string, unknown>>(prompt, { temperature: 0 });
+    const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+
+    const feedback: FreeRecallWrittenFeedback = {
+      strengths: str(raw?.strengths),
+      gaps: str(raw?.gaps),
+      next_steps: str(raw?.next_steps),
+    };
+
+    // An all-empty object is a failed generation, not feedback. Treat it as
+    // unavailable so the student sees the honest note rather than blank cards.
+    if (!feedback.strengths && !feedback.gaps && !feedback.next_steps) return null;
+    return feedback;
+  } catch (err) {
+    console.error('[FreeRecall] Written feedback unavailable:', err);
+    return null;
+  }
+}
+
+/**
  * POST /api/cognitive/free-recall
  *
  * Evaluates a Free Recall submission using the Concept-Extraction Pipeline.
@@ -60,7 +223,7 @@ function parseVector(raw: unknown): number[] {
  * 3. Embed each extracted student concept individually (gemini-embedding-001).
  * 4. For each true DB concept, compute its highest cosine similarity against the student's concept vectors.
  * 5. Grade: "Missed" if highest match < 0.70, "Covered" otherwise.
- * 6. Compute overall similarity score (avg of all best-match scores).
+ * 6. Compute overall similarity score (coverage ratio).
  * 7. Save the result to cognitive_logs.
  * 8. Return { similarity_score, missed_concepts[], overall_verdict }.
  *
@@ -74,6 +237,14 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
   }
 
   const { space_id, material_ids, user_input } = parsed.data;
+
+  // ── 0. Ownership and access ─────────────────────────────────────────────
+  // The response lists every concept term the student did not cover, so an
+  // ungated call would dump another grade's concept list to anyone who submits
+  // gibberish against its material id.
+  const studentId = await requireOwnedSpace(space_id, req, res);
+  if (!studentId) return;
+  if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
   try {
     // ── 1. Fetch all reference concepts for the selected materials ────────
@@ -127,19 +298,45 @@ Example output:
 ]
 `;
 
-    const extractedConcepts = await generateJson<ExtractedConcept[]>(extractionPrompt);
+    // temperature: 0 makes scoring reproducible. Extraction is the only
+    // sampling step in this pipeline — a different concept list embeds
+    // differently and shifts the coverage ratio, so resubmitting identical
+    // text would otherwise score differently each time.
+    const extractedConcepts = await generateJson<ExtractedConcept[]>(extractionPrompt, {
+      temperature: 0,
+    });
 
     // ── 3. Handle edge case: student wrote nothing recognizable ───────────
     if (!Array.isArray(extractedConcepts) || extractedConcepts.length === 0) {
       // Score is 0 — all concepts are missed
       const missedConcepts = conceptsWithEmbeddings.map(c => c.term);
+
+      // Fixed prose rather than an AI call. There is nothing in the submission
+      // to write personalised feedback about, so generating it would cost a
+      // round trip to say something we already know — and could itself fail.
+      const emptyFeedback: FreeRecallWrittenFeedback = {
+        strengths: "We could not find anything from this material in your answer yet.",
+        gaps: "Nothing you wrote matched the ideas in this lesson — it may be off-topic, too short, or about a different material.",
+        next_steps: "Re-read the material, then try again and write down every idea you can remember in your own words.",
+      };
+
+      const emptyPayload: FreeRecallFeedback = {
+        missed_concepts: missedConcepts,
+        overall_verdict: 'needs_review',
+        written_feedback: emptyFeedback,
+        covered_count: 0,
+        total_concepts: conceptsWithEmbeddings.length,
+      };
+
       const { data: log } = await supabaseAdmin.from('cognitive_logs').insert({
+        student_id: studentId,
         space_id,
         concept_id: null,
+        material_ids,
         mode: 'free_recall',
         user_input,
         similarity_score: 0,
-        ai_feedback: JSON.stringify({ missed_concepts: missedConcepts, overall_verdict: 'needs_review' }),
+        ai_feedback: JSON.stringify(emptyPayload),
       }).select().single();
 
       res.status(201).json({
@@ -147,8 +344,13 @@ Example output:
           log_id: log?.id,
           similarity_score: 0,
           score_percent: 0,
+          covered_count: 0,
+          total_concepts: conceptsWithEmbeddings.length,
           missed_concepts: missedConcepts,
           overall_verdict: 'needs_review',
+          written_feedback: emptyFeedback,
+          feedback_unavailable: false,
+          created_at: log?.created_at,
         },
       });
       return;
@@ -167,7 +369,9 @@ Example output:
     // ── 5. Grade each reference concept by its best match ─────────────────
     const COVERAGE_THRESHOLD = 0.70;
     const missedConcepts: string[] = [];
-    let coveredCount = 0;
+    // Covered terms are kept, not just counted — the written feedback needs to
+    // name what the student actually got, not only what they left out.
+    const coveredConcepts: string[] = [];
 
     for (const refConcept of conceptsWithEmbeddings) {
       const refEmbedding = parseVector(refConcept.embedding);
@@ -181,11 +385,13 @@ Example output:
       }
 
       if (bestScore >= COVERAGE_THRESHOLD) {
-        coveredCount++;
+        coveredConcepts.push(refConcept.term);
       } else {
         missedConcepts.push(refConcept.term);
       }
     }
+
+    const coveredCount = coveredConcepts.length;
 
     // ── 6. Compute score as coverage ratio ────────────────────────────────
     // Score = covered / total. This avoids the "hubness" problem where random
@@ -194,23 +400,58 @@ Example output:
     const similarityScore = totalConcepts > 0 ? coveredCount / totalConcepts : 0;
     const scorePercent = Math.round(similarityScore * 100);
 
+    // The denominator is every concept the material yielded, and extraction is
+    // granular — one lesson produced 78 concepts, including supporting details
+    // ("radio waves", "light pulses") nobody writes out from memory. Recalling
+    // a document well lands near 20-30%, not 75%, so the bands sit there. The
+    // ratio itself is left honest; only the label moved.
     const overallVerdict: 'strong' | 'partial' | 'needs_review' =
-      similarityScore >= 0.75 ? 'strong' :
-      similarityScore >= 0.40 ? 'partial' :
+      similarityScore >= 0.30 ? 'strong' :
+      similarityScore >= 0.15 ? 'partial' :
       'needs_review';
 
-    // ── 7. Save to cognitive_logs ─────────────────────────────────────────
-    const feedbackPayload = JSON.stringify({ missed_concepts: missedConcepts, overall_verdict: overallVerdict });
+    // ── 7. Written feedback — allowed to fail, never allowed to cost the score ─
+    // Scoring is finished and in memory by this point. Both calls below swallow
+    // their own errors and yield null, so an overloaded or misbehaving model
+    // costs the student their paragraphs and nothing else.
+    //
+    // An identical resubmission reuses the prose it got last time rather than
+    // asking the model to reproduce it — see findPreviousFeedback.
+    const writtenFeedback =
+      (await findPreviousFeedback({
+        studentId,
+        userInput: user_input,
+        materialIds: material_ids,
+        similarityScore,
+      })) ??
+      (await generateRecallFeedback({
+        userInput: user_input,
+        studentPoints: extractedConcepts.map(ec => `${ec.term}: ${ec.explanation}`),
+        coveredTerms: coveredConcepts,
+        missedTerms: missedConcepts,
+        scorePercent,
+      }));
+
+    // ── 8. Save to cognitive_logs ─────────────────────────────────────────
+    const payload: FreeRecallFeedback = {
+      missed_concepts: missedConcepts,
+      overall_verdict: overallVerdict,
+      written_feedback: writtenFeedback,
+      covered_count: coveredCount,
+      total_concepts: totalConcepts,
+    };
 
     const { data: log, error: logError } = await supabaseAdmin
       .from('cognitive_logs')
       .insert({
+        student_id: studentId,
         space_id,
         concept_id: null,
+        material_ids,
         mode: 'free_recall',
         user_input,
         similarity_score: similarityScore,
-        ai_feedback: feedbackPayload,
+        ai_feedback: JSON.stringify(payload),
       })
       .select()
       .single();
@@ -220,14 +461,18 @@ Example output:
       return;
     }
 
-    // ── 8. Return results to the frontend ────────────────────────────────
+    // ── 9. Return results to the frontend ────────────────────────────────
     res.status(201).json({
       data: {
         log_id: log.id,
         similarity_score: similarityScore,
         score_percent: scorePercent,
+        covered_count: coveredCount,
+        total_concepts: totalConcepts,
         missed_concepts: missedConcepts,
         overall_verdict: overallVerdict,
+        written_feedback: writtenFeedback,
+        feedback_unavailable: writtenFeedback === null,
         created_at: log.created_at,
       },
       message: 'Free recall scored successfully',
@@ -235,6 +480,12 @@ Example output:
 
   } catch (err: any) {
     console.error('[FreeRecall] Error:', err);
+    if (err instanceof GeminiUnavailableError) {
+      // Surface the upstream overload as a 503 so the client can offer a retry,
+      // rather than dumping Google's raw error JSON into the student's face.
+      res.status(503).json({ error: 'AI service unavailable', message: err.message });
+      return;
+    }
     res.status(500).json({ error: 'Failed to process free recall submission', message: err.message });
   }
 });
@@ -242,9 +493,13 @@ Example output:
 /**
  * GET /api/cognitive/history/:spaceId?mode=free_recall|feynman
  *
- * Returns the last 20 cognitive log sessions for a given study space.
+ * Returns the caller's last 20 cognitive log sessions for a given study space.
  * Ordered by most recent first. Defaults to `free_recall` when `mode` is
  * omitted, preserving the original behaviour for existing callers.
+ *
+ * These rows are the student's own written work. Filtering on space_id alone
+ * let anyone read another student's submissions, scores and feedback by
+ * supplying their space id, so the caller must own the space AND the rows.
  */
 router.get('/history/:spaceId', async (req: Request, res: Response): Promise<void> => {
   const { spaceId } = req.params;
@@ -256,10 +511,14 @@ router.get('/history/:spaceId', async (req: Request, res: Response): Promise<voi
     return;
   }
 
+  const studentId = await requireOwnedSpace(spaceId, req, res);
+  if (!studentId) return;
+
   const { data: logs, error } = await supabaseAdmin
     .from('cognitive_logs')
     .select('id, mode, user_input, similarity_score, ai_feedback, created_at')
     .eq('space_id', spaceId)
+    .eq('student_id', studentId)
     .eq('mode', mode)
     .order('created_at', { ascending: false })
     .limit(20);
@@ -272,8 +531,9 @@ router.get('/history/:spaceId', async (req: Request, res: Response): Promise<voi
   res.json({ data: logs ?? [] });
 });
 
-// ─── Feynman: audience rubrics ────────────────────────────────────────────
-// The audience swaps the grading rubric, never the output schema.
+// ─── Feynman: audience rubric ─────────────────────────────────────────────
+// The paper specifies one audience — a 10-year-old child. Kept as a lookup so
+// the rubric stays swappable without touching the prompt or the output schema.
 const AUDIENCE_RUBRICS: Record<FeynmanAudience, string> = {
   '10yr_old': `The student is explaining to a 10-YEAR-OLD CHILD.
 
@@ -281,16 +541,7 @@ Simplicity rubric (be strict):
 - Every technical or academic term used without being unpacked in plain words is JARGON. Flag it.
 - Reward concrete, everyday analogies (dominoes, mailboxes, cargo ships, water in pipes).
 - Reward short sentences and cause-and-effect storytelling.
-- A textbook-accurate explanation that a child could not follow scores LOW on simplicity, no matter how correct it is.
-- Always supply an "analogy_idea" a child would grasp, unless the student's own analogy is already excellent.`,
-
-  self: `The student is explaining to THEMSELVES, to test whether they truly understand it.
-
-Simplicity rubric (different goal — do NOT penalise vocabulary):
-- Technical terms are ALLOWED and expected here. Only flag a term as jargon if the student leans on it as a substitute for explaining the underlying mechanism (i.e. name-dropping without saying what actually happens).
-- Score simplicity on MECHANISTIC CLARITY: did they explain *why* and *how* it works, step by step, or did they recite memorised terminology?
-- Reward causal chains ("this happens, which causes that, which results in..."). Penalise circular definitions and restated textbook phrasing.
-- For "analogy_idea", suggest a deeper probing question or a level of mechanism they should push into to prove they understand it.`,
+- A textbook-accurate explanation that a child could not follow scores LOW on simplicity, no matter how correct it is.`,
 };
 
 /** Clamp an untrusted model-produced number into a 0–100 integer. */
@@ -321,29 +572,99 @@ function coerceStringArray(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
 }
 
+const normaliseTerm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * Every way a student might name the concept they were asked to explain.
+ *
+ * "Physical Layer (OSI Model)" yields the full string, "physical layer", and
+ * "osi model" — so naming the concept never counts against them, whichever
+ * form they used.
+ */
+function selfReferentialForms(term: string): Set<string> {
+  const forms = new Set<string>();
+  forms.add(normaliseTerm(term));
+  forms.add(normaliseTerm(term.replace(/\s*\([^)]*\)\s*/g, '')));
+  for (const match of term.matchAll(/\(([^)]*)\)/g)) {
+    forms.add(normaliseTerm(match[1]));
+  }
+  return forms;
+}
+
 /**
  * Strips the concept's own name from its jargon list. The student was asked to
  * explain that term, so naming it cannot be jargon — but the model flags it
  * anyway when the explanation is circular. The prompt forbids this; this is the
  * belt-and-braces enforcement.
- *
- * Also drops the parenthetical acronym: "Cross-Site Request Forgery (CSRF)"
- * yields both "cross-site request forgery" and "csrf" as forbidden entries.
  */
 function stripSelfReferentialJargon(jargon: string[], term: string): string[] {
-  const forbidden = new Set<string>();
-  const normalise = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+  const forbidden = selfReferentialForms(term);
+  return jargon.filter(j => !forbidden.has(normaliseTerm(j)));
+}
 
-  forbidden.add(normalise(term));
-  // "Physical Layer (OSI Model)" → also forbid "physical layer"
-  forbidden.add(normalise(term.replace(/\s*\([^)]*\)\s*/g, '')));
-  // Capture the parenthetical itself, e.g. "(CSRF)" → "csrf"
-  for (const match of term.matchAll(/\(([^)]*)\)/g)) {
-    forbidden.add(normalise(match[1]));
+/**
+ * True when a claimed "everyday comparison" is built out of the lesson's own
+ * vocabulary — which makes it an in-domain example, not an analogy.
+ *
+ * Measured against the live model: it accepted "it's like a backup server
+ * taking over automatically" as an everyday comparison for Resilience. It says
+ * "like" twice, but compares computers to computers, and "Web server" is a term
+ * in that lesson's glossary. The prompt forbids this; the prompt alone did not
+ * hold, so this enforces it in code — and therefore holds whichever model grades.
+ *
+ * The concept's own name is excluded: "Defense-in-depth is like a castle" must
+ * stay a valid analogy even though "Defense-in-depth" is itself a glossary term.
+ *
+ * Deliberately matches WHOLE glossary terms only, never their individual words.
+ * Splitting multi-word terms was tried and rejected: this material's glossary
+ * yields head nouns like "pages" (Web pages), "traffic" (HTTP/HTTPS traffic),
+ * "control" (Broken Access Control), "fields" (Input fields) and "waves" (Radio
+ * waves). Matching those would reject "like pages in a book" and "like traffic
+ * on a road" — precisely the everyday analogies the feature exists to reward.
+ *
+ * Consequence: a comparison sharing only a head noun ("a backup server") is not
+ * caught here. That case is the prompt's job; this is the backstop for
+ * unambiguous ones. A false rejection is the worse error, because the student is
+ * then told to do something they already did.
+ */
+function analogyUsesLessonVocabulary(
+  quote: string,
+  glossaryTerms: string[],
+  conceptTerm: string
+): boolean {
+  const haystack = normaliseTerm(quote);
+  if (!haystack) return false;
+
+  const own = selfReferentialForms(conceptTerm);
+
+  for (const raw of glossaryTerms) {
+    const term = normaliseTerm(raw);
+    // Terms under 4 characters are too generic to be reliable evidence.
+    if (term.length < 4 || own.has(term)) continue;
+
+    // Match singular and plural in both directions: a glossary "Web server"
+    // must catch "web servers", and "Web pages" must catch "web page".
+    // Only the trailing "s" comes off — stripping "es" would turn "pages" into
+    // "pag" and stop matching "page" at all.
+    const base = term.replace(/s$/, '');
+    if (base.length < 4) continue;
+    const pattern = new RegExp(`\\b${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:es|s)?\\b`);
+    if (pattern.test(haystack)) return true;
   }
 
-  return jargon.filter(j => !forbidden.has(normalise(j)));
+  return false;
 }
+
+/**
+ * Shown instead of the model's own analogy verdict when the backstop above
+ * fires. The model wrote its `analogy_idea` believing the comparison counted,
+ * so it reads as praise — displaying that under "No everyday comparison" would
+ * contradict itself. This says plainly why it did not count, and what would.
+ */
+const IN_DOMAIN_ANALOGY_NOTE =
+  'Your comparison used words from this lesson, so it only makes sense to someone who already ' +
+  'studied the topic. Try comparing it to something from everyday life instead — a castle with ' +
+  'many walls, a lock on a door, or water flowing through pipes.';
 
 function mean(values: number[]): number {
   if (values.length === 0) return 0;
@@ -375,6 +696,13 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
   }
 
   const { space_id, material_ids, audience, explanations } = parsed.data;
+
+  // ── 0. Ownership and access ─────────────────────────────────────────────
+  // Grading echoes each concept's term back, and the feedback paraphrases its
+  // stored definition, so this is a read of the material's content.
+  const studentId = await requireOwnedSpace(space_id, req, res);
+  if (!studentId) return;
+  if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
   try {
     // ── 1. Reject duplicate concept submissions up front ──────────────────
@@ -408,6 +736,18 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
 
     const conceptById = new Map(concepts.map(c => [c.id, c]));
 
+    // ── 2b. Load the lesson glossary for the jargon check ─────────────────
+    // The paper's step 1 compares the explanation "against the main glossary
+    // list extracted during the document upload phase" — that list is every
+    // term extracted from the selected materials, not just the ones being
+    // explained. Terms only; definitions would balloon the prompt for nothing.
+    const { data: glossaryRows } = await supabaseAdmin
+      .from('concepts')
+      .select('term')
+      .in('material_id', material_ids);
+
+    const glossaryTerms = [...new Set((glossaryRows ?? []).map(r => r.term as string))];
+
     // ── 3. Build a single grounded prompt covering every concept ──────────
     const submissionBlock = explanations
       .map((e, i) => {
@@ -440,16 +780,39 @@ Grade EACH concept below on two INDEPENDENT axes:
 
 An explanation can score high on one axis and low on the other. Do not let one score drag the other. In particular: a true-but-empty answer scores mid on accuracy and low on simplicity, while a fluent-but-false answer scores low on accuracy and high on simplicity.
 
+EVERY piece of writing you produce is read by the student themselves, so ADDRESS THEM DIRECTLY as "you" and "your". Write "Your explanation captured...", never "The student's explanation captured...". Never refer to them in the third person and never call them "the student" — you are speaking to them, not reporting on them to someone else. Keep it warm, plain and direct, suitable for a Junior High School student.
+
 Also produce for each concept:
-- "jargon_found": array of terms from the student's own text that violate the simplicity rubric. Use the student's exact wording. NEVER include the concept's own Term (or its acronym) — the student was asked to explain it, so naming it is not jargon. Empty array if none.
-- "feedback": 2-4 encouraging sentences. Say what they got right, name any factual error explicitly, then say how to improve.
-- "analogy_idea": one concrete suggestion per the rubric. Empty string only if their explanation genuinely needs no improvement.
+- "jargon_found": array of terms from the student's own text that violate the simplicity rubric. Use the student's exact wording. Any term from the LESSON GLOSSARY below that the student used without unpacking it in plain words IS jargon for a 10-year-old and MUST be flagged — the glossary is this lesson's technical vocabulary, so a child has not met those words. Also flag technical terms outside that list. NEVER include the concept's own Term (or its acronym) — the student was asked to explain it, so naming it is not jargon. Empty array only if the answer genuinely contains no technical vocabulary at all.
+- "feedback": 2-4 encouraging sentences addressed to the student as "you". Say what they got right, name any factual error explicitly, then say how to improve.
+
+ANALOGY VERIFICATION — judge this from the student's own text, do not invent one for them:
+- "analogy_used": true ONLY if the student compared the concept to something from ORDINARY EVERYDAY LIFE that has nothing to do with this subject — castles, water in pipes, mailboxes, cooking, sport, a guard checking IDs at a door.
+
+  APPLY THIS TEST: could the comparison be understood by someone who has never studied this subject at all? If it needs subject knowledge, it is NOT an analogy.
+
+  The word "like" does NOT make something an analogy. Comparing one thing from this subject to another thing from the same subject is an IN-DOMAIN EXAMPLE, not an everyday comparison — mark it false.
+
+  Worked example of what to REJECT:
+    "Resilience is like when a server keeps running after a failure. For example, it's like a backup server taking over automatically."
+    → analogy_used: FALSE. It says "like" twice, but it compares computers to computers. A child who knows nothing about computers learns nothing from it.
+
+  Worked example of what to ACCEPT:
+    "Defense-in-depth is like a castle with a moat, then a wall, then guards inside."
+    → analogy_used: TRUE. Castles have nothing to do with computing, and any child pictures one instantly.
+
+  Also reject: restating the definition, naming a technical case, or listing an instance of the concept. If in doubt, FALSE.
+- "analogy_quote": if analogy_used is true, the student's comparison in THEIR OWN WORDS, quoted from their text. Empty string if analogy_used is false.
+- "analogy_idea": addressed to the student as "you". If analogy_used is true, one sentence on whether their comparison actually helps and how to sharpen it. If analogy_used is false, suggest one concrete everyday analogy a 10-year-old would grasp — phrase it as an invitation ("Try comparing it to..."), not as a report.
+
+LESSON GLOSSARY (technical vocabulary from this material):
+${glossaryTerms.join(', ') || '(none extracted)'}
 
 ${submissionBlock}
 
 Return ONLY a JSON object of this exact shape:
 {
-  "overall_feedback": "2-3 sentences summarising the submission as a whole.",
+  "overall_feedback": "2-3 sentences spoken TO the student about their submission as a whole, using 'you' and 'your'. Start from what they did, e.g. 'Your explanation of X was...' — never 'The student's explanation'.",
   "concepts": [
     {
       "concept_id": "<echo the concept_id exactly as given>",
@@ -457,6 +820,8 @@ Return ONLY a JSON object of this exact shape:
       "simplicity_score": 0,
       "jargon_found": ["..."],
       "feedback": "...",
+      "analogy_used": false,
+      "analogy_quote": "",
       "analogy_idea": "..."
     }
   ]
@@ -483,6 +848,21 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
         rawConcepts.find(rc => rc?.concept_id === e.concept_id) ?? rawConcepts[i] ?? {};
 
       const accuracyScore = clampScore(match.accuracy_score);
+
+      // Two independent ways a claimed analogy is rejected:
+      //   1. No quote — the model asserted one without producing the student's
+      //      words, so there is nothing to show and nothing to trust.
+      //   2. The quote is built from the lesson's own vocabulary, which makes it
+      //      an in-domain example rather than an everyday comparison.
+      // Either way a student is never told they did something they did not.
+      const analogyQuote = typeof match.analogy_quote === 'string' ? match.analogy_quote.trim() : '';
+      const claimedAnalogy = match.analogy_used === true && analogyQuote.length > 0;
+      const inDomain =
+        claimedAnalogy && analogyUsesLessonVocabulary(analogyQuote, glossaryTerms, concept.term);
+      const analogyUsed = claimedAnalogy && !inDomain;
+
+      const modelAnalogyIdea = typeof match.analogy_idea === 'string' ? match.analogy_idea : '';
+
       return {
         concept_id: concept.id,
         term: concept.term,
@@ -491,7 +871,9 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
         verdict: deriveVerdict(accuracyScore),
         jargon_found: stripSelfReferentialJargon(coerceStringArray(match.jargon_found), concept.term),
         feedback: typeof match.feedback === 'string' ? match.feedback : '',
-        analogy_idea: typeof match.analogy_idea === 'string' ? match.analogy_idea : '',
+        analogy_used: analogyUsed,
+        analogy_quote: analogyUsed ? analogyQuote : '',
+        analogy_idea: inDomain ? IN_DOMAIN_ANALOGY_NOTE : modelAnalogyIdea,
       };
     });
 
@@ -519,8 +901,10 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
     const { data: log, error: logError } = await supabaseAdmin
       .from('cognitive_logs')
       .insert({
+        student_id: studentId,
         space_id,
         concept_id: null,
+        material_ids,
         mode: 'feynman',
         user_input: userInput,
         similarity_score: accuracyScore / 100,
@@ -553,101 +937,6 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
     }
     res.status(500).json({ error: 'Failed to evaluate Feynman submission', message: err.message });
   }
-});
-
-/**
- * POST /api/cognitive/recall  (LEGACY — superseded by POST /api/cognitive/feynman)
- *
- * Scores a single concept via cosine similarity and writes prose (not JSON) to
- * `ai_feedback`. The Feynman tab no longer calls this. Retained only so any
- * older client keeps working; prefer /feynman for new work.
- *
- * Body: { concept_id, space_id, mode: 'feynman', user_input }
- */
-router.post('/recall', async (req: Request, res: Response): Promise<void> => {
-  const parsed = CognitiveReviewSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
-    return;
-  }
-
-  const { concept_id, space_id, mode, user_input } = parsed.data;
-
-  // 1. Fetch the target concept (with its stored embedding)
-  const { data: concept, error: conceptError } = await supabaseAdmin
-    .from('concepts')
-    .select('term, definition, embedding')
-    .eq('id', concept_id)
-    .single();
-
-  if (conceptError || !concept) {
-    res.status(404).json({ error: 'Concept not found' });
-    return;
-  }
-
-  if (!concept.embedding) {
-    res.status(400).json({ error: 'This concept does not have an embedding yet. Wait for material processing to complete.' });
-    return;
-  }
-
-  // 2. Embed the student's input
-  const userEmbedding = await generateEmbedding(user_input);
-  const refEmbedding = parseVector(concept.embedding);
-  const studentEmbedding = parseVector(userEmbedding);
-  const similarityScore = cosineSimilarity(refEmbedding, studentEmbedding);
-  const scorePercent = Math.round(Math.max(0, Math.min(1, similarityScore)) * 100);
-
-  // 3. Generate coaching feedback with Gemini
-  const feedbackPrompt = `
-You are a supportive academic tutor giving feedback on a student's Feynman Technique explanation.
-
-Concept: "${concept.term}"
-True Definition: "${concept.definition}"
-
-Student's Explanation:
-"${user_input}"
-
-Similarity Score: ${scorePercent}%
-
-Give concise, encouraging feedback (2–4 sentences) that:
-1. Acknowledges what the student got right
-2. Clarifies any gaps or misconceptions
-3. Reinforces the core concept
-
-Keep it friendly and academic.
-`;
-
-  const aiFeedback = await generateContent(feedbackPrompt);
-
-  // 4. Save to cognitive_logs
-  const { data: log, error: logError } = await supabaseAdmin
-    .from('cognitive_logs')
-    .insert({
-      space_id,
-      concept_id,
-      mode,
-      user_input,
-      similarity_score: similarityScore,
-      ai_feedback: aiFeedback,
-    })
-    .select()
-    .single();
-
-  if (logError) {
-    res.status(500).json({ error: 'Failed to save cognitive log', message: logError.message });
-    return;
-  }
-
-  res.status(201).json({
-    data: {
-      log_id: log.id,
-      similarity_score: similarityScore,
-      score_percent: scorePercent,
-      ai_feedback: aiFeedback,
-      concept: { term: concept.term, definition: concept.definition },
-    },
-    message: 'Recall scored successfully',
-  });
 });
 
 export default router;

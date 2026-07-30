@@ -36,7 +36,7 @@ Material Access Control: Only authenticated educators can upload learning resour
 3. Document Parsing & Semantic Storage (Course Resources Tab)
 
 Core Tables: materials, concepts
-AI Integration: Gemini API (text-embedding-004)
+AI Integration: Gemini API (gemini-embedding-001)
 
 Upload Flow:
   1. Educator uploads a PDF learning resource through the Educator Portal and selects the grade level(s) that can access it.
@@ -47,7 +47,7 @@ Processing Flow (Background Job):
   - A backend worker detects the pending material.
   - Extracts text from the document.
   - Uses Gemini/LLM to extract key terms and definitions.
-  - Calls Gemini Embeddings API to convert definitions into vector(768).
+  - Calls Gemini Embeddings API to convert definitions into vector(3072).
   - Inserts these into the concepts table.
   - Updates materials to completed.
 
@@ -89,12 +89,8 @@ Core Tables: cognitive_logs, concepts
 Logic Flow:
   - Student is prompted to type all the information they remember from their studied materials, without looking at any notes.
   - Student submits user_input (free-form text).
-  - Scoring: Backend converts user_input to a vector via Gemini Embeddings API. It runs a pgvector cosine similarity query (<=>) comparing the student's vector against the reference concept vectors. The resulting cosine similarity score is stored as similarity_score.
-  - AI Feedback: Backend sends the reference material context and the student's input to Gemini, prompting it to:
-      * Identify which concepts the student missed entirely.
-      * Flag areas where their understanding was incomplete or unclear.
-      * Provide constructive, actionable feedback.
-  - The ai_feedback text and similarity_score are stored in cognitive_logs and returned to the UI.
+  - Scoring: see Section 11 for the authoritative algorithm. In brief, the backend extracts the discrete concepts the student discussed, embeds each one separately, and scores coverage against the material's stored concepts. Cosine similarity is computed in the backend, NOT via a pgvector <=> query — an earlier design did the latter, and migration 0006 dropped the evaluate_recall() function that implemented it.
+  - The missed_concepts list and overall_verdict are stored in cognitive_logs.ai_feedback as a JSON string, alongside similarity_score.
   - Free Recall provides personalized explanations and feedback but does not directly update BKT mastery estimates.
 
 ---
@@ -107,11 +103,21 @@ Logic Flow:
   - Student is prompted to explain a concept from the educator-uploaded materials in their own words, as if teaching a 10-year-old child.
   - Student submits their explanation text.
   - AI Evaluation Pipeline (Three-Step Process):
-      1. Jargon Check: The AI scans the student's explanation and compares it against the main glossary list extracted during the document upload phase. If the student uses highly complex terms without breaking them down simply, the AI flags those words and tells the student to explain them in simpler terms.
-      2. Analogy Verification: The AI checks if the student used a helpful comparison or everyday story (analogy) to make the idea clear and easier to grasp.
+      1. Jargon Check: The AI scans the student's explanation and compares it against the main glossary list extracted during the document upload phase — every concept term belonging to the selected materials is passed into the grading prompt as that glossary. Terms from it that the student used without unpacking in plain words are flagged first; other technical vocabulary is flagged too. The concept's own term is never flagged (the student was asked to explain it), enforced both in the prompt and by stripSelfReferentialJargon() afterwards.
+      2. Analogy Verification: The AI checks whether the student used a helpful comparison or everyday story (analogy). It returns analogy_used, analogy_quote (the comparison in the student's own words), and analogy_idea — a verdict on their comparison, or one they could have used when there was none.
+         A claimed analogy is rejected on two independent grounds, so a student is never told they did something they did not:
+           (a) No quote. The model asserted one without producing the student's words, so there is nothing to show and nothing to trust.
+           (b) The quote is built from the lesson's own vocabulary, which makes it an in-domain example rather than an everyday comparison. analogyUsesLessonVocabulary() matches the quote against the material's glossary terms; when it fires, analogy_idea is replaced with IN_DOMAIN_ANALOGY_NOTE, because the model wrote its suggestion believing the comparison counted and it would otherwise read as praise under a "no comparison" heading.
+         Measured against the live model, the prompt alone did not hold: "it's like a backup server taking over automatically" was accepted as an everyday comparison for Resilience. Hence the code-level backstop, which holds regardless of which model grades.
+         The backstop matches WHOLE glossary terms only (with singular/plural tolerance in both directions), never their individual words. Splitting was tried and rejected: this material's glossary yields head nouns like "pages" (Web pages), "traffic" (HTTP/HTTPS traffic), "control" (Broken Access Control) and "waves" (Radio waves), so word-level matching would reject "like pages in a book" and "like traffic on a road" — exactly the analogies the feature exists to reward. The consequence is that a comparison sharing only a head noun ("a backup server") is left to the prompt. A false rejection is the worse error, since the student is then told to do something they already did.
+         The concept's own name is always excluded, so "Defense-in-depth is like a castle" stays valid even though Defense-in-depth is itself a glossary term.
       3. Finding the Gaps: The AI compares the student's simple explanation against the concept's true definition stored in the system to check whether anything is factually wrong, missing, or incomplete. It produces an accuracy score from 0 to 100 and a matching verdict of Correct, Needs Improvement, or Incorrect.
   - The AI writes short, encouraging feedback that points out what the student got right, names any factual errors directly, and tells them specifically how to improve.
-  - The ai_feedback is stored in cognitive_logs and surfaced to the student.
+  - Two independent axes are scored: accuracy_score (against the stored definition) and simplicity_score (against the audience rubric). A fluent but false explanation must not score well, and neither must a textbook-perfect one a child could not follow.
+  - The verdict is derived in the backend from accuracy_score (≥80 Correct, ≥30 Needs Improvement, else Incorrect), never taken from the model — asked for it directly, the model leaks the simplicity axis into it.
+  - Grading runs at temperature 0, so an identical resubmission cannot drift across a verdict band boundary.
+  - The audience is fixed at a 10-year-old child. FEYNMAN_AUDIENCES is a single-value enum so adding an audience later is one rubric plus one entry, not a data migration.
+  - The ai_feedback is stored in cognitive_logs as a JSON string and surfaced to the student.
   - The Feynman Technique provides personalized feedback but does not directly update BKT mastery estimates.
 
 ---
@@ -247,3 +253,16 @@ The Free Recall evaluation pipeline works as follows:
   3. Compare: Each reference concept from the DB is compared against all student concept vectors via cosine similarity. The highest score is taken as the best match.
   4. Grade: A reference concept is "Covered" if its best match score ≥ 0.70; otherwise "Missed".
   5. Score: similarity_score = coveredCount / totalConcepts (coverage ratio, NOT average of raw scores).
+
+Verdict bands: Strong ≥ 0.30, Partial ≥ 0.15, otherwise Needs Review.
+The denominator is every concept extracted from the selected materials, and extraction is granular — a single lesson produced 78 concepts, including supporting details ("radio waves", "light pulses") no student writes out from memory. Recalling a document well therefore lands near 20–30%, not 75%. The ratio is left honest and the bands are calibrated to it, rather than rescaling the score itself.
+
+Reproducibility: the concept-extraction call runs at temperature 0. It is the only sampling step in the scoring pipeline, so without it an identical resubmission would extract a different concept list and score differently.
+
+Written Feedback:
+  - After scoring, a second Gemini call writes three short pieces of coaching — strengths, gaps, next_steps — stored as written_feedback inside the ai_feedback JSON. No separate column.
+  - The prompt receives the student's raw text, the points extracted from it, the reference concepts they covered, and the ones they missed. Two students who score the same but wrote different things therefore receive different feedback.
+  - It is told NOT to recite the missed list. That list is generated against the whole document and is full of supporting detail nobody recalls from memory; the model picks the 2-3 ideas that actually matter and names those in plain language.
+  - Reproducibility is guaranteed by REUSE, not by temperature. Temperature 0 pins the score because extraction returns a structured list and the 0.70 threshold quantises the remainder — but free prose has no such quantisation, and in testing the same input reliably scored the same while producing reworded paragraphs. So before generating, findPreviousFeedback() looks for an earlier attempt by the same student with the same text, the same materials AND the same resulting score, and reuses its prose. Requiring the score to match means feedback is never reused after an educator changes the material underneath it.
+  - Failure is isolated. generateRecallFeedback() catches its own errors and returns null; the call sits outside the scoring try block and before the insert, so the row is still written with its score, verdict and missed list. The response carries feedback_unavailable: true and the tab shows a note instead of an error. Losing the feedback cannot cost the score.
+  - When extraction finds nothing recognisable in the submission, a fixed in-code message is used rather than an AI call — there is nothing personal to say, and a canned message cannot fail.

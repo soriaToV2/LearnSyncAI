@@ -121,6 +121,7 @@ LearnSyncAI/
 │   │           ├── FlashcardsTab.tsx   # Flashcards + spaced repetition
 │   │           ├── FreeRecallTab.tsx   # Free recall + AI evaluation
 │   │           ├── FeynmanTab.tsx      # Feynman technique
+│   │           ├── cognitiveShared.tsx # Layout shared by the two tabs above
 │   │           └── AdaptiveTestTab.tsx # Adaptive practice tests
 │   └── index.css                  # Tailwind config + design system tokens
 │
@@ -233,4 +234,24 @@ APP_URL=http://localhost:3000
 - **A study space's subject is fixed at creation.** `UpdateStudySpaceSchema` deliberately omits it.
 - **Peer sharing (CollabShare) is gone.** Migration 0003 removed it as contradicting the paper's data-isolation guarantee. Do not reintroduce `is_published`, `share_token`, `cloned_from_id`, or space cloning.
 - **`schema.sql` is the DB source of truth.** When DB changes are made, update `schema.sql` to reflect them.
-- **The `ai_feedback` column in `cognitive_logs` stores a JSON string.** Parse it with `JSON.parse()` before using it on the frontend.
+- **The `ai_feedback` column in `cognitive_logs` stores a JSON string.** Parse it with `JSON.parse()` before using it on the frontend. Treat every key inside it as optional — payloads have gained fields over time (`written_feedback`, `covered_count`, `analogy_used`), and older rows do not carry them.
+- **`cognitive_logs.student_id` is `NOT NULL`.** Set it on every insert. It is not defaulted and no trigger fills it in; omitting it fails the write *after* the AI work is already done and paid for.
+- **Free Recall and Feynman must never write mastery.** The paper's Scope section limits BKT updates to Adaptive Flashcards and Adaptive Test Mode. `bkt_mastery` has exactly one writer in the codebase: `practice.routes.ts`. Do not add a second from `cognitive.routes.ts`.
+- **AI feedback that a student is scored on must be reproducible.** Grading calls pass `temperature: 0`. That is enough to pin a *score* (structured output, then a threshold that quantises the remainder) but **not** enough to pin *prose* — measured against the live model, identical input reliably scored the same while rewording its paragraphs. Free Recall therefore reuses a previous identical attempt's feedback rather than regenerating it; see `findPreviousFeedback()`.
+- **A failed feedback call must never cost a student their score.** Generation is wrapped in its own `try/catch`, returns `null`, and sits outside the scoring block and before the insert. The row saves regardless and the response carries `feedback_unavailable`.
+
+---
+
+## Cognitive Tabs — Free Recall & Feynman
+
+Both tabs have a Study / History toggle in the header. **Submitting keeps you in Study** — the result replaces the composer where the student is already looking, rather than moving them into History. History is a view they choose: an always-visible attempts list beside the selected attempt (stacked on mobile).
+
+Each tab therefore tracks two selections, `resultLogId` (shown in Study after submitting) and `historyLogId` (clicked in the list). One shared variable would make the two views fight over it.
+
+Everything a student reads after submitting — the verdict banner, the feedback cards, the collapsible detail, the attempts list — comes from `src/pages/student/studySpaceTabs/cognitiveShared.tsx`, and both views render the result through the same `resultView()` helper, so there is one result layout rather than two. That file is used by those two tabs only; it is not part of the global design system.
+
+**Free Recall scoring is a coverage ratio against every concept in the material.** Extraction is granular — one lesson yielded 78 concepts, including supporting detail like "radio waves" that nobody recalls from memory — so good recall lands near 20–30%, not 75%. The verdict bands are calibrated to that (Strong ≥ 0.30, Partial ≥ 0.15); the ratio itself is left honest. The written feedback is explicitly instructed **not** to recite the missed list for the same reason, and the UI collapses it.
+
+**Feynman grades two independent axes.** `accuracy_score` (against the stored definition) drives the verdict and the ring; `simplicity_score` (against the audience rubric) is shown as a secondary bar. The verdict is derived in the backend from accuracy — asked for one directly, the model leaks the simplicity axis into it. The audience is fixed at a 10-year-old; `FEYNMAN_AUDIENCES` is a single-value enum so adding one later is a rubric, not a migration.
+
+**Every cognitive endpoint enforces ownership itself.** `requireOwnedSpace()` (404) then `rejectInaccessibleMaterials()` (403). `requireRole('student')` only proves the caller is *a* student — it says nothing about *whose* space or *which* grade's materials.

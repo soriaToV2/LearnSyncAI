@@ -1,7 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { Brain, History, PenTool, RefreshCw, Target, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Brain, RefreshCw, Target, CheckCircle2, XCircle, AlertTriangle, Sparkles, PenTool, History } from 'lucide-react';
 import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
 import { api } from '../../../lib/api';
+import {
+  CARD, LABEL, SECTION,
+  CognitiveTabShell, VerdictBanner, FeedbackCard, Collapsible, AttemptsList,
+  type AttemptSummary, type Tone, type ViewMode,
+} from './cognitiveShared';
 
 interface FreeRecallTabProps {
   availableResources: { id: string; title: string }[];
@@ -14,48 +19,97 @@ interface CognitiveLog {
   mode: 'free_recall';
   user_input: string;
   similarity_score: number | null;
-  ai_feedback: string | null; // Stored as JSON string: { missed_concepts: string[], overall_verdict: string }
+  ai_feedback: string | null; // JSON string — see ParsedFeedback
   created_at: string;
+}
+
+// Written coaching on the attempt. Null when generation failed — the score is
+// still saved, so the tab shows a note rather than treating it as an error.
+interface WrittenFeedback {
+  strengths: string;
+  gaps: string;
+  next_steps: string;
 }
 
 // Parsed feedback from the ai_feedback JSON column
 interface ParsedFeedback {
   missed_concepts: string[];
   overall_verdict: 'strong' | 'partial' | 'needs_review';
+  /** Absent on attempts logged before written feedback shipped. */
+  written_feedback?: WrittenFeedback | null;
+  /** Absent on attempts logged before the counts were recorded. */
+  covered_count?: number;
+  total_concepts?: number;
 }
 
 function parseFeedback(raw: string | null): ParsedFeedback {
-  if (!raw) return { missed_concepts: [], overall_verdict: 'partial' };
+  const fallback: ParsedFeedback = { missed_concepts: [], overall_verdict: 'partial', written_feedback: null };
+  if (!raw) return fallback;
   try {
-    return JSON.parse(raw) as ParsedFeedback;
+    const parsed = JSON.parse(raw) as ParsedFeedback;
+    return { ...parsed, written_feedback: parsed.written_feedback ?? null };
   } catch {
-    return { missed_concepts: [], overall_verdict: 'partial' };
+    return fallback;
   }
 }
 
-// ── Shared minimalist style tokens ──────────────────────────
-const CARD = 'bg-surface-container-lowest/40 rounded-2xl';
-const LABEL = 'font-sans text-[11px] font-semibold text-slate-500 uppercase tracking-wider';
-const SECTION = 'font-sans text-xs font-semibold text-slate-400 uppercase tracking-widest';
+const VERDICT: Record<string, { label: string; tone: Tone }> = {
+  strong: { label: 'Strong Coverage', tone: 'good' },
+  partial: { label: 'Partial Coverage', tone: 'mid' },
+  needs_review: { label: 'Needs Review', tone: 'poor' },
+};
+
+/**
+ * Plain sentence under the verdict.
+ *
+ * The old copy read "Based on cosine similarity against your material's
+ * concepts", which tells a Junior High student nothing. The counts do the
+ * explaining instead: 23% reads very differently next to "15 of 78 ideas".
+ */
+function verdictDescription(f: ParsedFeedback, verdict: string): string {
+  const covered = f.covered_count;
+  const total = f.total_concepts;
+  const counts = covered !== undefined && total !== undefined
+    ? `You covered ${covered} of the ${total} ideas in this material. `
+    : '';
+
+  if (verdict === 'strong') return `${counts}You recalled the main ideas of this lesson well.`;
+  if (verdict === 'partial') return `${counts}You remembered a fair amount — there is more to pick up.`;
+  return `${counts}Not much of this lesson came back yet. That is what practice is for.`;
+}
 
 export default function FreeRecallTab({ availableResources, spaceId }: FreeRecallTabProps) {
   const resourceOptions = availableResources.map(r => r.title);
 
-  const [viewMode, setViewMode] = useState<'study' | 'history'>('study');
+  const [viewMode, setViewMode] = useState<ViewMode>('study');
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
 
-  // Study State
+  // Composer state
   const [recallText, setRecallText] = useState('');
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evalError, setEvalError] = useState<string | null>(null);
 
-  // History / Logs State
+  // Two separate selections, deliberately. `resultLogId` is the attempt you
+  // just submitted and is shown inside Study, so submitting never moves you
+  // somewhere else. `historyLogId` is whatever you clicked in the History
+  // list. Sharing one variable would make the two views fight over it.
   const [historyLogs, setHistoryLogs] = useState<CognitiveLog[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [activeLogId, setActiveLogId] = useState<string | null>(null);
+  const [resultLogId, setResultLogId] = useState<string | null>(null);
+  const [historyLogId, setHistoryLogId] = useState<string | null>(null);
+  const [showMissed, setShowMissed] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
 
+  const activeLogId = viewMode === 'study' ? resultLogId : historyLogId;
   const activeLog = historyLogs.find(log => log.id === activeLogId);
   const activeFeedback = activeLog ? parseFeedback(activeLog.ai_feedback) : null;
+
+  const switchView = (mode: ViewMode) => {
+    setViewMode(mode);
+    if (mode === 'history') setHistoryLogId(null);
+    setShowMissed(false);
+    setShowAnswer(false);
+  };
 
   // ── Load history on mount ─────────────────────────────────
   useEffect(() => {
@@ -78,7 +132,6 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
     .filter(r => selectedDocs.includes(r.title))
     .map(r => r.id);
 
-  // ── Evaluate recall via real API ─────────────────────────
   const handleEvaluate = async () => {
     if (!recallText.trim() || selectedMaterialIds.length === 0) return;
     setIsEvaluating(true);
@@ -89,8 +142,12 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
         log_id: string;
         similarity_score: number;
         score_percent: number;
+        covered_count: number;
+        total_concepts: number;
         missed_concepts: string[];
         overall_verdict: 'strong' | 'partial' | 'needs_review';
+        written_feedback: WrittenFeedback | null;
+        feedback_unavailable: boolean;
         created_at: string;
       }>('/cognitive/free-recall', {
         space_id: spaceId,
@@ -100,7 +157,8 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
 
       const result = res.data;
 
-      // Build a CognitiveLog entry matching the API shape so we can display it immediately
+      // Mirror the API shape into a log entry so the result renders from the
+      // same code path as a past attempt — one layout, not two.
       const newLog: CognitiveLog = {
         id: result.log_id,
         mode: 'free_recall',
@@ -109,25 +167,31 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
         ai_feedback: JSON.stringify({
           missed_concepts: result.missed_concepts,
           overall_verdict: result.overall_verdict,
+          written_feedback: result.written_feedback ?? null,
+          covered_count: result.covered_count,
+          total_concepts: result.total_concepts,
         }),
         created_at: result.created_at ?? new Date().toISOString(),
       };
 
       setHistoryLogs(prev => [newLog, ...prev]);
-      setActiveLogId(newLog.id);
-      setViewMode('history');
+      // Stays in Study — the result replaces the composer where the student
+      // is already looking, rather than moving them into History.
+      setResultLogId(newLog.id);
+      setShowMissed(false);
+      setShowAnswer(false);
       setRecallText('');
-    } catch (err: any) {
-      const message = err?.response?.data?.error ?? err?.message ?? 'Something went wrong.';
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Something went wrong.';
       setEvalError(message);
     } finally {
       setIsEvaluating(false);
     }
   };
 
-  const switchView = (mode: 'study' | 'history') => {
-    setViewMode(mode);
-    setActiveLogId(null);
+  const startNewAttempt = () => {
+    setResultLogId(null);
+    setEvalError(null);
   };
 
   const formatDate = (isoString: string) => {
@@ -135,238 +199,214 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   };
 
-  const verdictLabel: Record<string, string> = {
-    strong: 'Strong Coverage',
-    partial: 'Partial Coverage',
-    needs_review: 'Needs Review',
-  };
+  const attempts: AttemptSummary[] = historyLogs.map(log => {
+    const f = parseFeedback(log.ai_feedback);
+    return {
+      id: log.id,
+      dateLabel: formatDate(log.created_at),
+      scoreLabel: `${Math.round((log.similarity_score ?? 0) * 100)}%`,
+      scoreTone: VERDICT[f.overall_verdict]?.tone ?? 'mid',
+      preview: log.user_input,
+    };
+  });
 
-  const verdictColor = (verdict: string) =>
-    verdict === 'strong' ? 'text-emerald-400' :
-    verdict === 'partial' ? 'text-amber-400' :
-    'text-red-400';
-
-  return (
-    <div className="animate-in fade-in duration-300 h-[calc(100vh-140px)] flex flex-col">
-      {/* ─── Header ───────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-5 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center shrink-0">
-            <Brain className="w-5 h-5 text-primary-fixed-dim" />
-          </div>
-          <div>
-            <h2 className="font-display text-xl font-semibold text-white tracking-tight">
-              Free Recall
-            </h2>
-            <p className="font-sans text-xs text-slate-500 mt-0.5">
-              Type everything you remember; AI computes the concept coverage gap.
-            </p>
-          </div>
-        </div>
-
-        {/* Segmented Study / History control */}
-        <div className="inline-flex items-center gap-1 p-1 bg-surface-container-lowest/60 rounded-xl self-start sm:self-auto">
-          <button
-            onClick={() => switchView('study')}
-            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg font-sans text-xs font-semibold transition-colors ${
-              viewMode === 'study' ? 'bg-surface-container-high text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <PenTool className="w-3.5 h-3.5" /> Study
-          </button>
-          <button
-            onClick={() => switchView('history')}
-            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg font-sans text-xs font-semibold transition-colors ${
-              viewMode === 'history' ? 'bg-surface-container-high text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" /> History
-          </button>
-        </div>
-      </div>
-
-      {/* ─── Main Content Area ─────────────────────────────── */}
-      <div className="flex-1 min-h-0 pt-6">
-        {viewMode === 'study' ? (
-          // STUDY MODE (Minimalist Editor)
-          <div className="h-full flex flex-col max-w-4xl mx-auto animate-in fade-in">
-            {/* Toolbar: Material */}
-            <div className="flex flex-col items-start gap-1.5 mb-4">
-              <span className={LABEL}>Material</span>
-              <MultiSelectDropdown
-                selectedValues={selectedDocs}
-                onChange={setSelectedDocs}
-                options={resourceOptions}
-                placeholder="Select materials..."
+  // The result view, shared by both places it can appear: inside Study right
+  // after submitting, and inside History when an attempt is selected.
+  const resultView = (log: CognitiveLog, feedback: ParsedFeedback, showWriteAnother: boolean) => {
+    const activeFeedback = feedback;
+    const activeLog = log;
+    return (
+            <div className="space-y-5 animate-in fade-in duration-300">
+              <VerdictBanner
+                score={Math.round((activeLog.similarity_score ?? 0) * 100)}
+                scoreSuffix="%"
+                tone={VERDICT[activeFeedback.overall_verdict]?.tone ?? 'mid'}
+                verdictLabel={VERDICT[activeFeedback.overall_verdict]?.label ?? 'Result'}
+                description={verdictDescription(activeFeedback, activeFeedback.overall_verdict)}
               />
-            </div>
 
-            {evalError && (
-              <div className="mb-4 flex items-center gap-2 bg-red-500/10 rounded-xl px-4 py-3 text-red-400 text-sm">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                {evalError}
-              </div>
-            )}
-
-            <div className={`${CARD} flex-1 flex flex-col min-h-0 p-5`}>
-              <textarea
-                value={recallText}
-                onChange={(e) => setRecallText(e.target.value)}
-                placeholder={selectedMaterialIds.length === 0 ? 'Select a material above to begin your recall...' : 'Start typing everything you remember...'}
-                disabled={isEvaluating}
-                className="flex-1 w-full bg-transparent border-none outline-none font-sans text-lg text-slate-200 placeholder:text-slate-600 resize-none no-scrollbar disabled:opacity-50"
-                autoFocus
-              />
-            </div>
-
-            <div className="py-4 flex items-center justify-between shrink-0">
-              <span className="font-sans text-xs text-slate-500 font-medium">
-                {recallText.split(/\s+/).filter(Boolean).length} words
-              </span>
-              <button
-                onClick={handleEvaluate}
-                disabled={!recallText.trim() || isEvaluating || selectedMaterialIds.length === 0}
-                className="px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {isEvaluating ? (
-                  <><RefreshCw className="w-4 h-4 animate-spin" /> Analyzing...</>
-                ) : (
-                  'Evaluate Recall'
-                )}
-              </button>
-            </div>
-          </div>
-        ) : (
-          // HISTORY MODE
-          <div className="h-full flex gap-6 animate-in fade-in">
-            {/* Sidebar List */}
-            <div className="w-[300px] flex flex-col border-r border-white/5 pr-6 h-full shrink-0">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className={SECTION}>Past Attempts</h3>
-                <span className="text-slate-500 text-xs font-medium">{historyLogs.length}</span>
-              </div>
-
-              <div className="flex-1 overflow-y-auto space-y-1 pr-2 no-scrollbar">
-                {isLoadingHistory ? (
-                  <div className="flex items-center justify-center mt-10">
-                    <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />
-                  </div>
-                ) : historyLogs.length === 0 ? (
-                  <p className="text-sm text-slate-500 font-sans text-center mt-10">No past attempts yet.</p>
-                ) : (
-                  historyLogs.map(log => {
-                    const feedback = parseFeedback(log.ai_feedback);
-                    const score = log.similarity_score ?? 0;
-                    return (
-                      <button
-                        key={log.id}
-                        onClick={() => setActiveLogId(log.id)}
-                        className={`w-full text-left p-3.5 rounded-xl transition-colors ${
-                          activeLogId === log.id
-                            ? 'bg-primary-fixed-dim/10'
-                            : 'hover:bg-white/[0.03]'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                            {formatDate(log.created_at)}
-                          </span>
-                          <span className={`text-xs font-bold ${verdictColor(feedback.overall_verdict)}`}>
-                            {Math.round(score * 100)}%
-                          </span>
-                        </div>
-                        <p className="font-sans text-sm text-slate-400 line-clamp-2 leading-relaxed">
-                          {log.user_input}
-                        </p>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {/* Detail View */}
-            <div className="flex-1 h-full overflow-y-auto no-scrollbar pb-10">
-              {activeLog && activeFeedback ? (
-                <div className="max-w-3xl animate-in fade-in slide-in-from-right-4 duration-300 space-y-6">
-
-                  {/* Score Overview */}
-                  <div className={`${CARD} p-6 flex items-center gap-6`}>
-                    <div className="relative shrink-0 flex items-center justify-center w-[88px] h-[88px]">
-                      <svg className="absolute inset-0 w-full h-full -rotate-90">
-                        <circle cx="44" cy="44" r="36" fill="none" stroke="currentColor" strokeWidth="6" className="text-white/5" />
-                        <circle
-                          cx="44" cy="44" r="36"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="6"
-                          strokeLinecap="round"
-                          strokeDasharray={226.2}
-                          strokeDashoffset={226.2 - (226.2 * (activeLog.similarity_score ?? 0))}
-                          className={verdictColor(activeFeedback.overall_verdict)}
-                        />
-                      </svg>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="font-display text-2xl font-bold text-white">
-                          {Math.round((activeLog.similarity_score ?? 0) * 100)}<span className="text-sm text-slate-400">%</span>
-                        </span>
-                      </div>
-                    </div>
-                    <div>
-                      <h3 className="font-sans text-base font-semibold text-white flex items-center gap-2">
-                        <Target className="w-4 h-4 text-primary-fixed-dim" />
-                        Concept Coverage Score
-                      </h3>
-                      <p className={`font-sans text-sm font-semibold mt-1 ${verdictColor(activeFeedback.overall_verdict)}`}>
-                        {verdictLabel[activeFeedback.overall_verdict]}
-                      </p>
-                      <p className="font-sans text-xs text-slate-500 mt-1">
-                        Based on cosine similarity against your material's concepts.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Missed Concepts */}
-                  <div>
-                    <h4 className={`${SECTION} mb-3`}>Missed Concepts</h4>
-                    {activeFeedback.missed_concepts.length === 0 ? (
-                      <div className="flex items-center gap-2 text-emerald-400 bg-emerald-400/10 px-4 py-2.5 rounded-xl w-fit">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span className="font-sans text-sm font-medium">All concepts covered</span>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        {activeFeedback.missed_concepts.map((concept, i) => (
-                          <div key={i} className="flex items-center gap-3 p-3.5 rounded-xl bg-red-500/5">
-                            <XCircle className="w-4 h-4 text-red-400 shrink-0" />
-                            <span className="font-sans text-sm text-slate-300 font-medium">{concept}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Original Input */}
-                  <div>
-                    <h4 className={`${SECTION} mb-3`}>Your Recall</h4>
-                    <div className={`${CARD} p-5`}>
-                      <p className="font-sans text-sm leading-loose text-slate-400 whitespace-pre-wrap">
-                        {activeLog.user_input}
-                      </p>
-                    </div>
-                  </div>
-
+              {activeFeedback.written_feedback ? (
+                <div className="space-y-3">
+                  <h4 className={SECTION}>Feedback</h4>
+                  {activeFeedback.written_feedback.strengths && (
+                    <FeedbackCard
+                      icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                      label="What you recalled well"
+                      tone="text-emerald-400"
+                    >
+                      {activeFeedback.written_feedback.strengths}
+                    </FeedbackCard>
+                  )}
+                  {activeFeedback.written_feedback.gaps && (
+                    <FeedbackCard
+                      icon={<Target className="w-3.5 h-3.5" />}
+                      label="What to look at again"
+                      tone="text-amber-400"
+                    >
+                      {activeFeedback.written_feedback.gaps}
+                    </FeedbackCard>
+                  )}
+                  {activeFeedback.written_feedback.next_steps && (
+                    <FeedbackCard
+                      icon={<Sparkles className="w-3.5 h-3.5" />}
+                      label="Try this next"
+                      tone="text-primary-fixed-dim"
+                    >
+                      {activeFeedback.written_feedback.next_steps}
+                    </FeedbackCard>
+                  )}
                 </div>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-center text-slate-500">
-                  <History className="w-10 h-10 mb-4 opacity-20" />
-                  <p className="font-sans text-sm">Select a past attempt to view its concept coverage and missed terms.</p>
+                <div className="flex items-start gap-2.5 bg-white/[0.03] rounded-xl px-4 py-3">
+                  <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                  <p className="font-sans text-sm text-slate-400 leading-relaxed">
+                    Your score is saved. The written feedback couldn't be generated this time —
+                    submit again if you'd like to try for it.
+                  </p>
+                </div>
+              )}
+
+              <Collapsible
+                title="Ideas you didn't mention"
+                count={activeFeedback.missed_concepts.length}
+                open={showMissed}
+                onToggle={() => setShowMissed(v => !v)}
+              >
+                {activeFeedback.missed_concepts.length === 0 ? (
+                  <div className="flex items-center gap-2 text-emerald-400 bg-emerald-400/10 px-4 py-2.5 rounded-xl w-fit">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span className="font-sans text-sm font-medium">All concepts covered</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {activeFeedback.missed_concepts.map((concept, i) => (
+                      <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-red-500/5">
+                        <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                        <span className="font-sans text-sm text-slate-300 font-medium">{concept}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Collapsible>
+
+              <Collapsible
+                title="Your answer"
+                open={showAnswer}
+                onToggle={() => setShowAnswer(v => !v)}
+              >
+                <div className={`${CARD} p-5`}>
+                  <p className="font-sans text-sm leading-loose text-slate-400 whitespace-pre-wrap">
+                    {activeLog.user_input}
+                  </p>
+                </div>
+              </Collapsible>
+
+              {showWriteAnother && (
+                <div className="pt-2">
+                  <button
+                    onClick={startNewAttempt}
+                    className="w-full sm:w-auto px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all flex items-center justify-center gap-2"
+                  >
+                    <PenTool className="w-4 h-4" /> Write another
+                  </button>
                 </div>
               )}
             </div>
+    );
+  };
+
+  const composer = (
+            <div className="animate-in fade-in">
+              <div className="flex flex-col items-start gap-1.5 mb-4">
+                <span className={LABEL}>Material</span>
+                <MultiSelectDropdown
+                  selectedValues={selectedDocs}
+                  onChange={setSelectedDocs}
+                  options={resourceOptions}
+                  placeholder="Select materials..."
+                />
+              </div>
+
+              {evalError && (
+                <div className="mb-4 flex items-start gap-2 bg-red-500/10 rounded-xl px-4 py-3 text-red-400 text-sm">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span className="font-sans">{evalError}</span>
+                </div>
+              )}
+
+              <div className={`${CARD} p-5`}>
+                <textarea
+                  value={recallText}
+                  onChange={(e) => setRecallText(e.target.value)}
+                  placeholder={
+                    selectedMaterialIds.length === 0
+                      ? 'Select a material above to begin your recall...'
+                      : 'Start typing everything you remember...'
+                  }
+                  disabled={isEvaluating}
+                  className="w-full min-h-[45vh] bg-transparent border-none outline-none font-sans text-base sm:text-lg text-slate-200 placeholder:text-slate-600 resize-none no-scrollbar disabled:opacity-50"
+                  autoFocus
+                />
+              </div>
+
+              <div className="py-4 flex items-center justify-between gap-4">
+                <span className="font-sans text-xs text-slate-500 font-medium">
+                  {recallText.split(/\s+/).filter(Boolean).length} words
+                </span>
+                <button
+                  onClick={handleEvaluate}
+                  disabled={!recallText.trim() || isEvaluating || selectedMaterialIds.length === 0}
+                  className="px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isEvaluating ? (
+                    <><RefreshCw className="w-4 h-4 animate-spin" /> Analyzing...</>
+                  ) : (
+                    'Evaluate Recall'
+                  )}
+                </button>
+              </div>
+            </div>
+  );
+
+  return (
+    <CognitiveTabShell
+      icon={<Brain className="w-5 h-5 text-primary-fixed-dim" />}
+      title="Free Recall"
+      subtitle="Write everything you remember, without looking."
+      viewMode={viewMode}
+      onViewModeChange={switchView}
+    >
+      {viewMode === 'study' ? (
+        <div className="max-w-3xl mx-auto h-full overflow-y-auto no-scrollbar pb-10">
+          {activeLog && activeFeedback ? resultView(activeLog, activeFeedback, true) : composer}
+        </div>
+      ) : (
+        <div className="h-full flex flex-col sm:flex-row gap-6 animate-in fade-in">
+          <AttemptsList
+            title="Past Attempts"
+            attempts={attempts}
+            activeId={historyLogId}
+            isLoading={isLoadingHistory}
+            emptyLabel="No past attempts yet."
+            onSelect={(id) => {
+              setHistoryLogId(id);
+              setShowMissed(false);
+              setShowAnswer(false);
+            }}
+          />
+
+          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10">
+            {activeLog && activeFeedback ? (
+              <div className="max-w-3xl">{resultView(activeLog, activeFeedback, false)}</div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 py-20">
+                <History className="w-10 h-10 mb-4 opacity-20" />
+                <p className="font-sans text-sm">Select a past attempt to view its score and feedback.</p>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </CognitiveTabShell>
   );
 }

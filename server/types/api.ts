@@ -172,21 +172,47 @@ export const FreeRecallSchema = z.object({
 });
 export type FreeRecallInput = z.infer<typeof FreeRecallSchema>;
 
-// Kept for legacy Feynman Technique usage
-export const CognitiveReviewSchema = z.object({
-  space_id: z.string().uuid(),
-  concept_id: z.string().uuid().optional().nullable(),  // Optional for whole-material evaluation
-  mode: z.enum(['free_recall', 'feynman']),
-  user_input: z.string().min(1),
-});
-export type CognitiveReviewInput = z.infer<typeof CognitiveReviewSchema>;
+/**
+ * Written coaching on a Free Recall attempt, nested inside the `ai_feedback`
+ * JSON string as `written_feedback`.
+ *
+ * Optional everywhere it is read: generation is allowed to fail without taking
+ * the score down with it, and attempts logged before this shipped have none.
+ */
+export interface FreeRecallWrittenFeedback {
+  /** What they actually recalled well, referring to their own words. */
+  strengths: string;
+  /** The gaps that matter, in plain language — not the raw missed list. */
+  gaps: string;
+  /** One concrete thing to review next. */
+  next_steps: string;
+}
+
+/** Full payload stored in `cognitive_logs.ai_feedback` for a Free Recall attempt. */
+export interface FreeRecallFeedback {
+  missed_concepts: string[];
+  overall_verdict: 'strong' | 'partial' | 'needs_review';
+  written_feedback: FreeRecallWrittenFeedback | null;
+  /**
+   * Stored so a past attempt can say "covered 15 of 78" without recomputing.
+   * Optional: attempts logged before this shipped carry neither.
+   */
+  covered_count?: number;
+  total_concepts?: number;
+}
 
 // ── Feynman Technique ─────────────────────────────────────
 
-export const FEYNMAN_AUDIENCES = ['10yr_old', 'self'] as const;
+/**
+ * The paper specifies exactly one audience — "a 10-year-old child" — so the
+ * rubric is fixed. Kept as a single-value enum rather than dropped entirely:
+ * every stored `ai_feedback` payload records which rubric graded it, so a
+ * future audience is one entry here plus one rubric, not a data migration.
+ */
+export const FEYNMAN_AUDIENCES = ['10yr_old'] as const;
 
 /**
- * A Feynman submission explains one or more concepts to a chosen audience.
+ * A Feynman submission explains one or more concepts to the target audience.
  * Only `concept_id` is accepted — the authoritative `term` and `definition`
  * are looked up server-side so a client cannot grade itself against a
  * definition it invented.
@@ -194,7 +220,7 @@ export const FEYNMAN_AUDIENCES = ['10yr_old', 'self'] as const;
 export const FeynmanEvaluationSchema = z.object({
   space_id: z.string().uuid(),
   material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
-  audience: z.enum(FEYNMAN_AUDIENCES),
+  audience: z.enum(FEYNMAN_AUDIENCES).default('10yr_old'),
   explanations: z
     .array(
       z.object({
@@ -218,6 +244,16 @@ export interface FeynmanConceptResult {
   verdict: FeynmanVerdict;
   jargon_found: string[];
   feedback: string;
+
+  // ── Analogy Verification (pipeline step 2) ──────────────────────────────
+  // Using an everyday comparison already moved `simplicity_score`, because the
+  // rubric tells the model to reward one. These three fields make that visible:
+  // the student is told whether they used one, which one, and whether it lands.
+  /** Did the student's own explanation contain an everyday comparison? */
+  analogy_used: boolean;
+  /** The student's comparison in their own words. Empty when none was used. */
+  analogy_quote: string;
+  /** Verdict on their analogy, or — when none was used — one they could try. */
   analogy_idea: string;
 }
 
