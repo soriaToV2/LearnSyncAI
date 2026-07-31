@@ -2,10 +2,9 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateFlashcardsFromConcepts } from '../lib/groq';
 import { generateEmbedding } from '../lib/gemini';
 import {
-  CreateMaterialSchema, GenerateFlashcardsSchema,
+  CreateMaterialSchema,
   CreateConceptSchema, UpdateConceptSchema,
 } from '../types/api';
 import { extractPdfPages, type PdfPage } from '../lib/pdfText';
@@ -517,72 +516,14 @@ router.get('/:id/status', requireMaterialAccess(), async (req: Request, res: Res
   res.json({ data });
 });
 
-/**
- * POST /api/materials/generate-flashcards
- *
- * Generates AI flashcard pairs from the pre-extracted concepts of the selected materials.
- *
- * Flow:
- * 1. Validate the request body (material_ids)
- * 2. Fetch all concepts from the concepts table WHERE material_id IN (...)
- * 3. Pass concepts to Groq llama-3.3-70b-versatile via generateFlashcardsFromConcepts()
- * 4. Return { title, description, cards: [{ front, back }] } to the frontend
- *
- * Body: { material_ids: string[] }
- */
-router.post('/generate-flashcards', async (req: Request, res: Response): Promise<void> => {
-  const parsed = GenerateFlashcardsSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
-    return;
-  }
-
-  const { material_ids, format } = parsed.data;
-
-  // Flashcards are generated from concept text, so the same access rule applies
-  // as for reading the concepts directly.
-  if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
-
-  // 1. Fetch all concepts for the selected materials
-  const { data: concepts, error: conceptsError } = await supabaseAdmin
-    .from('concepts')
-    .select('term, definition')
-    .in('material_id', material_ids)
-    .order('created_at', { ascending: true });
-
-  if (conceptsError) {
-    res.status(500).json({ error: 'Failed to fetch concepts', message: conceptsError.message });
-    return;
-  }
-
-  if (!concepts || concepts.length === 0) {
-    res.status(422).json({
-      error: 'No concepts found',
-      message: 'The selected materials have no extracted concepts yet. Please wait for processing to complete.',
-    });
-    return;
-  }
-
-  console.log(`[Flashcard Generation] 🃏 Generating flashcards from ${concepts.length} concepts across ${material_ids.length} material(s)`);
-
-  // 2. Generate flashcards using Groq
-  try {
-    const result = await generateFlashcardsFromConcepts(concepts, format);
-
-    console.log(`[Flashcard Generation] ✅ Generated ${result.cards.length} flashcards`);
-
-    res.status(200).json({
-      data: result,
-      message: `Generated ${result.cards.length} flashcards from ${concepts.length} concepts`,
-    });
-  } catch (err: any) {
-    console.error('[Flashcard Generation] ❌ Error:', err.message);
-    res.status(500).json({
-      error: 'Flashcard generation failed',
-      message: err.message ?? 'Unknown error from Groq',
-    });
-  }
-});
+// Flashcard generation used to live here: it asked Groq to rewrite every concept
+// into a question/answer pair and handed the result to the browser to save.
+// It is now POST /api/spaces/:id/decks/:deckId/generate, which builds cards from
+// the concept rows verbatim and writes them itself. Three reasons it moved:
+// the educator vets concepts, so a model paraphrase put unvetted text in front of
+// students; the prompt asked for one card per concept but capped at 4096 tokens,
+// which truncates on a real material; and free-form pairs cannot be traced back
+// to a concept_id, which is the one thing BKT needs.
 
 // ── Background Processing ──────────────────────────────────
 

@@ -116,18 +116,28 @@ export interface Flashcard {
   deck_id: string | null;
   term: string;
   definition: string;
-  is_ai_generated: boolean | null;
-  next_review_at: string | null;   // ISO timestamp — when to show this card next
-  ease_rating: EaseRating | null;  // Last self-rating by the student
+  is_ai_generated: boolean | null;  // True only where the model wrote the front
+  concept_id: string | null;        // Concept this card assesses — what BKT hangs on
+  source_material_id: string | null;// Material it was generated from
+  next_review_at: string | null;    // ISO timestamp — due when this is <= now
+  ease_rating: EaseRating | null;   // Last self-rating by the student
   created_at: string;
 }
 
-/** public.spaced_repetition_logs — records every flashcard rating event */
+/**
+ * public.spaced_repetition_logs — one row per rating that COUNTED.
+ *
+ * Practice ratings (the card was not due) are deliberately absent: they are not
+ * scheduled retrievals, so they are neither evidence nor schedule changes.
+ */
 export interface SpacedRepetitionLog {
   id: string;
   student_id: string | null;
   flashcard_id: string | null;
-  rating: EaseRating;              // easy=4d, medium=3d, hard=1d until next review
+  concept_id: string | null;       // Denormalised from the card so BKT can join directly
+  rating: EaseRating;              // easy=7d, medium=3d, hard=1d until next review
+  interval_days: 1 | 3 | 7;        // Leitner tier applied — CHECK (interval_days IN (1,3,7))
+  next_review_at: string | null;   // Where this rating pushed the card to
   reviewed_at: string;
 }
 

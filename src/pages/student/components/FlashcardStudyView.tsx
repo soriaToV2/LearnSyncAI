@@ -8,6 +8,8 @@ interface Flashcard {
   id: number | string;
   front: string;
   back: string;
+  /** Material this card came from, shown as a quiet label. */
+  source?: string;
 }
 
 type EaseRating = 'easy' | 'medium' | 'hard';
@@ -15,19 +17,26 @@ type EaseRating = 'easy' | 'medium' | 'hard';
 interface CardSession {
   cardId: number | string;
   rating: EaseRating;
+  /** Whether the server actually rescheduled it — false when it wasn't due. */
+  counted?: boolean;
 }
 
 interface FlashcardStudyViewProps {
   cards: Flashcard[];
   deckTitle: string;
   onExit: () => void;
-  studentId?: string;
+  /**
+   * A round the student chose to run over cards that are not due — "Practice
+   * all", or re-drilling cards they just rated. Ratings are still sent (a
+   * practice round can contain genuinely due cards, and those must schedule),
+   * but the UI says up front that most of them will not count.
+   */
+  isPractice?: boolean;
 }
 
 // ─── Spaced Repetition Config ─────────────────────────────────────────────────
-// Easy  → next review in 4 days
-// Medium→ next review in 3 days
-// Hard  → next review in 1 day
+// Leitner tiers, matching REVIEW_INTERVALS in server/lib/reviewSchedule.ts and
+// the interval_days CHECK constraint. Easy = 7, Medium = 3, Hard = 1.
 
 const RATING_CONFIG: Record<EaseRating, {
   label: string;
@@ -68,7 +77,7 @@ const RATING_CONFIG: Record<EaseRating, {
   easy: {
     label: 'Easy',
     sublabel: 'Review in 7 days',
-    days: 4,
+    days: 7,
     icon: <Zap className="w-5 h-5" />,
     containerClass: 'bg-emerald-500/10',
     borderClass: 'border-emerald-500/25',
@@ -85,7 +94,7 @@ export default function FlashcardStudyView({
   cards,
   deckTitle,
   onExit,
-  studentId,
+  isPractice = false,
 }: FlashcardStudyViewProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -97,6 +106,12 @@ export default function FlashcardStudyView({
   const [isSaving, setIsSaving] = useState(false);
   // Track which rating was chosen on current card for animation feedback
   const [selectedRating, setSelectedRating] = useState<EaseRating | null>(null);
+  // A rating the server refused. Shown to the student rather than swallowed —
+  // silently dropping it would leave them believing the card was scheduled.
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Starts from the prop, but a retry round turns it on: those cards were rated
+  // moments ago, so they are no longer due and can no longer count.
+  const [practiceRound, setPracticeRound] = useState(isPractice);
 
   // ── Rating handler ──────────────────────────────────────────────────────────
 
@@ -106,18 +121,30 @@ export default function FlashcardStudyView({
     setIsAnimating(true);
     setSelectedRating(rating);
     setIsSaving(true);
+    setSaveError(null);
 
     const card = studyCards[currentIndex];
 
-    // Fire-and-forget: log to backend (non-blocking — don't await)
-    if (studentId) {
-      api.post('/flashcards/rate', {
-        flashcard_id: card.id,
-        rating,
-      }).catch(() => {/* silent fail — offline resilient */});
-    }
+    // Every rating is posted, even in a practice round — a practice session can
+    // still contain genuinely due cards, and those must be scheduled. The server
+    // owns the decision and answers `counted`; the client only reports it.
+    //
+    // Not awaited — the card advances immediately either way, so a slow network
+    // never stalls the session. The student is told if it did not save.
+    api.post<{ counted: boolean }>('/flashcards/rate', {
+      flashcard_id: card.id,
+      rating,
+    }).then(res => {
+      if (res.data?.counted) {
+        setSessionResults(prev =>
+          prev.map(r => (r.cardId === card.id && r.counted === undefined ? { ...r, counted: true } : r))
+        );
+      }
+    }).catch((err: Error) => {
+      setSaveError(err.message ?? 'That rating could not be saved.');
+    });
 
-    // Record session result
+    // Record session result. `counted` is filled in when the server replies.
     setSessionResults(prev => [...prev, { cardId: card.id, rating }]);
 
     // Slide animation based on rating
@@ -137,7 +164,7 @@ export default function FlashcardStudyView({
       }
       setIsAnimating(false);
     }, 380);
-  }, [isAnimating, isFinished, isFlipped, currentIndex, studyCards, studentId]);
+  }, [isAnimating, isFinished, isFlipped, currentIndex, studyCards]);
 
   // ── Flip handler ────────────────────────────────────────────────────────────
 
@@ -177,6 +204,10 @@ export default function FlashcardStudyView({
     setCurrentIndex(0);
     setIsFlipped(false);
     setIsFinished(false);
+    setSaveError(null);
+    // These cards were rated seconds ago, so they are no longer due. Say so
+    // rather than letting the student believe a second pass moves anything.
+    setPracticeRound(true);
   };
 
   const handleRestartAll = () => {
@@ -185,6 +216,8 @@ export default function FlashcardStudyView({
     setCurrentIndex(0);
     setIsFlipped(false);
     setIsFinished(false);
+    setSaveError(null);
+    setPracticeRound(true);
   };
 
   // ── Derived stats ───────────────────────────────────────────────────────────
@@ -192,14 +225,16 @@ export default function FlashcardStudyView({
   const easyCount = sessionResults.filter(r => r.rating === 'easy').length;
   const mediumCount = sessionResults.filter(r => r.rating === 'medium').length;
   const hardCount = sessionResults.filter(r => r.rating === 'hard').length;
-  const masteryPercent =
+  // How this session went — NOT BKT mastery. BKT mastery is a per-concept
+  // probability owned by the backend; this is a tally of self-ratings, so it is
+  // labelled "Session Score" wherever it appears.
+  const sessionScore =
     studyCards.length > 0
       ? Math.round(((easyCount + mediumCount * 0.5) / studyCards.length) * 100)
       : 0;
-  const progress =
-    studyCards.length > 0
-      ? ((currentIndex + (isFinished ? 1 : 0)) / studyCards.length) * 100
-      : 0;
+  // How many ratings the server actually acted on. Anything else was a card
+  // that was not due — reviewed, but not rescheduled.
+  const countedCount = sessionResults.filter(r => r.counted).length;
 
   // ════════════════════════════════════════════════════════════════════════════
   // RESULTS SCREEN
@@ -207,28 +242,28 @@ export default function FlashcardStudyView({
 
   if (isFinished) {
     const circumference = 2 * Math.PI * 54;
-    const strokeDashoffset = circumference - (masteryPercent / 100) * circumference;
+    const strokeDashoffset = circumference - (sessionScore / 100) * circumference;
 
     const getGradeColor = () => {
-      if (masteryPercent >= 80) return 'text-emerald-400';
-      if (masteryPercent >= 50) return 'text-amber-400';
+      if (sessionScore >= 80) return 'text-emerald-400';
+      if (sessionScore >= 50) return 'text-amber-400';
       return 'text-red-400';
     };
     const getGradeRingColor = () => {
-      if (masteryPercent >= 80) return 'stroke-emerald-400';
-      if (masteryPercent >= 50) return 'stroke-amber-400';
+      if (sessionScore >= 80) return 'stroke-emerald-400';
+      if (sessionScore >= 50) return 'stroke-amber-400';
       return 'stroke-red-400';
     };
     const getGradeMessage = () => {
-      if (masteryPercent >= 90) return "Outstanding! Your mastery is excellent.";
-      if (masteryPercent >= 75) return "Great work! Keep reviewing the harder ones.";
-      if (masteryPercent >= 50) return "Good progress! Focus on the hard cards.";
+      if (sessionScore >= 90) return "Outstanding! You knew almost all of these.";
+      if (sessionScore >= 75) return "Great work! Keep reviewing the harder ones.";
+      if (sessionScore >= 50) return "Good progress! Focus on the hard cards.";
       return "Keep going — spaced repetition will help!";
     };
 
     return (
-      <div className="animate-in fade-in duration-500 flex flex-col items-center justify-center py-10">
-        <div className="w-full max-w-lg bg-surface-container-lowest rounded-3xl border border-white/5 p-10 text-center relative overflow-hidden shadow-2xl shadow-black/30">
+      <div className="animate-in fade-in duration-500 flex flex-col items-center justify-center py-6 sm:py-10">
+        <div className="w-full max-w-lg bg-surface-container-lowest rounded-3xl border border-white/5 p-6 sm:p-10 text-center relative overflow-hidden shadow-2xl shadow-black/30">
           <div className="absolute inset-0 bg-gradient-to-b from-primary-fixed-dim/5 via-transparent to-transparent pointer-events-none" />
 
           <div className="relative z-10">
@@ -240,8 +275,8 @@ export default function FlashcardStudyView({
             <h2 className="font-display text-2xl font-bold text-white mb-1">Session Complete</h2>
             <p className="font-sans text-sm text-slate-400 mb-8">{deckTitle}</p>
 
-            {/* Mastery ring */}
-            <div className="relative w-36 h-36 mx-auto mb-8">
+            {/* Session score ring */}
+            <div className="relative w-36 h-36 mx-auto mb-4">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
                 <circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" strokeWidth="6" className="text-white/5" />
                 <circle
@@ -253,10 +288,14 @@ export default function FlashcardStudyView({
                 />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className={`font-display text-4xl font-bold ${getGradeColor()}`}>{masteryPercent}%</span>
-                <span className="font-sans text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Mastery</span>
+                <span className={`font-display text-4xl font-bold ${getGradeColor()}`}>{sessionScore}%</span>
+                <span className="font-sans text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Session Score</span>
               </div>
             </div>
+
+            <p className="font-sans text-[11px] text-slate-600 mb-6 max-w-xs mx-auto leading-relaxed">
+              How you rated yourself in this session — not your overall mastery of the subject.
+            </p>
 
             <p className="font-sans text-sm text-slate-300 mb-8">{getGradeMessage()}</p>
 
@@ -287,15 +326,35 @@ export default function FlashcardStudyView({
                   <span className="font-display text-2xl font-bold text-emerald-400">{easyCount}</span>
                 </div>
                 <p className="font-sans text-[10px] uppercase tracking-widest text-emerald-400/70 font-semibold">Easy</p>
-                <p className="font-sans text-[9px] text-slate-600 mt-0.5">4 days</p>
+                <p className="font-sans text-[9px] text-slate-600 mt-0.5">7 days</p>
               </div>
             </div>
 
-            {/* Spaced repetition note */}
-            <div className="flex items-start gap-3 bg-primary-fixed-dim/5 border border-primary-fixed-dim/15 rounded-xl p-4 mb-8 text-left">
-              <Calendar className="w-4 h-4 text-primary-fixed-dim shrink-0 mt-0.5" />
+            {/* What the schedule actually did. Claiming reviews were scheduled
+                unconditionally was false after a practice round. */}
+            <div className={`flex items-start gap-3 rounded-xl p-4 mb-8 text-left border ${
+              countedCount > 0
+                ? 'bg-primary-fixed-dim/5 border-primary-fixed-dim/15'
+                : 'bg-white/5 border-white/10'
+            }`}>
+              <Calendar className={`w-4 h-4 shrink-0 mt-0.5 ${countedCount > 0 ? 'text-primary-fixed-dim' : 'text-slate-500'}`} />
               <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                Your next review dates have been scheduled based on your ratings. Cards you found hard will appear sooner.
+                {countedCount > 0 ? (
+                  <>
+                    <span className="text-slate-200 font-semibold">
+                      {countedCount} card{countedCount === 1 ? '' : 's'} rescheduled.
+                    </span>{' '}
+                    Cards you found hard come back in 1 day, medium in 3, easy in 7.
+                    {countedCount < sessionResults.length && (
+                      <> The other {sessionResults.length - countedCount} weren't due yet, so their dates are unchanged.</>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className="text-slate-200 font-semibold">Nothing was rescheduled.</span>{' '}
+                    These cards weren't due yet, so this was practice — your review dates are unchanged.
+                  </>
+                )}
               </p>
             </div>
 
@@ -341,33 +400,49 @@ export default function FlashcardStudyView({
   return (
     <div className="animate-in fade-in duration-300 flex flex-col items-center">
 
+      {/* Said up front, not discovered at the end: these cards are not due, so
+          rating them is for the student's own benefit and nothing else. */}
+      {practiceRound && (
+        <div className="w-full max-w-3xl mb-4 flex items-start gap-2.5 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10">
+          <Brain className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+          <p className="font-sans text-xs text-slate-400 leading-relaxed">
+            <span className="text-slate-200 font-semibold">Practice round.</span>{' '}
+            These cards aren't due yet, so your ratings won't change their review dates.
+          </p>
+        </div>
+      )}
+
       {/* ── Progress header ─────────────────────────────────────────── */}
-      <div className="w-full max-w-2xl mb-6">
-        <div className="flex items-center justify-between mb-3">
+      <div className="w-full max-w-3xl mb-5">
+        <div className="flex items-center justify-between gap-3 mb-3">
           <button
             onClick={onExit}
-            className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 font-sans font-semibold text-sm uppercase tracking-widest"
+            className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 font-sans font-semibold text-xs sm:text-sm uppercase tracking-widest shrink-0"
           >
             <ArrowLeft className="w-4 h-4" /> Exit
           </button>
 
-          <div className="flex items-center gap-4">
+          <span className="hidden md:block font-display text-sm text-slate-400 truncate min-w-0 px-4">
+            {deckTitle}
+          </span>
+
+          <div className="flex items-center gap-4 shrink-0">
             {/* Mini rating pills */}
             <div className="hidden sm:flex items-center gap-2">
               <span className="flex items-center gap-1 font-sans text-xs text-red-400">
                 <AlertTriangle className="w-3 h-3" />
-                {sessionResults.filter(r => r.rating === 'hard').length}
+                {hardCount}
               </span>
               <span className="flex items-center gap-1 font-sans text-xs text-amber-400">
                 <Clock className="w-3 h-3" />
-                {sessionResults.filter(r => r.rating === 'medium').length}
+                {mediumCount}
               </span>
               <span className="flex items-center gap-1 font-sans text-xs text-emerald-400">
                 <Zap className="w-3 h-3" />
-                {sessionResults.filter(r => r.rating === 'easy').length}
+                {easyCount}
               </span>
             </div>
-            <span className="font-sans text-xs text-slate-500">
+            <span className="font-sans text-xs text-slate-500 tabular-nums">
               {currentIndex + 1} / {studyCards.length}
             </span>
           </div>
@@ -393,10 +468,10 @@ export default function FlashcardStudyView({
       </div>
 
       {/* ── Flashcard ───────────────────────────────────────────────── */}
-      <div className="w-full max-w-2xl mb-6">
+      <div className="w-full max-w-3xl mb-6">
         <div
           onClick={handleFlip}
-          className={`relative w-full h-80 md:h-[22rem] cursor-pointer select-none transition-all duration-350
+          className={`relative w-full h-72 sm:h-80 md:h-[23rem] cursor-pointer select-none transition-all duration-350
             ${slideDirection === 'right' ? 'translate-x-[130%] opacity-0 rotate-6' : ''}
             ${slideDirection === 'left' ? '-translate-x-[130%] opacity-0 -rotate-6' : ''}
           `}
@@ -411,35 +486,54 @@ export default function FlashcardStudyView({
           >
             {/* Front face */}
             <div
-              className="absolute inset-0 rounded-3xl border border-white/10 bg-surface-container-lowest p-8 md:p-12 flex flex-col justify-center items-center text-center shadow-2xl shadow-black/20"
+              className="absolute inset-0 rounded-3xl border border-white/10 bg-surface-container-lowest flex flex-col shadow-2xl shadow-black/20 overflow-hidden"
               style={{ backfaceVisibility: 'hidden' }}
             >
-              <span className="absolute top-5 left-6 font-sans text-[10px] uppercase tracking-widest text-slate-600 font-bold">
-                Question
-              </span>
-              <p className="font-display text-xl md:text-2xl text-on-surface leading-relaxed">
-                {currentCard.front}
-              </p>
-              <span className="absolute bottom-5 text-[10px] uppercase tracking-widest text-slate-600 flex items-center gap-1.5 font-semibold animate-pulse">
-                <span className="inline-block px-2 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px]">Space</span>
-                Tap or press Space to reveal
-              </span>
+              <div className="flex items-baseline justify-between gap-3 px-6 pt-5 shrink-0">
+                <span className="font-sans text-[10px] uppercase tracking-widest text-slate-600 font-bold">
+                  Question
+                </span>
+                {currentCard.source && (
+                  <span className="font-sans text-[10px] text-slate-700 truncate min-w-0">
+                    {currentCard.source}
+                  </span>
+                )}
+              </div>
+              {/* Scrolls rather than clipping — some definitions run long. */}
+              <div className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex items-center justify-center">
+                <p className="font-display text-xl md:text-2xl text-on-surface leading-relaxed text-center">
+                  {currentCard.front}
+                </p>
+              </div>
+              <div className="shrink-0 pb-5 flex justify-center">
+                <span className="text-[10px] uppercase tracking-widest text-slate-600 flex items-center gap-1.5 font-semibold animate-pulse">
+                  <span className="hidden sm:inline-block px-2 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px]">Space</span>
+                  Tap to reveal
+                </span>
+              </div>
             </div>
 
             {/* Back face */}
             <div
-              className="absolute inset-0 rounded-3xl border border-primary-fixed-dim/20 bg-gradient-to-br from-surface-container-lowest to-primary-fixed-dim/5 p-8 md:p-12 flex flex-col justify-center items-center text-center shadow-2xl shadow-primary-fixed-dim/5"
+              className="absolute inset-0 rounded-3xl border border-primary-fixed-dim/20 bg-gradient-to-br from-surface-container-lowest to-primary-fixed-dim/5 flex flex-col shadow-2xl shadow-primary-fixed-dim/5 overflow-hidden"
               style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
             >
-              <span className="absolute top-5 left-6 font-sans text-[10px] uppercase tracking-widest text-primary-fixed-dim/50 font-bold">
-                Answer
-              </span>
-              <p className="font-sans text-lg md:text-xl text-primary-fixed font-medium leading-relaxed">
-                {currentCard.back}
-              </p>
-
-              {/* "Rate yourself" prompt — only visible when flipped */}
-              <div className="absolute bottom-5 flex items-center gap-2">
+              <div className="flex items-baseline justify-between gap-3 px-6 pt-5 shrink-0">
+                <span className="font-sans text-[10px] uppercase tracking-widest text-primary-fixed-dim/50 font-bold">
+                  Answer
+                </span>
+                {currentCard.source && (
+                  <span className="font-sans text-[10px] text-slate-700 truncate min-w-0">
+                    {currentCard.source}
+                  </span>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex items-center justify-center">
+                <p className="font-sans text-base md:text-lg text-primary-fixed font-medium leading-relaxed text-center">
+                  {currentCard.back}
+                </p>
+              </div>
+              <div className="shrink-0 pb-5 flex justify-center items-center gap-2">
                 <Brain className="w-3.5 h-3.5 text-slate-600" />
                 <span className="font-sans text-[10px] uppercase tracking-widest text-slate-600 font-semibold">
                   How well did you know this?
@@ -450,87 +544,88 @@ export default function FlashcardStudyView({
         </div>
       </div>
 
-      {/* ── Rating Buttons (revealed after flip) ───────────────────── */}
-      <div className="w-full max-w-2xl">
-        {!isFlipped ? (
-          /* Before flip: show neutral flip-to-reveal state */
-          <div className="flex items-center justify-center">
-            <button
-              onClick={handleFlip}
-              className="flex items-center gap-3 px-8 py-3.5 rounded-2xl bg-surface-container border border-white/10 text-slate-300 font-sans font-semibold text-sm hover:bg-surface-container-high hover:border-white/20 transition-all hover:scale-[1.02]"
-            >
-              <RotateCcw className="w-4 h-4 text-slate-400" />
-              Reveal Answer
-            </button>
+      {/* ── Rating buttons ──────────────────────────────────────────────
+          Always rendered, disabled until the card is flipped. Swapping them in
+          on flip made the whole page jump on every single card. */}
+      <div className="w-full max-w-3xl">
+        <p className="text-center font-sans text-xs text-slate-500 uppercase tracking-widest mb-4 font-semibold transition-colors">
+          {isFlipped ? 'Rate your recall' : 'Flip the card to rate it'}
+        </p>
+
+        <div className={`grid grid-cols-3 gap-2 sm:gap-3 transition-opacity duration-300 ${isFlipped ? 'opacity-100' : 'opacity-40'}`}>
+          {ratingOrder.map((rating) => {
+            const cfg = RATING_CONFIG[rating];
+            const isSelected = selectedRating === rating;
+            return (
+              <button
+                key={rating}
+                onClick={() => handleRate(rating)}
+                disabled={!isFlipped || isAnimating}
+                aria-label={`${cfg.label} — ${cfg.sublabel}`}
+                className={`
+                  group relative flex flex-col items-center justify-center gap-1.5 sm:gap-2 px-2 py-3.5 sm:p-4 rounded-2xl border
+                  transition-all duration-200 disabled:cursor-not-allowed
+                  ${cfg.containerClass} ${cfg.borderClass} ${isFlipped ? cfg.hoverClass : ''}
+                  ${isSelected ? `scale-95 shadow-lg ${cfg.glowClass}` : isFlipped ? 'hover:scale-[1.03]' : ''}
+                `}
+              >
+                {/* Checkmark overlay when selected */}
+                {isSelected && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/20">
+                    <CheckCircle2 className={`w-6 h-6 ${cfg.textClass}`} />
+                  </div>
+                )}
+
+                <span className={cfg.textClass}>{cfg.icon}</span>
+                <div className="text-center">
+                  <p className={`font-display font-bold text-sm ${cfg.textClass}`}>
+                    {cfg.label}
+                  </p>
+                  <p className="hidden sm:block font-sans text-[10px] text-slate-600 mt-0.5">
+                    {cfg.sublabel}
+                  </p>
+                </div>
+
+                {/* Keyboard hint */}
+                <span className="hidden sm:block absolute top-2 right-2 w-5 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px] text-slate-600">
+                  {cfg.kbd}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Keyboard hints — laptop only, there is no keyboard on a phone. */}
+        <div className="hidden sm:flex items-center justify-center gap-6 mt-4">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block px-2 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px] text-slate-600">Space</span>
+            <span className="font-sans text-[10px] text-slate-600">Flip</span>
           </div>
-        ) : (
-          /* After flip: show 3-tier rating buttons */
-          <div className="animate-in fade-in slide-in-from-bottom-3 duration-300">
-            <p className="text-center font-sans text-xs text-slate-500 uppercase tracking-widest mb-4 font-semibold">
-              Rate your recall
-            </p>
-            <div className="grid grid-cols-3 gap-3">
-              {ratingOrder.map((rating) => {
-                const cfg = RATING_CONFIG[rating];
-                const isSelected = selectedRating === rating;
-                return (
-                  <button
-                    key={rating}
-                    onClick={() => handleRate(rating)}
-                    disabled={isAnimating}
-                    className={`
-                      group relative flex flex-col items-center gap-2 p-4 rounded-2xl border
-                      transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none
-                      ${cfg.containerClass} ${cfg.borderClass} ${cfg.hoverClass}
-                      ${isSelected ? `scale-95 shadow-lg ${cfg.glowClass}` : 'hover:scale-[1.03]'}
-                    `}
-                  >
-                    {/* Checkmark overlay when selected */}
-                    {isSelected && (
-                      <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/20">
-                        <CheckCircle2 className={`w-6 h-6 ${cfg.textClass}`} />
-                      </div>
-                    )}
-
-                    <span className={cfg.textClass}>{cfg.icon}</span>
-                    <div className="text-center">
-                      <p className={`font-display font-bold text-sm ${cfg.textClass}`}>
-                        {cfg.label}
-                      </p>
-                      <p className="font-sans text-[10px] text-slate-600 mt-0.5">
-                        {cfg.sublabel}
-                      </p>
-                    </div>
-
-                    {/* Keyboard hint */}
-                    <span className="absolute top-2 right-2 w-5 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px] text-slate-600">
-                      {cfg.kbd}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Keyboard hints row */}
-            <div className="flex items-center justify-center gap-6 mt-4">
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block px-2 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px] text-slate-600">Space</span>
-                <span className="font-sans text-[10px] text-slate-600">Flip back</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block px-2 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px] text-slate-600">1 / 2 / 3</span>
-                <span className="font-sans text-[10px] text-slate-600">Rate</span>
-              </div>
-            </div>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block px-2 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px] text-slate-600">1 / 2 / 3</span>
+            <span className="font-sans text-[10px] text-slate-600">Rate</span>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Saving indicator */}
-      {isSaving && (
+      {isSaving && !saveError && (
         <div className="mt-4 flex items-center gap-2 text-slate-600">
           <div className="w-3 h-3 rounded-full border-2 border-slate-600 border-t-transparent animate-spin" />
           <span className="font-sans text-[10px] uppercase tracking-widest">Saving...</span>
+        </div>
+      )}
+
+      {/* A rating that did not reach the server. The session continues — losing
+          one schedule update must not cost the student their place. */}
+      {saveError && (
+        <div className="mt-4 w-full max-w-3xl flex items-start gap-2.5 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 animate-in fade-in duration-200">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+          <p className="font-sans text-xs text-rose-300 leading-relaxed">
+            That rating wasn't saved, so this card's next review date didn't change. You can keep
+            studying — rate it again later to reschedule it.
+            <span className="block text-rose-400/60 mt-1">{saveError}</span>
+          </p>
         </div>
       )}
     </div>

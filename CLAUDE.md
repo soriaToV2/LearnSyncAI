@@ -230,6 +230,16 @@ APP_URL=http://localhost:3000
 - **Three user roles exist: `student`, `educator`, and `admin`.** Use the appropriate `requireRole()` middleware for each endpoint. Admin manages accounts only. Educators manage materials and view analytics. Students access learning features.
 - **BKT is implemented directly in the backend.** Do NOT use pyBKT or any external BKT library. Do NOT implement Expectation Maximization (EM) parameter fitting. Use the default parameters specified in ARCHITECTURE.md.
 - **Only educators upload materials.** Students access materials uploaded by their educators. Students cannot upload instructional materials, and the student UI must contain no upload control, no file picker, and no delete control.
+- **Every flashcard route is owner-checked, reads included.** All of `GET/POST/PUT/DELETE /api/spaces/:id/decks*` and `POST /api/flashcards/rate` resolve to the caller's own space via `loadOwnedSpace()` (or card → deck → space) and answer **404** otherwise. Reads are guarded as tightly as writes on purpose: a space id is visible in the address bar (`/student/space/:spaceId`), and a deck carries its owner's `ease_rating` and `next_review_at` — a direct readout of the concepts they are struggling with. Migration 0003 removed peer sharing to guarantee data isolation between students; an unguarded read contradicts that.
+- **Students own decks but not cards.** A deck is the student's own folder for organising lessons: create, rename and delete are all theirs (`POST/PUT/DELETE /api/spaces/:id/decks`). The **cards inside are not** — there is no add/edit/delete card control and no such endpoint. Every card assesses a `concepts` row an educator uploaded and vetted (educators curate concepts via `POST/PUT/DELETE /api/materials/:id/concepts`), so a hand-written card would have no concept to attach mastery to, or would inject unvetted text into the knowledge base that also feeds Free Recall scoring, Feynman grading, the chatbot and adaptive tests. **Cards enter a deck by generation against a selected material and by no other route.** A new deck is empty by design.
+- **A deck may gather several materials.** Decks are organisational, so "have I already generated this material?" is a question about cards, not decks: it is `flashcards.source_material_id` scoped to a `deck_id`. Do not add a `source_material_id` to `flashcard_decks` — it would force one deck per material and defeat the point.
+- **The back of a flashcard is always the educator's definition, verbatim.** `POST /api/spaces/:id/decks/:deckId/generate` writes `definition` → back, plus `concept_id` and `source_material_id`, whatever the format. **A model never writes an answer** — the deleted helper did, which put unvetted text in front of students. Only the front varies, via `format`:
+  - `'term'` (default) — front is the concept's `term`. No model in the path; instant.
+  - `'question'` — `generateQuestionsForConcepts()` writes a question whose answer *is* that definition. ~13s for 68 concepts.
+- **Question generation batches and echoes indices — do not "simplify" either.** `QUESTION_BATCH_SIZE = 20`: the old helper asked for one card per concept under `max_tokens: 4096` and truncates on a real material. The model returns `{ n, question }` and every `n` is range-checked before it is trusted, because a card whose `concept_id` is wrong is worse than one with no question. A concept the model skips **falls back to its term**, so a card is never lost and never unlinked. A Groq call that throws aborts the request with a 502 before anything is written — a deck half questions and half terms is worse than a clean retry.
+- **`flashcards.is_ai_generated` means "the model wrote this front".** True only for cards whose question came back from Groq — false for term cards *and* for question-format cards that fell back. The 409 response derives `current_format` from it so a Refresh rebuilds a deck in the style it already has.
+- **Re-generating a material into a deck reconciles, it does not wipe.** Matched by `concept_id`: existing cards are updated in place, new concepts inserted, cards whose concept is gone deleted. Never delete-then-reinsert — `spaced_repetition_logs.flashcard_id` is `ON DELETE CASCADE`, so wiping the cards destroys the student's rating history and resets every `next_review_at`. Without `replace: true` the endpoint answers **409** with the existing count and writes nothing.
+- **Generation gates in order:** `requireRole('student')` → `loadOwnedSpace()` (404) → deck is in that space (404) → `rejectInaccessibleMaterials()` (403) → material is both published to (subject, grade) *and* linked in `study_space_materials` (404). The last check is not redundant: passing the grade rule only proves the student may read the material, not that this space holds it.
 - **Every student-reachable route that takes a material ID must gate it** through `server/lib/materialAccess.ts`. RLS does not protect these routes — the service role bypasses it. Path IDs 404; body ID arrays 403.
 - **A study space's subject is fixed at creation.** `UpdateStudySpaceSchema` deliberately omits it.
 - **Peer sharing (CollabShare) is gone.** Migration 0003 removed it as contradicting the paper's data-isolation guarantee. Do not reintroduce `is_published`, `share_token`, `cloned_from_id`, or space cloning.
@@ -241,6 +251,48 @@ APP_URL=http://localhost:3000
 - **A failed feedback call must never cost a student their score.** Generation is wrapped in its own `try/catch`, returns `null`, and sits outside the scoring block and before the insert. The row saves regardless and the response carries `feedback_unavailable`.
 
 ---
+
+## Flashcards Tab — Layout
+
+**Study is on the deck tile, not behind the deck view.** Opening the tab and starting a session is one click. The deck view still exists — for browsing cards, adding another lesson, renaming and deleting — but it is no longer a step you pass *through* to reach studying. A tile shows exactly one action: **Study** when it has cards, **Add Cards** when it does not.
+
+**A deck's summary line is derived, not stored.** `deckSummary()` reads the distinct `sourceMaterialId`s of the deck's cards and resolves them against `availableResources`, giving "68 cards · from 6. Information Security" or "· from 2 lessons". Nothing on `flashcard_decks` records this — see the rule above about not adding `source_material_id` to the deck.
+
+**The rating buttons in the study view are always rendered, disabled until the card is flipped.** They used to be swapped in on flip, which moved the page on every single card. Disabled-not-absent keeps the layout still. `handleRate()` already refuses when `!isFlipped`, so the guard is unchanged and Easy/Medium/Hard record exactly what they always did.
+
+**Card faces scroll internally** (`flex-1 overflow-y-auto` between a fixed header and footer). Definitions run to ~300 characters and previously overflowed a fixed-height card with no way to read the rest.
+
+**The results ring says "Session Score", never "Mastery".** It is `(easy + medium × 0.5) / cards` — a tally of self-ratings for one session. BKT mastery is a per-concept probability in `bkt_mastery` owned by the backend. Using one word for both invites a reader to mistake this figure for the paper's.
+
+**On phones the three rating buttons stay side by side**, losing their "Review in N days" sublabel rather than stacking. Stacked full-width buttons pushed the card off screen, which would mean scrolling between flipping and rating on every card.
+
+## Flashcards — Spaced Repetition
+
+**One rule governs everything: a rating counts only if the card was due.** `next_review_at` moves — and, when BKT lands, mastery updates — if and only if `next_review_at <= now()` at the moment the student rates. Every other rating is practice: nothing is written, and `POST /api/flashcards/rate` answers `counted: false`. No column was needed for this; `flashcards.next_review_at` defaults to `now()`, so a fresh card is born due and the first honest pass always counts.
+
+That single check covers retries, "Restart Entire Set", cramming before a test, and studying the same deck three times in a day. **Do not special-case any of them, and do not add a session id or a practice flag** — a card rated moments ago is not due, which is the whole mechanism.
+
+**Why retries must not count.** A student rates Hard, presses "Drill hard cards again", and rates the same card Easy thirty seconds later — because they just read the answer. That is working memory, not knowledge. Counting it drives mastery *up* on exactly the concepts the student is weakest at, and lets anyone farm mastery by re-drilling one card. BKT assumes each observation is an independent test of latent knowledge; a retry is not one, which is why ITS implementations score the **first attempt** and treat later ones as help-seeking.
+
+**The client never decides this.** `FlashcardStudyView` posts every rating, including in a practice round — a "Practice all" session over a deck with 12 genuinely due cards must still schedule those 12. The server checks and returns `counted`; the UI reports what actually happened rather than asserting it.
+
+**`server/lib/reviewSchedule.ts` is the only place intervals and due-ness are defined.** `REVIEW_INTERVALS` is Easy 7 / Medium 3 / Hard 1, matching `CHECK (interval_days IN (1, 3, 7))`. Four separate places used to disagree about Easy (7 vs 4) and the database would have rejected 4 outright. `FlashcardsTab` has a small `isDue()` mirroring the server's, for display and session composition only.
+
+**Due dates land on midnight Asia/Manila, not `now + N × 24h`.** A student who rates at 8pm Monday and revises after school on Tuesday must find their cards waiting; exact 24-hour intervals would hide them until 8pm and the deck would look broken. `nextReviewAt()` shifts into the Manila frame, truncates to the date, adds the interval and shifts back. A fixed +8 offset is correct — the Philippines has observed no DST since 1978. If the platform ever spans timezones this becomes a per-profile setting.
+
+**Sessions are due-only; the card grid always shows everything.** Different jobs. A deck tile reads `68 cards · 12 due` with a *Review 12* button, falling back to `next review Tue 4 Aug` and a quiet *Practice all* when nothing is due. The grid inside a deck is for browsing a lesson, so scheduled cards are marked `Due in 3 days` — never hidden, or the deck would look emptied.
+
+**The results screen reports what was rescheduled, never asserts it.** It counts `counted` responses: "12 cards rescheduled" or "Nothing was rescheduled — these weren't due yet." The old unconditional "Your next review dates have been scheduled" was false after any practice round.
+
+**`POST /api/flashcards/rate` walks card → deck → space and 404s unless the space is the caller's.** It previously took any card UUID from any student. Once BKT hangs here, that would have written mastery against a stranger's concepts.
+
+`GET /api/flashcards/due/:spaceId` was deleted — unused, and it returned any space's cards to any logged-in user. Due-ness is derived from cards the tab already loads. It can return, properly guarded, when the dashboard becomes real.
+
+### BKT on top of this (still NOT implemented)
+
+The rating endpoint is now the right place to hang it: ownership is enforced, `concept_id` is on both the card and the log row, and the due check already gates what counts. **The observation mapping is settled in `bkt_params`:** `g_easy = 0.05`, `g_medium = 0.25`, `g_hard = 0.10`; Easy and Medium are correct observations (obs = 1), Hard is incorrect (obs = 0). `bkt_update_logs` already carries a `flashcard_id` column and a `'flashcard'` value in the `bkt_source` enum.
+
+`StudentDashboard.tsx` still shows a hardcoded `dueToday = 12`; the whole page runs on `MOCK_STUDENTS[0]` and is a separate job.
 
 ## Cognitive Tabs — Free Recall & Feynman
 

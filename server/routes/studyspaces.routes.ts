@@ -6,10 +6,12 @@ import {
   CreateStudySpaceSchema,
   UpdateStudySpaceSchema,
   CreateDeckSchema,
-  CreateFlashcardSchema,
+  UpdateDeckSchema,
+  GenerateDeckCardsSchema,
   SyncSpaceMaterialsSchema,
 } from '../types/api';
-import { publishedMaterialIds } from '../lib/materialAccess';
+import { publishedMaterialIds, rejectInaccessibleMaterials } from '../lib/materialAccess';
+import { generateQuestionsForConcepts } from '../lib/groq';
 import type { SpaceMaterial } from '../types/database';
 
 const router = Router();
@@ -404,16 +406,38 @@ router.delete('/:id', requireRole('student'), async (req: Request, res: Response
 });
 
 // ── Flashcard Decks ───────────────────────────────────────
+//
+// A deck is an empty folder the student owns: they create it, rename it and
+// delete it to organise their lessons however they like. What goes INSIDE it is
+// not theirs to write. Every flashcard assesses a concept an educator uploaded
+// and vetted, so cards arrive by generation against a selected material and by
+// no other route — the create / update / delete card endpoints are gone. A
+// hand-written card would have no concept to attach mastery to, or would inject
+// unvetted text into the knowledge base that Free Recall, Feynman, the chatbot
+// and adaptive tests all read from.
 
 /**
  * GET /api/spaces/:id/decks
- * Returns all flashcard decks in a study space.
+ * Returns all flashcard decks in a study space. Owner only.
+ *
+ * Reading is guarded as tightly as writing. A space id is visible in the browser
+ * address bar (/student/space/:spaceId), so a screenshot or a shared link is
+ * enough for another student to hold one — and a deck carries its owner's
+ * ease_rating and next_review_at, which is a direct readout of the concepts they
+ * are struggling with. Migration 0003 removed peer sharing to guarantee data
+ * isolation between students; leaving this open contradicted that.
  */
-router.get('/:id/decks', async (req: Request, res: Response): Promise<void> => {
+router.get('/:id/decks', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
+  const space = await loadOwnedSpace(req.params.id, req.user!.id);
+  if (!space) {
+    res.status(404).json({ error: 'Study space not found' });
+    return;
+  }
+
   const { data, error } = await supabaseAdmin
     .from('flashcard_decks')
     .select('*')
-    .eq('space_id', req.params.id)
+    .eq('space_id', space.id)
     .order('created_at');
 
   if (error) {
@@ -426,7 +450,11 @@ router.get('/:id/decks', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * POST /api/spaces/:id/decks
- * Creates a new flashcard deck. Students only.
+ * Creates an empty deck. Owner only — 404 for anyone else, matching every other
+ * space route, so a student cannot probe which space ids exist.
+ *
+ * The deck starts empty by design: cards arrive when the student generates
+ * against a material from POST /api/materials/generate-flashcards.
  */
 router.post('/:id/decks', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateDeckSchema.safeParse(req.body);
@@ -435,9 +463,19 @@ router.post('/:id/decks', requireRole('student'), async (req: Request, res: Resp
     return;
   }
 
+  const space = await loadOwnedSpace(req.params.id, req.user!.id);
+  if (!space) {
+    res.status(404).json({ error: 'Study space not found' });
+    return;
+  }
+
   const { data, error } = await supabaseAdmin
     .from('flashcard_decks')
-    .insert({ ...parsed.data, space_id: req.params.id })
+    .insert({
+      title: parsed.data.title,
+      description: parsed.data.description || null,
+      space_id: space.id,
+    })
     .select()
     .single();
 
@@ -449,83 +487,45 @@ router.post('/:id/decks', requireRole('student'), async (req: Request, res: Resp
   res.status(201).json({ data, message: 'Deck created' });
 });
 
-// ── Flashcards ────────────────────────────────────────────
-
-/**
- * GET /api/spaces/:id/decks/:deckId/flashcards
- * Returns all flashcards in a deck.
- */
-router.get('/:id/decks/:deckId/flashcards', async (req: Request, res: Response): Promise<void> => {
-  const { data, error } = await supabaseAdmin
-    .from('flashcards')
-    .select('*')
-    .eq('deck_id', req.params.deckId)
-    .order('created_at');
-
-  if (error) {
-    res.status(500).json({ error: 'Failed to fetch flashcards', message: error.message });
-    return;
-  }
-
-  res.json({ data });
-});
-
-/**
- * POST /api/spaces/:id/decks/:deckId/flashcards
- * Creates a new flashcard in a deck. Students only.
- */
-router.post(
-  '/:id/decks/:deckId/flashcards',
-  requireRole('student'),
-  async (req: Request, res: Response): Promise<void> => {
-    const parsed = CreateFlashcardSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
-      return;
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from('flashcards')
-      .insert({ ...parsed.data, deck_id: req.params.deckId })
-      .select()
-      .single();
-
-    if (error) {
-      res.status(500).json({ error: 'Failed to create flashcard', message: error.message });
-      return;
-    }
-
-    res.status(201).json({ data, message: 'Flashcard created' });
-  }
-);
-
 /**
  * PUT /api/spaces/:id/decks/:deckId
- * Updates a deck title/description. Owner only.
+ * Renames a deck or edits its description. Owner only.
+ *
+ * Title and description are the only fields a student may set — the update is
+ * built from the parsed schema, never spread from req.body, so an extra field
+ * in the payload cannot reach the table.
  */
 router.put('/:id/decks/:deckId', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
-  const { data: space } = await supabaseAdmin
-    .from('study_spaces')
-    .select('student_id')
-    .eq('id', req.params.id)
-    .single();
-
-  if (!space || space.student_id !== req.user!.id) {
-    res.status(403).json({ error: 'Unauthorized or space not found' });
+  const parsed = UpdateDeckSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
     return;
   }
 
-  const { title, description } = req.body;
+  const space = await loadOwnedSpace(req.params.id, req.user!.id);
+  if (!space) {
+    res.status(404).json({ error: 'Study space not found' });
+    return;
+  }
+
   const { data, error } = await supabaseAdmin
     .from('flashcard_decks')
-    .update({ title, description })
+    .update({
+      title: parsed.data.title,
+      description: parsed.data.description ?? null,
+    })
     .eq('id', req.params.deckId)
-    .eq('space_id', req.params.id)
+    .eq('space_id', space.id)
     .select()
-    .single();
+    .maybeSingle();
 
-  if (error || !data) {
-    res.status(500).json({ error: 'Failed to update deck', message: error?.message });
+  if (error) {
+    res.status(500).json({ error: 'Failed to update deck', message: error.message });
+    return;
+  }
+
+  if (!data) {
+    res.status(404).json({ error: 'Deck not found' });
     return;
   }
 
@@ -534,30 +534,35 @@ router.put('/:id/decks/:deckId', requireRole('student'), async (req: Request, re
 
 /**
  * DELETE /api/spaces/:id/decks/:deckId
- * Deletes a deck. Owner only.
+ * Deletes a deck and the cards filed in it. Owner only.
+ *
+ * Deleting generated cards is safe — they are this student's copies. The
+ * concepts they were generated from are the educator's and are untouched.
  */
 router.delete('/:id/decks/:deckId', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
-  const { data: space } = await supabaseAdmin
-    .from('study_spaces')
-    .select('student_id')
-    .eq('id', req.params.id)
-    .single();
-
-  if (!space || space.student_id !== req.user!.id) {
-    res.status(403).json({ error: 'Unauthorized or space not found' });
+  const space = await loadOwnedSpace(req.params.id, req.user!.id);
+  if (!space) {
+    res.status(404).json({ error: 'Study space not found' });
     return;
   }
 
-  await supabaseAdmin
-    .from('flashcards')
-    .delete()
-    .eq('deck_id', req.params.deckId);
-
-  const { error } = await supabaseAdmin
+  // Confirm the deck is in this space before deleting anything, so a deck id
+  // from another student's space cannot have its cards wiped.
+  const { data: deck } = await supabaseAdmin
     .from('flashcard_decks')
-    .delete()
+    .select('id')
     .eq('id', req.params.deckId)
-    .eq('space_id', req.params.id);
+    .eq('space_id', space.id)
+    .maybeSingle();
+
+  if (!deck) {
+    res.status(404).json({ error: 'Deck not found' });
+    return;
+  }
+
+  await supabaseAdmin.from('flashcards').delete().eq('deck_id', deck.id);
+
+  const { error } = await supabaseAdmin.from('flashcard_decks').delete().eq('id', deck.id);
 
   if (error) {
     res.status(500).json({ error: 'Failed to delete deck', message: error.message });
@@ -567,127 +572,304 @@ router.delete('/:id/decks/:deckId', requireRole('student'), async (req: Request,
   res.json({ message: 'Deck deleted' });
 });
 
+// ── Flashcards ────────────────────────────────────────────
+
 /**
- * PUT /api/spaces/:id/decks/:deckId/flashcards/:cardId
- * Updates a single flashcard. Owner only.
+ * GET /api/spaces/:id/decks/:deckId/flashcards
+ * Returns all flashcards in a deck. Owner only.
+ *
+ * The deck must be confirmed to sit in the owned space before its cards are
+ * read — checking the space alone would let any deck id be paired with a space
+ * the caller happens to own.
  */
-router.put(
-  '/:id/decks/:deckId/flashcards/:cardId',
+router.get(
+  '/:id/decks/:deckId/flashcards',
   requireRole('student'),
   async (req: Request, res: Response): Promise<void> => {
-    const { data: space } = await supabaseAdmin
-      .from('study_spaces')
-      .select('student_id')
-      .eq('id', req.params.id)
-      .single();
-
-    if (!space || space.student_id !== req.user!.id) {
-      res.status(403).json({ error: 'Unauthorized' });
+    const space = await loadOwnedSpace(req.params.id, req.user!.id);
+    if (!space) {
+      res.status(404).json({ error: 'Study space not found' });
       return;
     }
 
-    const { term, definition } = req.body;
+    const { data: deck } = await supabaseAdmin
+      .from('flashcard_decks')
+      .select('id')
+      .eq('id', req.params.deckId)
+      .eq('space_id', space.id)
+      .maybeSingle();
+
+    if (!deck) {
+      res.status(404).json({ error: 'Deck not found' });
+      return;
+    }
+
     const { data, error } = await supabaseAdmin
       .from('flashcards')
-      .update({ term, definition })
-      .eq('id', req.params.cardId)
-      .eq('deck_id', req.params.deckId)
-      .select()
-      .single();
-
-    if (error || !data) {
-      res.status(500).json({ error: 'Failed to update flashcard', message: error?.message });
-      return;
-    }
-
-    res.json({ data, message: 'Flashcard updated' });
-  }
-);
-
-/**
- * DELETE /api/spaces/:id/decks/:deckId/flashcards/:cardId
- * Deletes a single flashcard. Owner only.
- */
-router.delete(
-  '/:id/decks/:deckId/flashcards/:cardId',
-  requireRole('student'),
-  async (req: Request, res: Response): Promise<void> => {
-    const { data: space } = await supabaseAdmin
-      .from('study_spaces')
-      .select('student_id')
-      .eq('id', req.params.id)
-      .single();
-
-    if (!space || space.student_id !== req.user!.id) {
-      res.status(403).json({ error: 'Unauthorized' });
-      return;
-    }
-
-    const { error } = await supabaseAdmin
-      .from('flashcards')
-      .delete()
-      .eq('id', req.params.cardId)
-      .eq('deck_id', req.params.deckId);
+      .select('*')
+      .eq('deck_id', deck.id)
+      .order('created_at');
 
     if (error) {
-      res.status(500).json({ error: 'Failed to delete flashcard', message: error.message });
+      res.status(500).json({ error: 'Failed to fetch flashcards', message: error.message });
       return;
     }
 
-    res.json({ message: 'Flashcard deleted' });
+    res.json({ data });
   }
 );
 
 /**
- * POST /api/spaces/:id/decks/:deckId/flashcards/bulk
- * Overwrites all flashcards in a deck. Owner only.
+ * POST /api/spaces/:id/decks/:deckId/generate
+ *
+ * Fills a deck with one card per concept of the selected material.
+ *
+ * The BACK of every card is the educator's stored definition, verbatim, in both
+ * formats — a model never writes the answer, so a student never studies a fact
+ * nobody vetted. Only the front varies:
+ *
+ *   format: 'term'     -> the concept's term. No model in the path at all.
+ *   format: 'question' -> an AI-written question whose answer is that definition.
+ *
+ * Every card carries its concept_id either way, which is the link BKT needs and
+ * the reason the model is asked to echo indices rather than return loose pairs.
+ *
+ * Body: { material_id: UUID, replace?: boolean, format?: 'term' | 'question' }
  */
 router.post(
-  '/:id/decks/:deckId/flashcards/bulk',
+  '/:id/decks/:deckId/generate',
   requireRole('student'),
   async (req: Request, res: Response): Promise<void> => {
-    const { data: space } = await supabaseAdmin
-      .from('study_spaces')
-      .select('student_id')
-      .eq('id', req.params.id)
-      .single();
-
-    if (!space || space.student_id !== req.user!.id) {
-      res.status(403).json({ error: 'Unauthorized' });
+    const parsed = GenerateDeckCardsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
       return;
     }
 
-    const cards = req.body.cards;
-    if (!Array.isArray(cards)) {
-      res.status(400).json({ error: 'Validation error: cards must be an array' });
+    const { material_id, replace, format } = parsed.data;
+
+    const space = await loadOwnedSpace(req.params.id, req.user!.id);
+    if (!space) {
+      res.status(404).json({ error: 'Study space not found' });
       return;
     }
 
-    // Delete old ones
-    await supabaseAdmin
+    const { data: deck } = await supabaseAdmin
+      .from('flashcard_decks')
+      .select('id, title')
+      .eq('id', req.params.deckId)
+      .eq('space_id', space.id)
+      .maybeSingle();
+
+    if (!deck) {
+      res.status(404).json({ error: 'Deck not found' });
+      return;
+    }
+
+    // Grade level / archive rule first.
+    if (!(await rejectInaccessibleMaterials(req, res, [material_id]))) return;
+
+    // Then space membership. Passing the grade check is not enough — the
+    // material must also be one this space actually holds, or a student could
+    // pull another subject's content into this space's deck and corrupt the
+    // mastery picture the space is supposed to represent.
+    const published = await publishedMaterialIds(space.subject, space.gradeLevel);
+    const linked = await linkedMaterialIds(space.id);
+    if (!published.includes(material_id) || !linked.includes(material_id)) {
+      res.status(404).json({ error: 'Material not found in this study space' });
+      return;
+    }
+
+    const { data: concepts, error: conceptsError } = await supabaseAdmin
+      .from('concepts')
+      .select('id, term, definition')
+      .eq('material_id', material_id)
+      .order('created_at', { ascending: true });
+
+    if (conceptsError) {
+      res.status(500).json({ error: 'Failed to read concepts', message: conceptsError.message });
+      return;
+    }
+
+    if (!concepts || concepts.length === 0) {
+      res.status(422).json({
+        error: 'No concepts found',
+        message: 'This material has no concepts yet, so there is nothing to make cards from.',
+      });
+      return;
+    }
+
+    // What this deck already holds from this material.
+    const { data: existing, error: existingError } = await supabaseAdmin
       .from('flashcards')
-      .delete()
-      .eq('deck_id', req.params.deckId);
+      .select('id, concept_id, is_ai_generated')
+      .eq('deck_id', deck.id)
+      .eq('source_material_id', material_id);
 
-    // Insert new ones
-    if (cards.length > 0) {
-      const toInsert = cards.map((c: any) => ({
-        deck_id: req.params.deckId,
-        term: c.term || c.front,
-        definition: c.definition || c.back,
-        is_ai_generated: c.is_ai_generated || false,
-      }));
-      const { error } = await supabaseAdmin
-        .from('flashcards')
-        .insert(toInsert);
+    if (existingError) {
+      res.status(500).json({ error: 'Failed to read deck contents', message: existingError.message });
+      return;
+    }
 
-      if (error) {
-        res.status(500).json({ error: 'Failed to insert flashcards', message: error.message });
+    const existingCards = existing ?? [];
+
+    // Already here and no explicit go-ahead: say so and write nothing, rather
+    // than silently doubling the deck. `current_format` comes back so the client
+    // can offer a Refresh that keeps the deck's existing style.
+    if (existingCards.length > 0 && !replace) {
+      const currentFormat = existingCards.some((c) => c.is_ai_generated) ? 'question' : 'term';
+      res.status(409).json({
+        error: 'Already generated',
+        message: `This material is already in "${deck.title}" (${existingCards.length} card${existingCards.length === 1 ? '' : 's'}).`,
+        data: {
+          existing_count: existingCards.length,
+          concept_count: concepts.length,
+          current_format: currentFormat,
+        },
+      });
+      return;
+    }
+
+    // ── Fronts.
+    //
+    // 'question' asks Groq for one question per concept. A concept the model
+    // omits or mis-numbers falls back to its term, so a card is never lost and
+    // never left without a concept_id. A Groq call that throws aborts the whole
+    // request before anything is written — a deck half in one style and half in
+    // another is worse than a clean retry.
+    let questions = new Map<string, string>();
+    if (format === 'question') {
+      try {
+        questions = await generateQuestionsForConcepts(
+          concepts.map((c) => ({ id: c.id as string, term: c.term, definition: c.definition }))
+        );
+      } catch (err: any) {
+        res.status(502).json({
+          error: 'Question generation failed',
+          message:
+            'The question writer could not be reached, so nothing was added. Please try again, or add these cards as terms and definitions.',
+        });
         return;
       }
     }
 
-    res.json({ message: 'Flashcards bulk synced' });
+    const frontFor = (concept: { id: string; term: string }): string =>
+      (format === 'question' ? questions.get(concept.id)?.trim() : '') || concept.term;
+
+    /** True only where the model actually wrote the front. Drives current_format. */
+    const aiWrote = (concept: { id: string }): boolean =>
+      format === 'question' && Boolean(questions.get(concept.id)?.trim());
+
+    /** How many fell back to the term because the model skipped them. */
+    const fallbackCount =
+      format === 'question'
+        ? concepts.filter((c) => !questions.get(c.id as string)?.trim()).length
+        : 0;
+
+    const fallbackNote =
+      fallbackCount > 0
+        ? ` ${fallbackCount} card${fallbackCount === 1 ? '' : 's'} show the term instead — no question could be written for ${fallbackCount === 1 ? 'it' : 'them'}.`
+        : '';
+
+    // ── First run: one insert, so it either all lands or none of it does and
+    // the student is never left with a half-filled deck.
+    if (existingCards.length === 0) {
+      const { error: insertError } = await supabaseAdmin.from('flashcards').insert(
+        concepts.map((c) => ({
+          deck_id: deck.id,
+          term: frontFor(c as any),
+          definition: c.definition,
+          concept_id: c.id,
+          source_material_id: material_id,
+          is_ai_generated: aiWrote(c as any),
+        }))
+      );
+
+      if (insertError) {
+        res.status(500).json({ error: 'Failed to add cards', message: insertError.message });
+        return;
+      }
+
+      res.status(201).json({
+        data: { added: concepts.length, updated: 0, removed: 0, fallback: fallbackCount },
+        message: `Added ${concepts.length} card${concepts.length === 1 ? '' : 's'} to ${deck.title}.${fallbackNote}`,
+      });
+      return;
+    }
+
+    // ── Refresh: reconcile against the current concepts by concept_id.
+    //
+    // Deliberately NOT delete-then-reinsert. spaced_repetition_logs.flashcard_id
+    // is ON DELETE CASCADE, so wiping the cards would take the student's whole
+    // rating history with it and reset every next_review_at. Updating in place
+    // keeps both. bkt_mastery is keyed on (student, concept) and is untouched
+    // either way.
+    const cardByConcept = new Map(
+      existingCards
+        .filter((c) => c.concept_id)
+        .map((c) => [c.concept_id as string, c.id as string])
+    );
+    const liveConceptIds = new Set(concepts.map((c) => c.id as string));
+
+    const toInsert = concepts.filter((c) => !cardByConcept.has(c.id as string));
+    const toUpdate = concepts.filter((c) => cardByConcept.has(c.id as string));
+    // Cards whose concept the educator has since deleted, plus any legacy card
+    // with no concept_id at all — neither can be reconciled, so both go.
+    const staleIds = existingCards
+      .filter((c) => !c.concept_id || !liveConceptIds.has(c.concept_id as string))
+      .map((c) => c.id as string);
+
+    for (const c of toUpdate) {
+      const { error } = await supabaseAdmin
+        .from('flashcards')
+        .update({
+          term: frontFor(c as any),
+          definition: c.definition,
+          is_ai_generated: aiWrote(c as any),
+        })
+        .eq('id', cardByConcept.get(c.id as string)!);
+
+      if (error) {
+        res.status(500).json({ error: 'Failed to refresh cards', message: error.message });
+        return;
+      }
+    }
+
+    if (toInsert.length > 0) {
+      const { error } = await supabaseAdmin.from('flashcards').insert(
+        toInsert.map((c) => ({
+          deck_id: deck.id,
+          term: frontFor(c as any),
+          definition: c.definition,
+          concept_id: c.id,
+          source_material_id: material_id,
+          is_ai_generated: aiWrote(c as any),
+        }))
+      );
+
+      if (error) {
+        res.status(500).json({ error: 'Failed to add new cards', message: error.message });
+        return;
+      }
+    }
+
+    if (staleIds.length > 0) {
+      const { error } = await supabaseAdmin.from('flashcards').delete().in('id', staleIds);
+      if (error) {
+        res.status(500).json({ error: 'Failed to remove outdated cards', message: error.message });
+        return;
+      }
+    }
+
+    res.json({
+      data: {
+        added: toInsert.length,
+        updated: toUpdate.length,
+        removed: staleIds.length,
+        fallback: fallbackCount,
+      },
+      message: `Refreshed ${deck.title} — ${toUpdate.length} updated, ${toInsert.length} added, ${staleIds.length} removed.${fallbackNote}`,
+    });
   }
 );
 

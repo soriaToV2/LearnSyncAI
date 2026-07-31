@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Sparkles, Plus, Layers, ChevronLeft, RefreshCw, Play, Trash2, BookOpen, Globe, Lock, Loader2, Pencil, X } from 'lucide-react';
+import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Loader2, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck } from 'lucide-react';
 import FlashcardStudyView from '../components/FlashcardStudyView';
-import CreateFlashcardsModal from '../components/CreateFlashcardsModal';
 import Modal from '../../../components/ui/Modal';
 import { api } from '../../../lib/api';
 
@@ -10,6 +9,38 @@ interface Flashcard {
   id: string;
   front: string;
   back: string;
+  /** The material this card was generated from. Drives "already in this deck". */
+  sourceMaterialId?: string | null;
+  /** When this card is next due. Past or null = due now. */
+  nextReviewAt?: string | null;
+}
+
+/**
+ * Mirrors `isDue()` in server/lib/reviewSchedule.ts. The server remains the
+ * authority — this only decides what to show and which cards a session opens
+ * with. `<=` so overdue cards still count as due; null means never scheduled.
+ */
+function isDue(nextReviewAt: string | null | undefined, now: number = Date.now()): boolean {
+  if (!nextReviewAt) return true;
+  const due = new Date(nextReviewAt).getTime();
+  return Number.isNaN(due) || due <= now;
+}
+
+/** "Tue 4 Aug" — short enough for a deck tile. */
+function formatReviewDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+}
+
+/** "Due now" / "Due in 3 days" for a single card. */
+function dueLabel(nextReviewAt: string | null | undefined): string {
+  if (isDue(nextReviewAt)) return 'Due now';
+  const days = Math.ceil((new Date(nextReviewAt!).getTime() - Date.now()) / 86_400_000);
+  if (days <= 1) return 'Due tomorrow';
+  return `Due in ${days} days`;
 }
 
 interface FlashcardSet {
@@ -18,501 +49,605 @@ interface FlashcardSet {
   description?: string;
   cardCount: number;
   cards: Flashcard[];
-  isPublic: boolean;
 }
 
+interface SpaceMaterial {
+  id: string;
+  title: string;
+  concept_count: number;
+}
+
+/**
+ * What goes on the FRONT of a generated card. The back is the educator's
+ * definition in both cases — the model never writes an answer.
+ */
+type CardFormat = 'term' | 'question';
+
+/**
+ * A deck is the student's own folder — they create, rename and delete decks to
+ * organise their lessons. The CARDS inside are not theirs to write: every card
+ * assesses a concept an educator uploaded and vetted, so cards arrive only by
+ * generating against a selected material. There is deliberately no add-card,
+ * edit-card or delete-card control here, and the routes behind them are gone.
+ *
+ * Layout note: Study is on the deck tile itself, so opening the tab and starting
+ * a session is one click. The deck view still exists, but for browsing cards and
+ * managing the deck — it is no longer a step you pass through to reach studying.
+ */
 interface FlashcardsTabProps {
   spaceId: string;
-  readOnly: boolean;
-  courseConnected: boolean;
-  isGenerating: boolean;
   selectedSetContent: string | null;
   flashcardSets: FlashcardSet[];
   setSelectedSetContent: (id: string | null) => void;
-  setIsCreateDeckModalOpen: (isOpen: boolean) => void;
-  setActiveTab: (tab: 'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources') => void;
   onRefresh: () => void;
-  spaceIsPublic: boolean;
-  onToggleDeckVisibility: (deckId: string) => void;
-  availableResources: { id: string; title: string }[];
+  availableResources: SpaceMaterial[];
 }
 
 export default function FlashcardsTab({
   spaceId,
-  readOnly,
-  courseConnected,
-  isGenerating,
   selectedSetContent,
   flashcardSets,
   setSelectedSetContent,
-  setIsCreateDeckModalOpen,
-  setActiveTab,
   onRefresh,
-  spaceIsPublic,
-  onToggleDeckVisibility,
   availableResources,
 }: FlashcardsTabProps) {
   const [isStudying, setIsStudying] = useState(false);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [editingSetId, setEditingSetId] = useState<string | null>(null);
+  /** 'due' opens with only the cards that are due; 'practice' with all of them. */
+  const [studyMode, setStudyMode] = useState<'due' | 'practice'>('due');
   const [flippedCardId, setFlippedCardId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Deck Edit State
-  const [isEditDeckModalOpen, setIsEditDeckModalOpen] = useState(false);
-  const [deckEditTitle, setDeckEditTitle] = useState('');
-  const [deckEditDesc, setDeckEditDesc] = useState('');
+  // Every failed action lands here and is rendered. Writing failures to the
+  // console only would leave a student assuming the action worked.
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Deck Delete Confirmation State
-  const [isDeleteDeckConfirmOpen, setIsDeleteDeckConfirmOpen] = useState(false);
+  // Create deck
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newDescription, setNewDescription] = useState('');
 
-  // Single Card Create State
-  const [isAddCardModalOpen, setIsAddCardModalOpen] = useState(false);
-  const [newCardFront, setNewCardFront] = useState('');
-  const [newCardBack, setNewCardBack] = useState('');
+  // Rename deck
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renameDescription, setRenameDescription] = useState('');
 
-  // Single Card Edit State
-  const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
-  const [editingCardId, setEditingCardId] = useState<string | null>(null);
-  const [editCardFront, setEditCardFront] = useState('');
-  const [editCardBack, setEditCardBack] = useState('');
+  // Delete deck
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
-  // Single Card Delete Confirmation State
-  const [isDeleteCardConfirmOpen, setIsDeleteCardConfirmOpen] = useState(false);
-  const [deletingCardId, setDeletingCardId] = useState<string | null>(null);
+  // Add cards from a material
+  const [isAddCardsOpen, setIsAddCardsOpen] = useState(false);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateNotice, setGenerateNotice] = useState<string | null>(null);
+  const [cardFormat, setCardFormat] = useState<CardFormat>('term');
+  /** Material the server said is already here — the Refresh confirmation. */
+  const [confirmRefresh, setConfirmRefresh] = useState<
+    { material: SpaceMaterial; message: string; currentFormat: CardFormat } | null
+  >(null);
 
   const toggleFlip = (cardId: string) => {
     setFlippedCardId(prev => (prev === cardId ? null : cardId));
   };
 
   const selectedSet = flashcardSets.find(s => s.id === selectedSetContent) || null;
+  const hasMaterials = availableResources.length > 0;
 
-  const handleSaveCards = async (data: { title: string; description: string; cards: { front: string; back: string }[] }) => {
-    if (readOnly) return;
+  const materialTitle = (id: string | null | undefined): string | null =>
+    availableResources.find(m => m.id === id)?.title ?? null;
+
+  /** Distinct material titles represented in a deck, in card order. */
+  const deckSources = (set: FlashcardSet): string[] => {
+    const seen = new Set<string>();
+    const titles: string[] = [];
+    for (const card of set.cards) {
+      if (!card.sourceMaterialId || seen.has(card.sourceMaterialId)) continue;
+      seen.add(card.sourceMaterialId);
+      const title = materialTitle(card.sourceMaterialId);
+      if (title) titles.push(title);
+    }
+    return titles;
+  };
+
+  /** Cards in a deck that are ready to review right now. */
+  const dueCards = (set: FlashcardSet): Flashcard[] =>
+    set.cards.filter(c => isDue(c.nextReviewAt));
+
+  /** Earliest upcoming review date in a deck, when nothing is due. */
+  const nextReviewDate = (set: FlashcardSet): string | null => {
+    const upcoming = set.cards
+      .map(c => c.nextReviewAt)
+      .filter((d): d is string => Boolean(d) && !isDue(d))
+      .sort();
+    return upcoming[0] ?? null;
+  };
+
+  /**
+   * The one-line summary under a deck name. Leads with what the student has to
+   * do — how many are due — rather than the deck's total size.
+   */
+  const deckSummary = (set: FlashcardSet): string => {
+    if (set.cardCount === 0) return 'Empty — no cards yet';
+    const cards = `${set.cardCount} card${set.cardCount === 1 ? '' : 's'}`;
+    const due = dueCards(set).length;
+    if (due > 0) return `${cards} · ${due} due`;
+    const next = nextReviewDate(set);
+    return next ? `${cards} · next review ${formatReviewDate(next)}` : cards;
+  };
+
+  /**
+   * Where a deck's cards came from. Kept off the tile — the tile's one line is
+   * spent on what to do next — and shown in the deck view, which has the room.
+   */
+  const deckSourceLine = (set: FlashcardSet): string | null => {
+    const sources = deckSources(set);
+    if (sources.length === 0) return null;
+    if (sources.length === 1) return `From ${sources[0]}`;
+    return `From ${sources.join(', ')}`;
+  };
+
+  /** Material ids the open deck already holds cards from. */
+  const materialsInDeck = new Set(
+    (selectedSet?.cards ?? [])
+      .map(c => c.sourceMaterialId)
+      .filter((id): id is string => Boolean(id))
+  );
+
+  const openAddCards = () => {
+    setGenerateError(null);
+    setGenerateNotice(null);
+    setConfirmRefresh(null);
+    setIsAddCardsOpen(true);
+  };
+
+  /** Start a session straight from a deck tile — the one-click path. */
+  const studyDeck = (deckId: string, mode: 'due' | 'practice' = 'due') => {
+    setSelectedSetContent(deckId);
+    setStudyMode(mode);
+    setIsStudying(true);
+  };
+
+  /**
+   * Leaving a session refreshes the deck list, so the counts the student just
+   * changed are correct the moment they land back on it.
+   */
+  const exitStudy = () => {
+    setIsStudying(false);
+    onRefresh();
+  };
+
+  const handleCreateDeck = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim()) return;
     setIsSaving(true);
+    setActionError(null);
     try {
-      if (editingSetId !== null) {
-        // Edit Deck Info
-        await api.put(`/spaces/${spaceId}/decks/${editingSetId}`, {
-          title: data.title,
-          description: data.description
-        });
-        // Bulk Sync Flashcards
-        await api.post(`/spaces/${spaceId}/decks/${editingSetId}/flashcards/bulk`, {
-          cards: data.cards
-        });
-      } else {
-        // Create new deck
-        const resDeck = await api.post<any>(`/spaces/${spaceId}/decks`, {
-          title: data.title,
-          description: data.description
-        });
-        if (resDeck.data && resDeck.data.id) {
-          await api.post(`/spaces/${spaceId}/decks/${resDeck.data.id}/flashcards/bulk`, {
-            cards: data.cards
-          });
-        }
-      }
+      await api.post(`/spaces/${spaceId}/decks`, {
+        title: newTitle.trim(),
+        description: newDescription.trim() || undefined,
+      });
+      setIsCreateOpen(false);
+      setNewTitle('');
+      setNewDescription('');
       onRefresh();
-      setIsCreateModalOpen(false);
-      setEditingSetId(null);
-    } catch (err) {
-      console.error('Failed to save flashcards', err);
+    } catch (err: any) {
+      setActionError(err?.message ?? 'That deck could not be created. Please try again.');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleUpdateDeckDetails = async (e: React.FormEvent) => {
+  const handleRenameDeck = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSet || readOnly || !deckEditTitle.trim()) return;
+    if (!selectedSet || !renameTitle.trim()) return;
     setIsSaving(true);
+    setActionError(null);
     try {
       await api.put(`/spaces/${spaceId}/decks/${selectedSet.id}`, {
-        title: deckEditTitle.trim(),
-        description: deckEditDesc.trim()
+        title: renameTitle.trim(),
+        description: renameDescription.trim() || null,
       });
-      setIsEditDeckModalOpen(false);
+      setIsRenameOpen(false);
       onRefresh();
-    } catch (err) {
-      console.error('Failed to update deck details', err);
+    } catch (err: any) {
+      setActionError(err?.message ?? 'That deck could not be renamed. Please try again.');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleDeleteDeck = (deckId: string) => {
-    if (readOnly) return;
-    setIsDeleteDeckConfirmOpen(true);
-  };
-
-  const handleDeleteDeckConfirmed = async () => {
-    if (readOnly || !selectedSet) return;
+  const handleDeleteDeck = async () => {
+    if (!selectedSet) return;
     setIsSaving(true);
+    setActionError(null);
     try {
       await api.delete(`/spaces/${spaceId}/decks/${selectedSet.id}`);
+      setIsDeleteOpen(false);
       setSelectedSetContent(null);
-      setIsDeleteDeckConfirmOpen(false);
       onRefresh();
-    } catch (err) {
-      console.error('Failed to delete deck', err);
+    } catch (err: any) {
+      setActionError(err?.message ?? 'That deck could not be deleted. Please try again.');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleCreateSingleCard = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedSet || readOnly || !newCardFront.trim() || !newCardBack.trim()) return;
-    setIsSaving(true);
+  /**
+   * Fills the open deck from one material. Without `replace` the server answers
+   * 409 when the material is already here; that is surfaced as a Refresh
+   * confirmation rather than an error, because nothing went wrong.
+   */
+  const handleGenerate = async (material: SpaceMaterial, replace = false, format = cardFormat) => {
+    if (!selectedSet || generatingId) return;
+    setGeneratingId(material.id);
+    setGenerateError(null);
+    setGenerateNotice(null);
     try {
-      await api.post(`/spaces/${spaceId}/decks/${selectedSet.id}/flashcards`, {
-        term: newCardFront.trim(),
-        definition: newCardBack.trim()
-      });
-      setIsAddCardModalOpen(false);
-      setNewCardFront('');
-      setNewCardBack('');
+      const res = await api.post<{ added: number; updated: number; removed: number; fallback: number }>(
+        `/spaces/${spaceId}/decks/${selectedSet.id}/generate`,
+        { material_id: material.id, replace, format }
+      );
+      const { added = 0, updated = 0, removed = 0, fallback = 0 } = res.data ?? {};
+      const note = fallback > 0
+        ? ` ${fallback} show the term instead — no question could be written for ${fallback === 1 ? 'it' : 'them'}.`
+        : '';
+      setGenerateNotice(
+        (replace
+          ? `Refreshed from ${material.title} — ${updated} updated, ${added} added, ${removed} removed.`
+          : `Added ${added} card${added === 1 ? '' : 's'} from ${material.title}.`) + note
+      );
+      setConfirmRefresh(null);
+      setIsAddCardsOpen(false);
       onRefresh();
-    } catch (err) {
-      console.error('Failed to create flashcard', err);
+    } catch (err: any) {
+      const message: string = err?.message ?? 'Those cards could not be added. Please try again.';
+      // The 409 message names the deck and the existing count, so it reads as a
+      // prompt rather than a failure. A refresh keeps the deck's existing style
+      // unless the student deliberately picks the other one.
+      if (/already/i.test(message)) {
+        setConfirmRefresh({ material, message, currentFormat: cardFormat });
+      } else {
+        setGenerateError(message);
+      }
     } finally {
-      setIsSaving(false);
+      setGeneratingId(null);
     }
   };
 
-  const handleUpdateSingleCard = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedSet || readOnly || !editingCardId || !editCardFront.trim() || !editCardBack.trim()) return;
-    setIsSaving(true);
-    try {
-      await api.put(`/spaces/${spaceId}/decks/${selectedSet.id}/flashcards/${editingCardId}`, {
-        term: editCardFront.trim(),
-        definition: editCardBack.trim()
-      });
-      setIsEditCardModalOpen(false);
-      setEditingCardId(null);
-      setEditCardFront('');
-      setEditCardBack('');
-      onRefresh();
-    } catch (err) {
-      console.error('Failed to update flashcard', err);
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  /** Shared inline error banner. Dismissible — it must not trap the student. */
+  const errorBanner = actionError && (
+    <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 animate-in fade-in duration-200">
+      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+      <p className="font-sans text-xs text-rose-300 leading-relaxed flex-1">{actionError}</p>
+      <button
+        onClick={() => setActionError(null)}
+        className="font-sans text-[10px] uppercase tracking-widest text-rose-400/70 hover:text-rose-300 font-bold shrink-0"
+      >
+        Dismiss
+      </button>
+    </div>
+  );
 
-  const handleDeleteCard = (cardId: string) => {
-    if (readOnly || !selectedSet) return;
-    setDeletingCardId(cardId);
-    setIsDeleteCardConfirmOpen(true);
-  };
-
-  const handleDeleteCardConfirmed = async () => {
-    if (!selectedSet || readOnly || !deletingCardId) return;
-    setIsSaving(true);
-    try {
-      await api.delete(`/spaces/${spaceId}/decks/${selectedSet.id}/flashcards/${deletingCardId}`);
-      setIsDeleteCardConfirmOpen(false);
-      setDeletingCardId(null);
-      onRefresh();
-    } catch (err) {
-      console.error('Failed to delete card', err);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleOpenCreateModal = (setId?: string) => {
-    if (readOnly) return;
-    if (setId) {
-      setEditingSetId(setId);
-    } else {
-      setEditingSetId(null);
-    }
-    setIsCreateModalOpen(true);
-  };
-
-  // Render study view if active
+  // Render study view if active.
+  //
+  // A 'due' session opens with only the cards that are due — that is what makes
+  // the schedule mean anything. 'practice' opens with the whole deck; those
+  // ratings are still sent, and the server schedules any that happen to be due.
   if (isStudying && selectedSet && selectedSet.cards.length > 0) {
-    return (
-      <div className="animate-in fade-in duration-300">
-        <FlashcardStudyView
-          cards={selectedSet.cards}
-          deckTitle={selectedSet.title}
-          onExit={() => setIsStudying(false)}
-        />
-      </div>
-    );
+    const sessionCards = studyMode === 'due' ? dueCards(selectedSet) : selectedSet.cards;
+    if (sessionCards.length > 0) {
+      return (
+        <div className="animate-in fade-in duration-300">
+          <FlashcardStudyView
+            cards={sessionCards.map(c => ({
+              id: c.id,
+              front: c.front,
+              back: c.back,
+              source: materialTitle(c.sourceMaterialId) ?? undefined,
+            }))}
+            deckTitle={selectedSet.title}
+            isPractice={studyMode === 'practice' && dueCards(selectedSet).length === 0}
+            onExit={exitStudy}
+          />
+        </div>
+      );
+    }
   }
 
   return (
     <div className="animate-in fade-in duration-300">
-      {/* Deck list */}
+      {/* ══ Deck list ══════════════════════════════════════════════════ */}
       {selectedSetContent === null ? (
         <div key="deck-list" className="animate-in fade-in duration-500">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
               <h2 className="font-display text-2xl font-semibold text-white mb-1">Study Decks</h2>
-              <p className="font-sans text-sm text-slate-400">Organize your flashcards into decks</p>
+              <p className="font-sans text-sm text-slate-400">Organize your lessons into decks</p>
             </div>
-            {!readOnly && (
-              <div className="flex flex-wrap gap-3">
-                <button 
-                  onClick={() => setIsCreateDeckModalOpen(true)}
-                  className="px-5 py-2.5 bg-surface-container border border-white/10 text-on-surface hover:bg-surface-container-high rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 transition-all"
-                >
-                  <Plus className="w-4 h-4" />
-                  New Deck
-                </button>
-              </div>
+            {flashcardSets.length > 0 && (
+              <button
+                onClick={() => { setIsCreateOpen(true); setActionError(null); }}
+                className="px-5 py-2.5 bg-surface-container border border-white/10 text-on-surface hover:bg-surface-container-high rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 transition-all shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                New Deck
+              </button>
             )}
           </div>
 
-          {!readOnly && !courseConnected && flashcardSets.length === 0 && (
-            <div className="bg-surface-container-lowest border border-white/5 rounded-xl p-6 mb-8 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full bg-primary-fixed-dim/10 flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-primary-fixed-dim" />
-                </div>
-                <div>
-                  <h3 className="font-display font-medium text-white">Generate from Course Material</h3>
-                  <p className="font-sans text-sm text-slate-400">Connect this space to a course to unlock one-click AI flashcard generation.</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setActiveTab('resources')}
-                className="px-4 py-2 bg-primary-fixed-dim/20 text-primary-fixed rounded-lg text-sm font-semibold hover:bg-primary-fixed-dim hover:text-on-primary-fixed transition-colors"
-              >
-                Go to Resources
-              </button>
-            </div>
-          )}
+          {errorBanner}
 
           {flashcardSets.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-center bg-surface-container-lowest/10 border border-white/5 rounded-2xl">
-              <BookOpen className="w-10 h-10 text-slate-600 mb-4" />
-              <h3 className="font-display text-lg font-medium text-white mb-2">No Decks Yet</h3>
-              <p className="font-sans text-sm text-slate-400 max-w-sm">
-                {readOnly ? 'This study space does not contain any flashcard decks.' : 'Create a flashcard deck to start studying.'}
-              </p>
+            /* No decks at all — one instruction, one button. */
+            <div className="flex flex-col items-center justify-center py-16 md:py-24 px-6 text-center bg-surface-container-lowest/40 border border-white/5 rounded-2xl">
+              <div className="w-16 h-16 rounded-2xl bg-surface-container border border-white/5 flex items-center justify-center mb-6">
+                <LibraryBig className="w-8 h-8 text-primary-fixed-dim" />
+              </div>
+              <h3 className="font-display text-xl font-medium text-white mb-2">Start your first deck</h3>
+              {hasMaterials ? (
+                <>
+                  <p className="font-sans text-sm text-slate-400 max-w-sm mb-7 leading-relaxed">
+                    A deck is a folder for one lesson. Make one, then fill it with flashcards from
+                    your teacher's materials.
+                  </p>
+                  <button
+                    onClick={() => { setIsCreateOpen(true); setActionError(null); }}
+                    className="px-6 py-3 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    New Deck
+                  </button>
+                </>
+              ) : (
+                <p className="font-sans text-sm text-slate-400 max-w-sm leading-relaxed">
+                  There are no materials in this study space yet, so there is nothing to make
+                  flashcards from. Open the <span className="text-slate-300 font-semibold">Learning Resources</span> tab
+                  to see what your teacher has published.
+                </p>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {flashcardSets.map(set => (
-                <div
-                  key={set.id}
-                  onClick={() => setSelectedSetContent(set.id)}
-                  className="bg-surface-container-lowest rounded-2xl border border-white/5 p-6 hover:-translate-y-1 transition-all duration-300 group hover:border-primary-fixed-dim/30 hover:shadow-lg hover:shadow-primary-fixed-dim/5 flex flex-col cursor-pointer"
-                >
-                  <div className="flex items-start justify-between mb-6">
-                    <div
-                      className="w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center group-hover:bg-primary-fixed-dim/20 group-hover:border-primary-fixed-dim/30 transition-colors"
-                    >
+              {flashcardSets.map(set => {
+                const isEmpty = set.cardCount === 0;
+                const due = dueCards(set).length;
+                return (
+                  <div
+                    key={set.id}
+                    onClick={() => setSelectedSetContent(set.id)}
+                    className="bg-surface-container-lowest rounded-2xl border border-white/5 p-6 hover:-translate-y-1 transition-all duration-300 group hover:border-primary-fixed-dim/30 hover:shadow-lg hover:shadow-primary-fixed-dim/5 flex flex-col cursor-pointer"
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center group-hover:bg-primary-fixed-dim/20 group-hover:border-primary-fixed-dim/30 transition-colors mb-5">
                       <Layers className="w-6 h-6 text-slate-400 group-hover:text-primary-fixed-dim transition-colors" />
                     </div>
- 
-                    {!readOnly && (
+
+                    <div className="flex-1 mb-5">
+                      <h3 className="font-display text-xl font-medium text-white mb-1.5 group-hover:text-primary-fixed-dim transition-colors line-clamp-2">
+                        {set.title}
+                      </h3>
+                      {set.description && (
+                        <p className="font-sans text-xs text-slate-500 mb-2 line-clamp-2">{set.description}</p>
+                      )}
+                      <p className="font-sans text-xs text-slate-400">{deckSummary(set)}</p>
+                    </div>
+
+                    {/* One clear action per tile. Studying is one click from
+                        here — the deck view is no longer on the way. */}
+                    {isEmpty ? (
                       <button
-                        onClick={e => { e.stopPropagation(); onToggleDeckVisibility(set.id); }}
-                        title={set.isPublic ? 'Click to make this deck private' : 'Click to share this deck publicly'}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border font-sans text-[10px] font-bold uppercase tracking-wider transition-all active:scale-95 ${
-                          set.isPublic
-                            ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400 hover:bg-emerald-400/20'
-                            : 'bg-white/5 border-white/10 text-slate-500 hover:border-white/20 hover:text-slate-300'
-                        } ${!spaceIsPublic ? 'opacity-40 cursor-not-allowed' : ''}`}
-                        disabled={!spaceIsPublic}
+                        onClick={e => { e.stopPropagation(); setSelectedSetContent(set.id); openAddCards(); }}
+                        disabled={!hasMaterials}
+                        className="w-full px-4 py-2.5 bg-surface-container border border-primary-fixed-dim/30 text-primary-fixed-dim hover:bg-primary-fixed-dim/10 rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-container"
                       >
-                        {set.isPublic
-                          ? <><Globe className="w-3 h-3" /> Public</>
-                          : <><Lock className="w-3 h-3" /> Private</>}
+                        <Sparkles className="w-4 h-4" />
+                        {hasMaterials ? 'Add Cards' : 'No Materials'}
+                      </button>
+                    ) : due > 0 ? (
+                      <button
+                        onClick={e => { e.stopPropagation(); studyDeck(set.id, 'due'); }}
+                        className="w-full px-4 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(0,218,243,0.15)] hover:shadow-[0_0_30px_rgba(0,218,243,0.3)] transition-all"
+                      >
+                        <Play className="w-4 h-4" />
+                        Review {due}
+                      </button>
+                    ) : (
+                      /* Nothing due. Practice stays available for cramming, but
+                         quietly — it is not the recommended next action. */
+                      <button
+                        onClick={e => { e.stopPropagation(); studyDeck(set.id, 'practice'); }}
+                        className="w-full px-4 py-2.5 bg-surface-container border border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        Practice all
                       </button>
                     )}
                   </div>
- 
-                  <div className="flex-1">
-                    <h3 className="font-display text-xl font-medium text-white mb-2 group-hover:text-primary-fixed-dim transition-colors">{set.title}</h3>
-                    {set.description && (
-                      <p className="font-sans text-xs text-slate-500 mb-2 line-clamp-2">{set.description}</p>
-                    )}
-                    <p className="font-sans text-sm text-slate-400">{set.cardCount} Cards</p>
-                  </div>
-
-                  {!readOnly && !spaceIsPublic && (
-                    <p className="font-sans text-[10px] text-slate-600 mt-3 flex items-center gap-1">
-                      <Lock className="w-3 h-3" /> Publicize the space first to share individual decks
-                    </p>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       ) : (
-        /* Selected deck view */
+        /* ══ Inside a deck — browsing and managing, not a step to studying ══ */
         <div key="selected-deck" className="animate-in fade-in duration-500">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-            <div>
-              <button 
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5 mb-8">
+            <div className="min-w-0">
+              <button
                 onClick={() => setSelectedSetContent(null)}
-                className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 mb-2 font-sans font-semibold text-sm uppercase tracking-widest"
+                className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 mb-3 font-sans font-semibold text-xs uppercase tracking-widest"
               >
-                <ChevronLeft className="w-4 h-4" /> Back to Decks
+                <ChevronLeft className="w-4 h-4" /> All decks
               </button>
-              <h2 className="font-display text-2xl font-semibold text-white mb-1">
+              <h2 className="font-display text-2xl font-semibold text-white mb-1.5">
                 {selectedSet?.title}
               </h2>
               {selectedSet?.description && (
-                <p className="font-sans text-sm text-slate-400">{selectedSet.description}</p>
+                <p className="font-sans text-sm text-slate-400 mb-1">{selectedSet.description}</p>
               )}
-              {!selectedSet?.description && (
-                <p className="font-sans text-sm text-slate-400">Review your cards and start studying</p>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-3">
-              {!readOnly && selectedSet && (
+              {selectedSet && (
                 <>
-                  <button
-                    onClick={() => {
-                      setDeckEditTitle(selectedSet.title);
-                      setDeckEditDesc(selectedSet.description || '');
-                      setIsEditDeckModalOpen(true);
-                    }}
-                    className="px-5 py-2.5 bg-surface-container border border-white/10 text-on-surface hover:bg-surface-container-high rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 transition-all"
-                  >
-                    <Pencil className="w-4 h-4" />
-                    Edit Deck
-                  </button>
-                  <button
-                    onClick={() => handleDeleteDeck(selectedSet.id)}
-                    className="px-5 py-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 transition-all"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Delete Deck
-                  </button>
+                  <p className="font-sans text-xs text-slate-500">{deckSummary(selectedSet)}</p>
+                  {deckSourceLine(selectedSet) && (
+                    <p className="font-sans text-xs text-slate-600 mt-0.5">{deckSourceLine(selectedSet)}</p>
+                  )}
                 </>
               )}
-              {selectedSet && selectedSet.cards.length > 0 && (
-                <button
-                  onClick={() => setIsStudying(true)}
-                  className="px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 shadow-[0_0_20px_rgba(0,218,243,0.2)] hover:shadow-[0_0_30px_rgba(0,218,243,0.35)] transition-all hover:scale-[1.02]"
-                >
-                  <Play className="w-4 h-4" />
-                  Study Cards
-                </button>
-              )}
             </div>
-          </div>
 
-          {/* Empty state */}
-          {selectedSet && selectedSet.cards.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <div className="w-20 h-20 rounded-2xl bg-surface-container border border-white/5 flex items-center justify-center mb-6">
-                <BookOpen className="w-10 h-10 text-slate-600" />
-              </div>
-              <h3 className="font-display text-xl font-medium text-white mb-2">No Cards Yet</h3>
-              <p className="font-sans text-sm text-slate-400 mb-6 max-w-sm">
-                This deck is empty. Add flashcards to start studying.
-              </p>
-              {!readOnly && (
-                <div className="flex gap-4">
+            {selectedSet && (
+              <div className="flex flex-col sm:flex-row gap-3 shrink-0">
+                {selectedSet.cards.length > 0 && (
+                  dueCards(selectedSet).length > 0 ? (
+                    <button
+                      onClick={() => studyDeck(selectedSet.id, 'due')}
+                      className="px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(0,218,243,0.2)] hover:shadow-[0_0_30px_rgba(0,218,243,0.35)] transition-all"
+                    >
+                      <Play className="w-4 h-4" />
+                      Review {dueCards(selectedSet).length}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => studyDeck(selectedSet.id, 'practice')}
+                      className="px-5 py-2.5 bg-surface-container border border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      Practice all
+                    </button>
+                  )
+                )}
+                <div className="flex gap-2">
                   <button
-                    onClick={() => setIsAddCardModalOpen(true)}
-                    className="px-6 py-3 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all flex items-center gap-2"
+                    onClick={openAddCards}
+                    className="flex-1 sm:flex-none px-4 py-2.5 bg-surface-container border border-white/10 text-on-surface hover:bg-surface-container-high rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center justify-center gap-2 transition-all"
                   >
-                    <Plus className="w-4 h-4" />
-                    Add Flashcard
+                    <Sparkles className="w-4 h-4" />
+                    Add Cards
                   </button>
                   <button
-                    onClick={() => handleOpenCreateModal(selectedSet.id)}
-                    className="px-6 py-3 bg-surface-container border border-white/10 text-on-surface rounded-xl font-sans text-sm font-bold hover:bg-surface-container-high transition-all flex items-center gap-2"
+                    onClick={() => {
+                      setRenameTitle(selectedSet.title);
+                      setRenameDescription(selectedSet.description || '');
+                      setActionError(null);
+                      setIsRenameOpen(true);
+                    }}
+                    aria-label="Rename deck"
+                    className="px-3 py-2.5 bg-surface-container border border-white/10 text-slate-300 hover:text-white hover:bg-surface-container-high rounded-xl transition-all"
                   >
-                    <Layers className="w-4 h-4" />
-                    Bulk Manage
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => { setActionError(null); setIsDeleteOpen(true); }}
+                    aria-label="Delete deck"
+                    className="px-3 py-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 rounded-xl transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {errorBanner}
+
+          {/* Result of the last generation. */}
+          {generateNotice && (
+            <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 animate-in fade-in duration-200">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <p className="font-sans text-xs text-emerald-300 leading-relaxed flex-1">{generateNotice}</p>
+              <button
+                onClick={() => setGenerateNotice(null)}
+                className="font-sans text-[10px] uppercase tracking-widest text-emerald-400/70 hover:text-emerald-300 font-bold shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Caught up. Said explicitly so an inactive Review button reads as
+              success rather than something being broken. */}
+          {selectedSet && selectedSet.cards.length > 0 && dueCards(selectedSet).length === 0 && (
+            <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-emerald-500/5 border border-emerald-500/15">
+              <CalendarCheck className="w-4 h-4 text-emerald-400/80 shrink-0 mt-0.5" />
+              <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                <span className="text-slate-200 font-semibold">You're all caught up.</span>{' '}
+                {nextReviewDate(selectedSet)
+                  ? `Your next cards are due ${formatReviewDate(nextReviewDate(selectedSet)!)}.`
+                  : 'Nothing is due right now.'}{' '}
+                You can still practise — it just won't change your review dates.
+              </p>
+            </div>
+          )}
+
+          {/* Empty state — a new deck is empty by design, so it names the next step. */}
+          {selectedSet && selectedSet.cards.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 md:py-24 px-6 text-center bg-surface-container-lowest/40 border border-white/5 rounded-2xl">
+              <div className="w-16 h-16 rounded-2xl bg-surface-container border border-white/5 flex items-center justify-center mb-6">
+                <BookOpen className="w-8 h-8 text-slate-500" />
+              </div>
+              <h3 className="font-display text-xl font-medium text-white mb-2">This deck is empty</h3>
+              {hasMaterials ? (
+                <>
+                  <p className="font-sans text-sm text-slate-400 mb-7 max-w-sm leading-relaxed">
+                    Pick one of your teacher's materials and this deck fills with a card for every
+                    key term in it.
+                  </p>
+                  <button
+                    onClick={openAddCards}
+                    className="px-6 py-3 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all flex items-center gap-2"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    Add Cards from Material
+                  </button>
+                </>
+              ) : (
+                <p className="font-sans text-sm text-slate-400 max-w-sm leading-relaxed">
+                  There are no materials in this study space yet. Open the{' '}
+                  <span className="text-slate-300 font-semibold">Learning Resources</span> tab to see
+                  what your teacher has published.
+                </p>
               )}
             </div>
           )}
 
-          {/* Card grid */}
+          {/* Card grid — for reviewing what is in the deck. No controls on cards. */}
           {selectedSet && selectedSet.cards.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* Add card tile */}
-                {!readOnly && (
-                  <>
+              {selectedSet.cards.map((card) => {
+                const source = materialTitle(card.sourceMaterialId);
+                return (
+                  <div key={card.id} className="group relative h-64 [perspective:1000px]">
                     <div
-                      onClick={() => setIsAddCardModalOpen(true)}
-                      className="h-64 rounded-2xl border border-white/10 bg-surface-container hover:border-primary-fixed-dim/30 hover:bg-primary-fixed-dim/5 transition-all cursor-pointer flex flex-col justify-center items-center text-center p-6"
+                      onClick={() => toggleFlip(card.id)}
+                      className={`relative w-full h-full transition-transform duration-500 [transform-style:preserve-3d] ${flippedCardId === card.id ? '[transform:rotateY(180deg)]' : ''} cursor-pointer`}
                     >
-                      <div className="w-12 h-12 rounded-full bg-primary-fixed-dim/10 flex items-center justify-center mb-4">
-                        <Plus className="w-6 h-6 text-primary-fixed-dim" />
+                      {/* Front */}
+                      <div className="absolute inset-0 [backface-visibility:hidden] rounded-2xl border border-white/10 bg-surface-container flex flex-col shadow-lg overflow-hidden">
+                        {/* The grid always shows every card — it is for browsing
+                            a lesson. Scheduled cards are marked, never hidden. */}
+                        <div className="shrink-0 flex items-baseline justify-between gap-2 px-5 pt-4">
+                          <p className="font-sans text-[10px] text-slate-600 truncate min-w-0">{source ?? ''}</p>
+                          <span className={`font-sans text-[10px] shrink-0 ${
+                            isDue(card.nextReviewAt) ? 'text-primary-fixed-dim/80' : 'text-slate-600'
+                          }`}>
+                            {dueLabel(card.nextReviewAt)}
+                          </span>
+                        </div>
+                        <div className="flex-1 overflow-y-auto px-5 py-3 flex items-center justify-center">
+                          <p className="font-display text-lg text-on-surface text-center leading-snug">{card.front}</p>
+                        </div>
+                        <span className="shrink-0 pb-4 text-[10px] uppercase tracking-widest text-slate-500 flex items-center justify-center gap-1 font-semibold">
+                          <RefreshCw className="w-3 h-3" /> Click to Flip
+                        </span>
                       </div>
-                      <h3 className="font-display font-medium text-white mb-1">Add Single Card</h3>
-                      <p className="font-sans text-xs text-slate-400">Add a single new card to this deck.</p>
-                    </div>
-                    
-                    <div
-                      onClick={() => handleOpenCreateModal(selectedSet.id)}
-                      className="h-64 rounded-2xl border border-white/10 bg-surface-container hover:border-primary-fixed-dim/30 hover:bg-primary-fixed-dim/5 transition-all cursor-pointer flex flex-col justify-center items-center text-center p-6"
-                    >
-                      <div className="w-12 h-12 rounded-full bg-surface-container flex items-center justify-center mb-4">
-                        <Layers className="w-6 h-6 text-slate-400" />
+                      {/* Back */}
+                      <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-primary-fixed-dim/5 flex flex-col shadow-[0_0_30px_rgba(0,218,243,0.1)] overflow-hidden">
+                        <div className="flex-1 overflow-y-auto px-5 py-4 flex items-center justify-center">
+                          <p className="font-sans text-sm text-primary-fixed-dim font-medium text-center leading-relaxed">{card.back}</p>
+                        </div>
                       </div>
-                      <h3 className="font-display font-medium text-white mb-1">Bulk Manage Decks</h3>
-                      <p className="font-sans text-xs text-slate-400">Bulk edit or import cards in this set.</p>
-                    </div>
-                  </>
-                )}
-              {selectedSet.cards.map((card) => (
-                <div key={card.id} className="group relative h-64 [perspective:1000px]">
-                  {/* Delete / Edit card controls */}
-                  {!readOnly && (
-                    <div className="absolute top-3.5 right-3.5 z-10 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingCardId(card.id);
-                          setEditCardFront(card.front);
-                          setEditCardBack(card.back);
-                          setIsEditCardModalOpen(true);
-                        }}
-                        className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all"
-                        title="Edit Card"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteCard(card.id);
-                        }}
-                        className="p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 hover:border-rose-500/20 transition-all"
-                        title="Delete Card"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-
-                  <div 
-                    onClick={() => toggleFlip(card.id)}
-                    className={`relative w-full h-full transition-transform duration-500 [transform-style:preserve-3d] ${flippedCardId === card.id ? '[transform:rotateY(180deg)]' : ''} cursor-pointer`}
-                  >
-                    {/* Front */}
-                    <div className="absolute inset-0 [backface-visibility:hidden] rounded-2xl border border-white/10 bg-surface-container p-6 flex flex-col justify-center items-center text-center shadow-lg">
-                      <p className="font-display text-xl text-on-surface mb-4">{card.front}</p>
-                      <span className="text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-1 mt-auto font-semibold">
-                        <RefreshCw className="w-3 h-3" /> Click to Flip
-                      </span>
-                    </div>
-                    {/* Back */}
-                    <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-primary-fixed-dim/5 p-6 flex flex-col justify-center items-center text-center shadow-[0_0_30px_rgba(0,218,243,0.1)]">
-                      <p className="font-sans text-base text-primary-fixed-dim font-medium">{card.back}</p>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -529,74 +664,107 @@ export default function FlashcardsTab({
         document.body
       )}
 
-      {/* Create/Edit modal */}
-      <CreateFlashcardsModal
-        isOpen={isCreateModalOpen}
-        onClose={() => {
-          setIsCreateModalOpen(false);
-          setEditingSetId(null);
-        }}
-        onSave={handleSaveCards}
-        initialData={
-          editingSetId
-            ? (() => {
-                const s = flashcardSets.find(s => s.id === editingSetId);
-                return s
-                  ? { title: s.title, description: s.description || '', cards: s.cards }
-                  : null;
-              })()
-            : null
-        }
-        availableResources={availableResources}
-      />
-
-      {/* Edit Deck Details Modal */}
+      {/* Create Deck Modal */}
       <Modal
-        isOpen={isEditDeckModalOpen}
-        onClose={() => setIsEditDeckModalOpen(false)}
-        title="Edit Deck Details"
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        title="Create New Deck"
       >
-        <form onSubmit={handleUpdateDeckDetails}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">
-                Deck Title
-              </label>
-              <input
-                type="text"
-                value={deckEditTitle}
-                onChange={(e) => setDeckEditTitle(e.target.value)}
-                placeholder="e.g. Chapter 4 Key Concepts"
-                className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">
-                Description
-              </label>
-              <textarea
-                value={deckEditDesc}
-                onChange={(e) => setDeckEditDesc(e.target.value)}
-                placeholder="Brief description of deck..."
-                rows={3}
-                className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 resize-none font-sans text-sm"
-              />
-            </div>
+        <form onSubmit={handleCreateDeck} className="flex flex-col gap-6">
+          <div className="space-y-2">
+            <label htmlFor="new-deck-title" className="font-sans text-sm font-medium text-slate-300">
+              Deck Title
+            </label>
+            <input
+              id="new-deck-title"
+              type="text"
+              value={newTitle}
+              onChange={e => setNewTitle(e.target.value)}
+              placeholder="e.g. Chapter 4 — Information Security"
+              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 focus:border-primary-fixed-dim transition-all font-sans text-sm"
+              autoFocus
+            />
           </div>
-
-          <div className="mt-8 flex gap-3">
+          <div className="space-y-2">
+            <label htmlFor="new-deck-desc" className="font-sans text-sm font-medium text-slate-300">
+              Description <span className="text-slate-500 text-xs">(optional)</span>
+            </label>
+            <textarea
+              id="new-deck-desc"
+              value={newDescription}
+              onChange={e => setNewDescription(e.target.value)}
+              placeholder="What does this deck cover?"
+              rows={3}
+              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 focus:border-primary-fixed-dim transition-all font-sans text-sm resize-none"
+            />
+          </div>
+          <p className="font-sans text-xs text-slate-500 leading-relaxed">
+            Your new deck starts empty. You'll fill it with flashcards generated from your teacher's materials.
+          </p>
+          <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
-              onClick={() => setIsEditDeckModalOpen(false)}
-              className="flex-1 px-4 py-3 rounded-xl border border-white/10 text-white font-medium hover:bg-white/5 transition-colors"
+              onClick={() => setIsCreateOpen(false)}
+              className="px-5 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={!deckEditTitle.trim()}
-              className="flex-1 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-medium hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!newTitle.trim()}
+              className="px-5 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Create Deck
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Rename Deck Modal */}
+      <Modal
+        isOpen={isRenameOpen}
+        onClose={() => setIsRenameOpen(false)}
+        title="Rename Deck"
+      >
+        <form onSubmit={handleRenameDeck} className="flex flex-col gap-6">
+          <div className="space-y-2">
+            <label htmlFor="rename-deck-title" className="font-sans text-sm font-medium text-slate-300">
+              Deck Title
+            </label>
+            <input
+              id="rename-deck-title"
+              type="text"
+              value={renameTitle}
+              onChange={e => setRenameTitle(e.target.value)}
+              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 focus:border-primary-fixed-dim transition-all font-sans text-sm"
+              autoFocus
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="rename-deck-desc" className="font-sans text-sm font-medium text-slate-300">
+              Description <span className="text-slate-500 text-xs">(optional)</span>
+            </label>
+            <textarea
+              id="rename-deck-desc"
+              value={renameDescription}
+              onChange={e => setRenameDescription(e.target.value)}
+              rows={3}
+              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 focus:border-primary-fixed-dim transition-all font-sans text-sm resize-none"
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsRenameOpen(false)}
+              className="px-5 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!renameTitle.trim()}
+              className="px-5 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Save Changes
             </button>
@@ -604,10 +772,157 @@ export default function FlashcardsTab({
         </form>
       </Modal>
 
-      {/* Delete Deck Confirmation Modal */}
+      {/* Add Cards from Material */}
       <Modal
-        isOpen={isDeleteDeckConfirmOpen}
-        onClose={() => setIsDeleteDeckConfirmOpen(false)}
+        isOpen={isAddCardsOpen}
+        onClose={() => { if (!generatingId) { setIsAddCardsOpen(false); setConfirmRefresh(null); } }}
+        title="Add Cards from Material"
+        maxWidth="max-w-lg"
+      >
+        <div className="space-y-4">
+          <p className="font-sans text-xs text-slate-400 leading-relaxed">
+            Every key term your teacher approved becomes one flashcard in
+            <span className="text-white font-semibold"> {selectedSet?.title}</span>.
+            The back of each card is always their exact definition.
+          </p>
+
+          {/* Card style — what goes on the FRONT. */}
+          <div>
+            <p className="font-sans text-[11px] uppercase tracking-widest text-slate-400 font-bold mb-2">
+              Card front
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {([
+                {
+                  value: 'term' as CardFormat,
+                  label: 'Term & Definition',
+                  blurb: 'The term on the front. Instant.',
+                  example: 'Defense-in-depth',
+                },
+                {
+                  value: 'question' as CardFormat,
+                  label: 'Question & Answer',
+                  blurb: 'AI writes a question. Takes a moment.',
+                  example: 'What does defense-in-depth involve, and why does it help?',
+                },
+              ]).map(option => {
+                const isActive = cardFormat === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setCardFormat(option.value)}
+                    disabled={!!generatingId}
+                    className={`text-left p-3 rounded-xl border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      isActive
+                        ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/50'
+                        : 'bg-surface-container border-white/10 hover:border-white/25'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                        isActive ? 'border-primary-fixed-dim' : 'border-slate-500'
+                      }`}>
+                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim" />}
+                      </span>
+                      <span className="font-sans text-xs font-bold text-slate-200">{option.label}</span>
+                    </div>
+                    <p className="font-sans text-[10px] text-slate-500 mb-1.5 ml-5.5">{option.blurb}</p>
+                    <p className="font-sans text-[10px] text-slate-600 italic leading-snug line-clamp-2">
+                      “{option.example}”
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {generateError && (
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <p className="font-sans text-xs text-rose-300 leading-relaxed">{generateError}</p>
+            </div>
+          )}
+
+          {/* Already here — a prompt, not a failure. */}
+          {confirmRefresh && (
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-3">
+              <p className="font-sans text-xs text-amber-200 leading-relaxed">
+                {confirmRefresh.message}
+              </p>
+              <p className="font-sans text-[11px] text-amber-200/70 leading-relaxed">
+                Refreshing updates the wording if your teacher has corrected it, adds any new terms and
+                removes any they deleted. Your review progress on these cards is kept. They'll be
+                rebuilt as{' '}
+                <span className="font-semibold text-amber-200">
+                  {confirmRefresh.currentFormat === 'question' ? 'questions' : 'terms'}
+                </span>.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setConfirmRefresh(null)}
+                  className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-[11px] font-bold uppercase tracking-wider transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleGenerate(confirmRefresh.material, true, confirmRefresh.currentFormat)}
+                  disabled={!!generatingId}
+                  className="flex-1 px-3 py-2 rounded-lg bg-amber-500/20 border border-amber-500/40 hover:bg-amber-500/30 text-amber-200 font-sans text-[11px] font-bold uppercase tracking-wider transition-all disabled:opacity-50"
+                >
+                  {generatingId ? 'Refreshing…' : 'Refresh Cards'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+            {availableResources.length === 0 ? (
+              <p className="font-sans text-xs text-slate-500 text-center py-8 leading-relaxed">
+                There are no materials in this study space yet.<br />
+                Open the Learning Resources tab to see what your teacher has published.
+              </p>
+            ) : (
+              availableResources.map(material => {
+                const alreadyHere = materialsInDeck.has(material.id);
+                const isBusy = generatingId === material.id;
+                return (
+                  <button
+                    key={material.id}
+                    onClick={() => handleGenerate(material)}
+                    disabled={!!generatingId}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-surface-container hover:border-primary-fixed-dim/40 hover:bg-primary-fixed-dim/5 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="w-9 h-9 rounded-lg bg-surface-container-high border border-white/5 flex items-center justify-center shrink-0">
+                      {isBusy
+                        ? <Loader2 className="w-4 h-4 text-primary-fixed-dim animate-spin" />
+                        : <FileText className="w-4 h-4 text-slate-400" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-sans text-sm text-slate-200 truncate">{material.title}</p>
+                      <p className="font-sans text-[11px] text-slate-500">
+                        {isBusy
+                          ? (cardFormat === 'question' ? 'Writing questions…' : 'Adding cards…')
+                          : `${material.concept_count} card${material.concept_count === 1 ? '' : 's'}`}
+                      </p>
+                    </div>
+                    {alreadyHere && !isBusy && (
+                      <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-400/10 border border-emerald-400/20 text-emerald-400 font-sans text-[10px] font-bold uppercase tracking-wider shrink-0">
+                        <Check className="w-3 h-3" /> In deck
+                      </span>
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete Deck Confirmation */}
+      <Modal
+        isOpen={isDeleteOpen}
+        onClose={() => setIsDeleteOpen(false)}
         title="Delete Flashcard Deck?"
         maxWidth="max-w-sm"
       >
@@ -615,175 +930,24 @@ export default function FlashcardsTab({
           <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto shadow-inner animate-in fade-in duration-300">
             <Trash2 className="w-5 h-5" />
           </div>
-          
-          <div className="space-y-2">
-            <p className="font-sans text-xs text-slate-400 leading-relaxed">
-              Are you sure you want to delete <span className="font-semibold text-white">"{selectedSet?.title}"</span>? This will delete all cards inside. This action cannot be undone.
-            </p>
-          </div>
+
+          <p className="font-sans text-xs text-slate-400 leading-relaxed">
+            Are you sure you want to delete <span className="font-semibold text-white">"{selectedSet?.title}"</span>?
+            This removes the deck and the {selectedSet?.cardCount ?? 0} card{selectedSet?.cardCount === 1 ? '' : 's'} inside it.
+            You can generate them again from the same material.
+          </p>
 
           <div className="flex gap-3 justify-end pt-2">
             <button
               type="button"
-              onClick={() => setIsDeleteDeckConfirmOpen(false)}
+              onClick={() => setIsDeleteOpen(false)}
               className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase tracking-wider transition-all"
             >
               Cancel
             </button>
             <button
               type="button"
-              onClick={handleDeleteDeckConfirmed}
-              className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-sans text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-red-600/20"
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Add Single Card Modal */}
-      <Modal
-        isOpen={isAddCardModalOpen}
-        onClose={() => setIsAddCardModalOpen(false)}
-        title="Add New Flashcard"
-      >
-        <form onSubmit={handleCreateSingleCard} className="space-y-4">
-          <div>
-            <label className="block text-xs uppercase tracking-widest text-slate-400 font-bold mb-1.5 font-sans">
-              Front (Question / Term)
-            </label>
-            <textarea
-              value={newCardFront}
-              onChange={(e) => setNewCardFront(e.target.value)}
-              placeholder="Enter front content..."
-              rows={3}
-              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 resize-none font-sans text-sm"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs uppercase tracking-widest text-slate-400 font-bold mb-1.5 font-sans">
-              Back (Answer / Definition)
-            </label>
-            <textarea
-              value={newCardBack}
-              onChange={(e) => setNewCardBack(e.target.value)}
-              placeholder="Enter back content..."
-              rows={3}
-              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 resize-none font-sans text-sm"
-              required
-            />
-          </div>
-
-          <div className="mt-8 flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => setIsAddCardModalOpen(false)}
-              className="flex-1 px-4 py-3 rounded-xl border border-white/10 text-white font-medium hover:bg-white/5 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={!newCardFront.trim() || !newCardBack.trim()}
-              className="flex-1 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-medium hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Add Card
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Edit Single Card Modal */}
-      <Modal
-        isOpen={isEditCardModalOpen}
-        onClose={() => setIsEditCardModalOpen(false)}
-        title="Edit Flashcard"
-      >
-        <form onSubmit={handleUpdateSingleCard} className="space-y-4">
-          <div>
-            <label className="block text-xs uppercase tracking-widest text-slate-400 font-bold mb-1.5 font-sans">
-              Front (Question / Term)
-            </label>
-            <textarea
-              value={editCardFront}
-              onChange={(e) => setEditCardFront(e.target.value)}
-              placeholder="Enter front content..."
-              rows={3}
-              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 resize-none font-sans text-sm"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs uppercase tracking-widest text-slate-400 font-bold mb-1.5 font-sans">
-              Back (Answer / Definition)
-            </label>
-            <textarea
-              value={editCardBack}
-              onChange={(e) => setEditCardBack(e.target.value)}
-              placeholder="Enter back content..."
-              rows={3}
-              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 resize-none font-sans text-sm"
-              required
-            />
-          </div>
-
-          <div className="mt-8 flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => setIsEditCardModalOpen(false)}
-              className="flex-1 px-4 py-3 rounded-xl border border-white/10 text-white font-medium hover:bg-white/5 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={!editCardFront.trim() || !editCardBack.trim()}
-              className="flex-1 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-medium hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Save Changes
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Delete Card Confirmation Modal */}
-      <Modal
-        isOpen={isDeleteCardConfirmOpen}
-        onClose={() => {
-          setIsDeleteCardConfirmOpen(false);
-          setDeletingCardId(null);
-        }}
-        title="Delete Flashcard?"
-        maxWidth="max-w-sm"
-      >
-        <div className="space-y-6 text-center">
-          <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto shadow-inner animate-in fade-in duration-300">
-            <Trash2 className="w-5 h-5" />
-          </div>
-          
-          <div className="space-y-2">
-            <p className="font-sans text-xs text-slate-400 leading-relaxed">
-              Are you sure you want to delete this flashcard? This action cannot be undone.
-            </p>
-          </div>
-
-          <div className="flex gap-3 justify-end pt-2">
-            <button
-              type="button"
-              onClick={() => {
-                setIsDeleteCardConfirmOpen(false);
-                setDeletingCardId(null);
-              }}
-              className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-sans text-xs font-bold uppercase tracking-wider transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleDeleteCardConfirmed}
+              onClick={handleDeleteDeck}
               className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-sans text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-red-600/20"
             >
               Delete

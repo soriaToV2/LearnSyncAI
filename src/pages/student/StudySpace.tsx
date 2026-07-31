@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Plus, BookOpen, Layers, Lock, Brain, Award, BrainCircuit, ChevronDown, Loader2 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
-import Modal from '../../components/ui/Modal';
 import FlashcardsTab from './studySpaceTabs/FlashcardsTab';
 import FreeRecallTab from './studySpaceTabs/FreeRecallTab';
 import FeynmanTab from './studySpaceTabs/FeynmanTab';
@@ -14,6 +13,10 @@ interface Flashcard {
   id: string;
   front: string;
   back: string;
+  /** Which material generated this card — drives "already in this deck". */
+  sourceMaterialId?: string | null;
+  /** When this card is next due. Past or null = due now. */
+  nextReviewAt?: string | null;
 }
 
 interface FlashcardSet {
@@ -22,7 +25,6 @@ interface FlashcardSet {
   description?: string;
   cardCount: number;
   cards: Flashcard[];
-  isPublic: boolean;
 }
 
 export default function StudySpace() {
@@ -33,13 +35,15 @@ export default function StudySpace() {
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedSetContent, setSelectedSetContent] = useState<string | null>(null);
-  const [isCreateDeckModalOpen, setIsCreateDeckModalOpen] = useState(false);
-  const [newDeckTitle, setNewDeckTitle] = useState('');
-  
+
   const [currentSpace, setCurrentSpace] = useState<any>(null);
   const [flashcardSets, setFlashcardSets] = useState<FlashcardSet[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [availableResources, setAvailableResources] = useState<{ id: string; title: string }[]>([]);
+  // `concept_count` is how many cards a material will produce. The other study
+  // tabs read only id and title and are unaffected by the extra field.
+  const [availableResources, setAvailableResources] = useState<
+    { id: string; title: string; concept_count: number }[]
+  >([]);
 
   const fetchSpaceData = async () => {
     if (!spaceId) return;
@@ -61,7 +65,11 @@ export default function StudySpace() {
         setAvailableResources(
           materials
             .filter((m: any) => m.parsed_status === 'completed')
-            .map((m: any) => ({ id: m.id, title: m.title }))
+            .map((m: any) => ({
+              id: m.id,
+              title: m.title,
+              concept_count: m.concept_count ?? 0,
+            }))
         );
       } catch (err) {
         console.error('Failed to load space materials', err);
@@ -84,8 +92,9 @@ export default function StudySpace() {
               id: c.id,
               front: c.term,
               back: c.definition,
+              sourceMaterialId: c.source_material_id ?? null,
+              nextReviewAt: c.next_review_at ?? null,
             })),
-            isPublic: deck.is_public || false
           };
         })
       );
@@ -102,40 +111,6 @@ export default function StudySpace() {
   }, [spaceId]);
 
   const handleConnectCourse = () => setCourseConnected(true);
-
-  const handleToggleDeckVisibility = async (deckId: string) => {
-    const deck = flashcardSets.find(s => s.id === deckId);
-    if (!deck) return;
-    try {
-      await api.put(`/spaces/${spaceId}/decks/${deckId}`, {
-        title: deck.title,
-        description: deck.description,
-        is_public: !deck.isPublic
-      });
-      setFlashcardSets(prev =>
-        prev.map(s => s.id === deckId ? { ...s, isPublic: !s.isPublic } : s)
-      );
-    } catch (err) {
-      console.error('Failed to toggle deck visibility', err);
-    }
-  };
-
-  const handleCreateDeck = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newDeckTitle.trim()) return;
-    try {
-      await api.post(`/spaces/${spaceId}/decks`, {
-        title: newDeckTitle.trim(),
-        description: `Key concepts from ${currentSpace?.title || 'Study Space'}.`
-      });
-      await fetchSpaceData();
-      setNewDeckTitle('');
-      setIsCreateDeckModalOpen(false);
-    } catch (err) {
-      console.error('Failed to create deck', err);
-    }
-  };
-
 
   if (isLoading) {
     return (
@@ -269,20 +244,11 @@ export default function StudySpace() {
         {activeTab === 'flashcards' && (
           <FlashcardsTab
             spaceId={spaceId!}
-            /* Peer sharing was removed with CollabShare (migration 0003), so a space
-               is always the owner's own and always private. */
-            readOnly={false}
-            courseConnected={courseConnected}
-            isGenerating={isGenerating}
             selectedSetContent={selectedSetContent}
             flashcardSets={flashcardSets}
             setSelectedSetContent={setSelectedSetContent}
-            setIsCreateDeckModalOpen={setIsCreateDeckModalOpen}
-            setActiveTab={setActiveTab as any}
             onRefresh={fetchSpaceData}
             availableResources={availableResources}
-            spaceIsPublic={false}
-            onToggleDeckVisibility={handleToggleDeckVisibility}
           />
         )}
 
@@ -316,28 +282,6 @@ export default function StudySpace() {
           />
         )}
       </main>
-
-      {/* Create Deck Modal */}
-      <Modal isOpen={isCreateDeckModalOpen} onClose={() => { setIsCreateDeckModalOpen(false); setNewDeckTitle(''); }} title="Create New Deck">
-        <form onSubmit={handleCreateDeck} className="flex flex-col gap-6">
-          <div className="space-y-2">
-            <label htmlFor="deckTitle" className="font-sans text-sm font-medium text-slate-300">Deck Title</label>
-            <input
-              id="deckTitle"
-              type="text"
-              value={newDeckTitle}
-              onChange={e => setNewDeckTitle(e.target.value)}
-              placeholder="e.g. Biology 101 Midterm"
-              className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50 focus:border-primary-fixed-dim transition-all"
-              autoFocus
-            />
-          </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={() => { setIsCreateDeckModalOpen(false); setNewDeckTitle(''); }} className="px-5 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-colors">Cancel</button>
-            <button type="submit" disabled={!newDeckTitle.trim()} className="px-5 py-2.5 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all disabled:opacity-50 disabled:cursor-not-allowed">Create Deck</button>
-          </div>
-        </form>
-      </Modal>
 
     </div>
   );

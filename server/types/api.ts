@@ -134,26 +134,45 @@ export type UpdateStudySpaceInput = z.infer<typeof UpdateStudySpaceSchema>;
 export const SyncSpaceMaterialsSchema = z.object({}).passthrough();
 export type SyncSpaceMaterialsInput = z.infer<typeof SyncSpaceMaterialsSchema>;
 
+// A deck is the student's own filing system — they name it, rename it and throw
+// it away. Its CONTENTS are not theirs to write: there is no create/update/delete
+// schema for a flashcard, because every card assesses a concept an educator
+// uploaded and vetted. Cards enter a deck through generation only.
+
 export const CreateDeckSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().optional(),
+  title: z.string().min(1).max(120),
+  description: z.string().max(500).optional(),
 });
 export type CreateDeckInput = z.infer<typeof CreateDeckSchema>;
 
-export const CreateFlashcardSchema = z.object({
-  term: z.string().min(1),
-  definition: z.string().min(1),
-  is_ai_generated: z.boolean().default(false),
+/** Renaming and re-describing only. A deck has nothing else a student may set. */
+export const UpdateDeckSchema = z.object({
+  title: z.string().min(1).max(120),
+  description: z.string().max(500).optional().nullable(),
 });
-export type CreateFlashcardInput = z.infer<typeof CreateFlashcardSchema>;
+export type UpdateDeckInput = z.infer<typeof UpdateDeckSchema>;
 
 // ── AI Flashcard Generation ───────────────────────────────
 
-export const GenerateFlashcardsSchema = z.object({
-  material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
-  format: z.enum(['question', 'term']).default('question'),
+/**
+ * Filling a deck from one of the space's materials.
+ *
+ * One material per call, not an array: a deck gathers materials one lesson at a
+ * time, and "is this material already in this deck?" is only answerable per
+ * material. `replace` is the student's explicit answer to the 409 they get when
+ * it already is.
+ */
+export const GenerateDeckCardsSchema = z.object({
+  material_id: z.string().uuid(),
+  replace: z.boolean().default(false),
+  /**
+   * 'term'     — front is the concept's term, verbatim. No model involved.
+   * 'question' — front is an AI-written question. The BACK is the educator's
+   *              definition either way; the model never writes the answer.
+   */
+  format: z.enum(['term', 'question']).default('term'),
 });
-export type GenerateFlashcardsInput = z.infer<typeof GenerateFlashcardsSchema>;
+export type GenerateDeckCardsInput = z.infer<typeof GenerateDeckCardsSchema>;
 
 // ── Spaced Repetition ────────────────────────────────────
 

@@ -14,94 +14,105 @@ export interface ConceptInput {
   definition: string;
 }
 
-/** The shape of a single generated flashcard */
-export interface GeneratedFlashcard {
-  front: string;
-  back: string;
+// ──────────────────────────────────────────────────────────────
+// Flashcard question generation
+//
+// The model writes the QUESTION only. The answer on the back of every card is
+// the educator's stored definition, verbatim — the earlier helper had the model
+// rewrite that too, which put text nobody vetted in front of students. Here the
+// definition is passed in as the fixed answer and the model writes a prompt for
+// it, so the AI adds pedagogy without touching the facts.
+//
+// Two failure modes the old helper had, addressed here:
+//   * Truncation. It asked for one card per concept under max_tokens: 4096, and
+//     a real material has ~68 concepts. This batches instead.
+//   * Lost linkage. It returned bare {front, back} with no way back to a
+//     concept_id, which is exactly what BKT needs. Here the model echoes each
+//     concept's number in its batch, every echo is range-checked, and anything
+//     unmatched is simply absent from the returned map — the caller falls back
+//     to the term for those, so a card is never lost and never unlinked.
+// ──────────────────────────────────────────────────────────────
+
+/** A concept to write a question for. `id` is the concepts row id. */
+export interface ConceptForQuestion {
+  id: string;
+  term: string;
+  definition: string;
 }
 
-/** The full payload Groq returns for flashcard generation */
-export interface FlashcardGenerationResult {
-  title: string;
-  description: string;
-  cards: GeneratedFlashcard[];
-}
+/** Concepts per Groq call. 20 × ~30 tokens of question leaves ample headroom. */
+const QUESTION_BATCH_SIZE = 20;
 
 /**
- * Generates flashcards from a list of pre-extracted concepts using
- * Groq's llama-3.3-70b-versatile model (free tier).
+ * Writes one question per concept, keyed by concept id.
  *
- * Uses JSON mode to ensure a valid, parseable response.
- *
- * @param concepts   Array of { term, definition } objects from the concepts table
- * @param format     'question' for question-style front, 'term' for just the term on front
- * @returns          Parsed flashcard generation result with title, description, and cards[]
+ * A concept missing from the result is not an error — the caller uses its term
+ * as the card front instead. Throws only when a Groq call itself fails, which
+ * the route treats as "write nothing and let them retry" rather than saving a
+ * deck of mixed quality.
  */
-export async function generateFlashcardsFromConcepts(
-  concepts: ConceptInput[],
-  format: 'question' | 'term' = 'question'
-): Promise<FlashcardGenerationResult> {
-  // Build a numbered concept list for the prompt
-  const conceptList = concepts
-    .map((c, i) => `${i + 1}. Term: "${c.term}" — Definition: ${c.definition}`)
-    .join('\n');
+export async function generateQuestionsForConcepts(
+  concepts: ConceptForQuestion[]
+): Promise<Map<string, string>> {
+  const questions = new Map<string, string>();
 
-  const formatRules = format === 'question' 
-    ? `- FRONT: A clear, concise question or prompt about the concept (not the term itself)
-- BACK: The accurate, direct answer (2–4 sentences max, plain language)
-- Avoid trivial or overly obvious questions
-- Questions should test understanding, not just recall`
-    : `- FRONT: Just the exact term of the concept (e.g. "Cybercrime")
-- BACK: A clear, concise, and accurate definition or explanation of the term (2–4 sentences max, plain language)
-- Do not phrase the front as a question.`;
+  for (let start = 0; start < concepts.length; start += QUESTION_BATCH_SIZE) {
+    const batch = concepts.slice(start, start + QUESTION_BATCH_SIZE);
 
-  const prompt = `You are an expert study tool designed to help students learn more effectively.
+    const list = batch
+      .map((c, i) => `${i + 1}. Term: "${c.term}" — Answer: ${c.definition}`)
+      .join('\n');
 
-Given the following list of academic concepts and their definitions, generate exactly one high-quality flashcard for EACH concept in the list. This means you will generate exactly ${concepts.length} flashcards in total.
+    const prompt = `You are writing the question side of study flashcards.
 
-Each flashcard must follow these rules:
-${formatRules}
+For each numbered item below you are given a term and the EXACT answer that will
+appear on the back of its card. Write a question whose answer is that text.
 
-Also generate a short, descriptive title for this flashcard set and a 1-sentence description of what it covers.
+Rules for each question:
+- It must be fully answered by the given answer text — nothing more, nothing less.
+- Name the term in the question. The student is being asked to explain it, so
+  hiding the term makes the card unanswerable.
+- Ask what it means, how it works, or why it matters — prefer understanding over
+  a bare "define X".
+- One sentence. No preamble, no "according to the text".
+- Echo back the item's number in "n" so each question stays matched to its term.
 
-Respond ONLY with a valid JSON object using this EXACT format (no markdown, no extra text):
+Respond ONLY with valid JSON in this EXACT format (no markdown, no extra text):
 {
-  "title": "<concise descriptive title for the flashcard set>",
-  "description": "<one sentence summarizing what these flashcards cover>",
-  "cards": [
-    { "front": "<question or prompt>", "back": "<answer>" }
+  "questions": [
+    { "n": 1, "question": "<question text>" }
   ]
 }
 
-Concepts to use:
-${conceptList}`;
+Items:
+${list}`;
 
-  const chatCompletion = await groq.chat.completions.create({
-    messages: [{ role: 'user', content: prompt }],
-    model: 'llama-3.3-70b-versatile',
-    response_format: { type: 'json_object' },
-    temperature: 0.7,
-    max_tokens: 4096,
-  });
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: 'user', content: prompt }],
+      model: 'llama-3.3-70b-versatile',
+      response_format: { type: 'json_object' },
+      // Low but not zero: flashcards are not graded, so exact reproducibility is
+      // not required, but a Refresh should not reword every card gratuitously.
+      temperature: 0.3,
+      max_tokens: 2048,
+    });
 
-  const rawText = chatCompletion.choices[0]?.message?.content;
-  if (!rawText) {
-    throw new Error('Groq returned an empty response for flashcard generation.');
+    const parsed = parseGroqJson<{ questions: Array<{ n: number; question: string }> }>(
+      completion.choices[0]?.message?.content
+    );
+
+    for (const item of parsed.questions ?? []) {
+      const n = Number(item?.n);
+      // Range-checked: a hallucinated or out-of-range number is dropped rather
+      // than attaching a question to the wrong concept.
+      if (!Number.isInteger(n) || n < 1 || n > batch.length) continue;
+      const text = typeof item?.question === 'string' ? item.question.trim() : '';
+      if (!text) continue;
+      questions.set(batch[n - 1].id, text);
+    }
   }
 
-  let parsed: FlashcardGenerationResult;
-  try {
-    parsed = JSON.parse(rawText) as FlashcardGenerationResult;
-  } catch {
-    throw new Error(`Failed to parse Groq JSON response: ${rawText.slice(0, 200)}`);
-  }
-
-  // Validate the parsed shape minimally
-  if (!Array.isArray(parsed.cards) || parsed.cards.length === 0) {
-    throw new Error('Groq response did not contain a valid cards array.');
-  }
-
-  return parsed;
+  return questions;
 }
 
 // ──────────────────────────────────────────────────────────────
