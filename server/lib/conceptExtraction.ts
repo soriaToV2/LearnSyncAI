@@ -8,8 +8,14 @@
  *   COVERAGE      We window the document by pages and loop over EVERY window, so
  *                 the last page is processed as thoroughly as the first. The
  *                 loop — not the model — decides when the document is finished.
- *   CONSISTENCY   Every model call runs at temperature 0 over fixed, disjoint
- *                 page windows, so the same PDF yields substantially the same set.
+ *   CONSISTENCY   Guaranteed structurally, not by sampling. Windows are fixed and
+ *                 disjoint and are decided by code; CONCEPT_SCHEMA pins the shape
+ *                 of every item returned; terms are required verbatim from the
+ *                 text, so the same term normalises the same way on every run and
+ *                 reaches the merge branch below. Note that Gemini 3 IGNORES
+ *                 `temperature` (2.5's temperature: 0 no longer has an
+ *                 equivalent), so definition WORDING may differ between runs over
+ *                 the same PDF — which is what the dedup step exists to absorb.
  *   NO DUPLICATES Concepts are de-duplicated by MEANING (embedding cosine), which
  *                 also removes repeats that straddle a window boundary.
  *   MULTIPLE      The same term with two distinct meanings is kept as two rows
@@ -20,7 +26,8 @@
  *   TRACEABILITY  Each concept records the source page(s) it was drawn from.
  */
 
-import { generateJson, generateEmbedding } from './gemini';
+import { Type, ThinkingLevel, type Schema } from '@google/genai';
+import { generateJson, generateEmbedding, GEMINI_EXTRACTION_MODEL } from './gemini';
 
 export interface PageText {
   page: number;
@@ -48,6 +55,35 @@ const MIN_DEFINITION_CHARS = 12;
 // here ("hubness"), so real duplicates sit high.
 const SAME_TERM_MERGE = 0.9;   // same term + this similar ⇒ one meaning, merge
 const CROSS_TERM_DUP = 0.93;   // different terms this similar ⇒ reworded duplicate
+
+// Thinking is on by default on Gemini 3 and its tokens draw on maxOutputTokens.
+// Extraction is enumeration rather than reasoning, so LOW keeps per-window latency
+// near what 2.5-flash gave us while leaving room for the "extract EVERY term" rule.
+const EXTRACTION_THINKING = ThinkingLevel.LOW;
+
+// A dense window yields 30+ concepts; with thinking sharing the budget, a default
+// ceiling truncates mid-array and surfaces as unparseable JSON rather than a clean
+// error. Explicit and generous, still far under the model's 64k cap.
+const EXTRACTION_MAX_OUTPUT_TOKENS = 16384;
+
+/**
+ * Pins the shape of every item the model returns. STRUCTURE ONLY — the value
+ * rules (definition length, definition ≠ term, page inside the window) are still
+ * enforced in the validation loop below, because a schema cannot express them.
+ */
+const CONCEPT_SCHEMA: Schema = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      term: { type: Type.STRING },
+      definition: { type: Type.STRING },
+      page: { type: Type.INTEGER },
+    },
+    required: ['term', 'definition', 'page'],
+    propertyOrdering: ['term', 'definition', 'page'],
+  },
+};
 
 /** What the model returns per item, before validation. */
 interface RawConcept {
@@ -110,6 +146,7 @@ const PROMPT_RULES = `Return a JSON array; each item is an object { "term": stri
 
 Rules:
 - Extract EVERY term or concept a teacher could test from this text — not only the highlights. Cover the whole excerpt, including the last page shown.
+- Write "term" exactly as it appears in the text. Do not paraphrase it, expand an abbreviation, or change its capitalisation.
 - "page" is the [PAGE n] number where the concept mainly appears.
 - Definitions must be self-contained: understandable on their own without seeing the page, one to three sentences, and must NOT merely repeat the term. Never return an empty definition.
 - If a term is used with two or more DISTINCT meanings in this text, return a SEPARATE item for each meaning, each with its own definition. Do not merge different meanings into one.
@@ -123,7 +160,7 @@ Rules:
 export async function extractConcepts(pages: PageText[]): Promise<ExtractedConcept[]> {
   const windows = buildWindows(pages);
 
-  // 1. Extract per window (temperature 0 for reproducibility).
+  // 1. Extract per window, one call each, shape pinned by CONCEPT_SCHEMA.
   const candidates: Array<{ term: string; definition: string; page: number }> = [];
 
   for (const w of windows) {
@@ -136,7 +173,12 @@ ${w.text}`;
 
     let raw: RawConcept[];
     try {
-      raw = await generateJson<RawConcept[]>(prompt, { temperature: 0 });
+      raw = await generateJson<RawConcept[]>(prompt, {
+        model: GEMINI_EXTRACTION_MODEL,
+        thinkingLevel: EXTRACTION_THINKING,
+        responseSchema: CONCEPT_SCHEMA,
+        maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
+      });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       throw new Error(`Extraction failed on pages ${w.startPage}–${w.endPage}: ${reason}`);

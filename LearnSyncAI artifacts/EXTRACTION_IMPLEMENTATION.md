@@ -1,10 +1,27 @@
 # PDF Upload & Concept Extraction — Implementation Guide
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-07-28  
-**Feature Scope:** Educator PDF upload → automatic concept extraction → curated knowledge base
+**Document Version:** 1.2  
+**Last Updated:** 2026-08-01  
+**Feature Scope:** Educator PDF upload → automatic concept extraction → curated knowledge base  
+**Extraction model:** `gemini-3.6-flash` (migrated from `gemini-2.5-flash`, which already returns 404 — see `GEMINI_MIGRATION_STATUS.md`)
 
 This document provides complete technical and architectural context for the PDF upload and concept extraction pipeline. It is intended for AI agents, developers, and auditors who need to understand, debug, or extend this feature.
+
+---
+
+## Read This First (if you are about to change extraction)
+
+Five constraints that are **not** obvious from the code, each of which has already caused a bug here:
+
+1. **Never change the embedding model.** `gemini-embedding-001`, 3072-d, fixed. Every stored `concepts.embedding` depends on it, and so do Free Recall scoring, chatbot RAG and cross-term dedup. Supported to 2028-05-14, so there is no deadline forcing your hand.
+2. **Never send `temperature` to a `gemini-3*` model.** Gemini 3 dropped the sampling parameters; they are ignored now and return HTTP 400 in a future model generation. `generateJson()` strips it and warns — treat that warning as a bug at the call site, not noise. Extraction's consistency comes from `CONCEPT_SCHEMA` + verbatim terms + dedup, **not** from sampling. (§3.2)
+3. **Thinking tokens spend `maxOutputTokens`.** Gemini 3 thinks by default. Always set `thinkingLevel` *and* `maxOutputTokens` explicitly, or a tight budget truncates the array and surfaces as unparseable JSON rather than a clean error. (§3.3)
+4. **Quota exhaustion is not an outage.** They arrive looking the same; only one recovers on its own. Do not collapse them back into one "temporarily overloaded" message — that message was false on a free-tier key and made failures undiagnosable. (Error Handling)
+5. **A model listed by `ListModels` may still be dead.** `gemini-2.5-flash` is listed and answers 404. Probe before trusting.
+
+**Where behaviour actually lives:** `server/lib/conceptExtraction.ts` (windowing, prompt, validation, dedup) and `server/lib/gemini.ts` (model constants, retry/quota classification). `materials.routes.ts` only orchestrates and writes rows. No frontend file knows a model name.
+
+**Biggest open weakness:** one failed window discards the entire run — see *Known Limitation* under Error Handling before you touch retry behaviour.
 
 ---
 
@@ -84,7 +101,7 @@ The extraction pipeline enables educators to:
                                   ├─ Set status = "processing"
                                   ├─ Split document into windows (8k chars / 6 pages)
                                   ├─ For each window:
-                                  │  ├─ Call Gemini (temp=0)
+                                  │  ├─ Call Gemini (schema-pinned, no temperature)
                                   │  └─ Extract {term, definition, page}[]
                                   ├─ Embed each concept
                                   ├─ Deduplicate by meaning (cosine similarity)
@@ -265,29 +282,72 @@ const MAX_WINDOW_PAGES = 6;       // Safety limit on page clustering
    - Combined character count ≥ MAX_WINDOW_CHARS, OR
    - Reached MAX_WINDOW_PAGES, OR
    - Reached end of document
-2. Extract concepts from that window (Gemini, temp=0)
+2. Extract concepts from that window (one Gemini call, shape pinned by CONCEPT_SCHEMA)
 3. Repeat until all pages processed
 ```
 
-**Rationale for temp=0:**
-- Ensures reproducibility — same PDF → same concepts
-- Prevents hallucination or creative rewording on repeated runs
-- Gemini still varies slightly, but within acceptable bounds
+**How consistency is guaranteed (updated — this used to be `temperature: 0`):**
+
+`gemini-2.5-flash` accepted `temperature: 0`, which the pipeline used to pin output. **Gemini 3 dropped the sampling parameters entirely** — `temperature`, `top_p` and `top_k` are ignored, and a future model generation returns HTTP 400 for them. There is no equivalent knob. Consistency is therefore structural:
+
+| Mechanism | What it pins |
+|---|---|
+| Fixed, disjoint windows built in `buildWindows()` | Which text reaches which call. Decided by code, not the model. |
+| `CONCEPT_SCHEMA` (`responseSchema`) | The exact `{ term, definition, page }` shape of every item. |
+| Prompt rule: *write `term` exactly as it appears in the text* | Term wording, so `norm(term)` matches across runs and reaches the same-term merge branch. |
+| Embedding dedup at 0.90 / 0.93 | Absorbs rewordings, including ones that straddle a window boundary. |
+
+**What is no longer guaranteed:** definition *wording* may differ between two runs over the same PDF. This is accepted because extracted concepts are reviewed and curated by the educator before any student sees them — unlike a Free Recall score, which is shown to a student directly. See the AI Services section in `CLAUDE.md`.
 
 #### 3.3 Gemini Concept Extraction (Per Window)
 
-**Function:** `extractConcepts(pages: PdfPage[])`
+**Function:** `extractConcepts(pages: PdfPage[])`  
+**Model:** `gemini-3.6-flash` (`GEMINI_EXTRACTION_MODEL` in [gemini.ts](server/lib/gemini.ts))
 
 For each window, call Gemini with a prompt like:
 ```
 Extract all key concepts from this educational material. 
 For each concept, provide:
-- term: A 1–3 word name (e.g., "Photosynthesis")
+- term: A 1–3 word name, written exactly as it appears in the text
 - definition: A 12+ character, self-contained explanation
 - page: The page number where this concept appears (1-indexed)
 
 Return a JSON array: [{ term, definition, page }, ...]
 ```
+
+**Call configuration:**
+```typescript
+raw = await generateJson<RawConcept[]>(prompt, {
+  model: GEMINI_EXTRACTION_MODEL,          // gemini-3.6-flash
+  thinkingLevel: ThinkingLevel.LOW,        // enumeration, not reasoning
+  responseSchema: CONCEPT_SCHEMA,          // pins the item shape
+  maxOutputTokens: 16384,                  // thinking shares this budget
+});
+```
+
+**Why each setting:**
+- **No `temperature`** — Gemini 3 ignores it (see §3.2). Passing it would log a warning from `generateJson()` and be dropped.
+- **`thinkingLevel: LOW`** — Gemini 3 thinks by default (`medium` on 3.6-flash). Extraction is enumeration, so `low` keeps per-window latency close to the old 2.5-flash timings while leaving headroom for the "extract EVERY testable term" instruction.
+- **`maxOutputTokens: 16384`** — thinking tokens draw on the *same* budget as the answer. A dense window yielding 30+ concepts under a default ceiling truncates mid-array, which surfaces as unparseable JSON rather than a clean error. Well under the model's 64k cap.
+
+**Response schema (`CONCEPT_SCHEMA`):**
+```typescript
+{
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      term:       { type: Type.STRING },
+      definition: { type: Type.STRING },
+      page:       { type: Type.INTEGER },
+    },
+    required: ['term', 'definition', 'page'],
+    propertyOrdering: ['term', 'definition', 'page'],
+  },
+}
+```
+
+The schema constrains **structure only**. Value rules — minimum definition length, definition ≠ term, page inside the window's range — are still enforced in the validation loop below, because a JSON schema cannot express them.
 
 **Gemini Response Format:**
 ```json
@@ -299,13 +359,28 @@ Return a JSON array: [{ term, definition, page }, ...]
 ```
 
 **Validation (on raw Gemini response):**
+
+Bad items are **skipped, never thrown on.** One malformed concept must not cost the educator the other 70 in the same window — and the model does occasionally emit a stub. The page number is *clamped* rather than rejected, because a wrong page is a traceability nuisance while a discarded concept is lost content.
+
 ```typescript
-// Each extracted concept must:
-if (!term || !definition) throw new Error('Missing term or definition');
-if (definition.length < 12) throw new Error('Definition too short');
-if (term.toLowerCase() === definition.toLowerCase()) throw new Error('Term = definition (no-op)');
-if (page < 1 || page > pages.length) throw new Error(`Page ${page} out of range`);
+for (const item of raw) {
+  const term = typeof item?.term === 'string' ? item.term.trim() : '';
+  const definition = typeof item?.definition === 'string' ? item.definition.trim() : '';
+  if (!term || !definition) continue;                     // missing either half
+  if (definition.length < MIN_DEFINITION_CHARS) continue;  // 12 chars — not self-contained
+  if (norm(definition) === norm(term)) continue;           // definition just restates the term
+
+  // Clamp the reported page into THIS window's real range, never the document's.
+  let page = typeof item?.page === 'number' ? Math.round(item.page) : w.startPage;
+  if (page < w.startPage || page > w.endPage) page = w.startPage;
+
+  candidates.push({ term, definition, page });
+}
 ```
+
+`norm()` is `trim → lowercase → collapse whitespace`. Note the clamp is against the **window** bounds (`w.startPage`/`w.endPage`), not the whole document — the model only saw this window, so a page number outside it is a hallucination regardless of whether the document has that page.
+
+An entire window that comes back as a non-array is skipped with `continue`; only a thrown API error aborts the run.
 
 #### 3.4 Embedding
 
@@ -323,51 +398,57 @@ const embedding = await generateEmbedding(definition);
 
 **Purpose:** Remove or merge concepts that the extractor produces in duplicate or near-duplicate forms.
 
-**Algorithm:**
+**Algorithm — as actually implemented.** Note the shape: it finds the **single most similar** concept kept so far, and *only then* asks what to do with it. It does **not** scan every kept concept for a rule that matches.
+
 ```typescript
-for (const candidate of extracted) {
-  let merged = false;
+for (const c of candidates) {
+  const embedding = await generateEmbedding(c.definition);
 
-  for (const existing of deduplicated) {
-    const similarity = cosineSimilarity(candidate.embedding, existing.embedding);
+  // The single most similar concept kept so far — one winner, not a scan.
+  let bestIdx = -1, bestSim = -1;
+  for (let i = 0; i < kept.length; i++) {
+    const sim = cosine(embedding, kept[i].embedding);
+    if (sim > bestSim) { bestSim = sim; bestIdx = i; }
+  }
 
-    // Case 1: Same term + high similarity (≥0.90)
-    if (candidate.term.toLowerCase() === existing.term.toLowerCase() && similarity >= 0.90) {
-      // Merge: union source_pages, keep one row
-      existing.source_pages = [...new Set([...existing.source_pages, ...candidate.source_pages])].sort((a, b) => a - b);
-      merged = true;
-      break;
-    }
+  if (bestIdx >= 0) {
+    const match = kept[bestIdx];
+    const sameTerm = norm(match.term) === norm(c.term);
 
-    // Case 2: Same term + low similarity (<0.90)
-    // → Keep as separate rows (different meanings of the same word)
-    if (candidate.term.toLowerCase() === existing.term.toLowerCase() && similarity < 0.90) {
-      // Do nothing; let candidate be added as-is
+    // Same term + high similarity ⇒ one meaning: keep the fuller definition.
+    if (sameTerm && bestSim >= SAME_TERM_MERGE) {          // 0.90
+      if (c.definition.length > match.definition.length) match.definition = c.definition;
+      match.source_pages = unionPages(match.source_pages, c.page);
       continue;
     }
-
-    // Case 3: Different terms + high similarity (≥0.93)
-    // → Drop candidate as a reworded duplicate
-    if (similarity >= 0.93) {
-      merged = true; // Mark as subsumed, don't add
-      break;
+    // Different term, near-identical idea ⇒ reworded duplicate: drop.
+    if (!sameTerm && bestSim >= CROSS_TERM_DUP) {          // 0.93
+      match.source_pages = unionPages(match.source_pages, c.page);
+      continue;
     }
+    // Otherwise — INCLUDING same term at low similarity — keep as its own row.
   }
 
-  if (!merged) {
-    deduplicated.push(candidate);
-  }
+  kept.push({ term: c.term, definition: c.definition, source_pages: [c.page], embedding });
 }
 ```
 
-**Thresholds (tuned for 3072-dimensional space):**
-- **0.90** for same-term merging: Catches high-confidence rewording
-- **0.93** for cross-term deduplication: Avoids losing genuinely different terms
+**Thresholds** (`SAME_TERM_MERGE` / `CROSS_TERM_DUP` in [conceptExtraction.ts](server/lib/conceptExtraction.ts)), tuned for 3072-d space where even unrelated vectors score ~0.60–0.65 (the hubness problem):
 
-**Why these thresholds?**
-- In 3072-dimensional space, even unrelated vectors score ~0.60–0.65 (hubness problem)
-- 0.93 means truly near-identical semantic content
-- This avoids over-aggressive deduplication while still catching duplicates
+- **0.90** same-term merge — catches high-confidence rewording
+- **0.93** cross-term drop — high enough that genuinely different terms survive
+
+##### ⚠️ Two known weaknesses in this algorithm
+
+Both produce the same visible symptom — **the same term appearing as two rows with different definitions** — and both are worth understanding before touching dedup or debugging a duplicate report.
+
+**1. The same-term branch can be shadowed.** Only `bestIdx` is examined. If a same-term concept sits at 0.91 (which *should* merge) but some unrelated concept scores 0.92, `bestIdx` points at the unrelated one, `sameTerm` is false, 0.92 < 0.93 so nothing fires, and the candidate is pushed as a new row. The merge silently never happens. Resolving term identity by exact grouping *before* any similarity work would remove the failure mode entirely.
+
+**2. "Two distinct meanings" fires far more often than real polysemy.** Same term below 0.90 is deliberately kept as a second row, on the theory it is a second sense ("bank": river vs financial). In practice it usually catches two *partial* definitions of one term from different pages, which embed apart merely because they stress different aspects.
+
+**Why this matters downstream, and why it is not cosmetic.** `v_student_material_mastery` computes `m_doc` as `avg(COALESCE(bm.latent_mastery, 0.10))` over **every** concept row. A split concept means the student masters one row while its twin sits at `P(L0) = 0.10` forever, permanently depressing `m_doc` and undercounting `mastered_concept_count`. Free Recall's coverage ratio inflates its denominator the same way. The damage is invisible — nothing surfaces it — whereas a wrongly *merged* concept is listed in the Concepts tab and editable in seconds. That asymmetry argues for merging aggressively and leaving genuine polysemy to manual curation via `POST /api/materials/:id/concepts`.
+
+**Also not merged:** `norm()` does no stemming, so "Firewall" and "Firewalls" are different terms and fall to the 0.93 cross-term rule. Adding stemming invites worse false merges; treat these as a curation fix.
 
 #### 3.6 Batch Insert Concepts
 
@@ -817,9 +898,18 @@ Returns a signed URL (1-hour expiry) to access the PDF in Supabase Storage. Open
 | `typescript` | ^5.x | Type safety |
 | `multer` | ^1.x | File upload handling |
 | `zod` | ^3.x | Request validation |
-| `pdfjs-dist` | ^4.x | PDF text extraction (legacy Node.js build) |
-| `@google/generative-ai` | ^0.11.x | Gemini API client |
+| `pdfjs-dist` | ^5.x | PDF text extraction (legacy Node.js build) |
+| `@google/genai` | ^1.50.0 | Gemini API client |
 | `@supabase/supabase-js` | ^2.x | Database + storage client |
+
+**Gemini models used by this pipeline:**
+
+| Purpose | Model | Notes |
+|---------|-------|-------|
+| Concept extraction | `gemini-3.6-flash` | Google's listed replacement for `gemini-2.5-flash`. Thinking on by default; no `temperature`. |
+| Concept embeddings | `gemini-embedding-001` | 3072-d. **Fixed** — supported to 2028-05-14, and changing it invalidates every stored vector. |
+
+> The `^1.50.0` floor is not cosmetic: `ThinkingLevel` and `thinkingConfig` arrived with the Gemini 3 family, and the extraction call now depends on them.
 
 ### Frontend
 
@@ -872,31 +962,108 @@ If a PDF has zero pages:
 - Material is marked `completed` with `concept_count = 0`
 - Educator can manually add concepts
 
-### Gemini API Failures
+### Gemini API Failures — Retries, Quota and Overload
 
-If `generateEmbedding()` fails:
-```typescript
-catch (err) {
-  await supabaseAdmin
-    .from('materials')
-    .update({
-      parsed_status: 'failed',
-      parse_error: `Embedding failed: ${err.message.slice(0, 500)}`
-    })
-    .eq('id', materialId);
-}
+All Gemini calls (generation *and* embedding) go through `withRetry()` in [gemini.ts](server/lib/gemini.ts). It sorts every upstream failure into **three outcomes that must not be conflated**:
+
+| Outcome | Trigger | Behaviour | Thrown |
+|---|---|---|---|
+| `fatal` | 400, 403, **404** (dead model), bad key | Rethrown **immediately**, untouched | original `ApiError` |
+| `quota` | 429 / `RESOURCE_EXHAUSTED` on a non-per-minute metric | **One** retry, then give up | `GeminiQuotaError` (429) |
+| `transient` | 500/502/503/504, or 429 on a `*_per_minute` metric | Full backoff, up to 4 attempts | `GeminiUnavailableError` (503) |
+
+**Why quota and overload are separated.** They arrive looking identical — both are retryable-shaped 429/5xx — but only one recovers on its own. Before this split, both reached the educator as *"The AI service is temporarily overloaded. Please try again in a moment."* On a free-tier key that sentence is **false**: the daily allowance is spent and no amount of retrying inside one upload will change it. Google names the window in the quota metric, which is the only reliable signal:
+
+- `…/generate_content_free_tier_requests` → **daily**, will not recover → `quota`
+- `…_per_minute` → burst limit, clears by itself → `transient`
+
+**Google's own retry hint is honoured.** `google.rpc.RetryInfo` in the error body carries a `retryDelay` (e.g. `"7.248835383s"`). `withRetry` uses it in preference to its own exponential backoff, capped at `MAX_HONOURED_RETRY_DELAY_MS = 30_000`. This matters for multi-window documents: on a ~10 RPM free tier a long module *will* trip the per-minute limit, and waiting the server-suggested delay lets the run continue instead of dying.
+
+**Every attempt logs the real cause.** The SDK's `ApiError` puts the HTTP code on `.status` and the whole JSON error body in `.message`, so `parseUpstreamError()` digs out the status, the `google.rpc` reason, the quota metric and the retry hint:
+
+```
+[Gemini] generateJson attempt 1/4 failed — HTTP 429 RESOURCE_EXHAUSTED [quota]:
+  Quota exceeded for metric: …/generate_content_free_tier_requests, limit: 20
+[Gemini] generateJson retrying in 7249ms (server-suggested)
 ```
 
-- Material marked `failed` with error message
-- Educator can retry by re-uploading
+> **Do not remove the status and reason from that log line.** An earlier version logged only `failed (attempt 1/4)` and threw a hardcoded message, which made a spent quota and a genuine outage *indistinguishable after the fact* — a failed upload could not be diagnosed at all once it had happened.
+
+**What the educator sees.** The thrown message is wrapped by `extractConcepts()` with the page range and stored in `materials.parse_error` (truncated to 500 chars), which `MaterialDetail.tsx` renders verbatim:
+
+```
+Extraction failed on pages 1–6: The Gemini API quota for this key is exhausted
+(generate_content_free_tier_requests, limit 20). Free-tier quotas reset on a daily
+cycle — try again after the reset, or enable billing on the Google Cloud project
+behind this API key.
+```
+
+The material lands on `parsed_status = 'failed'`, and the educator can still add concepts by hand or re-upload once the quota resets.
+
+`GeminiQuotaError` **extends** `GeminiUnavailableError`, so existing `instanceof` handlers keep catching it; it simply answers 429 instead of 503. Route handlers should forward `err.status` rather than hardcoding a status — see the two handlers in [cognitive.routes.ts](server/routes/cognitive.routes.ts).
+
+### Free-Tier Quota Reality
+
+Observed against this project's own keys — **not** the generous figures in Google's public docs:
+
+```
+429 — Quota exceeded for metric:
+      generativelanguage.googleapis.com/generate_content_free_tier_requests,
+      limit: 20, model: gemini-3.6-flash
+```
+
+**20 generation requests per day.** Extraction makes **one call per window**, so:
+
+| Document | Windows | Share of a 20/day budget |
+|---|---|---|
+| 6 pages | 1 | 5% |
+| ~40 pages | ~6 | 30% |
+| 100 pages | ~12–15 | **60–75%** |
+
+Embeddings are metered **separately** from generation, so they do not consume this budget — but they do count toward per-minute request pressure on the same project.
+
+Plan testing around this, or enable billing before a demo. A key that worked an hour ago can refuse the next upload purely because the day's allowance ran out.
+
+### Truncated Model Output (Gemini 3 only)
+
+A failure mode `gemini-2.5-flash` did not have. Gemini 3 thinks by default, and **thinking tokens draw on the same `maxOutputTokens` budget as the answer**. If the budget runs out mid-array, the call returns no usable text and `finishReason = MAX_TOKENS`.
+
+`generateJson()` names this explicitly rather than reporting a bare "empty response":
+
+```
+Failed to generate JSON content: the model hit its output token limit before
+finishing (finishReason=MAX_TOKENS). On a thinking model, raise maxOutputTokens
+or lower thinkingLevel.
+```
+
+The error propagates through `extractConcepts()`, which wraps it with the page range (`Extraction failed on pages 13–18: …`), so `parse_error` tells the educator *where* it broke. Fixes, in order of preference: raise `EXTRACTION_MAX_OUTPUT_TOKENS`, lower `EXTRACTION_THINKING`, or shrink `MAX_WINDOW_CHARS` — all in [conceptExtraction.ts](server/lib/conceptExtraction.ts).
 
 ### Large Documents
 
 A 100-page document with 8k-char windows:
 - ~12–15 windows (depending on page lengths)
-- Each window calls Gemini once (temp=0)
+- Each window calls Gemini **once** — and one embedding call per surviving candidate
 - Concepts extracted independently per window, then deduplicated
 - Total processing time: 2–5 minutes (mostly Gemini latency)
+
+### ⚠️ Known Limitation — One Failed Window Discards the Whole Run
+
+**`extractConcepts()` throws on the first window that fails, and `processMaterialAsync()` catches it and marks the material `failed`. Nothing is persisted.** Every window that already succeeded is thrown away, along with every API request already spent on it.
+
+```
+window 1..13  ✓ extracted, embedded, held in memory
+window 14     ✗ 429 / 503
+              ⇒ all 13 windows' concepts discarded, material = 'failed'
+```
+
+On a 20/day free tier this is severe: a 15-window module that fails on the last window burns ~70% of the daily allowance and stores **zero** concepts. Re-uploading starts from window 1 and needs the full budget again.
+
+This is a **deliberate simplicity trade-off, not an oversight** — a half-extracted material is a worse default than a clean failure, because students would study an incomplete knowledge base without any signal that it was incomplete. But it is the most valuable thing to fix if extraction reliability becomes a problem.
+
+If you rework this, the shape is roughly:
+1. Insert concepts per window as each window completes, rather than batching at the end.
+2. Record progress on the material (e.g. last completed page) so a retry resumes rather than restarts.
+3. Introduce a `partial` state distinct from `completed`, so the educator and every downstream reader can tell an incomplete knowledge base from a finished one. **Do not let `partial` masquerade as `completed`** — Free Recall's coverage ratio and `v_student_material_mastery`'s `m_doc` both average over whatever concepts exist, so a half-populated material silently mis-scores students rather than failing loudly.
 
 ### Duplicate Concepts
 
@@ -917,6 +1084,8 @@ These are **kept as separate rows** if cosine similarity < 0.90.
 ```
 Similarity ≥0.93 → **Candidate is dropped** as a reworded duplicate.
 
+> **Observed in testing:** duplicate rows for one term with *different* definitions do occur on real uploads, and they are not always genuine second meanings. Read the two known weaknesses in §3.5 before treating this as working as intended — the split is usually two partial definitions from different pages, and it silently corrupts BKT mastery.
+
 ---
 
 ## Design Decisions & Rationale
@@ -933,17 +1102,22 @@ The upload endpoint returns immediately (`201 pending`), while extraction happen
 
 **Alternative considered:** Webhooks. But webhooks add operational complexity (must be reliably delivered, idempotent, etc.). Polling is simpler and works well for a small number of concurrent uploads.
 
-### Why Windowing with Temperature 0?
+### Why Windowing?
 
-**Windowing:**
 - Ensures full-document coverage (extraction doesn't miss tail-end concepts)
 - Keeps token budgets reasonable (~2k tokens per window)
-- Reproducible: same PDF → same window splits → same concepts
+- Reproducible splits: same PDF → same window boundaries, decided by code
 
-**Temperature 0:**
-- Gemini's default behavior includes some randomness (temp ~0.7)
-- Setting temp=0 locks output to the most deterministic response
-- Same PDF uploaded twice should produce identical concept lists (for auditing/debugging)
+Windows stayed at 8000 chars / 6 pages through the Gemini 3.6 migration on purpose. `gemini-3.6-flash` has a 1M context and could take far larger windows, but changing the model and the windowing in one step would make any change in extraction output ambiguous. Enlarging windows — fewer calls, less rate-limit pressure — is a worthwhile follow-up once 3.6 output has been compared against 2.5 output on the same documents.
+
+### Why Not Temperature 0 Anymore?
+
+The pipeline used `temperature: 0` under `gemini-2.5-flash` to make repeat extractions comparable. **Gemini 3 removed that option** — the sampling parameters are ignored and will eventually 400. Rather than leave a dead parameter in the call, the guarantee was rebuilt out of things the model cannot vary: code-decided windows, a `responseSchema`, a verbatim-term prompt rule, and the embedding dedup that was already there. See §3.2 for the full table.
+
+Two consequences worth being explicit about:
+
+1. **Determinism was always weaker than the old wording implied.** `temperature: 0` reduces variance; it never made the model a pure function. The source comment already hedged with *"substantially the same set"*.
+2. **The stakes here are low.** An educator reviews and curates every extracted concept before students see it. The same trade-off would **not** be acceptable in Free Recall or Feynman grading, where the model's output becomes a score shown directly to a student — which is why those two remain on `gemini-2.5-flash` pending a proper design.
 
 ### Why Embedding-Based Deduplication?
 
@@ -1137,6 +1311,14 @@ Response (201):
 - [ ] Edit non-existent concept → `404`
 - [ ] Delete as non-educator → `403`
 
+#### Failure Handling
+- [ ] Invalid `GEMINI_API_KEY` → material `failed`, `parse_error` names the page range, **no retries** in the log (a bad key is `fatal`, not transient)
+- [ ] Quota exhausted → `parse_error` says *quota … reset on a daily cycle*, **not** "temporarily overloaded"; log shows `[quota]` and exactly 2 attempts
+- [ ] Every retry log line carries an HTTP status and a `[quota]`/`[transient]`/`[fatal]` tag — if it does not, the classifier has been bypassed
+- [ ] Material never sits on `processing` forever; every path ends `completed` or `failed`
+
+Error classification can be exercised without burning quota by throwing synthetic `ApiError`s (status + JSON body in `.message`) at a stubbed `genai.models.generateContent` and asserting the class, status and attempt count that come back out.
+
 ### Automated Testing (E2E Script)
 
 **File:** `e2e-concepts.mjs` (provided)
@@ -1159,6 +1341,36 @@ Expected output:
 ```
 
 ### Debugging Tips
+
+#### Extraction failed — which failure was it?
+
+**Read the retry lines, not the final message.** The final `parse_error` is a summary; the per-attempt log carries the upstream truth:
+
+```
+[Gemini] generateJson attempt 1/4 failed — HTTP 429 RESOURCE_EXHAUSTED [quota]: …
+                                                ▲          ▲            ▲
+                                          HTTP code   google.rpc    classification
+```
+
+| What you see | Meaning | Do this |
+|---|---|---|
+| `[quota]`, 2 attempts | Daily allowance spent | Wait for reset, or enable billing |
+| `[transient]`, 4 attempts, HTTP 429 | Per-minute burst limit | Fewer/larger windows, or space uploads out |
+| `[transient]`, 4 attempts, HTTP 5xx | Genuine Google outage | Retry later; nothing to fix locally |
+| `[fatal]`, 1 attempt, HTTP 404 | Model name is dead or wrong | Check `GEMINI_EXTRACTION_MODEL` against Google's deprecation page |
+| `[fatal]`, 1 attempt, HTTP 400 | Malformed request | Usually a bad `responseSchema` or an unsupported param on Gemini 3 |
+| `finishReason=MAX_TOKENS` | Output truncated, not an outage | Raise `EXTRACTION_MAX_OUTPUT_TOKENS` or lower `EXTRACTION_THINKING` |
+
+**A model that `ListModels` returns can still be dead.** `gemini-2.5-flash` is listed but answers 404 `"no longer available to new users"` on keys that had not already used it. Probe the model directly rather than trusting the listing.
+
+**Confirm whether it is the key or the code** — hit the API without going through the app:
+```bash
+curl -s -X POST \
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=$GEMINI_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"contents":[{"role":"user","parts":[{"text":"Say OK."}]}]}'
+```
+A 200 here with a failure in the app means the problem is local. A 429 here is quota, and the response body names the exact metric and limit.
 
 #### "Parsing failed" / Status stuck in "processing"
 
@@ -1217,9 +1429,8 @@ Expected output:
 
 Edit thresholds in [conceptExtraction.ts](server/lib/conceptExtraction.ts):
 ```typescript
-// Line ~170
-const MERGE_THRESHOLD = 0.90;        // Same-term merge
-const DUPLICATE_THRESHOLD = 0.93;    // Cross-term drop
+const SAME_TERM_MERGE = 0.9;   // same term + this similar ⇒ one meaning, merge
+const CROSS_TERM_DUP  = 0.93;  // different terms this similar ⇒ reworded duplicate
 ```
 
 Lower values → more aggressive deduplication. Higher values → keep more distinct rows.
@@ -1246,6 +1457,8 @@ Lower values → more aggressive deduplication. Higher values → keep more dist
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2026-08-01 | **Failure handling.** `withRetry()` now classifies every upstream error as `fatal` / `quota` / `transient` instead of treating all 429/5xx alike, honours Google's `RetryInfo` retry hint, and logs the real HTTP status + `google.rpc` reason on every attempt. Added `GeminiQuotaError` (429, extends `GeminiUnavailableError`) so a spent quota no longer reaches the educator as "temporarily overloaded — try again in a moment", which was false. Documented the observed 20-requests/day free-tier ceiling and the one-failed-window-discards-everything limitation. Corrected the §3.3 validation snippet, which showed `throw` where the code does `continue`. |
+| 1.1 | 2026-08-01 | Migrated extraction from `gemini-2.5-flash` to `gemini-3.6-flash` ahead of the 2026-10-16 shutdown. Removed `temperature: 0` (Gemini 3 ignores it) and rebuilt the consistency guarantee on `responseSchema` + verbatim terms + existing dedup. Added `thinkingLevel: LOW` and an explicit `maxOutputTokens`. Corrected the SDK row (`@google/genai`, not `@google/generative-ai`). Windowing unchanged. |
 | 1.0 | 2026-07-28 | Initial comprehensive guide. Covers upload, extraction, deduplication, CRUD, architecture, and debugging. |
 
 ---

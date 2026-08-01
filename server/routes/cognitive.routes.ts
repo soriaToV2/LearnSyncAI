@@ -481,9 +481,11 @@ Example output:
   } catch (err: any) {
     console.error('[FreeRecall] Error:', err);
     if (err instanceof GeminiUnavailableError) {
-      // Surface the upstream overload as a 503 so the client can offer a retry,
-      // rather than dumping Google's raw error JSON into the student's face.
-      res.status(503).json({ error: 'AI service unavailable', message: err.message });
+      // Surface the upstream failure with its own status — 503 for an overload,
+      // 429 when the key's quota is spent — rather than dumping Google's raw
+      // error JSON into the student's face. A quota refusal must not read as a
+      // retryable outage; retrying it just fails again.
+      res.status(err.status).json({ error: 'AI service unavailable', message: err.message });
       return;
     }
     res.status(500).json({ error: 'Failed to process free recall submission', message: err.message });
@@ -930,9 +932,11 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
   } catch (err: any) {
     console.error('[Feynman] Error:', err);
     if (err instanceof GeminiUnavailableError) {
-      // Surface the upstream overload as a 503 so the client can offer a retry,
-      // rather than dumping Google's raw error JSON into the student's face.
-      res.status(503).json({ error: 'AI service unavailable', message: err.message });
+      // Surface the upstream failure with its own status — 503 for an overload,
+      // 429 when the key's quota is spent — rather than dumping Google's raw
+      // error JSON into the student's face. A quota refusal must not read as a
+      // retryable outage; retrying it just fails again.
+      res.status(err.status).json({ error: 'AI service unavailable', message: err.message });
       return;
     }
     res.status(500).json({ error: 'Failed to evaluate Feynman submission', message: err.message });

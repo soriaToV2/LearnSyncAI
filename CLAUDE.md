@@ -40,7 +40,21 @@ There are **three user roles**:
 
 ### AI Services
 
-> **IMPORTANT:** The embedding model **must always be `gemini-embedding-001`**. All concept vectors stored in the `concepts` table use 3072 dimensions from this model. Never switch embedding models — doing so would make all stored vectors incompatible.
+> **IMPORTANT:** The embedding model **must always be `gemini-embedding-001`**. All concept vectors stored in the `concepts` table use 3072 dimensions from this model. Never switch embedding models — doing so would make all stored vectors incompatible. (Google lists it as supported until 2028-05-14, so there is no deadline pressure here.)
+
+**Two Gemini text models are in play, and they do not share semantics.** Both constants live in `server/lib/gemini.ts`; nowhere else may name a model string.
+
+| Constant | Model | Used by | Status |
+|---|---|---|---|
+| `GEMINI_EXTRACTION_MODEL` | `gemini-3.6-flash` | Educator concept extraction (`conceptExtraction.ts`) | ✅ working |
+| `GEMINI_LEGACY_TEXT_MODEL` | `gemini-2.5-flash` | Adaptive tests (`practice.routes.ts`), Free Recall + Feynman grading (`cognitive.routes.ts`) | ❌ **404 — dead** |
+
+- **`gemini-2.5-flash` is already gone, not going.** Verified 2026-08-01 against our own API key: every call returns `HTTP 404 — "no longer available to new users"`. It is still returned by `ListModels`, which is why it looks alive from the outside. The published 2026-10-16 shutdown date is irrelevant — **adaptive tests, Free Recall and Feynman grading are broken in the running app right now.** See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
+- `generateJson()` already takes a `model` option, so the swap is one line per call site. The blocker is the rule below, not the plumbing.
+- **Never send `temperature` to a `gemini-3*` model.** Gemini 3 dropped the sampling parameters: `temperature`, `top_p` and `top_k` are ignored today and a future model generation returns HTTP 400 for them. `generateJson()` strips `temperature` on Gemini 3 and logs a warning; treat that warning as a bug to fix at the call site, not noise.
+- **This collides head-on with the reproducibility rule further down** ("AI feedback that a student is scored on must be reproducible. Grading calls pass `temperature: 0`"). Moving Free Recall or Feynman to Gemini 3 removes the mechanism that rule names. That needs a deliberate replacement — structured output pins *shape*, not *score* — so do not migrate those two as a routine model swap.
+- **Extraction was migrated first and deliberately gave up temperature pinning.** Its consistency now rests on code-decided windows, `CONCEPT_SCHEMA`, verbatim terms and embedding dedup. Acceptable there because an educator curates every concept before a student sees it; not acceptable for a score shown straight to a student.
+- **Gemini 3 thinks by default** (`medium` on 3.6-flash) and thinking tokens draw on `maxOutputTokens`. Set `thinkingLevel` and `maxOutputTokens` explicitly on any Gemini 3 call, or a tight budget truncates the response and surfaces as unparseable JSON.
 
 ### BKT Implementation
 - BKT is implemented **directly in the platform backend** using the classical four-parameter update equations.
