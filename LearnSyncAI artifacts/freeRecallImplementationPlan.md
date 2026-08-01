@@ -47,8 +47,11 @@ Student types recall → POST /api/cognitive/free-recall
 1. Fetch ALL concepts (id, term, definition, embedding) for the selected material_ids
    → 400 if none, or if none have embeddings yet
         ↓
+1b. MEMO CHECK — identical resubmission? serve the stored result, skip steps 2-6 entirely
+   findMemoisedAttempt()   ← keyed on text + materials + concept fingerprint
+        ↓  (miss)
 2. Extract the concepts the STUDENT discussed, from their raw text
-   generateJson(extractionPrompt, { temperature: 0 })    ← gemini-2.5-flash
+   generateJson(extractionPrompt)   ← gemini-3.5-flash-lite, MINIMAL thinking, no temperature
         ↓  (if it returns [] → the "nothing recognisable" path, see §7)
 3. Embed each extracted student concept individually
    generateEmbedding()   ← gemini-embedding-001, 3072 dims
@@ -58,8 +61,8 @@ Student types recall → POST /api/cognitive/free-recall
         ↓
 5. similarity_score = coveredCount / totalConcepts        (a COVERAGE RATIO)
         ↓
-6. Written feedback — findPreviousFeedback() first, else generateRecallFeedback()
-   Both are allowed to fail. Neither can take the score down with it.
+6. Written feedback — generateRecallFeedback()   ← gemini-3.5-flash-lite, LOW thinking
+   Allowed to fail. Cannot take the score down with it. (Reuse happens at 1b now.)
         ↓
 7. INSERT ONE ROW into cognitive_logs (student_id!, material_ids, mode 'free_recall')
         ↓
@@ -141,25 +144,31 @@ right". Both now say "you".
 
 ### Reproducibility is guaranteed by REUSE, not by temperature
 
-**This is the most important subtlety in the file.**
+**This is the most important subtlety in the file** — and as of 2026-08-01 it is the *only*
+mechanism, not a supplement to one.
 
-`temperature: 0` pins the *score*, because extraction returns a structured concept list and the 0.70
-threshold quantises away whatever variation remains. It does **not** pin *prose*. Measured against
-the live model: identical input reliably produced the same score while **rewording its paragraphs
-every time**.
+Historically `temperature: 0` pinned the *score* while reuse pinned the *prose*. **Gemini 3 dropped
+the sampling parameters**, so `temperature` is gone and reuse now carries both. That is deliberate:
+it makes reproducibility a property of this code rather than of whichever model is configured, which
+is exactly what made the model swap safe.
 
-So `findPreviousFeedback()` (`cognitive.routes.ts:106`) looks for an earlier attempt by the same
-student with the same text, the same materials **and the same resulting score**, and reuses its
-prose verbatim.
+`findMemoisedAttempt()` (replacing `findPreviousFeedback()`) runs **before any AI call** and matches
+on same student, same mode, same text, same materials, and the same **concept fingerprint**.
 
-- Requiring the **score** to match is what stops stale prose being served after an educator edits
-  the material underneath it.
-- `similarity_score` is a Postgres `NUMERIC` and round-trips as a string — compared with a `1e-9`
-  tolerance, not by identity.
+- **The fingerprint replaced score-matching.** The old code required the resulting *score* to match,
+  which meant it had to run *after* scoring and needed a `1e-9` tolerance because `similarity_score`
+  is a Postgres `NUMERIC` that round-trips as a string. `fingerprintConcepts()` answers the same
+  question — *has the material changed underneath this?* — directly, earlier, and exactly.
+- **Why a content hash and not a timestamp:** `concepts` has **no `updated_at` column**, so an
+  educator editing a definition changes nothing observable. The hash covers id + term + definition.
+- **A hit costs zero API calls** (previously 2 plus one embedding per student concept) and still
+  writes a log row, so history is unchanged.
+- Rows written before `concepts_fingerprint` existed are never reused — they cannot be proven current.
 
-> **Testing consequence:** resubmitting the same text returns the OLD feedback. If you change the
-> prompt and want to see the new wording, **use different text.** More than one person has been
-> confused by this. Feynman has no reuse and always regenerates.
+> **Testing consequence (unchanged, and now stronger):** resubmitting the same text returns the OLD
+> result — and no longer even calls the model. If you change the prompt and want to see new wording,
+> **use different text.** More than one person has been confused by this. **Feynman now memoises too**
+> (it previously always regenerated), so the same applies there.
 
 ### A failed feedback call must never cost the score
 
@@ -359,9 +368,14 @@ The paper (p. 84) *does* promise feedback "so they know what to review", which t
    would collapse them into roughly one. **This is very likely the largest single chunk of the wait**
    and is the first thing to fix if latency is the complaint.
 
-2. **`gemini-2.5-flash` is a reasoning model and thinking is on by default.** No thinking budget is
+2. ~~**`gemini-2.5-flash` is a reasoning model and thinking is on by default.** No thinking budget is
    set anywhere. For "extract the concepts this student mentioned" — a mechanical task — that is
-   latency paid for nothing.
+   latency paid for nothing.~~
+   **FIXED 2026-08-01.** Both calls moved to `GEMINI_UTILITY_MODEL` (`gemini-3.5-flash-lite`) with
+   an explicit thinking level: extraction runs at `MINIMAL` (measured: **0 thinking tokens**),
+   written feedback at `LOW` — `LOW` rather than `MINIMAL` because the prompt carries a real
+   restraint rule ("do NOT recite the missed list, choose only the 2-3 important ideas") that a
+   zero-thinking pass tends to ignore. This diagnosis was correct: it *was* latency paid for nothing.
 
 3. **All 78 embeddings are fetched from Supabase on every submission.** `select('id, term, definition, embedding')`
    pulls 78 × 3072 floats as strings before any AI call starts.
@@ -376,6 +390,12 @@ The paper (p. 84) *does* promise feedback "so they know what to review", which t
    feedback), so 20 RPD is **10 submissions per day for the entire school**. The paper plans 50
    students over 2–4 weeks. **Enable billing before any student testing.** Embeddings run on
    `gemini-embedding-001`, a separate model with its own quota.
+
+   **Partly eased 2026-08-01, not solved.** Free Recall's 2 requests now hit
+   `gemini-3.5-flash-lite`, and the quota id is `…PerProjectPerModel`, so those 2 no longer compete
+   with document uploads or Feynman for the same 20/day bucket. An identical resubmission is
+   memoised and costs **zero** requests. Still ~10 *distinct* submissions per day though — the
+   advice to enable billing before student testing stands.
 
 6. **Latency vs Groq.** Groq's inference is much faster, and Free Recall's *extraction* is the
    mechanical call best suited to a fast model. But it feeds the score, so swapping it risks the

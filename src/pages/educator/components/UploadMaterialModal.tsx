@@ -35,7 +35,8 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** Grade access is the educator's own decision, so all four JHS grades are offered. */
-  const gradeOptions = ALL_GRADE_LEVELS.map(gradeLabel);
+  // Grade labels are unique, so label doubles as the option value.
+  const gradeOptions = ALL_GRADE_LEVELS.map((g) => ({ value: gradeLabel(g), label: gradeLabel(g) }));
 
   const reset = () => {
     setFile(null);
@@ -222,6 +223,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
               onChange={setGrades}
               options={gradeOptions}
               placeholder="Select grades..."
+              itemNoun="grade"
             />
           </div>
         </div>

@@ -186,7 +186,19 @@ export type RateFlashcardInput = z.infer<typeof RateFlashcardSchema>;
 
 export const FreeRecallSchema = z.object({
   space_id: z.string().uuid(),
-  material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
+  /**
+   * Exactly one material. The score is a coverage ratio over every concept in the
+   * selection, so spanning two lessons doubles the denominator and reports a
+   * student who recalled one of them well as having recalled little.
+   *
+   * Stays an ARRAY despite the cap: `cognitive_logs.material_ids` is `UUID[]` and
+   * older attempts genuinely hold several, which History must keep rendering.
+   * Only new submissions are capped.
+   */
+  material_ids: z
+    .array(z.string().uuid())
+    .min(1, 'A material must be selected')
+    .max(1, 'Only one material can be evaluated at a time'),
   user_input: z.string().min(10, 'Response must be at least 10 characters'),
 });
 export type FreeRecallInput = z.infer<typeof FreeRecallSchema>;
@@ -238,7 +250,16 @@ export const FEYNMAN_AUDIENCES = ['10yr_old'] as const;
  */
 export const FeynmanEvaluationSchema = z.object({
   space_id: z.string().uuid(),
-  material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
+  /**
+   * Exactly one material — see the note on FreeRecallSchema. Here it also keeps
+   * term grouping honest: the same term in two materials is two different lessons'
+   * definitions, and grading an explanation against both would be judging the
+   * student on a lesson they did not choose.
+   */
+  material_ids: z
+    .array(z.string().uuid())
+    .min(1, 'A material must be selected')
+    .max(1, 'Only one material can be evaluated at a time'),
   audience: z.enum(FEYNMAN_AUDIENCES).default('10yr_old'),
   explanations: z
     .array(

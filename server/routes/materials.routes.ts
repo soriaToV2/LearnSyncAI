@@ -466,6 +466,10 @@ router.delete(
 /**
  * POST /api/materials/concepts/batch
  * Returns all extracted concepts for an array of materials.
+ *
+ * One row per term is guaranteed by extraction (see the ONE ROW PER TERM
+ * invariant in `lib/conceptExtraction.ts`), so callers can render these directly
+ * without collapsing duplicates.
  */
 import { FetchConceptsBatchSchema } from '../types/api';
 

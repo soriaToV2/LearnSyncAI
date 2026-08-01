@@ -1,8 +1,16 @@
 import { Router, Request, Response } from 'express';
+import { createHash } from 'node:crypto';
+import { Type, ThinkingLevel, type Schema } from '@google/genai';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateEmbedding, generateJson, GeminiUnavailableError } from '../lib/gemini';
+import {
+  generateEmbedding,
+  generateJson,
+  GeminiUnavailableError,
+  GEMINI_GRADING_MODEL,
+  GEMINI_UTILITY_MODEL,
+} from '../lib/gemini';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 import {
   FreeRecallSchema,
@@ -89,33 +97,70 @@ function parseVector(raw: unknown): number[] {
 
 
 /**
- * Returns the feedback a previous identical attempt already received, or null.
+ * Fingerprints the educator content a submission is graded against.
  *
- * temperature: 0 pins the *scoring* pipeline — the extraction step returns a
- * structured concept list, and the 0.70 coverage threshold quantises away what
- * little variation remains, so an identical submission always scores the same.
- * Free prose has no such quantisation: measured against the live model, the
- * same input reliably produced the same score but reworded paragraphs.
+ * This is what lets an identical resubmission be reused SAFELY. Reuse must stop
+ * the moment the educator changes the material, and `concepts` has **no
+ * `updated_at` column** — editing a definition changes no timestamp anywhere — so
+ * the fingerprint has to be taken over the content itself.
  *
- * So reproducibility is guaranteed by reuse rather than by trusting the model.
- * A resubmission is only treated as identical when the text, the materials AND
- * the resulting score all match — if the educator has since changed the
- * material, the score moves and fresh feedback is written instead of stale
- * prose being served for a situation that no longer holds.
+ * Both callers already fetch exactly these rows before their AI call, so this
+ * costs no extra query. Sorted by id so row order from Postgres cannot affect it,
+ * and hashed as JSON rather than concatenated text so no combination of field
+ * values can be reassembled into a different set that hashes the same.
+ *
+ * `extra` carries anything else the grading depended on — Feynman passes the
+ * lesson glossary, because that list drives its jargon detection.
  */
-async function findPreviousFeedback(params: {
+function fingerprintConcepts(
+  concepts: Array<{ id: string; term: string; definition: string }>,
+  extra: string[] = []
+): string {
+  const canonical = [...concepts]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map(c => [c.id, c.term, c.definition]);
+  return createHash('sha256')
+    .update(JSON.stringify([canonical, [...extra].sort()]))
+    .digest('hex');
+}
+
+/** Every payload we memoise carries the fingerprint it was produced against. */
+interface MemoisableFeedback {
+  concepts_fingerprint?: string;
+}
+
+/**
+ * Returns a previous identical attempt's stored result, or null.
+ *
+ * REPRODUCIBILITY LIVES HERE. `temperature: 0` used to pin the scoring pipeline,
+ * but Gemini 3 dropped the sampling parameters entirely, so there is no model-side
+ * knob left. Rather than hope threshold quantisation absorbs the drift, an
+ * identical submission is answered from what it scored last time — which is exact,
+ * and true whichever model is configured. That is precisely what makes the model a
+ * free variable rather than a load-bearing part of the guarantee.
+ *
+ * A hit skips EVERY AI call for that submission, which also matters on a free tier
+ * metered at 20 requests per day per model.
+ *
+ * Matched on: same student, same mode, same text, same materials, and the same
+ * concept content. The fingerprint is the part that makes this safe — an educator
+ * edit changes it, so the next submission is evaluated fresh instead of being
+ * served a score for a lesson that no longer exists.
+ */
+async function findMemoisedAttempt<T extends MemoisableFeedback>(params: {
   studentId: string;
+  mode: 'free_recall' | 'feynman';
   userInput: string;
   materialIds: string[];
-  similarityScore: number;
-}): Promise<FreeRecallWrittenFeedback | null> {
-  const { studentId, userInput, materialIds, similarityScore } = params;
+  fingerprint: string;
+}): Promise<T | null> {
+  const { studentId, mode, userInput, materialIds, fingerprint } = params;
 
   const { data: priors } = await supabaseAdmin
     .from('cognitive_logs')
-    .select('material_ids, similarity_score, ai_feedback')
+    .select('material_ids, ai_feedback')
     .eq('student_id', studentId)
-    .eq('mode', 'free_recall')
+    .eq('mode', mode)
     .eq('user_input', userInput)
     .order('created_at', { ascending: false })
     .limit(5);
@@ -127,20 +172,45 @@ async function findPreviousFeedback(params: {
   for (const prior of priors) {
     const priorMaterials = [...((prior.material_ids as string[]) ?? [])].sort().join(',');
     if (priorMaterials !== wanted) continue;
-    // NUMERIC round-trips through a string; compare with a tolerance rather
-    // than by identity.
-    if (Math.abs(Number(prior.similarity_score) - similarityScore) > 1e-9) continue;
 
     try {
-      const parsed = JSON.parse((prior.ai_feedback as string) ?? '{}') as FreeRecallFeedback;
-      if (parsed.written_feedback?.strengths) return parsed.written_feedback;
+      const parsed = JSON.parse((prior.ai_feedback as string) ?? '{}') as T;
+      // Rows written before this field existed have no fingerprint and cannot be
+      // proven current, so they are ignored rather than trusted.
+      if (parsed.concepts_fingerprint === fingerprint) return parsed;
     } catch {
-      // Unparseable prior — fall through and generate fresh feedback.
+      // Unparseable prior — fall through and evaluate fresh.
     }
   }
 
   return null;
 }
+
+/** Shape of the concepts a student's own answer is broken into. */
+const STUDENT_CONCEPT_SCHEMA: Schema = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      term: { type: Type.STRING },
+      explanation: { type: Type.STRING },
+    },
+    required: ['term', 'explanation'],
+    propertyOrdering: ['term', 'explanation'],
+  },
+};
+
+/** Shape of the coaching prose. Pins structure only — emptiness is caught below. */
+const RECALL_FEEDBACK_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    strengths: { type: Type.STRING },
+    gaps: { type: Type.STRING },
+    next_steps: { type: Type.STRING },
+  },
+  required: ['strengths', 'gaps', 'next_steps'],
+  propertyOrdering: ['strengths', 'gaps', 'next_steps'],
+};
 
 /**
  * Writes coaching prose for a Free Recall attempt.
@@ -193,7 +263,15 @@ Return ONLY a JSON object of this exact shape:
 }`;
 
   try {
-    const raw = await generateJson<Record<string, unknown>>(prompt, { temperature: 0 });
+    // LOW rather than MINIMAL: the prompt carries a real restraint rule — "do NOT
+    // recite the missed list, choose only the 2-3 genuinely important ideas" — and
+    // a zero-thinking pass tends to just list them.
+    const raw = await generateJson<Record<string, unknown>>(prompt, {
+      model: GEMINI_UTILITY_MODEL,
+      thinkingLevel: ThinkingLevel.LOW,
+      responseSchema: RECALL_FEEDBACK_SCHEMA,
+      maxOutputTokens: 2048,
+    });
     const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 
     const feedback: FreeRecallWrittenFeedback = {
@@ -274,6 +352,65 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    // ── 1b. Identical resubmission? Answer from what it scored last time ───
+    // Runs BEFORE any AI call, so a hit costs zero Gemini requests (this endpoint
+    // otherwise spends 2 plus one embedding per student concept). This is also
+    // what guarantees an identical submission scores identically now that Gemini 3
+    // has no `temperature` to pin — see findMemoisedAttempt.
+    const fingerprint = fingerprintConcepts(conceptsWithEmbeddings);
+    const memoised = await findMemoisedAttempt<FreeRecallFeedback & MemoisableFeedback>({
+      studentId,
+      mode: 'free_recall',
+      userInput: user_input,
+      materialIds: material_ids,
+      fingerprint,
+    });
+
+    if (memoised) {
+      // Still writes a row: a resubmission is a real attempt and must appear in
+      // the student's history exactly as before. Only the model calls are skipped.
+      const memoScore = memoised.total_concepts
+        ? memoised.covered_count / memoised.total_concepts
+        : 0;
+
+      const { data: log, error: logError } = await supabaseAdmin
+        .from('cognitive_logs')
+        .insert({
+          student_id: studentId,
+          space_id,
+          concept_id: null,
+          material_ids,
+          mode: 'free_recall',
+          user_input,
+          similarity_score: memoScore,
+          ai_feedback: JSON.stringify(memoised),
+        })
+        .select()
+        .single();
+
+      if (logError) {
+        res.status(500).json({ error: 'Failed to save cognitive log', message: logError.message });
+        return;
+      }
+
+      res.status(201).json({
+        data: {
+          log_id: log.id,
+          similarity_score: memoScore,
+          score_percent: Math.round(memoScore * 100),
+          covered_count: memoised.covered_count,
+          total_concepts: memoised.total_concepts,
+          missed_concepts: memoised.missed_concepts,
+          overall_verdict: memoised.overall_verdict,
+          written_feedback: memoised.written_feedback,
+          feedback_unavailable: memoised.written_feedback === null,
+          created_at: log.created_at,
+        },
+        message: 'Free recall scored successfully',
+      });
+      return;
+    }
+
     // ── 2. Extract discrete concepts from the student's text via Gemini ───
     interface ExtractedConcept { term: string; explanation: string }
 
@@ -298,12 +435,20 @@ Example output:
 ]
 `;
 
-    // temperature: 0 makes scoring reproducible. Extraction is the only
-    // sampling step in this pipeline — a different concept list embeds
-    // differently and shifts the coverage ratio, so resubmitting identical
-    // text would otherwise score differently each time.
+    // This is the only sampling step that feeds the score — a different concept
+    // list embeds differently and shifts the coverage ratio. `temperature: 0`
+    // used to pin it; Gemini 3 ignores temperature, so the schema pins the shape
+    // and findMemoisedAttempt above pins repeat submissions exactly.
+    //
+    // The utility model is correct here despite feeding a score: the model only
+    // ENUMERATES what the student mentioned. Nothing it returns is a score — the
+    // number comes from cosine similarity against COVERAGE_THRESHOLD, computed
+    // below in code.
     const extractedConcepts = await generateJson<ExtractedConcept[]>(extractionPrompt, {
-      temperature: 0,
+      model: GEMINI_UTILITY_MODEL,
+      thinkingLevel: ThinkingLevel.MINIMAL,
+      responseSchema: STUDENT_CONCEPT_SCHEMA,
+      maxOutputTokens: 4096,
     });
 
     // ── 3. Handle edge case: student wrote nothing recognizable ───────────
@@ -320,7 +465,8 @@ Example output:
         next_steps: "Re-read the material, then try again and write down every idea you can remember in your own words.",
       };
 
-      const emptyPayload: FreeRecallFeedback = {
+      const emptyPayload: FreeRecallFeedback & MemoisableFeedback = {
+        concepts_fingerprint: fingerprint,
         missed_concepts: missedConcepts,
         overall_verdict: 'needs_review',
         written_feedback: emptyFeedback,
@@ -411,34 +557,31 @@ Example output:
       'needs_review';
 
     // ── 7. Written feedback — allowed to fail, never allowed to cost the score ─
-    // Scoring is finished and in memory by this point. Both calls below swallow
-    // their own errors and yield null, so an overloaded or misbehaving model
+    // Scoring is finished and in memory by this point. The call below swallows
+    // its own errors and yields null, so an overloaded or misbehaving model
     // costs the student their paragraphs and nothing else.
     //
-    // An identical resubmission reuses the prose it got last time rather than
-    // asking the model to reproduce it — see findPreviousFeedback.
-    const writtenFeedback =
-      (await findPreviousFeedback({
-        studentId,
-        userInput: user_input,
-        materialIds: material_ids,
-        similarityScore,
-      })) ??
-      (await generateRecallFeedback({
-        userInput: user_input,
-        studentPoints: extractedConcepts.map(ec => `${ec.term}: ${ec.explanation}`),
-        coveredTerms: coveredConcepts,
-        missedTerms: missedConcepts,
-        scorePercent,
-      }));
+    // Reuse of a previous identical attempt is handled earlier, before extraction
+    // ran at all — see the memo check in step 1b.
+    const writtenFeedback = await generateRecallFeedback({
+      userInput: user_input,
+      studentPoints: extractedConcepts.map(ec => `${ec.term}: ${ec.explanation}`),
+      coveredTerms: coveredConcepts,
+      missedTerms: missedConcepts,
+      scorePercent,
+    });
 
     // ── 8. Save to cognitive_logs ─────────────────────────────────────────
-    const payload: FreeRecallFeedback = {
+    // `concepts_fingerprint` is what lets an identical resubmission be answered
+    // from this row instead of re-calling the model, and what stops that reuse
+    // the moment the educator edits a concept.
+    const payload: FreeRecallFeedback & MemoisableFeedback = {
       missed_concepts: missedConcepts,
       overall_verdict: overallVerdict,
       written_feedback: writtenFeedback,
       covered_count: coveredCount,
       total_concepts: totalConcepts,
+      concepts_fingerprint: fingerprint,
     };
 
     const { data: log, error: logError } = await supabaseAdmin
@@ -674,6 +817,47 @@ function mean(values: number[]): number {
 }
 
 /**
+ * Shape of a Feynman grading response.
+ *
+ * STRUCTURE ONLY. It guarantees the keys exist and are the right type; it says
+ * nothing about whether `accuracy_score` is sane, whether `concept_id` echoes an
+ * id we actually sent, or whether a claimed analogy is really an analogy. The
+ * coercion layer after the call is what enforces all of that and must stay.
+ */
+const FEYNMAN_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    overall_feedback: { type: Type.STRING },
+    concepts: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          concept_id: { type: Type.STRING },
+          accuracy_score: { type: Type.INTEGER },
+          simplicity_score: { type: Type.INTEGER },
+          jargon_found: { type: Type.ARRAY, items: { type: Type.STRING } },
+          feedback: { type: Type.STRING },
+          analogy_used: { type: Type.BOOLEAN },
+          analogy_quote: { type: Type.STRING },
+          analogy_idea: { type: Type.STRING },
+        },
+        required: [
+          'concept_id', 'accuracy_score', 'simplicity_score', 'jargon_found',
+          'feedback', 'analogy_used', 'analogy_quote', 'analogy_idea',
+        ],
+        propertyOrdering: [
+          'concept_id', 'accuracy_score', 'simplicity_score', 'jargon_found',
+          'feedback', 'analogy_used', 'analogy_quote', 'analogy_idea',
+        ],
+      },
+    },
+  },
+  required: ['overall_feedback', 'concepts'],
+  propertyOrdering: ['overall_feedback', 'concepts'],
+};
+
+/**
  * POST /api/cognitive/feynman
  *
  * Grades a Feynman Technique submission on TWO independent axes:
@@ -686,7 +870,7 @@ function mean(values: number[]): number {
  * Unlike free-recall, this endpoint does NOT use embeddings. Cosine similarity
  * cannot see jargon or misconceptions — a student who parrots the textbook
  * verbatim would score ~0.95 while completely failing the Feynman exercise.
- * Instead we ground `gemini-2.5-flash` on the stored definitions as truth.
+ * Instead we ground GEMINI_GRADING_MODEL on the stored definitions as truth.
  *
  * Body: { space_id, material_ids[], audience, explanations: [{ concept_id, explanation }] }
  */
@@ -718,6 +902,10 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
     // ── 2. Look up the authoritative term + definition for each concept ───
     // Scoped to material_ids so a client cannot grade against a concept from
     // a material it did not select.
+    //
+    // One row per term is guaranteed upstream by extraction, so a submitted id
+    // names exactly one definition — see the ONE ROW PER TERM invariant in
+    // `lib/conceptExtraction.ts`.
     const { data: concepts, error: conceptsError } = await supabaseAdmin
       .from('concepts')
       .select('id, term, definition')
@@ -749,6 +937,57 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
       .in('material_id', material_ids);
 
     const glossaryTerms = [...new Set((glossaryRows ?? []).map(r => r.term as string))];
+
+    // ── 2c. Identical resubmission? Answer from what it graded last time ──
+    // Built before the prompt so a hit costs zero Gemini requests. This is also
+    // what keeps an identical explanation scoring identically now that Gemini 3
+    // ignores `temperature` — a drifting accuracy_score would otherwise be able to
+    // cross deriveVerdict()'s 80 boundary and flip the badge a student is shown.
+    //
+    // The glossary is part of the fingerprint because it drives jargon detection,
+    // so adding a concept to the material legitimately changes the grade.
+    const userInput = explanations
+      .map(e => `Concept: ${conceptById.get(e.concept_id)!.term}\nExplanation: ${e.explanation}`)
+      .join('\n\n');
+
+    const fingerprint = fingerprintConcepts(concepts, glossaryTerms);
+    const memoised = await findMemoisedAttempt<FeynmanFeedback & MemoisableFeedback>({
+      studentId,
+      mode: 'feynman',
+      userInput,
+      materialIds: material_ids,
+      fingerprint,
+    });
+
+    if (memoised) {
+      // Still writes a row — a resubmission is a real attempt and must appear in
+      // history exactly as before. Only the model call is skipped.
+      const { data: log, error: memoLogError } = await supabaseAdmin
+        .from('cognitive_logs')
+        .insert({
+          student_id: studentId,
+          space_id,
+          concept_id: null,
+          material_ids,
+          mode: 'feynman',
+          user_input: userInput,
+          similarity_score: memoised.accuracy_score / 100,
+          ai_feedback: JSON.stringify(memoised),
+        })
+        .select()
+        .single();
+
+      if (memoLogError) {
+        res.status(500).json({ error: 'Failed to save cognitive log', message: memoLogError.message });
+        return;
+      }
+
+      res.status(201).json({
+        data: { log_id: log.id, created_at: log.created_at, ...memoised },
+        message: 'Feynman explanation evaluated successfully',
+      });
+      return;
+    }
 
     // ── 3. Build a single grounded prompt covering every concept ──────────
     const submissionBlock = explanations
@@ -835,11 +1074,23 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
       concepts?: unknown;
     }
 
-    // temperature: 0 makes grading reproducible — resubmitting the same
-    // explanation must not yield a different score. Without it, sampling
-    // variance can drift a score across a verdict band boundary (an 80-vs-70
-    // swing flips the badge between "Correct" and "Needs Improvement").
-    const raw = await generateJson<RawFeynmanResponse>(prompt, { temperature: 0 });
+    // The grading model, not the utility one: `accuracy_score` below comes
+    // straight from the model and drives deriveVerdict(), so this is the one call
+    // in the codebase where the model's judgement IS the number a student is told.
+    //
+    // MEDIUM thinking is where that model earns its price — two anti-correlated
+    // axes, a restraint rule, analogy classification and glossary-grounded jargon
+    // in one pass. maxOutputTokens is generous because thinking tokens draw on the
+    // same budget and a multi-concept submission is already a long response.
+    //
+    // `temperature: 0` used to pin repeat submissions; Gemini 3 ignores it, so
+    // findMemoisedAttempt above does that job exactly instead.
+    const raw = await generateJson<RawFeynmanResponse>(prompt, {
+      model: GEMINI_GRADING_MODEL,
+      thinkingLevel: ThinkingLevel.MEDIUM,
+      responseSchema: FEYNMAN_SCHEMA,
+      maxOutputTokens: 16384,
+    });
     const rawConcepts = Array.isArray(raw?.concepts) ? (raw.concepts as Record<string, unknown>[]) : [];
 
     // ── 4. Coerce the model output — never trust it to hold its schema ────
@@ -882,7 +1133,11 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
     const accuracyScore = mean(results.map(r => r.accuracy_score));
     const simplicityScore = mean(results.map(r => r.simplicity_score));
 
-    const feedbackPayload: FeynmanFeedback = {
+    // `concepts_fingerprint` is what lets an identical resubmission be answered
+    // from this row instead of re-grading, and what stops that reuse the moment
+    // the educator edits a concept or the glossary changes.
+    const feedbackPayload: FeynmanFeedback & MemoisableFeedback = {
+      concepts_fingerprint: fingerprint,
       audience,
       accuracy_score: accuracyScore,
       simplicity_score: simplicityScore,
@@ -896,10 +1151,7 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
     // per-concept breakdown lives inside the ai_feedback JSON.
     // `similarity_score` stores mean accuracy as a 0–1 numeric, matching the
     // convention free-recall already uses for this column.
-    const userInput = explanations
-      .map(e => `Concept: ${conceptById.get(e.concept_id)!.term}\nExplanation: ${e.explanation}`)
-      .join('\n\n');
-
+    // `userInput` was built in step 2c — it doubles as the memo key.
     const { data: log, error: logError } = await supabaseAdmin
       .from('cognitive_logs')
       .insert({

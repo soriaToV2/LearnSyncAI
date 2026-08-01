@@ -1,12 +1,31 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 
+/**
+ * One selectable row. `value` must be UNIQUE and stable — it is the React key, the
+ * membership test and what `onChange` reports.
+ *
+ * It used to be a bare `string[]` of labels, which meant two options sharing a
+ * label were indistinguishable: they collided as React keys, ticked together, and
+ * only the first could ever be resolved back to a record. A material with three
+ * concepts named "SECURE SOFTWARE DEVELOPMENT" made all three of those visible at
+ * once. Pass an id as `value` and a label as `label`.
+ */
+export interface DropdownOption {
+  value: string;
+  label: string;
+  /** Optional muted suffix, e.g. a count or a page number. */
+  hint?: string;
+}
+
 interface MultiSelectDropdownProps {
   selectedValues: string[];
   onChange: (values: string[]) => void;
-  options: string[];
+  options: DropdownOption[];
   placeholder?: string;
   className?: string;
+  /** Noun used in the button text, e.g. "resource" or "concept". */
+  itemNoun?: string;
 }
 
 export default function MultiSelectDropdown({
@@ -14,7 +33,8 @@ export default function MultiSelectDropdown({
   onChange,
   options,
   placeholder = 'Select resources...',
-  className = ''
+  className = '',
+  itemNoun = 'resource',
 }: MultiSelectDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -41,7 +61,7 @@ export default function MultiSelectDropdown({
     if (selectedValues.length === options.length) {
       onChange([]);
     } else {
-      onChange([...options]);
+      onChange(options.map((o) => o.value));
     }
   };
 
@@ -49,8 +69,8 @@ export default function MultiSelectDropdown({
     selectedValues.length === 0
       ? placeholder
       : selectedValues.length === options.length
-      ? 'All resources'
-      : `${selectedValues.length} resource${selectedValues.length > 1 ? 's' : ''} selected`;
+      ? `All ${itemNoun}s`
+      : `${selectedValues.length} ${itemNoun}${selectedValues.length > 1 ? 's' : ''} selected`;
 
   // w-fit stops a flex/grid parent from stretching the root. The panel below is anchored
   // with `right-0`, so a stretched root would fling it out to the container's right edge.
@@ -92,12 +112,12 @@ export default function MultiSelectDropdown({
             )}
 
             {options.map((option) => {
-              const isSelected = selectedValues.includes(option);
+              const isSelected = selectedValues.includes(option.value);
               return (
                 <button
-                  key={option}
+                  key={option.value}
                   type="button"
-                  onClick={() => handleToggleOption(option)}
+                  onClick={() => handleToggleOption(option.value)}
                   className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${
                     isSelected
                       ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim font-semibold'
@@ -108,14 +128,19 @@ export default function MultiSelectDropdown({
                   <div className="w-4 h-4 rounded border border-white/20 flex items-center justify-center mr-2.5 shrink-0 bg-white/5">
                     {isSelected && <Check className="w-3 h-3 text-primary-fixed-dim" />}
                   </div>
-                  <span className="truncate flex-1">{option}</span>
+                  <span className="truncate flex-1">{option.label}</span>
+                  {option.hint && (
+                    <span className="ml-2 shrink-0 text-[10px] font-medium text-slate-500">
+                      {option.hint}
+                    </span>
+                  )}
                 </button>
               );
             })}
 
             {options.length === 0 && (
               <div className="px-4 py-3 text-xs text-slate-500 italic text-center">
-                No resources available
+                No {itemNoun}s available
               </div>
             )}
           </div>

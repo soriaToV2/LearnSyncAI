@@ -346,9 +346,33 @@ reinforced on each individual field, with a worked example. Verified: *"Your exp
 
 ---
 
-## 12. Model choice: Gemini vs Groq — the open question
+## 12. Model choice — SETTLED 2026-08-01
 
-Currently **`gemini-2.5-flash`** via `generateJson()`, one call per submission, `temperature: 0`.
+> **This section was an open question. It is now decided.** Current: **`GEMINI_GRADING_MODEL`
+> (`gemini-3.6-flash`)** via `generateJson()`, one call per submission, `thinkingLevel: MEDIUM`,
+> `responseSchema: FEYNMAN_SCHEMA`, `maxOutputTokens: 16384`. **No `temperature`** — Gemini 3
+> dropped the sampling parameters entirely.
+>
+> **Why it stayed on the strong model.** Feynman is the only call in the codebase where the
+> model's own judgement becomes a number the student is told about themselves; everything else
+> either enumerates (Free Recall extraction) or writes prose. That single test — *does the
+> model's judgement become the student's score?* — is what assigns a call site to
+> `GEMINI_GRADING_MODEL` rather than the ~5x cheaper `GEMINI_UTILITY_MODEL`.
+>
+> **Cost was explicitly rejected as the deciding factor**: across the paper's 50-student study
+> the whole spread between the cheapest and most expensive configuration is ~$3 vs ~$14.
+>
+> **Reproducibility no longer depends on the model at all.** `temperature: 0` is gone;
+> `findMemoisedAttempt()` answers an identical resubmission from the row it produced last time.
+> See `GEMINI_MIGRATION_STATUS.md`.
+>
+> **The §2 acceptance table below was re-run against the new config and passed** — jargon-heavy
+> +85 gap, simple-but-wrong −60 gap, circular 40, in-domain analogy rejected.
+>
+> Groq remains unattractive for this endpoint for the reasons below, chiefly the missing retry
+> wrapper. The historical argument is kept intact:
+
+Previously **`gemini-2.5-flash`** via `generateJson()`, one call per submission, `temperature: 0`.
 
 The user asked (30 July) about moving Feynman to Groq, correctly noting it needs **no embeddings** and
 is therefore cleanly separable — unlike Free Recall, which depends on `gemini-embedding-001`.
@@ -381,6 +405,12 @@ budget — both provider-agnostic, no revalidation, and likely larger wins. See 
 ---
 
 ## 13. Quota — read before any student testing
+
+> **Updated 2026-08-01.** `gemini-2.5-flash` is dead (404). Current measured free-tier cap is
+> **20 requests/day**, and the quota id is `…PerProjectPerModel` — **per model**, so Feynman
+> (`gemini-3.6-flash`) and Free Recall (`gemini-3.5-flash-lite`) now draw on *separate* daily
+> buckets. An identical resubmission is memoised and costs **zero** requests. The figures below
+> are the historical 2.5-flash measurements; the shape of the problem is unchanged.
 
 Measured free-tier limits for `gemini-2.5-flash`: **5 RPM / 250k TPM / 20 RPD.**
 

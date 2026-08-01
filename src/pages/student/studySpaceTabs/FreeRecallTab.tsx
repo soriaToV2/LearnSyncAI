@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Brain, RefreshCw, Target, CheckCircle2, XCircle, AlertTriangle, Sparkles, PenTool, History } from 'lucide-react';
-import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
+import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
 import { api } from '../../../lib/api';
 import {
   CARD, LABEL, SECTION,
@@ -79,10 +79,12 @@ function verdictDescription(f: ParsedFeedback, verdict: string): string {
 }
 
 export default function FreeRecallTab({ availableResources, spaceId }: FreeRecallTabProps) {
-  const resourceOptions = availableResources.map(r => r.title);
+  // Keyed on material id, not title — two materials may share a title.
+  const resourceOptions = availableResources.map(r => ({ value: r.id, label: r.title }));
 
   const [viewMode, setViewMode] = useState<ViewMode>('study');
-  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
+  /** Exactly one material. The coverage ratio is scored against one lesson. */
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
 
   // Composer state
   const [recallText, setRecallText] = useState('');
@@ -127,10 +129,9 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
     fetchHistory();
   }, [spaceId]);
 
-  // ── Resolve selected titles → material IDs ───────────────
-  const selectedMaterialIds = availableResources
-    .filter(r => selectedDocs.includes(r.title))
-    .map(r => r.id);
+  // The API still takes an array — cognitive_logs.material_ids is UUID[] and older
+  // attempts span several — but new submissions carry exactly one.
+  const selectedMaterialIds = selectedMaterialId ? [selectedMaterialId] : [];
 
   const handleEvaluate = async () => {
     if (!recallText.trim() || selectedMaterialIds.length === 0) return;
@@ -319,11 +320,11 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
             <div className="animate-in fade-in">
               <div className="flex flex-col items-start gap-1.5 mb-4">
                 <span className={LABEL}>Material</span>
-                <MultiSelectDropdown
-                  selectedValues={selectedDocs}
-                  onChange={setSelectedDocs}
+                <SingleSelectDropdown
+                  selectedValue={selectedMaterialId}
+                  onChange={setSelectedMaterialId}
                   options={resourceOptions}
-                  placeholder="Select materials..."
+                  placeholder="Select a material..."
                 />
               </div>
 

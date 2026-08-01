@@ -14,24 +14,62 @@ if (!apiKey) {
 
 const genai = new GoogleGenAI({ apiKey: apiKey ?? '' });
 
-/**
- * Educator concept extraction. Google's listed replacement for gemini-2.5-flash.
- * Gemini 3 semantics differ — see `isGemini3` below.
+/*
+ * ── Choosing a model for a new call site ──────────────────────────────────
+ *
+ * One question decides it:
+ *
+ *     Does the MODEL'S OWN JUDGEMENT become a number the student is shown?
+ *
+ *   yes → GEMINI_GRADING_MODEL. A plausible-but-wrong score is invisible; nobody
+ *         can eyeball it the way they can spot a bad trivia question.
+ *   no  → GEMINI_UTILITY_MODEL. Extraction, classification and prose, where the
+ *         model enumerates and CODE does any scoring.
+ *
+ * Free Recall is the instructive case: it *looks* like grading, but the model
+ * only lists what the student mentioned. The score is coveredCount/totalConcepts,
+ * computed here from cosine similarity against a fixed threshold — so it belongs
+ * on the utility model. Feynman genuinely grades, so it does not.
+ *
+ * Gemini 3 semantics differ from 2.5 across all of these — see `isGemini3` below.
  */
+
+/** Educator document concept extraction. Feeds the entire knowledge base. */
 export const GEMINI_EXTRACTION_MODEL = 'gemini-3.6-flash';
 
 /**
- * Adaptive test generation, Free Recall and Feynman grading.
+ * Calls whose output IS a score the student is shown. Feynman grading only.
+ *
+ * Worth the stronger model: Feynman is the hardest prompt in the codebase — two
+ * anti-correlated scores, a restraint rule, analogy classification and
+ * glossary-grounded jargon — and Gemini has already been recorded failing to keep
+ * the two axes apart on it.
+ */
+export const GEMINI_GRADING_MODEL = 'gemini-3.6-flash';
+
+/**
+ * Mechanical calls: extraction and coaching prose. ~5x cheaper input and ~3x
+ * cheaper output than the grading model, and Google positions Flash-Lite for
+ * exactly this — extraction and classification where reasoning depth is not
+ * critical.
+ *
+ * Free-tier request quota is per-model (`GenerateRequestsPerDayPerProjectPerModel`),
+ * so using a distinct model here also buys a separate daily bucket rather than
+ * sharing one with extraction and grading.
+ */
+export const GEMINI_UTILITY_MODEL = 'gemini-3.5-flash-lite';
+
+/**
+ * Adaptive test generation (`practice.routes.ts`) — the last caller.
  *
  * ⚠️ ALREADY DEAD. Verified 2026-08-01 against our own key: every call returns
  * HTTP 404 "no longer available to new users". It is still listed by ListModels,
  * which is why it looks alive. The published 2026-10-16 shutdown date is moot —
- * the four call sites naming this constant are broken NOW, not in October.
+ * the call site naming this constant is broken NOW, not in October.
  *
- * They were left on it deliberately, not by oversight: they pass `temperature: 0`
- * for score reproducibility and Gemini 3 ignores that parameter, so migrating
- * them is a design decision rather than a model swap. See
- * `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md` for what each one needs.
+ * Migrating it is easy (it passes no `temperature`), but its prompt asks the model
+ * to echo `concept_id` UUIDs and a wrong one silently corrupts BKT, so the echoed
+ * ids must be validated. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
  */
 const GEMINI_LEGACY_TEXT_MODEL = 'gemini-2.5-flash';
 

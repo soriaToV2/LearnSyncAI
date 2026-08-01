@@ -4,6 +4,7 @@ import {
   XCircle, AlertTriangle, PenTool, History,
 } from 'lucide-react';
 import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
+import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
 import { api } from '../../../lib/api';
 import {
   CARD, LABEL, SECTION,
@@ -17,6 +18,14 @@ interface FeynmanTabProps {
   spaceId: string;
 }
 
+/**
+ * Selection is keyed on `id`, never on `term`.
+ *
+ * Extraction guarantees one row per term, but the picker must not depend on that
+ * to behave: keying on display text meant two same-named concepts collided as
+ * React keys, ticked together, and only the first could ever be resolved back to
+ * a record.
+ */
 interface Concept {
   id: string;
   term: string;
@@ -94,14 +103,16 @@ function overallVerdict(accuracy: number): Verdict {
 }
 
 export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabProps) {
-  const resourceOptions = availableResources.map(r => r.title);
+  // Keyed on material id, not title — two materials may share a title.
+  const resourceOptions = availableResources.map(r => ({ value: r.id, label: r.title }));
 
   const [viewMode, setViewMode] = useState<ViewMode>('study');
-  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
+  /** Exactly one material. A submission is graded against one lesson. */
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
 
   // Concept Fetching State
   const [availableConcepts, setAvailableConcepts] = useState<Concept[]>([]);
-  const [selectedConceptTerms, setSelectedConceptTerms] = useState<string[]>([]);
+  const [selectedConceptIds, setSelectedConceptIds] = useState<string[]>([]);
   const [isFetchingConcepts, setIsFetchingConcepts] = useState(false);
 
   // Composer state — explanations are keyed by concept_id, which is what the API grades against.
@@ -129,14 +140,14 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
     setShowAnswer(false);
   };
 
-  // Map selected titles back to material IDs
-  const selectedMaterialIds = availableResources
-    .filter(r => selectedDocs.includes(r.title))
-    .map(r => r.id);
+  // The API still takes an array — cognitive_logs.material_ids is UUID[] and older
+  // attempts span several — but new submissions carry exactly one.
+  const selectedMaterialIds = selectedMaterialId ? [selectedMaterialId] : [];
 
-  // Map selected terms back to concept records
-  const selectedConcepts = selectedConceptTerms
-    .map(term => availableConcepts.find(c => c.term === term))
+  // Resolve by id. Resolving by term used to silently drop every duplicate row
+  // past the first, because `.find()` returns only the earliest match.
+  const selectedConcepts = selectedConceptIds
+    .map(id => availableConcepts.find(c => c.id === id))
     .filter((c): c is Concept => Boolean(c));
 
   // ── Load history on mount ─────────────────────────────────
@@ -155,19 +166,23 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
     fetchHistory();
   }, [spaceId]);
 
-  // Fetch concepts when selected materials change
+  // Reload concepts whenever the material changes. Concept selections and the
+  // explanations written against them belong to the old material, so both are
+  // cleared — keeping them would submit ids that are not in the chosen lesson.
   useEffect(() => {
     async function fetchConcepts() {
-      if (selectedMaterialIds.length === 0) {
+      setSelectedConceptIds([]);
+      setExplanations({});
+
+      if (!selectedMaterialId) {
         setAvailableConcepts([]);
-        setSelectedConceptTerms([]);
         return;
       }
 
       setIsFetchingConcepts(true);
       try {
         const res = await api.post<Concept[]>('/materials/concepts/batch', {
-          material_ids: selectedMaterialIds,
+          material_ids: [selectedMaterialId],
         });
         setAvailableConcepts(res.data || []);
       } catch (error) {
@@ -178,10 +193,10 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
     }
 
     fetchConcepts();
-  }, [JSON.stringify(selectedMaterialIds)]);
+  }, [selectedMaterialId]);
 
-  const handleConceptChange = (newSelectedTerms: string[]) => {
-    setSelectedConceptTerms(newSelectedTerms);
+  const handleConceptChange = (newSelectedIds: string[]) => {
+    setSelectedConceptIds(newSelectedIds);
     setEvalError(null);
   };
 
@@ -243,7 +258,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
       setResultLogId(newLog.id);
       setShowAnswer(false);
       setExplanations({});
-      setSelectedConceptTerms([]);
+      setSelectedConceptIds([]);
     } catch (err) {
       console.error('[Feynman] Evaluation failed:', err);
       const raw = err instanceof Error ? err.message : '';
@@ -430,11 +445,11 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
               <div className="flex flex-wrap items-end gap-x-6 gap-y-4 mb-6">
                 <div className="flex flex-col gap-1.5">
                   <span className={LABEL}>Material</span>
-                  <MultiSelectDropdown
-                    selectedValues={selectedDocs}
-                    onChange={setSelectedDocs}
+                  <SingleSelectDropdown
+                    selectedValue={selectedMaterialId}
+                    onChange={setSelectedMaterialId}
                     options={resourceOptions}
-                    placeholder="Select materials..."
+                    placeholder="Select a material..."
                   />
                 </div>
 
@@ -443,10 +458,11 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
                     Concepts {isFetchingConcepts && <RefreshCw className="w-3 h-3 animate-spin" />}
                   </span>
                   <MultiSelectDropdown
-                    selectedValues={selectedConceptTerms}
+                    selectedValues={selectedConceptIds}
                     onChange={handleConceptChange}
-                    options={availableConcepts.map(c => c.term)}
+                    options={availableConcepts.map(c => ({ value: c.id, label: c.term }))}
                     placeholder="Select concepts..."
+                    itemNoun="concept"
                   />
                 </div>
               </div>

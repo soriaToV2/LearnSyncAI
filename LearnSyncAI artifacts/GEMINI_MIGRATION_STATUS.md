@@ -27,12 +27,14 @@ had not already used it — including this project's — lost access earlier.
 
 | # | Feature | Call site | Model | Status |
 |---|---------|-----------|-------|--------|
-| 1 | Educator concept extraction | `lib/conceptExtraction.ts:~170` | `gemini-3.6-flash` | ✅ migrated & verified |
-| 2 | Adaptive test generation | `routes/practice.routes.ts:101` | `gemini-2.5-flash` | ❌ **404 — down** |
-| 3 | Free Recall — concept extraction | `routes/cognitive.routes.ts:305` | `gemini-2.5-flash` | ❌ **404 — down** |
-| 4 | Free Recall — written feedback | `routes/cognitive.routes.ts:196` | `gemini-2.5-flash` | ❌ **404 — down** |
-| 5 | Feynman — grading | `routes/cognitive.routes.ts:840` | `gemini-2.5-flash` | ❌ **404 — down** |
+| 1 | Educator concept extraction | `lib/conceptExtraction.ts` | `gemini-3.6-flash` | ✅ migrated & verified |
+| 2 | Free Recall — concept extraction | `routes/cognitive.routes.ts` | `gemini-3.5-flash-lite` | ✅ migrated & verified |
+| 3 | Free Recall — written feedback | `routes/cognitive.routes.ts` | `gemini-3.5-flash-lite` | ✅ migrated & verified |
+| 4 | Feynman — grading | `routes/cognitive.routes.ts` | `gemini-3.6-flash` | ✅ migrated & verified |
+| 5 | **Adaptive test generation** | `routes/practice.routes.ts:101` | `gemini-2.5-flash` | ❌ **404 — still down** |
 | — | All embeddings | `lib/gemini.ts` `generateEmbedding()` | `gemini-embedding-001` | ✅ fine until 2028-05-14 |
+
+**Adaptive test generation is now the only remaining dead call site.** It is the easy one — it passes no `temperature`, so there is no reproducibility question. The one care point: its prompt asks the model to echo `concept_id` UUIDs back, and a wrong id silently corrupts BKT, so the returned ids must be range-checked against the ids sent (the flashcard generator's index echo is the pattern to copy).
 
 Dead code that also names the legacy model, harmless but should be deleted or migrated:
 `generateContent()` (no callers at all) and `generateJsonFromDocument()` (called only by
@@ -58,74 +60,82 @@ So each migration below is a small, local edit. **Nothing structural is missing.
 
 ---
 
-## What each remaining site needs
+## How Free Recall and Feynman were migrated (2026-08-01)
 
-### 2. Adaptive test generation — `practice.routes.ts:101`
+The blocker was never the plumbing. It was that **`temperature: 0` was the stated mechanism
+for score reproducibility, and Gemini 3 has no equivalent**. Two halves, in this order:
 
-The easy one. It passes **no** `temperature`, so there is no reproducibility question at
-all — a practice test is generated once and stored.
+### Half 1 — make reproducibility independent of the model
+
+`findPreviousFeedback()` was replaced by **`findMemoisedAttempt()`**, which runs *before* any
+AI call in both endpoints. An identical resubmission is answered from the row it produced
+last time — exact, and true whichever model is configured. **That is what turned the model
+into a free variable**; without it, every future model change would re-open this same question.
+
+Keyed on `student_id` + `mode` + `user_input` + `material_ids` + a **content fingerprint**.
+
+The fingerprint exists because **`concepts` has no `updated_at` column** — an educator
+editing a definition changes no timestamp anywhere, so a time-based key would happily serve a
+score for a lesson that no longer exists. `fingerprintConcepts()` hashes the concept
+id/term/definition set, plus the glossary for Feynman (it drives jargon detection). Stored as
+`concepts_fingerprint` inside the existing `ai_feedback` JSON — **no migration needed**.
+
+Two properties worth preserving if this is ever reworked:
+
+- **A hit still INSERTs a log row.** A resubmission is a real attempt and must appear in the
+  student's history exactly as before. Only the model calls are skipped.
+- **Rows predating the field are never reused.** No fingerprint means it cannot be proven
+  current.
+
+Side benefit: an identical resubmission now costs **zero** API calls instead of 2 (Free
+Recall) or 1 (Feynman) — material on a 20/day budget.
+
+### Half 2 — the model split
+
+| Call site | Model | Thinking | Why |
+|---|---|---|---|
+| Free Recall extraction | `GEMINI_UTILITY_MODEL` | `MINIMAL` | Model only *enumerates*; the score is cosine + threshold in code |
+| Free Recall prose | `GEMINI_UTILITY_MODEL` | `LOW` | `LOW` not `MINIMAL` — the prompt has a restraint rule a zero-thinking pass ignores |
+| Feynman grading | `GEMINI_GRADING_MODEL` | `MEDIUM` | The one call where the model's judgement *is* the student's score |
+
+**The rule for a new call site:** *does the model's own judgement become a number the student
+is shown?* Free Recall looks like grading but fails that test — the model never scores
+anything. Feynman passes it.
+
+**Cost was deliberately not the deciding factor.** Across the paper's 50-student study the
+entire spread is ~$14 (3.6-flash everywhere) vs ~$3 (Flash-Lite everywhere). The real lever
+is that free-tier quota is **per model**, so the split buys separate daily buckets.
+
+**Verified on the live API, 2026-08-01** — the `feynmanImplementationPlan.md` §2 acceptance
+table re-run against the new config:
+
+| Case | Required | Result |
+|---|---|---|
+| jargon-heavy but correct | large accuracy/simplicity gap | 95 / 10 → **+85** |
+| simple but wrong | gap inverted | 10 / 70 → **−60** |
+| circular / hollow | 30–50, not near 0 | **40** |
+| in-domain pseudo-analogy | `analogy_used: false` | **false** |
+
+> **The Feynman coercion layer was kept in full.** A `responseSchema` pins *structure*, never
+> *correctness*. `clampScore()`, the `concept_id` echo match, `stripSelfReferentialJargon()`,
+> `analogyUsesLessonVocabulary()` and `deriveVerdict()` all still earn their place — the
+> analogy backstop exists because the prompt alone once failed, and it must keep holding
+> whichever model grades. Do not delete it on the grounds that "we have a schema now."
+
+### Still to do — adaptive test generation (`practice.routes.ts:101`)
 
 ```ts
 const questionsPayload = await generateJson<{ questions: unknown[] }>(prompt, {
-  model: GEMINI_EXTRACTION_MODEL,
+  model: GEMINI_UTILITY_MODEL,
   thinkingLevel: ThinkingLevel.LOW,
   maxOutputTokens: 16384,
 });
 ```
 
-Add a `responseSchema` if you want the `{ questions: [...] }` envelope pinned. The one
-thing to re-test by hand: the prompt ends with *"Use the actual concept_id UUIDs provided
-above"*, and a wrong `concept_id` silently corrupts BKT. Verify the returned UUIDs against
-the ones sent, exactly as the flashcard generator range-checks its indices.
-
-### 3 & 4. Free Recall — `cognitive.routes.ts:305` and `:196`
-
-**Read `cognitive.routes.ts:91-105` before touching this.** That comment already
-establishes what the guarantee actually rests on, and it is *not* `temperature` alone:
-
-- **The score** is pinned by structured extraction plus the **0.70 coverage threshold**,
-  which quantises away residual variation. A `responseSchema` on the extraction call at
-  `:305` strengthens exactly this — it is a closer fit to the real guarantee than
-  `temperature: 0` ever was.
-- **The prose** is pinned by **`findPreviousFeedback()`** (`:106`), which reuses a previous
-  identical attempt's feedback rather than asking the model to reproduce it. The code
-  comment is explicit that temperature never pinned prose: *"the same input reliably
-  produced the same score but reworded paragraphs."*
-
-So the migration is defensible on the mechanism the code already documents:
-
-```ts
-// :305 — the scoring-critical call
-const extractedConcepts = await generateJson<ExtractedConcept[]>(extractionPrompt, {
-  model: GEMINI_EXTRACTION_MODEL,
-  thinkingLevel: ThinkingLevel.LOW,
-  responseSchema: /* array of { term, explanation } */,
-  maxOutputTokens: 16384,
-});
-```
-
-Drop `temperature: 0` and **rewrite the comment at `:301-304`** — it currently claims
-temperature is what makes scoring reproducible, which stops being true.
-
-`:196` is written feedback (prose), guarded by `findPreviousFeedback()`. No schema needed;
-just the model swap.
-
-**Before/after check worth running:** submit the same Free Recall text 3× and confirm the
-coverage ratio lands on the same value each time. If it does, the quantisation is doing
-its job and the paper's reproducibility claim holds on its real terms.
-
-### 5. Feynman — `cognitive.routes.ts:840`
-
-The one that needs actual thought. Feynman returns **two continuous scores**
-(`accuracy_score`, `simplicity_score`) and the verdict is derived in the backend from
-accuracy. Unlike Free Recall's coverage ratio, **there may be no quantisation step** to
-absorb model variation — check whether the verdict bands are wide enough that a small
-score wobble cannot flip a student between verdicts.
-
-- If the bands absorb it → migrate like the others, with a `responseSchema` pinning
-  `{ accuracy_score, simplicity_score, ... }`.
-- If they do not → the honest fix is to quantise the score before storing it (round to a
-  band), or extend `findPreviousFeedback()`-style reuse to Feynman.
+No `temperature`, so no reproducibility question. The one care point: the prompt ends with
+*"Use the actual concept_id UUIDs provided above"*, and a wrong `concept_id` silently
+corrupts BKT. Validate the returned UUIDs against the ones sent, exactly as the flashcard
+generator range-checks its indices.
 
 ---
 
@@ -139,9 +149,21 @@ cap, observed:**
       limit: 20, model: gemini-3.6-flash
 ```
 
-**20 requests per day.** Concept extraction makes one call per window, so a 100-page module
-(~12–15 windows) consumes most of a day's budget in a single upload. Plan testing around
-this, or enable billing before a defence demo. Embeddings are metered separately.
+**20 requests per day** — and note `PerModel` in the quota id. Concept extraction makes one
+call per window, so a 100-page module (~12–15 windows) consumes most of a day's budget in a
+single upload. Plan testing around this, or enable billing before a defence demo. Embeddings
+are metered separately.
+
+**The per-model split multiplies effective headroom.** Because the quota is keyed
+`…PerProjectPerModel`, each configured model carries its own 20/day allowance:
+
+| Model | Consumed by | Per submission |
+|---|---|---|
+| `gemini-3.6-flash` | document extraction, Feynman grading | 1 per Feynman submission |
+| `gemini-3.5-flash-lite` | Free Recall extraction + prose | 2 per Free Recall submission |
+
+Free Recall no longer competes with document uploads for the same bucket. And a memoised
+resubmission costs **nothing** from either.
 
 ---
 

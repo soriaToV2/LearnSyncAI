@@ -1,6 +1,6 @@
 # PDF Upload & Concept Extraction — Implementation Guide
 
-**Document Version:** 1.2  
+**Document Version:** 1.3  
 **Last Updated:** 2026-08-01  
 **Feature Scope:** Educator PDF upload → automatic concept extraction → curated knowledge base  
 **Extraction model:** `gemini-3.6-flash` (migrated from `gemini-2.5-flash`, which already returns 404 — see `GEMINI_MIGRATION_STATUS.md`)
@@ -20,6 +20,8 @@ Five constraints that are **not** obvious from the code, each of which has alrea
 5. **A model listed by `ListModels` may still be dead.** `gemini-2.5-flash` is listed and answers 404. Probe before trusting.
 
 **Where behaviour actually lives:** `server/lib/conceptExtraction.ts` (windowing, prompt, validation, dedup) and `server/lib/gemini.ts` (model constants, retry/quota classification). `materials.routes.ts` only orchestrates and writes rows. No frontend file knows a model name.
+
+6. **One concept row per term per material is an invariant, not a tendency.** Enforced by exact normalised-term folding *before* any embedding (§3.4). Every downstream feature — the Feynman picker, Free Recall's denominator, flashcard generation — assumes it. Do not reintroduce a similarity threshold for same-term concepts; that is precisely what used to fail.
 
 **Biggest open weakness:** one failed window discards the entire run — see *Known Limitation* under Error Handling before you touch retry behaviour.
 
@@ -103,8 +105,9 @@ The extraction pipeline enables educators to:
                                   ├─ For each window:
                                   │  ├─ Call Gemini (schema-pinned, no temperature)
                                   │  └─ Extract {term, definition, page}[]
-                                  ├─ Embed each concept
-                                  ├─ Deduplicate by meaning (cosine similarity)
+                                  ├─ Fold same-term concepts into ONE row each
+                                  ├─ Embed each merged definition
+                                  ├─ Drop cross-term duplicates (cosine ≥ 0.93)
                                   ├─ Batch insert concepts with source_pages
                                   └─ Set status = "completed" (or "failed" on error)
                                      │
@@ -382,75 +385,113 @@ for (const item of raw) {
 
 An entire window that comes back as a non-array is skipped with `continue`; only a thrown API error aborts the run.
 
-#### 3.4 Embedding
+#### 3.4 Same-Term Fold — **one concept row per term**
+
+> **Invariant:** a term appears **at most once per material**. Everything the document says about it is folded into that single record.
+
+String work on `foldKey(term)`, running **before any embedding**. Exact identity cannot be missed the way a similarity search can — this, not a threshold, is what guarantees the invariant. §3.3's prompt asks the model for the same thing, but a prompt is a request; this is the enforcement.
+
+**`foldKey()` = `norm()` (trim → lowercase → collapse whitespace) plus one documented exception: a trailing ALL-CAPS acronym is ignored.**
+
+```
+SECURE SOFTWARE DEVELOPMENT LIFE CYCLE (SSDLC)  ─┐
+SECURE SOFTWARE DEVELOPMENT LIFE CYCLE          ─┼─→ one concept
+SSDLC                                           ─┘
+```
+
+A bare acronym folds in too: any term ending `(ABC)` registers `ABC` as an alias for its full name, so a standalone `SSDLC` row merges into it. The label kept for display is the one **carrying the acronym** — `Incident response (IR)` teaches the abbreviation, `INCIDENT RESPONSE` does not.
+
+> **Why the acronym rule is narrow and not "strip every bracket".** A lowercase parenthetical is usually a *disambiguator* doing the opposite job. `Bank (river)` and `Bank (financial)` are two concepts and must stay two rows — stripping all brackets would silently merge them. `TRAILING_ACRONYM` therefore only matches an ALL-CAPS/digit token of 1–10 characters, and only at the end.
+
+This rule was added after a real upload: that material produced `… LIFE CYCLE (SSDLC)` on page 5 and `… LIFE CYCLE` on page 7. Their definitions embed at **0.887 cosine** — comfortably below `CROSS_TERM_DUP`, so §3.6 would never have caught them either. Re-checked across all 37 concepts of that material, the rule merges exactly those two pairs and nothing else.
+
+**`mergeDefinitions()`:**
+1. Order the group's definitions by **source page ascending** — the merged passage reads in document order and is identical on every run.
+2. Drop exact repeats, and any definition wholly contained in a longer one. Terminal punctuation is stripped before that comparison: `"A fast store."` *is* contained in `"A fast store of recently used data."`, but the full stop hides it from a plain substring test and the fragment gets appended anyway.
+3. Join with a space, giving each part terminal punctuation first.
+4. Stop at `MAX_MERGED_DEFINITION_CHARS = 800`, adding parts in page order so the earliest (usually most foundational) survive. Never truncates mid-sentence.
+
+`source_pages` is unioned across the group, so traceability survives the fold.
+
+**Worked example** — the model returns three items for one term:
+
+```
+Firewall   p1  "A barrier that blocks unwanted network traffic."
+firewall   p3  "A network security device that monitors and filters incoming and
+                outgoing traffic based on established security policies."
+FIREWALL   p2  "A barrier that blocks unwanted network traffic."   ← exact repeat
+
+⇒ ONE row, source_pages {1,2,3}
+  "A barrier that blocks unwanted network traffic. A network security device that
+   monitors and filters incoming and outgoing traffic based on established
+   security policies."
+```
+
+**Why one row per term.** This replaced a rule that kept the same term as two rows whenever its definitions embedded far enough apart, on the theory they were two senses of one word ("bank": river vs financial). In real JHS modules that branch almost never caught polysemy — it caught two *partial* definitions of one term from different pages, which embed apart merely because they stress different aspects.
+
+The cost of getting it wrong is wildly asymmetric:
+
+| Failure | Visibility | Consequence |
+|---|---|---|
+| Concept wrongly **split** | Invisible | Inflates Free Recall's coverage denominator; a picker offering the same term twice cannot show a student which is which, and rows past the first were unreachable in Feynman. |
+| Concept wrongly **merged** | Listed in the Concepts tab | Educator edits it in seconds, or splits it back out via `POST /api/materials/:id/concepts`. |
+
+So the pipeline always merges, and leaves genuine polysemy to manual curation. There is deliberately **no** `UNIQUE (material_id, lower(term))` constraint — that would also block the manual escape hatch.
+
+**Not folded:** `foldKey()` does no stemming, so "Firewall" and "Firewalls" stay separate rows and fall to §3.6. Stemming invites worse false merges than it prevents.
+
+**Where to stop adding rules.** The fold is deliberately made of *mechanical* conventions — a term written with and without its acronym is always the same concept, so code can settle it with no judgement. Anything requiring judgement (`Firewall`/`Firewalls`, `Bank` in two senses) belongs to the educator, who has add/edit/delete in the Concepts tab. Resist widening these rules into fuzzy matching; the previous 0.90 similarity gate is exactly what let duplicates through in the first place.
+
+#### 3.5 Embedding
 
 **Function:** `generateEmbedding(definition: string): Promise<number[]>`  
 **File:** [server/lib/gemini.ts](server/lib/gemini.ts)
 
 ```typescript
-const embedding = await generateEmbedding(definition);
+const embedding = await generateEmbedding(mergedDefinition);
 // Returns: number[] of length 3072 (gemini-embedding-001 dimensions)
 ```
 
+**Order matters:** embedding runs **after** the fold, on the **final** definition — never an intermediate one. Text and vector are produced together and cannot diverge.
+
+> This ordering fixed a real bug. The old merge branch swapped in the longer definition but kept the *original* definition's embedding, so the stored vector described text that was no longer stored. Free Recall (0.70 covered threshold), the chatbot's `match_concepts` RPC (0.60) and cross-term dedup all read that vector, so a stale one silently mis-scores students.
+
+Folding first also makes **fewer** embedding calls than before: one per final concept rather than one per raw candidate.
+
 **Critical Note:** The embedding model **must always be `gemini-embedding-001`**. Changing it would invalidate all stored concept vectors and break similarity search downstream (Free Recall, chatbot RAG, etc.).
 
-#### 3.5 Deduplication (Embedding-Based)
+#### 3.6 Cross-Term Deduplication (Embedding-Based)
 
-**Purpose:** Remove or merge concepts that the extractor produces in duplicate or near-duplicate forms.
-
-**Algorithm — as actually implemented.** Note the shape: it finds the **single most similar** concept kept so far, and *only then* asks what to do with it. It does **not** scan every kept concept for a rule that matches.
+**Purpose:** drop concepts under *different* terms that mean the same thing — including repeats that straddle a window boundary. Same-term duplicates no longer reach this stage at all.
 
 ```typescript
-for (const c of candidates) {
-  const embedding = await generateEmbedding(c.definition);
+for (const m of merged) {
+  const embedding = await generateEmbedding(m.definition);
 
-  // The single most similar concept kept so far — one winner, not a scan.
   let bestIdx = -1, bestSim = -1;
   for (let i = 0; i < kept.length; i++) {
     const sim = cosine(embedding, kept[i].embedding);
     if (sim > bestSim) { bestSim = sim; bestIdx = i; }
   }
 
-  if (bestIdx >= 0) {
-    const match = kept[bestIdx];
-    const sameTerm = norm(match.term) === norm(c.term);
-
-    // Same term + high similarity ⇒ one meaning: keep the fuller definition.
-    if (sameTerm && bestSim >= SAME_TERM_MERGE) {          // 0.90
-      if (c.definition.length > match.definition.length) match.definition = c.definition;
-      match.source_pages = unionPages(match.source_pages, c.page);
-      continue;
+  // Different term, near-identical idea ⇒ reworded duplicate.
+  // Drop it, but keep its pages on the survivor.
+  if (bestIdx >= 0 && bestSim >= CROSS_TERM_DUP) {          // 0.93
+    for (const page of m.source_pages) {
+      kept[bestIdx].source_pages = unionPages(kept[bestIdx].source_pages, page);
     }
-    // Different term, near-identical idea ⇒ reworded duplicate: drop.
-    if (!sameTerm && bestSim >= CROSS_TERM_DUP) {          // 0.93
-      match.source_pages = unionPages(match.source_pages, c.page);
-      continue;
-    }
-    // Otherwise — INCLUDING same term at low similarity — keep as its own row.
+    continue;
   }
 
-  kept.push({ term: c.term, definition: c.definition, source_pages: [c.page], embedding });
+  kept.push({ ...m, embedding });
 }
 ```
 
-**Thresholds** (`SAME_TERM_MERGE` / `CROSS_TERM_DUP` in [conceptExtraction.ts](server/lib/conceptExtraction.ts)), tuned for 3072-d space where even unrelated vectors score ~0.60–0.65 (the hubness problem):
+**One threshold: `CROSS_TERM_DUP = 0.93`.** In 3072-dimensional space even unrelated vectors score ~0.60–0.65 (the hubness problem), so 0.93 means truly near-identical semantic content. There is deliberately **no same-term threshold** any more.
 
-- **0.90** same-term merge — catches high-confidence rewording
-- **0.93** cross-term drop — high enough that genuinely different terms survive
+> **A bug this restructure removed.** The old loop found the single globally-most-similar concept and *then* asked whether it shared the candidate's term. A same-term concept sitting at 0.91 was invisible whenever an unrelated concept scored 0.92 — so the same-term merge silently never fired for it. Term identity is now settled by exact grouping in §3.4, before any vector comparison, so no branch can be shadowed this way.
 
-##### ⚠️ Two known weaknesses in this algorithm
-
-Both produce the same visible symptom — **the same term appearing as two rows with different definitions** — and both are worth understanding before touching dedup or debugging a duplicate report.
-
-**1. The same-term branch can be shadowed.** Only `bestIdx` is examined. If a same-term concept sits at 0.91 (which *should* merge) but some unrelated concept scores 0.92, `bestIdx` points at the unrelated one, `sameTerm` is false, 0.92 < 0.93 so nothing fires, and the candidate is pushed as a new row. The merge silently never happens. Resolving term identity by exact grouping *before* any similarity work would remove the failure mode entirely.
-
-**2. "Two distinct meanings" fires far more often than real polysemy.** Same term below 0.90 is deliberately kept as a second row, on the theory it is a second sense ("bank": river vs financial). In practice it usually catches two *partial* definitions of one term from different pages, which embed apart merely because they stress different aspects.
-
-**Why this matters downstream, and why it is not cosmetic.** `v_student_material_mastery` computes `m_doc` as `avg(COALESCE(bm.latent_mastery, 0.10))` over **every** concept row. A split concept means the student masters one row while its twin sits at `P(L0) = 0.10` forever, permanently depressing `m_doc` and undercounting `mastered_concept_count`. Free Recall's coverage ratio inflates its denominator the same way. The damage is invisible — nothing surfaces it — whereas a wrongly *merged* concept is listed in the Concepts tab and editable in seconds. That asymmetry argues for merging aggressively and leaving genuine polysemy to manual curation via `POST /api/materials/:id/concepts`.
-
-**Also not merged:** `norm()` does no stemming, so "Firewall" and "Firewalls" are different terms and fall to the 0.93 cross-term rule. Adding stemming invites worse false merges; treat these as a curation fix.
-
-#### 3.6 Batch Insert Concepts
+#### 3.7 Batch Insert Concepts
 
 ```typescript
 const chunks = [];
@@ -479,7 +520,7 @@ for (const chunk of chunks) {
 
 **Embedding storage:** The vector is stringified (`"[-0.013, 0.024, ...]"`) because Supabase's pgvector type is returned as a string to the JS client.
 
-#### 3.7 Status Update → "completed" (or "failed")
+#### 3.8 Status Update → "completed" (or "failed")
 
 ```typescript
 try {
@@ -1067,12 +1108,16 @@ If you rework this, the shape is roughly:
 
 ### Duplicate Concepts
 
-**Same term, different meanings:**
+**Same term, more than one definition** — always folded into one row (§3.4), no matter how far apart the definitions embed:
 ```
-"Bank" → financial institution
-"Bank" → river bank
+"Firewall" p2 → "A barrier that blocks unwanted traffic."
+"Firewall" p9 → "A network security device that monitors and filters
+                 incoming and outgoing traffic based on security rules."
+
+⇒ 1 row, definition = both parts in page order, source_pages = {2, 9}
 ```
-These are **kept as separate rows** if cosine similarity < 0.90.
+
+Even a genuine two-sense term ("Bank": financial vs river) merges. That is deliberate — see the asymmetry table in §3.4. If a material really needs both senses as separate rows, the educator adds the second by hand via `POST /api/materials/:id/concepts`.
 
 **Different terms, identical meaning:**
 ```
@@ -1084,7 +1129,7 @@ These are **kept as separate rows** if cosine similarity < 0.90.
 ```
 Similarity ≥0.93 → **Candidate is dropped** as a reworded duplicate.
 
-> **Observed in testing:** duplicate rows for one term with *different* definitions do occur on real uploads, and they are not always genuine second meanings. Read the two known weaknesses in §3.5 before treating this as working as intended — the split is usually two partial definitions from different pages, and it silently corrupts BKT mastery.
+> **History:** duplicate rows for one term used to reach the database routinely — a real upload produced three rows named "SECURE SOFTWARE DEVELOPMENT". Two causes, both now fixed: the prompt explicitly *asked* for a separate item per distinct meaning, and the code's same-term merge was gated behind a 0.90 cosine threshold that two partial definitions routinely failed. **Materials uploaded before that fix still hold their duplicate rows** — re-upload or merge them by hand in the Concepts tab.
 
 ---
 
@@ -1425,15 +1470,39 @@ A 200 here with a failure in the app means the problem is local. A 429 here is q
    LIMIT 5;
    ```
 
-#### Deduplication overly aggressive / not aggressive enough
+#### The same term appears twice in one material
 
-Edit thresholds in [conceptExtraction.ts](server/lib/conceptExtraction.ts):
-```typescript
-const SAME_TERM_MERGE = 0.9;   // same term + this similar ⇒ one meaning, merge
-const CROSS_TERM_DUP  = 0.93;  // different terms this similar ⇒ reworded duplicate
+Should be impossible after §3.4 — verify:
+```sql
+SELECT lower(term), count(*) FROM concepts
+WHERE material_id = '...'
+GROUP BY 1 HAVING count(*) > 1;
 ```
+Zero rows expected — but note this checks *exact* terms, and `foldKey()` also ignores a trailing acronym. To see what the fold actually considers duplicate:
+```sql
+SELECT lower(btrim(regexp_replace(term, '\s*\(\s*[A-Z0-9][A-Z0-9./-]{0,9}\s*\)\s*$', ''))) AS fold_key,
+       count(*), string_agg(term, '  +  ')
+FROM concepts WHERE material_id = '...'
+GROUP BY 1 HAVING count(*) > 1;
+```
+Any row returned means two spellings `foldKey()` does not consider equal — most likely a plural, a hyphen, or a spelled-out abbreviation. That is a **curation fix, not a code fix**: merge them in the Concepts tab. **Do not add stemming** — it causes worse false merges than it prevents. If it is systematic, tighten the *verbatim term* rule in `PROMPT_RULES` instead.
 
-Lower values → more aggressive deduplication. Higher values → keep more distinct rows.
+A material uploaded before the fold shipped will still show duplicates; re-upload it.
+
+#### Cross-term dedup overly aggressive / not aggressive enough
+
+Distinct terms are disappearing, or obvious rewordings are surviving. One knob, in [conceptExtraction.ts](server/lib/conceptExtraction.ts):
+```typescript
+const CROSS_TERM_DUP = 0.93;  // different terms this similar ⇒ reworded duplicate
+```
+Lower → more aggressive. Higher → keep more distinct rows. There is no same-term threshold to tune; §3.4 folds those by exact match.
+
+#### Merged definitions too long / rambling
+
+```typescript
+const MAX_MERGED_DEFINITION_CHARS = 800;
+```
+Lower it if flashcard backs read poorly or full-mode chat starts returning 413. Parts are dropped from the *end* (latest pages first), never truncated mid-sentence.
 
 ---
 
@@ -1444,7 +1513,8 @@ Lower values → more aggressive deduplication. Higher values → keep more dist
 | **Concept** | A term (e.g., "Photosynthesis") + definition (e.g., "The process by which plants...") + embedding vector. The atomic unit of the knowledge base. |
 | **Embedding** | A 3072-dimensional vector representation of a text (definition). Used for semantic similarity search. |
 | **Cosine Similarity** | A distance metric between two embedding vectors (range 0–1, where 1 = identical). |
-| **Deduplication** | Removing or merging duplicate/near-duplicate concepts extracted by Gemini. |
+| **Same-Term Fold** | Combining every definition the document gives for one term into a single concept row, in page order. Exact match on the normalised term, before any embedding. Guarantees one row per term per material. |
+| **Cross-Term Deduplication** | Dropping a concept whose *different* term means the same as one already kept (cosine ≥ 0.93). |
 | **Windowing** | Splitting a multi-page PDF into chunks (~8k chars / 6 pages) and extracting concepts per chunk. Ensures full-document coverage. |
 | **pgvector** | PostgreSQL extension for vector storage and similarity search. The `embedding` column is of type `VECTOR(3072)`. |
 | **RLS (Row-Level Security)** | Database policy that filters rows based on the authenticated user. Enforces educator → owns only their own materials. |
@@ -1457,6 +1527,8 @@ Lower values → more aggressive deduplication. Higher values → keep more dist
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3.1 | 2026-08-01 | **Acronym folding.** A real re-upload still produced two rows for one concept — `… LIFE CYCLE (SSDLC)` (p5) and `… LIFE CYCLE` (p7), embedding at 0.887 cosine so §3.6 could not catch them either. `foldKey()` now ignores a trailing ALL-CAPS acronym, and a bare acronym folds into the term that introduced it. Deliberately narrow: lowercase parentheticals are disambiguators (`Bank (river)` vs `Bank (financial)`) and must stay split. Verified over all 37 concepts of that material — exactly 2 pairs merge, no false merges. |
+| 1.3 | 2026-08-01 | **One concept row per term.** Duplicate rows for a single term are now impossible: the prompt asks for exactly one item per term (it previously *asked* for a separate item per distinct meaning), and the code folds same-term candidates by exact normalised match **before** embedding. Definitions are joined in page order with containment collapse and an 800-char cap; `source_pages` unions. Removed `SAME_TERM_MERGE` and the "two distinct meanings" branch. Two bugs died with it: the same-term merge could never fire when an unrelated concept scored higher, and merging swapped the definition without re-embedding, leaving stored vectors describing discarded text. §3.4–3.6 rewritten. |
 | 1.2 | 2026-08-01 | **Failure handling.** `withRetry()` now classifies every upstream error as `fatal` / `quota` / `transient` instead of treating all 429/5xx alike, honours Google's `RetryInfo` retry hint, and logs the real HTTP status + `google.rpc` reason on every attempt. Added `GeminiQuotaError` (429, extends `GeminiUnavailableError`) so a spent quota no longer reaches the educator as "temporarily overloaded — try again in a moment", which was false. Documented the observed 20-requests/day free-tier ceiling and the one-failed-window-discards-everything limitation. Corrected the §3.3 validation snippet, which showed `throw` where the code does `continue`. |
 | 1.1 | 2026-08-01 | Migrated extraction from `gemini-2.5-flash` to `gemini-3.6-flash` ahead of the 2026-10-16 shutdown. Removed `temperature: 0` (Gemini 3 ignores it) and rebuilt the consistency guarantee on `responseSchema` + verbatim terms + existing dedup. Added `thinkingLevel: LOW` and an explicit `maxOutputTokens`. Corrected the SDK row (`@google/genai`, not `@google/generative-ai`). Windowing unchanged. |
 | 1.0 | 2026-07-28 | Initial comprehensive guide. Covers upload, extraction, deduplication, CRUD, architecture, and debugging. |

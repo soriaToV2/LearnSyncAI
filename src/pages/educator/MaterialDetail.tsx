@@ -379,8 +379,9 @@ export default function MaterialDetail() {
               <MultiSelectDropdown
                 selectedValues={grades}
                 onChange={setGrades}
-                options={ALL_GRADE_LEVELS.map((g) => `Grade ${g}`)}
+                options={ALL_GRADE_LEVELS.map((g) => ({ value: `Grade ${g}`, label: `Grade ${g}` }))}
                 placeholder="Select grades..."
+                itemNoun="grade"
               />
             ) : (
               <GradeChips grades={gradeValues} />
