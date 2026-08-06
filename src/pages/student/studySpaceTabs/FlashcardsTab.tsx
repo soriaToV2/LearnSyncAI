@@ -631,8 +631,13 @@ export default function FlashcardsTab({
                             {dueLabel(card.nextReviewAt)}
                           </span>
                         </div>
-                        <div className="flex-1 overflow-y-auto px-5 py-3 flex items-center justify-center">
-                          <p className="font-display text-lg text-on-surface text-center leading-snug">{card.front}</p>
+                        {/* `my-auto` on the text, never `items-center` here — a
+                            centred flex item taller than its box overflows past
+                            the TOP edge, which is outside the scrollable region
+                            and unreachable. An auto margin centres the same way
+                            when it fits and clips nothing when it does not. */}
+                        <div className="flex-1 overflow-y-auto px-5 py-3 flex flex-col">
+                          <p className="my-auto font-display text-lg text-on-surface text-center leading-snug">{card.front}</p>
                         </div>
                         <span className="shrink-0 pb-4 text-[10px] uppercase tracking-widest text-slate-500 flex items-center justify-center gap-1 font-semibold">
                           <RefreshCw className="w-3 h-3" /> Click to Flip
@@ -640,8 +645,8 @@ export default function FlashcardsTab({
                       </div>
                       {/* Back */}
                       <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-primary-fixed-dim/5 flex flex-col shadow-[0_0_30px_rgba(0,218,243,0.1)] overflow-hidden">
-                        <div className="flex-1 overflow-y-auto px-5 py-4 flex items-center justify-center">
-                          <p className="font-sans text-sm text-primary-fixed-dim font-medium text-center leading-relaxed">{card.back}</p>
+                        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col">
+                          <p className="my-auto font-sans text-sm text-primary-fixed-dim font-medium text-center leading-relaxed">{card.back}</p>
                         </div>
                       </div>
                     </div>

@@ -12,6 +12,9 @@ import {
   GEMINI_UTILITY_MODEL,
 } from '../lib/gemini';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
+// The canonical term-matching convention, shared with extraction so a student
+// typing "SSDLC" resolves to the same concept the fold would have joined it to.
+import { foldKey, acronymOf } from '../lib/conceptExtraction';
 import {
   FreeRecallSchema,
   FeynmanEvaluationSchema,
@@ -204,12 +207,63 @@ const STUDENT_CONCEPT_SCHEMA: Schema = {
 const RECALL_FEEDBACK_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
-    strengths: { type: Type.STRING },
-    gaps: { type: Type.STRING },
-    next_steps: { type: Type.STRING },
+    feedback: { type: Type.STRING },
+    // Required rather than optional so "nothing to flag" is an explicit empty
+    // string the model had to decide on, not a field it quietly omitted.
+    corrections: { type: Type.STRING },
   },
-  required: ['strengths', 'gaps', 'next_steps'],
-  propertyOrdering: ['strengths', 'gaps', 'next_steps'],
+  required: ['feedback', 'corrections'],
+  propertyOrdering: ['feedback', 'corrections'],
+};
+
+/**
+ * Embeds many texts at once, preserving order, a few at a time.
+ *
+ * Bounded rather than a plain `Promise.all`: a long answer can extract 60+
+ * points, and firing all of them at once risks a rate-limit burst costing far
+ * more than the serialisation saves. Eight keeps wall time within a whisker of
+ * unbounded while never putting more than eight requests in flight.
+ *
+ * Measured on a real submission: 29 points took 11.5s one-at-a-time versus 1.5s
+ * in parallel — 75% of everything spent before the feedback call, purely because
+ * this was written as a for-loop over independent calls.
+ *
+ * Results are written by index, so the output lines up with the input whatever
+ * order the responses arrive in.
+ */
+const EMBED_CONCURRENCY = 8;
+
+async function embedAll(texts: string[]): Promise<number[][]> {
+  const out: number[][] = new Array(texts.length);
+  let next = 0;
+
+  const worker = async () => {
+    for (let i = next++; i < texts.length; i = next++) {
+      out[i] = parseVector(await generateEmbedding(texts[i]));
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(EMBED_CONCURRENCY, texts.length) }, worker)
+  );
+  return out;
+}
+
+/**
+ * Fixed prose for an attempt that matched NOTHING in the material.
+ *
+ * Written in code rather than by the model, for two reasons. There is nothing
+ * specific to say — no point landed, and naming gaps from a 28-item missed list
+ * is exactly the reciting the prompt forbids. And it would cost a model call to
+ * say something already known, on the slowest step of the request.
+ *
+ * Used for both zero extracted points and zero COVERED concepts. The second case
+ * is the common one: an off-topic answer still yields plenty of points
+ * ("chlorophyll", "glucose"), so extraction is not empty — only the matching is.
+ */
+const NO_MATCH_FEEDBACK: FreeRecallWrittenFeedback = {
+  feedback:
+    "Nothing you wrote matched the ideas in this lesson yet. That usually means the answer is about a different material, or it is still too short for us to match anything against — it does not mean what you wrote is wrong. Open the material again, read one section, then close it and write down every idea from that section you can remember in your own words.",
 };
 
 /**
@@ -219,15 +273,43 @@ const RECALL_FEEDBACK_SCHEMA: Schema = {
  * BEFORE saving and outside the scoring try block, so a failure here costs the
  * student their paragraphs and nothing else — the score, verdict and missed
  * list are already computed and still get written.
+ *
+ * Everything named here is read by the student as a statement about their own
+ * answer, so the prompt below forbids naming any gap that is not in `missedTerms`.
  */
 async function generateRecallFeedback(params: {
   userInput: string;
   studentPoints: string[];
   coveredTerms: string[];
+  /** Plain terms — the only gaps the prose is allowed to name. */
   missedTerms: string[];
+  /**
+   * The same missed terms carrying their `source_pages`, e.g. "Injection (p. 24,
+   * 25)". This is what turns "review injection" into somewhere the student can
+   * actually go, and it is the whole reason `next_steps` survives as its own
+   * field rather than dissolving into the summary.
+   */
+  missedWithPages: string[];
+  /**
+   * Every concept in the material with its page, not just the missed ones.
+   *
+   * A student who covers everything still gets a next step — "go deeper on X" —
+   * and with only the missed list supplied there were no pages left to cite.
+   * Two 100%-coverage attempts came back with "review the section on access
+   * control in your lesson materials", the model correctly declining to invent
+   * a page number it had not been given.
+   */
+  conceptPages: string[];
+  /**
+   * Each point the student made, paired with the closest thing the LESSON says.
+   * This is the only ground truth in the prompt — without it the writer sees
+   * concept names and no definitions, so it cannot tell a correct statement
+   * from a confident error, and may praise the error back to the student.
+   */
+  nearestLessonText: string[];
   scorePercent: number;
 }): Promise<FreeRecallWrittenFeedback | null> {
-  const { userInput, studentPoints, coveredTerms, missedTerms, scorePercent } = params;
+  const { userInput, studentPoints, coveredTerms, missedTerms, missedWithPages, conceptPages, nearestLessonText, scorePercent } = params;
 
   const prompt = `You are a supportive tutor giving feedback on a student's free recall attempt.
 They wrote down everything they could remember from a lesson, without notes.
@@ -242,47 +324,93 @@ ${studentPoints.length ? studentPoints.map(p => `- ${p}`).join('\n') : '(none id
 
 LESSON CONCEPTS THEY COVERED (${coveredTerms.length}):
 ${coveredTerms.length ? coveredTerms.join(', ') : '(none)'}
+${coveredTerms.length === 0 ? `
+!! NOTHING THEY WROTE BELONGS TO THIS MATERIAL. Read that literally: not one of their points
+   matched this lesson. Whatever they remembered is from somewhere else — very likely a different
+   material in the same subject, which will LOOK correct to you.
+   Lead the summary with that fact, in plain words, and be clear their answer is not WRONG, just
+   not this lesson. Do NOT describe any part of it as good recall, and do not praise it.
+` : ''}
 
-LESSON CONCEPTS THEY DID NOT COVER (${missedTerms.length}):
-${missedTerms.length ? missedTerms.join(', ') : '(none — they covered everything)'}
+LESSON CONCEPTS THEY DID NOT COVER (${missedTerms.length}), with the page each is taught on:
+${missedWithPages.length ? missedWithPages.join('\n') : '(none — they covered everything)'}
 
 Coverage score: ${scorePercent}%
 
-Write three short pieces of feedback. Rules:
+WHERE EVERY CONCEPT IS TAUGHT — the only page numbers you may cite. Never state a page that is not in this list:
+${conceptPages.length ? conceptPages.join('\n') : '(no page information available)'}
+
+WHAT THE LESSON ITSELF SAYS, matched to each point they raised.
+This is the ONLY source of truth you have. Judge nothing against your own knowledge of the subject:
+${nearestLessonText.length ? nearestLessonText.join('\n') : '(no concepts to compare against)'}
+
+Write ONE passage of feedback, plus corrections. Rules for both:
 - Ground every sentence in what THIS student actually wrote. Refer to their specific points. Never write praise that would fit any answer ("good effort", "nice work").
-- The "did not cover" list is machine-generated from the whole document and includes minor supporting details nobody would recall from memory. Do NOT recite it. Choose only the 2-3 genuinely important ideas from it and name those.
 - ADDRESS THE STUDENT DIRECTLY as "you" and "your". Write "You explained..." or "Your answer covered...", never "The student explained". You are speaking to them, not reporting on them to someone else.
 - Speak to a Junior High School student. Plain language, warm, direct, no jargon about the scoring system itself. Never mention percentages, cosine similarity, or concept counts.
-- One to two sentences each. No bullet points, no markdown.
+- No bullet points, no markdown.
+
+"feedback" — FOUR TO FIVE sentences, written as one flowing passage:
+- Cover both what landed and what did not, WOVEN TOGETHER. Do NOT write a praise half followed by a criticism half — that structure leaves you repeating yourself, and it reads like a form rather than a person.
+- Describe what they REMEMBERED AND EXPLAINED. Do NOT certify a claim as factually correct here; you are describing ground covered, not marking answers. Anything conflicting with the lesson text goes in "corrections" and must not be praised here.
+- THE COVERED LIST DECIDES WHAT COUNTED. Never describe a point as recalled, remembered or explained unless it appears in that list. Their answer shows what they WROTE; the covered list shows what belongs to THIS lesson, and only the second is recall. A student can write an excellent, accurate passage that earns nothing here because it is about a different material — a subject you may know well is not the same as the subject in front of you.
+- The "did not cover" list is machine-generated from the whole document and includes minor supporting details nobody would recall from memory. Do NOT recite it. Choose only the 2-3 genuinely important ideas from it.
+- Name a gap ONLY if it appears in that list. Never infer a further omission from the coverage score, from the length of their answer, or from a topic you expected and did not see. Anything you name is read by the student as a fact about their own answer, and telling them they forgot something they can see themselves having written destroys their trust in the whole exercise.
+- IMPORTANT — if the student clearly NAMED something that still appears in the "did not cover" list, say so and say why: naming a concept in passing is not the same as recalling it, and only an explanation counts. For example, "you listed injection among the risks but did not say what it does, so it did not count." This is usually the single most useful sentence you can write, because that distinction is invisible from the score alone.
+- If the "did not cover" list is empty, do not invent gaps. Write instead about depth: which of their own points they stated but did not explain.
+- END WITH ONE CONCRETE THING TO DO, AND NAME THE PAGE IT IS ON. This closing sentence is required, not optional — "Injection is on page 24, read it and then write what it does in your own words" is worth more than any amount of encouragement, and it is the only part of this passage the student can act on today.
+- Take that page ONLY from the "where every concept is taught" list. If the concept is not in that list, do not guess a page — give the action without one.
+- If they covered everything and there are no gaps, still end with an action: send them to deepen a concept they explained only briefly, and name ITS page from the same list. A complete answer still has a next step.
+
+"corrections" has its own rules, and silence is the correct answer far more often than not:
+- Work through the points ONE AT A TIME against the lesson text matched to each, before you answer. Do not stop at the first contradiction you notice.
+- Flag a statement ONLY when it CONTRADICTS the lesson text quoted above — a swapped name, a reversed cause and effect, a definition belonging to a different concept. Quote the student's own words, then say what the lesson says instead.
+- A REVERSED MECHANISM is the easiest kind to read straight past, because the vocabulary matches the lesson perfectly and only the direction is wrong: the student says a thing happens at the end when the lesson says throughout, or that A causes B when the lesson says B causes A. Check the direction of every claim, not just its subject.
+- Incomplete is NOT incorrect. Missing detail, vagueness, or a simplified explanation are not contradictions. Neither is wording that differs from the lesson while meaning the same thing. Those belong in "feedback" or nowhere.
+- If the lesson text above does not settle it, say nothing. Never correct a student from your own knowledge of the subject — an educator may define a term more narrowly or simply than you would, and their definition is the one that counts.
+- At most TWO corrections, the most important first. Return an EMPTY STRING when nothing contradicts, which will be the usual case.
+- Telling a student they are wrong when they are right is far worse than missing an error. When in doubt, stay silent.
 
 Return ONLY a JSON object of this exact shape:
 {
-  "strengths": "Spoken to the student as 'you': what you genuinely got right, naming your actual points.",
-  "gaps": "Spoken to the student as 'you': the 2-3 important ideas you left out, described in plain language rather than listed as terms.",
-  "next_steps": "Spoken to the student as 'you': one concrete thing to review or try next time."
+  "feedback": "Spoken to the student as 'you': four to five sentences weaving together what you recalled and what did not land, naming your actual points, and CLOSING with one concrete thing to do and the page it is on.",
+  "corrections": "Empty string if nothing contradicts the lesson. Otherwise, spoken to the student as 'you': quote what you wrote and say what the lesson says instead."
 }`;
 
   try {
-    // LOW rather than MINIMAL: the prompt carries a real restraint rule — "do NOT
-    // recite the missed list, choose only the 2-3 genuinely important ideas" — and
-    // a zero-thinking pass tends to just list them.
+    // LOW rather than MINIMAL: the prompt carries real restraint rules — "do NOT
+    // recite the missed list", and "stay silent unless the lesson text settles
+    // it" — and a zero-thinking pass tends to just list things.
+    //
+    // 6144: the prompt carries a definition per student point plus a paged
+    // missed list, the passage runs 4-5 sentences, and thinking tokens draw on
+    // this same allowance. A truncated response surfaces as unparseable JSON,
+    // which here means the student silently loses their feedback.
+    //
+    // MEDIUM, raised from LOW when `corrections` landed. Comparing ~25 claims
+    // against ~20 definitions is the actual work in this call, and at LOW the
+    // model found one injected error, stopped, and then praised the second one
+    // as a strength. Still the utility model, not the grading model — the rule
+    // in CLAUDE.md turns on whether the model's judgement becomes a number the
+    // student is shown, and this one only ever becomes prose.
     const raw = await generateJson<Record<string, unknown>>(prompt, {
       model: GEMINI_UTILITY_MODEL,
-      thinkingLevel: ThinkingLevel.LOW,
+      thinkingLevel: ThinkingLevel.MEDIUM,
       responseSchema: RECALL_FEEDBACK_SCHEMA,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 6144,
     });
     const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 
     const feedback: FreeRecallWrittenFeedback = {
-      strengths: str(raw?.strengths),
-      gaps: str(raw?.gaps),
-      next_steps: str(raw?.next_steps),
+      feedback: str(raw?.feedback),
+      // Empty is the expected answer, so it is never part of the emptiness test
+      // below — an attempt with nothing to correct is a normal attempt.
+      corrections: str(raw?.corrections),
     };
 
-    // An all-empty object is a failed generation, not feedback. Treat it as
-    // unavailable so the student sees the honest note rather than blank cards.
-    if (!feedback.strengths && !feedback.gaps && !feedback.next_steps) return null;
+    // An empty passage is a failed generation, not feedback. Treat it as
+    // unavailable so the student sees the honest note rather than a blank card.
+    if (!feedback.feedback) return null;
     return feedback;
   } catch (err) {
     console.error('[FreeRecall] Written feedback unavailable:', err);
@@ -328,7 +456,9 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
     // ── 1. Fetch all reference concepts for the selected materials ────────
     const { data: allConcepts, error: conceptsError } = await supabaseAdmin
       .from('concepts')
-      .select('id, term, definition, embedding')
+      // `source_pages` is carried purely so the feedback can tell a student WHERE
+      // to go and read. Extraction already records it for educator traceability.
+      .select('id, term, definition, embedding, source_pages')
       .in('material_id', material_ids);
 
     if (conceptsError) {
@@ -414,19 +544,43 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
     // ── 2. Extract discrete concepts from the student's text via Gemini ───
     interface ExtractedConcept { term: string; explanation: string }
 
+    // GRANULARITY IS THE WHOLE JOB HERE, and it is not a stylistic preference.
+    //
+    // Each item becomes one vector, and a reference concept is "covered" only if
+    // some student vector clears 0.70 against it. A point that summarises a whole
+    // paragraph embeds as an average, so no individual concept inside it matches
+    // well — the student is then marked as having missed things they plainly
+    // wrote. Measured on a real submission: an earlier version of this prompt
+    // yielded 8 points for a six-paragraph answer and produced FIVE such false
+    // misses, including "Saves Money and Resources" and "Protects Data and
+    // Privacy" from the sentence "the benefits are that it minimises the damage,
+    // reduces downtime, protects data and privacy, and saves money". The rules
+    // below took the same answer to 21 points and zero false misses.
+    //
+    // The list rule carries most of that. Educator-side extraction stores each
+    // item of an enumeration as its own concept ("Preparation", "Containment",
+    // "Reduces Downtime"), so a student listing them in one sentence must be
+    // split the same way or the two sides cannot line up.
     const extractionPrompt = `
-You are an expert academic assistant. Extract the distinct concepts and/or definitions that the student has discussed in their response.
+You are an expert academic assistant. Break the student's response below into EVERY distinct idea it contains, so each one can be matched against the lesson's concept list.
 
 Student Response:
 """
 ${user_input}
 """
 
+Rules:
+- Be GRANULAR. One item per distinct idea — not one per paragraph, and not one per topic.
+- If the student lists several things — steps, phases, benefits, types, examples, layers — return EACH listed item as its OWN item, even when they wrote them all in a single sentence. A list of five benefits is five items, not one.
+- Include anything the student named, including laws, agencies, acronyms and roles.
+- "explanation" is what the student said about that idea, in their own terms. If they only named it without elaborating, say so plainly.
+- Do NOT add ideas the student did not mention, and do not correct their mistakes — this is a record of what they wrote, not of what is true.
+
+If the student mentioned no distinct ideas, return an empty array [].
+
 Return a JSON array of objects. Each object must have:
 - "term": the concept or topic name (e.g. "Action Potential", "Calcium Influx")
 - "explanation": the student's brief explanation or description of that concept
-
-If the student mentioned no distinct concepts, return an empty array [].
 
 Example output:
 [
@@ -444,11 +598,17 @@ Example output:
     // ENUMERATES what the student mentioned. Nothing it returns is a score — the
     // number comes from cosine similarity against COVERAGE_THRESHOLD, computed
     // below in code.
+    //
+    // LOW rather than MINIMAL, and 8192 rather than 4096. Splitting an
+    // enumeration the student wrote as one sentence is a judgement the model
+    // will not make with thinking off, and a granular pass returns roughly three
+    // times as many items — a budget sized for the old coarse output truncates
+    // mid-array, which surfaces as unparseable JSON rather than a clean error.
     const extractedConcepts = await generateJson<ExtractedConcept[]>(extractionPrompt, {
       model: GEMINI_UTILITY_MODEL,
-      thinkingLevel: ThinkingLevel.MINIMAL,
+      thinkingLevel: ThinkingLevel.LOW,
       responseSchema: STUDENT_CONCEPT_SCHEMA,
-      maxOutputTokens: 4096,
+      maxOutputTokens: 8192,
     });
 
     // ── 3. Handle edge case: student wrote nothing recognizable ───────────
@@ -456,14 +616,7 @@ Example output:
       // Score is 0 — all concepts are missed
       const missedConcepts = conceptsWithEmbeddings.map(c => c.term);
 
-      // Fixed prose rather than an AI call. There is nothing in the submission
-      // to write personalised feedback about, so generating it would cost a
-      // round trip to say something we already know — and could itself fail.
-      const emptyFeedback: FreeRecallWrittenFeedback = {
-        strengths: "We could not find anything from this material in your answer yet.",
-        gaps: "Nothing you wrote matched the ideas in this lesson — it may be off-topic, too short, or about a different material.",
-        next_steps: "Re-read the material, then try again and write down every idea you can remember in your own words.",
-      };
+      const emptyFeedback = NO_MATCH_FEEDBACK;
 
       const emptyPayload: FreeRecallFeedback & MemoisableFeedback = {
         concepts_fingerprint: fingerprint,
@@ -503,14 +656,19 @@ Example output:
     }
 
     // ── 4. Embed each student-extracted concept individually ──────────────
-    const studentEmbeddings: { term: string; embedding: number[] }[] = [];
-    for (const ec of extractedConcepts) {
-      const textToEmbed = `${ec.term}: ${ec.explanation}`;
-      const rawEmbedding = await generateEmbedding(textToEmbed);
-      // generateEmbedding already returns number[] but normalise just in case
-      const embedding = parseVector(rawEmbedding);
-      studentEmbeddings.push({ term: ec.term, embedding });
-    }
+    //
+    // In parallel. Granular extraction turns one answer into ~30 points, and one
+    // await per point made this the single slowest stage of the request:
+    // measured 11.5s sequential against 1.5s in parallel for 29 points, 75% of
+    // everything spent before the feedback call. The calls are independent, so
+    // the only reason it was serial is that it was written as a for-loop.
+    const vectors = await embedAll(
+      extractedConcepts.map(ec => `${ec.term}: ${ec.explanation}`)
+    );
+    const studentEmbeddings = extractedConcepts.map((ec, i) => ({
+      term: ec.term,
+      embedding: vectors[i],
+    }));
 
     // ── 5. Grade each reference concept by its best match ─────────────────
     const COVERAGE_THRESHOLD = 0.70;
@@ -518,26 +676,110 @@ Example output:
     // Covered terms are kept, not just counted — the written feedback needs to
     // name what the student actually got, not only what they left out.
     const coveredConcepts: string[] = [];
+    // The same misses, carrying the page they are taught on — prompt only. The
+    // stored `missed_concepts` stays plain terms so the payload shape and the
+    // UI's collapsible list are unaffected.
+    const missedWithPages: string[] = [];
 
-    for (const refConcept of conceptsWithEmbeddings) {
+    /** One line per concept, so a page can be cited even at full coverage. */
+    const pagesOf = (c: { source_pages?: unknown }) => {
+      const pages = (c.source_pages as number[] | null) ?? [];
+      return pages.length ? ` (p. ${pages.join(', ')})` : '';
+    };
+    const conceptPages = conceptsWithEmbeddings.map(c => `- ${c.term}${pagesOf(c)}`);
+
+    // The reverse pairing, for the accuracy note only: for each point the STUDENT
+    // made, which concepts is the lesson's closest answer to it?
+    //
+    // Deliberately ignores COVERAGE_THRESHOLD. A badly wrong statement drifts
+    // AWAY from the concept it is wrong about — "Injection is when a hacker plugs
+    // in a USB stick" scored 0.609 against Injection, so it is not in the covered
+    // list at all, and the definition needed to contradict it would never be seen.
+    //
+    // Two rather than one, because that drift also REORDERS the neighbours: for
+    // that same sentence Injection ranked SIXTH, behind XSS, SQLi, File Inclusion,
+    // Integrity Failures and Cybersecurity. Vectors alone cannot be relied on to
+    // surface the right concept for a badly wrong claim — which is why the term
+    // lookup below exists and this is only the fallback for claims the student
+    // never named.
+    const TOP_NEAREST = 2;
+    const nearestRef: { refIdx: number; score: number }[][] =
+      studentEmbeddings.map(() => []);
+
+    for (const [refIdx, refConcept] of conceptsWithEmbeddings.entries()) {
       const refEmbedding = parseVector(refConcept.embedding);
       if (refEmbedding.length === 0) continue;
 
       // Find highest similarity score against any of the student's concept vectors
       let bestScore = 0;
-      for (const sc of studentEmbeddings) {
+      for (const [scIdx, sc] of studentEmbeddings.entries()) {
         const sim = cosineSimilarity(refEmbedding, sc.embedding);
         if (sim > bestScore) bestScore = sim;
+
+        const top = nearestRef[scIdx];
+        if (top.length < TOP_NEAREST) {
+          top.push({ refIdx, score: sim });
+          top.sort((a, b) => b.score - a.score);
+        } else if (sim > top[top.length - 1].score) {
+          top[top.length - 1] = { refIdx, score: sim };
+          top.sort((a, b) => b.score - a.score);
+        }
       }
 
       if (bestScore >= COVERAGE_THRESHOLD) {
         coveredConcepts.push(refConcept.term);
       } else {
         missedConcepts.push(refConcept.term);
+        missedWithPages.push(`- ${refConcept.term}${pagesOf(refConcept)}`);
       }
     }
 
     const coveredCount = coveredConcepts.length;
+
+    // Resolve the NAME the student used straight to the concept it names.
+    //
+    // This is the primary route, not a refinement of the vector search. A
+    // student explaining injection writes the word "Injection", and an exact
+    // name match finds that concept instantly where cosine buried it sixth. It
+    // is also deterministic and free.
+    //
+    // Aliased through the extraction module's own foldKey/acronymOf rather than
+    // a second copy of the rule, so "SSDLC" typed by a student resolves to
+    // "SECURE SOFTWARE DEVELOPMENT LIFE CYCLE (SSDLC)" exactly as it would
+    // during extraction.
+    const conceptIdxByAlias = new Map<string, number>();
+    for (const [refIdx, c] of conceptsWithEmbeddings.entries()) {
+      const term = c.term as string;
+      for (const alias of [normaliseTerm(term), foldKey(term), acronymOf(term)]) {
+        // First writer wins: an earlier concept should not be displaced by a
+        // later one that merely shares an acronym.
+        if (alias && !conceptIdxByAlias.has(alias)) conceptIdxByAlias.set(alias, refIdx);
+      }
+    }
+
+    // Pair each student point with the lesson text that could settle it — the
+    // concept they named, plus their nearest neighbours for claims they only
+    // described. Deduplicated on the concept, so a student who circled the same
+    // idea five times does not repeat its definition five times in the prompt.
+    const seenRef = new Set<number>();
+    const nearestLessonText: string[] = [];
+
+    for (const [scIdx, sc] of studentEmbeddings.entries()) {
+      const named = conceptIdxByAlias.get(normaliseTerm(sc.term)) ?? conceptIdxByAlias.get(foldKey(sc.term));
+      const candidates = [
+        ...(named === undefined ? [] : [named]),
+        ...nearestRef[scIdx].map(n => n.refIdx),
+      ];
+
+      const lines: string[] = [];
+      for (const refIdx of candidates) {
+        if (refIdx < 0 || seenRef.has(refIdx)) continue;
+        seenRef.add(refIdx);
+        const ref = conceptsWithEmbeddings[refIdx];
+        lines.push(`    ${ref.term}: ${ref.definition}`);
+      }
+      if (lines.length) nearestLessonText.push(`- You wrote about "${sc.term}":\n${lines.join('\n')}`);
+    }
 
     // ── 6. Compute score as coverage ratio ────────────────────────────────
     // Score = covered / total. This avoids the "hubness" problem where random
@@ -563,11 +805,22 @@ Example output:
     //
     // Reuse of a previous identical attempt is handled earlier, before extraction
     // ran at all — see the memo check in step 1b.
+    //
+    // Zero coverage is NOT short-circuited to fixed prose, though it was tried.
+    // The assumption was that an answer matching nothing leaves nothing to say;
+    // measured against a real off-topic submission, that was wrong. The model
+    // wrote "your recall drifted into biology, you missed the actual material we
+    // are studying" and sent them to page 2 — specific, and better than any
+    // fixed sentence. The genuine emptiness case is caught earlier, where
+    // extraction itself returns nothing.
     const writtenFeedback = await generateRecallFeedback({
       userInput: user_input,
       studentPoints: extractedConcepts.map(ec => `${ec.term}: ${ec.explanation}`),
       coveredTerms: coveredConcepts,
       missedTerms: missedConcepts,
+      missedWithPages,
+      conceptPages,
+      nearestLessonText,
       scorePercent,
     });
 
@@ -661,7 +914,11 @@ router.get('/history/:spaceId', async (req: Request, res: Response): Promise<voi
 
   const { data: logs, error } = await supabaseAdmin
     .from('cognitive_logs')
-    .select('id, mode, user_input, similarity_score, ai_feedback, created_at')
+    // `material_ids` is what lets the client compare an attempt to the earlier
+    // attempt on the SAME material. A space can hold attempts against several
+    // materials, and their coverage ratios have different denominators — so
+    // comparing across them would repeat the very error the verdict bands made.
+    .select('id, mode, user_input, similarity_score, ai_feedback, material_ids, created_at')
     .eq('space_id', spaceId)
     .eq('student_id', studentId)
     .eq('mode', mode)

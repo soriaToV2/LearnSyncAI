@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { RotateCcw, Trophy, ArrowLeft, Zap, Clock, AlertTriangle, Brain, Calendar, CheckCircle2 } from 'lucide-react';
 import { api } from '../../../lib/api';
 
@@ -88,6 +88,96 @@ const RATING_CONFIG: Record<EaseRating, {
   },
 };
 
+// ─── Card face typography ─────────────────────────────────────────────────────
+
+/**
+ * Type size and alignment for a card face, derived from how much text it holds.
+ *
+ * The back is the educator's stored definition VERBATIM — never truncated,
+ * never summarised — so the card has to adapt to the text rather than the
+ * reverse. Measured over the concepts table: 162-character median and a 267
+ * p90, but a term the document explains on two pages folds into one row and
+ * reaches 643. One fixed size cannot serve both ends of that range. On the
+ * current data 44 of 57 definitions land in the middle band and render exactly
+ * as they did before; 6 short ones gain a size and 7 long ones lose one.
+ *
+ * Alignment flips independently of size and matters just as much. Centred text
+ * is comfortable for two or three lines and hard to read past that, because
+ * every line starts at a different x-position — and the longest definitions run
+ * to fifteen lines on a phone.
+ *
+ * The two faces need different curves, which is why `kind` exists rather than
+ * one shared table. A back is a passage; a FRONT is a prompt — a term (23
+ * characters on average, 96 at the longest) or a one-sentence generated
+ * question. Running the front down the back's curve would shrink a perfectly
+ * ordinary question to passage size in a card with room to spare.
+ */
+function faceTypeClass(text: string, kind: 'front' | 'back'): string {
+  const len = text.length;
+
+  if (kind === 'front') {
+    if (len <= 260) return 'text-xl md:text-2xl leading-relaxed text-center';
+    if (len <= 420) return 'text-lg md:text-xl leading-relaxed text-center';
+    return 'text-base md:text-lg leading-relaxed text-left';
+  }
+
+  if (len <= 120) return 'text-xl md:text-2xl leading-relaxed text-center';
+  if (len <= 260) return 'text-base md:text-lg leading-relaxed text-center';
+  if (len <= 420) return 'text-sm md:text-base leading-relaxed text-left';
+  return 'text-sm leading-snug text-left';
+}
+
+/** Softens the bottom edge so text visibly runs on rather than stopping dead. */
+const FADE_MASK: React.CSSProperties = {
+  maskImage: 'linear-gradient(to bottom, black calc(100% - 2.5rem), transparent)',
+  WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 2.5rem), transparent)',
+};
+
+/**
+ * Tracks whether a scrolling box still has content below its bottom edge, so a
+ * face can fade its lower margin only while that is true.
+ *
+ * Measured rather than inferred from text length: whether a definition
+ * overflows depends on viewport width and on the size faceTypeClass() picked,
+ * so the same 300 characters fit on a laptop and overflow on a phone. A length
+ * threshold would fade text that is entirely visible.
+ *
+ * It also has to follow scrolling, not just overflow. A fade that stayed on
+ * once the student reached the end would wash out the last line of the answer —
+ * the one part of a long definition they had to work to reach.
+ *
+ * `content` re-runs the effect when the card changes, which is also where the
+ * box is scrolled back to the top: the DOM node is reused between cards, so
+ * without that a long answer followed by another long answer would open
+ * halfway down.
+ */
+function useMoreBelow(content: string): [React.RefObject<HTMLDivElement | null>, boolean] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    // 1px of slack — sub-pixel line heights leave a fractional remainder on
+    // text that visually fits exactly.
+    const measure = () => setMoreBelow(el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+
+    el.scrollTop = 0;
+    measure();
+
+    el.addEventListener('scroll', measure, { passive: true });
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener('scroll', measure);
+      observer.disconnect();
+    };
+  }, [content]);
+
+  return [ref, moreBelow];
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function FlashcardStudyView({
@@ -112,6 +202,14 @@ export default function FlashcardStudyView({
   // Starts from the prop, but a retry round turns it on: those cards were rated
   // moments ago, so they are no longer due and can no longer count.
   const [practiceRound, setPracticeRound] = useState(isPractice);
+
+  // The card on screen. Hoisted above the results-screen return further down so
+  // the face hooks below can read it — a hook cannot run after an early return.
+  const currentCard = studyCards[currentIndex];
+
+  // Each face fades its bottom edge while it still has text below the fold.
+  const [frontScrollRef, frontOverflows] = useMoreBelow(currentCard?.front ?? '');
+  const [backScrollRef, backOverflows] = useMoreBelow(currentCard?.back ?? '');
 
   // ── Rating handler ──────────────────────────────────────────────────────────
 
@@ -394,7 +492,6 @@ export default function FlashcardStudyView({
   // STUDY VIEW
   // ════════════════════════════════════════════════════════════════════════════
 
-  const currentCard = studyCards[currentIndex];
   const ratingOrder: EaseRating[] = ['hard', 'medium', 'easy'];
 
   return (
@@ -499,9 +596,15 @@ export default function FlashcardStudyView({
                   </span>
                 )}
               </div>
-              {/* Scrolls rather than clipping — some definitions run long. */}
-              <div className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex items-center justify-center">
-                <p className="font-display text-xl md:text-2xl text-on-surface leading-relaxed text-center">
+              {/* Scrolls rather than clipping — some definitions run long.
+                  `my-auto` on the text, NOT `items-center` here: see the back
+                  face below for why that distinction is the whole fix. */}
+              <div
+                ref={frontScrollRef}
+                className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex flex-col"
+                style={frontOverflows ? FADE_MASK : undefined}
+              >
+                <p className={`my-auto font-display text-on-surface ${faceTypeClass(currentCard.front, 'front')}`}>
                   {currentCard.front}
                 </p>
               </div>
@@ -528,8 +631,23 @@ export default function FlashcardStudyView({
                   </span>
                 )}
               </div>
-              <div className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex items-center justify-center">
-                <p className="font-sans text-base md:text-lg text-primary-fixed font-medium leading-relaxed text-center">
+              {/* The answer is the educator's definition verbatim and can run to
+                  ~800 characters, so this face has to scroll.
+
+                  `my-auto` on the text rather than `items-center` here is not a
+                  style preference — it is the fix for a real bug. A CENTRED flex
+                  item taller than its container overflows both edges, and the
+                  overflow past the TOP is outside the scrollable region, so no
+                  scrolling reaches it. Long answers silently began mid-sentence
+                  with the scrollbar already at its top. An auto margin centres
+                  identically when there is room and collapses to 0 when there is
+                  not, clipping nothing. Do not put `items-center` back. */}
+              <div
+                ref={backScrollRef}
+                className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex flex-col"
+                style={backOverflows ? FADE_MASK : undefined}
+              >
+                <p className={`my-auto font-sans text-primary-fixed font-medium ${faceTypeClass(currentCard.back, 'back')}`}>
                   {currentCard.back}
                 </p>
               </div>

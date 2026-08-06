@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Award, RefreshCw, AlertCircle, CheckCircle2, MessageSquare, Lightbulb,
   XCircle, AlertTriangle, PenTool, History,
@@ -118,6 +118,8 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
   // Composer state — explanations are keyed by concept_id, which is what the API grades against.
   const [explanations, setExplanations] = useState<Record<string, string>>({});
   const [isEvaluating, setIsEvaluating] = useState(false);
+  // Guards against a double-click submitting twice; see handleEvaluate.
+  const inFlightRef = useRef(false);
   const [evalError, setEvalError] = useState<string | null>(null);
 
   // Two separate selections, deliberately. `resultLogId` is the attempt you
@@ -218,6 +220,20 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
 
   const handleEvaluate = async () => {
     if (!canEvaluate) return;
+
+    // Synchronous latch, and NOT redundant with `canEvaluate` or the button's
+    // `disabled`. Both read React state, which does not re-render until this
+    // handler yields, so a double-click enters here twice with `isEvaluating`
+    // still false and fires two identical submissions.
+    //
+    // That is not hypothetical: one answer was graded 0.95 and then 0.90 three
+    // seconds later from byte-identical input. Both requests ran their memo
+    // lookup before either had written its row, so both missed it and both
+    // called the model — defeating the one mechanism guaranteeing that the same
+    // explanation always earns the same mark.
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+
     setIsEvaluating(true);
     setEvalError(null);
 
@@ -268,6 +284,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
         : 'Failed to evaluate your explanation. Please try again.';
       setEvalError(message);
     } finally {
+      inFlightRef.current = false;
       setIsEvaluating(false);
     }
   };
@@ -538,7 +555,11 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
       onViewModeChange={switchView}
     >
       {viewMode === 'study' ? (
-        <div className="max-w-3xl mx-auto h-full overflow-y-auto no-scrollbar pb-10">
+        // `px-2` is load-bearing, not spacing. `overflow-y-auto` makes CSS
+        // compute `overflow-x` to `auto` as well, so this box clips horizontally
+        // at its content edge. The material and concept dropdowns sit flush at
+        // x=0, and their borders and shadows were being sliced off.
+        <div className="max-w-3xl mx-auto h-full overflow-y-auto no-scrollbar pb-10 px-2">
           {activeLog && activeFeedback
             ? resultView(activeLog, activeFeedback, true)
             : activeLog
@@ -559,7 +580,8 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
             }}
           />
 
-          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10">
+          {/* Same horizontal-clip rule as the study pane above. */}
+          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10 px-2">
             {activeLog && activeFeedback ? (
               <div className="max-w-3xl">{resultView(activeLog, activeFeedback, false)}</div>
             ) : activeLog ? (

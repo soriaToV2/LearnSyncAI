@@ -211,17 +211,58 @@ export type FreeRecallInput = z.infer<typeof FreeRecallSchema>;
  * the score down with it, and attempts logged before this shipped have none.
  */
 export interface FreeRecallWrittenFeedback {
-  /** What they actually recalled well, referring to their own words. */
-  strengths: string;
-  /** The gaps that matter, in plain language — not the raw missed list. */
-  gaps: string;
-  /** One concrete thing to review next. */
-  next_steps: string;
+  /**
+   * The whole written response: what landed, what did not, and — as its closing
+   * sentence — one concrete thing to do next, naming the page it is on.
+   *
+   * ONE field, arrived at by removing two. It was `strengths`/`gaps`/`next_steps`,
+   * where the model had to fill three slots from one set of observations and ran
+   * out: in every logged attempt `next_steps` merely paraphrased `gaps`. Merging
+   * the first two fixed that. The remaining split was then kept on the theory
+   * that a concrete action is the hardest sentence to write and would be crowded
+   * out of a free passage — **that was measured and disproved.** Run on two
+   * stored submissions, including a 28/28 attempt with no obvious gap to point
+   * at, the merged prompt still closed with "try reviewing Injection on page 24"
+   * and "review security headers on page 39". Do not split it again on that
+   * reasoning.
+   *
+   * It describes COVERAGE, never certifies correctness. Coverage is decided by
+   * cosine similarity, which measures whether the student wrote ABOUT a concept,
+   * not whether they were right — a sentence calling RA 10175 the Data Privacy
+   * Act scored 0.7175 and counted as covered. Contradictions belong in
+   * `corrections`, which is checked against the lesson's own definitions.
+   */
+  feedback: string;
+  /**
+   * Statements that contradict the lesson's own definitions, quoted back in the
+   * student's words. Empty string when nothing conflicts.
+   *
+   * Prose only — this NEVER moves `similarity_score`. Coverage stays a pure
+   * cosine computation, which keeps the score deterministic given the
+   * extraction and keeps this call on GEMINI_UTILITY_MODEL under the rule in
+   * CLAUDE.md: the model's judgement here becomes words, not a number.
+   *
+   * Optional: attempts logged before this shipped carry none.
+   */
+  corrections?: string;
 }
 
 /** Full payload stored in `cognitive_logs.ai_feedback` for a Free Recall attempt. */
 export interface FreeRecallFeedback {
   missed_concepts: string[];
+  /**
+   * Retained as DATA, no longer shown to the student.
+   *
+   * It was derived from fixed thresholds (>= 0.30 strong, >= 0.15 partial) tuned
+   * against a 78-concept lesson, but the denominator is whichever material was
+   * selected. On a 29-concept material an 86% answer and a 36% answer containing
+   * two factual errors both came back "strong", so the label carried no
+   * information. The UI now leads with the covered/total count and the student's
+   * own progress on that same material.
+   *
+   * Still computed and stored so the payload shape is unchanged and the
+   * distribution stays available for later analysis.
+   */
   overall_verdict: 'strong' | 'partial' | 'needs_review';
   written_feedback: FreeRecallWrittenFeedback | null;
   /**

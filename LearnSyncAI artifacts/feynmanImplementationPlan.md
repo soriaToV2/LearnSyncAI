@@ -1,17 +1,26 @@
 # Feynman Technique — Implementation Reference
 
-> **Status: built and working. One prompt change awaiting live re-test** (see §12).
-> Last updated 30 July 2026.
+> **Status: built, working, and verified live against real submissions.** Last updated 6 August 2026.
+> The analogy fix that §18 was waiting on has now been tested — see §18 for the results.
 > Read alongside [freeRecallImplementationPlan.md](./freeRecallImplementationPlan.md) — the two tabs
 > share `cognitive.routes.ts`, `cognitiveShared.tsx` and the history endpoint, and §2, §6 and §13
 > there apply here too.
+>
+> **Free Recall changed substantially on 6 August; Feynman barely did.** The grading pipeline,
+> scores, bands and prompts here are untouched. What changed is shared UI and one concurrency bug —
+> see §19a. Do not assume a change described in the Free Recall doc applies here.
 
 ---
 
 ## 1. What the feature does
 
-A student picks materials, picks one or more concepts from them, and explains each **in their own
-words as if teaching a 10-year-old**. The AI grades every explanation and returns structured coaching.
+A student picks **one material**, picks one or more concepts from it, and explains each **in their
+own words as if teaching a 10-year-old**. The AI grades every explanation and returns structured
+coaching.
+
+**One material, not several** (6 August). `FeynmanEvaluationSchema` caps `material_ids` at 1 and the
+UI uses `SingleSelectDropdown`. Concepts remain multi-select — several concepts *from that one
+material* are graded in a single call.
 
 **Feynman never writes BKT mastery.** Paper Scope, p. 59. `bkt_mastery` has exactly one writer:
 `practice.routes.ts:130`.
@@ -530,6 +539,48 @@ Other behaviour worth preserving:
 
 `src/lib/api.ts` is a **`fetch` wrapper** (not axios, whatever older docs said) that unwraps `{ data }`.
 
+### ⚠️ The submit handler holds a `useRef` latch (added 6 August) — this tab is where the bug showed
+
+`disabled` and `canEvaluate` read React state, which does not re-render until the handler yields.
+A double-click therefore enters `handleEvaluate` **twice** with `isEvaluating` still `false`, and
+both submissions go out.
+
+Observed here, from byte-identical input three seconds apart:
+
+```
+11:23:34  accuracy 0.95
+11:23:37  accuracy 0.90   ← same text, same fingerprint, different mark
+11:23:53  accuracy 0.90   ← memo hit, correct
+```
+
+Both of the first two ran `findMemoisedAttempt()` before either had written its row, so both missed
+it, both spent a grading call, and the same explanation earned two different marks. Near
+`deriveVerdict()`'s 80 boundary that would flip the badge a student is shown.
+
+The latch is set synchronously **before the first `await`** and cleared in `finally`. It is not
+redundant with `disabled`, and removing it reopens exactly this.
+
+> It is per page load. Reloading during a slow request leaves the first running server-side while
+> the second starts blind. Rare, and a server-side lock would be the fix if it ever matters.
+
+### Dropdown panels are `left-0 w-full`
+
+Both `SingleSelectDropdown` (material) and `MultiSelectDropdown` (concepts) had `right-0 w-64`
+under a `w-56` button — 32px wider than the trigger and anchored to its right edge, so the panel
+overhung its own left edge. Where the control sits flush against a container edge that overhang was
+clipped, cutting the first characters off every option: `6. Information Security` rendered as
+`Information Security`. Fixed 6 August; **do not set `right-0` with a fixed width again.**
+
+Concept terms truncate in a panel that width, so each option carries `title={option.label}` — the
+full term is reachable on hover. `SECURE SOFTWARE DEVELOPMENT LIFE CYCLE (SSDLC)` is 46 characters.
+
+⚠️ **The scroll panes carry `px-2`, and it is load-bearing.** Both panes are `overflow-y-auto`, and
+**CSS makes `overflow-x` compute to `auto` whenever `overflow-y` is not `visible`** — so they clip
+horizontally at their content edge. With no horizontal padding the dropdowns sat flush at x=0 and
+their borders and shadows were sliced flat. This was the second half of the same bug: fixing the
+panel width stopped the labels being cut, but left the edge shaved. Removing `px-2` brings it back.
+See §10 of the Free Recall doc for the full write-up and the accepted residual limitation.
+
 ---
 
 ## 17. Known issues NOT fixed
@@ -537,8 +588,10 @@ Other behaviour worth preserving:
 1. **🔶 The verdict ignores simplicity.** See §8. Decided in principle, not implemented, needs a paper edit.
 
 2. **`analogy_used` for head-noun in-domain comparisons ("a backup server")** is left to the prompt, not
-   the code. Deliberate — see §6. **The sharpened prompt has NOT yet been re-tested live** (quota
-   exhausted 30 July). This is the top item to verify next session; see §18.
+   the code. Deliberate — see §6. ~~Not yet re-tested live.~~ **Re-tested 3 August: it holds.** An
+   in-domain comparison written as *"it is like when a web server sends HTTP traffic without TLS"*
+   returned `analogy_used: false`, while a genuine everyday one — *"like the roads in a city; the
+   roads do not know what is inside the delivery trucks"* — returned `true`. See §18.
 
 3. **`similarity_score` is a misnomer** on Feynman rows.
 
@@ -561,10 +614,39 @@ Other behaviour worth preserving:
 
 ---
 
-## 18. ▶ Next session: re-test the analogy fix
+## 18. ✅ Live verification — done 3 August 2026
 
-The prompt change in §6 is **unverified against the live model** — quota ran out on 30 July. Verify
-first, before anything else.
+**The analogy fix and the accuracy bands are verified.** This section was the outstanding item; it
+is closed. Results first, then the original test plan, which is still the right regression suite.
+
+### What was run, and what came back
+
+Four concepts in one submission (material 6), then three single-concept submissions:
+
+| Test | Explanation given | Result | |
+|---|---|---|---|
+| Physical Layer | correct, with *"like the roads in a city"* | accuracy **95**, simplicity **90**, `analogy_used: true` | ✅ |
+| Session Layer | textbook-accurate, heavy jargon | accuracy **95**, simplicity **20**, 10 jargon terms | ✅ |
+| Injection | circular — *"injection is when something gets injected"* | accuracy **40** | ✅ band 30–50 |
+| Injection | confidently false — a USB hardware attack | accuracy **10**, verdict `incorrect`, names the false claim | ✅ band 0–20 |
+| Cryptographic Failures | *"it is like a web server sending HTTP traffic without TLS"* | `analogy_used: **false**`, jargon caught `HTTP traffic`, `TLS` | ✅ the §6 fix |
+| SSDLC | partial, correct | accuracy **95** | see note |
+
+**The Session Layer result is the important one.** 95 accuracy against 20 simplicity, in the same
+grading pass, proves the two axes are genuinely independent (§2) — the whole design rests on it.
+
+**Injection circular (40) versus Injection false (10)** proves the bands still separate *said too
+little* from *said something untrue* (§7). If those two ever land in the same band, that rule has
+stopped holding.
+
+### One prediction that was wrong, and it is good news
+
+A partial explanation of **SSDLC** — whose stored definition is a 643-character merge of three
+paragraphs — was expected to stall at 55–75, on the theory that a long merged ground truth raises
+the bar for the 80+ band. It scored **95**. **Merged definitions do not depress the ceiling.**
+Do not "fix" that.
+
+### The original plan, still the right regression suite
 
 **One submission, four concepts, one API call:**
 
@@ -617,6 +699,29 @@ Passed 30 July 2026:
 - **Analogy detection**, live: castle analogy correctly `true` with the quote returned.
 
 Failed and fixed: the fake-analogy case (§6) — **fix not yet re-tested live.**
+
+---
+
+## 19a. Change log — 6 August 2026
+
+Free Recall was heavily revised that day. **Feynman's grading was not touched at all** — no change
+to the two-axis design, the bands, `deriveVerdict()`, the analogy backstop, the jargon stripping,
+the model, the thinking level or the prompt. What changed:
+
+| Change | Why | § |
+|---|---|---|
+| **`useRef` submit latch** in `handleEvaluate` | A double-click graded one answer **0.95 then 0.90** from identical text — both requests raced past the memo check | §16 |
+| **One material only** — `SingleSelectDropdown`, `.max(1)` in the Zod schema | Matches Free Recall; concepts stay multi-select | §1 |
+| Dropdown panels **`left-0 w-full`** | `right-0 w-64` under a `w-56` button clipped the first characters off every label | §16 |
+| **`px-2`** on both scroll panes | `overflow-y-auto` forces `overflow-x: auto`, so the panes sliced the dropdown's border and shadow flat | §16 |
+| `title={option.label}` on options | Long concept terms truncate at this panel width | §16 |
+| Analogy fix and bands **verified live** | Was the outstanding item in §18 | §18 |
+
+**Do not port Free Recall's changes here without thinking.** Its single-`feedback`-field merge, its
+`corrections` note, its page anchoring and its removal of verdict bands are all answers to problems
+Feynman does not have: Feynman already has per-concept detail beneath its summary, already grades
+correctness directly, and its `accuracy_score` is a 0–100 scale that **is** comparable across
+materials — which is exactly why its verdict bands are sound and Free Recall's were not.
 
 ---
 

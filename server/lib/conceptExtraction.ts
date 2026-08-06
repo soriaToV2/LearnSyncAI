@@ -162,14 +162,20 @@ const TRAILING_ACRONYM = /\s*\(\s*([A-Z0-9][A-Z0-9./-]{0,9})\s*\)\s*$/;
  * definitions embed at 0.887 cosine, comfortably under CROSS_TERM_DUP, so nothing
  * downstream would have caught them either.
  */
-function foldKey(term: string): string {
+export function foldKey(term: string): string {
   const stripped = term.replace(TRAILING_ACRONYM, '');
   // A term that is *only* an acronym has nothing left after stripping; keep it.
   return norm(stripped) || norm(term);
 }
 
-/** The acronym a term introduces, lowercased, or null. */
-function acronymOf(term: string): string | null {
+/**
+ * The acronym a term introduces, lowercased, or null.
+ *
+ * Exported alongside foldKey so Free Recall can resolve a term a STUDENT typed
+ * to the concept it names, using the same convention rather than a second copy
+ * of it. Duplicating this rule is how the two sides drift apart.
+ */
+export function acronymOf(term: string): string | null {
   const match = TRAILING_ACRONYM.exec(term.trim());
   return match ? match[1].toLowerCase() : null;
 }

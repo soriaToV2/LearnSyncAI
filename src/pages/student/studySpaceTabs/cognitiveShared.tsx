@@ -19,12 +19,23 @@ export const CARD = 'bg-surface-container-lowest/40 rounded-2xl';
 export const LABEL = 'font-sans text-[11px] font-semibold text-slate-500 uppercase tracking-wider';
 export const SECTION = 'font-sans text-xs font-semibold text-slate-400 uppercase tracking-widest';
 
-export type Tone = 'good' | 'mid' | 'poor';
+/**
+ * `neutral` is the "no direction to report" tone. Free Recall's progress line
+ * uses it when an attempt is the student's first on a material, or when the
+ * change since their last one is inside the measurement noise — cases where
+ * claiming either improvement or decline would be inventing a signal.
+ *
+ * It renders as ordinary body text rather than a colour, which is the point:
+ * good/mid/poor all assert a judgement, and there are places in these tabs where
+ * no judgement is available to make.
+ */
+export type Tone = 'good' | 'mid' | 'poor' | 'neutral';
 
 export const toneText: Record<Tone, string> = {
   good: 'text-emerald-400',
   mid: 'text-amber-400',
   poor: 'text-red-400',
+  neutral: 'text-slate-300',
 };
 
 /** 0–100 → tone. The single place the colour thresholds live. */
@@ -130,6 +141,7 @@ export function VerdictBanner({
   tone,
   verdictLabel,
   description,
+  descriptionTone,
   secondary,
 }: {
   score: number;
@@ -137,6 +149,14 @@ export function VerdictBanner({
   tone: Tone;
   verdictLabel: string;
   description: string;
+  /**
+   * Colours the sentence rather than the ring. Free Recall carries its meaning
+   * there: the ring's percentage is not comparable between materials, but the
+   * progress line compares one student's attempts at a single material, so the
+   * colour belongs on the half that can support it. Omitted elsewhere, which
+   * keeps the muted default.
+   */
+  descriptionTone?: Tone;
   secondary?: { label: string; value: number };
 }) {
   return (
@@ -145,7 +165,11 @@ export function VerdictBanner({
 
       <div className="min-w-0 flex-1">
         <p className={`font-display text-lg font-bold tracking-tight ${toneText[tone]}`}>{verdictLabel}</p>
-        <p className="font-sans text-sm text-slate-400 mt-1 leading-relaxed">{description}</p>
+        <p className={`font-sans text-sm mt-1 leading-relaxed ${
+          descriptionTone && descriptionTone !== 'neutral' ? toneText[descriptionTone] : 'text-slate-400'
+        }`}>
+          {description}
+        </p>
 
         {secondary && (
           <div className="mt-4 pt-4 border-t border-white/5">

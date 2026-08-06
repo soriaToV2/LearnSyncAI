@@ -72,8 +72,8 @@ export default function MultiSelectDropdown({
       ? `All ${itemNoun}s`
       : `${selectedValues.length} ${itemNoun}${selectedValues.length > 1 ? 's' : ''} selected`;
 
-  // w-fit stops a flex/grid parent from stretching the root. The panel below is anchored
-  // with `right-0`, so a stretched root would fling it out to the container's right edge.
+  // w-fit stops a flex/grid parent from stretching the root, which would drag the
+  // panel with it — the panel is sized and positioned against this element.
   return (
     <div className={`relative inline-block w-fit text-left font-sans ${className}`} ref={containerRef}>
       <div className="relative">
@@ -93,7 +93,12 @@ export default function MultiSelectDropdown({
       </div>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 origin-top-right rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md z-[100]">
+        // `left-0 w-full` pins the panel exactly under its trigger. See the same
+        // fix in SingleSelectDropdown: `right-0 w-64` against a `w-56` button
+        // made the panel overhang its own left edge by 32px, and wherever the
+        // control sat flush against a container edge that overhang was clipped,
+        // cutting the first characters off every option label.
+        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md z-[100]">
           <div className="py-1 max-h-68 overflow-y-auto scrollbar-none" role="none">
             {/* Select All toggle */}
             {options.length > 0 && (
@@ -124,6 +129,10 @@ export default function MultiSelectDropdown({
                       : 'text-slate-300 hover:bg-white/5 hover:text-white'
                   }`}
                   role="menuitem"
+                  // Concept terms run long — "SECURE SOFTWARE DEVELOPMENT LIFE
+                  // CYCLE (SSDLC)" truncates in a panel this wide, so the full
+                  // text stays reachable on hover.
+                  title={option.label}
                 >
                   <div className="w-4 h-4 rounded border border-white/20 flex items-center justify-center mr-2.5 shrink-0 bg-white/5">
                     {isSelected && <Check className="w-3 h-3 text-primary-fixed-dim" />}

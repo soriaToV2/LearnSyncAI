@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Brain, RefreshCw, Target, CheckCircle2, XCircle, AlertTriangle, Sparkles, PenTool, History } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Brain, RefreshCw, CheckCircle2, XCircle, AlertTriangle, PenTool, History } from 'lucide-react';
 import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
 import { api } from '../../../lib/api';
 import {
@@ -20,20 +20,57 @@ interface CognitiveLog {
   user_input: string;
   similarity_score: number | null;
   ai_feedback: string | null; // JSON string — see ParsedFeedback
+  /**
+   * Which material this attempt was scored against. Needed to compare an attempt
+   * only to earlier attempts on the SAME material — coverage denominators differ
+   * per material, so a cross-material comparison would be meaningless.
+   */
+  material_ids?: string[];
   created_at: string;
 }
 
 // Written coaching on the attempt. Null when generation failed — the score is
 // still saved, so the tab shows a note rather than treating it as an error.
 interface WrittenFeedback {
-  strengths: string;
-  gaps: string;
-  next_steps: string;
+  /**
+   * The whole written response — what landed, what did not, and a closing
+   * action naming its page. Optional only because attempts logged before the
+   * merge carry `summary`/`next_steps` instead; see `feedbackText()`.
+   */
+  feedback?: string;
+  /**
+   * Statements that contradict the lesson's own definitions. Usually empty —
+   * the backend is told silence is the right answer unless the lesson text
+   * settles it.
+   */
+  corrections?: string;
+
+  /** @deprecated Read-only, for attempts stored before the fields were merged. */
+  summary?: string;
+  /** @deprecated Read-only, for attempts stored before the fields were merged. */
+  next_steps?: string;
+}
+
+/**
+ * The passage to display, whichever shape the attempt was stored in.
+ *
+ * Older rows hold `summary` and `next_steps` as separate fields; joining them
+ * reads as the single passage newer rows already are, so History renders one
+ * card throughout and nothing needed migrating.
+ */
+function feedbackText(wf: WrittenFeedback): string {
+  return wf.feedback ?? [wf.summary, wf.next_steps].filter(Boolean).join(' ');
 }
 
 // Parsed feedback from the ai_feedback JSON column
 interface ParsedFeedback {
   missed_concepts: string[];
+  /**
+   * Stored by the backend, deliberately NOT displayed. It came from fixed
+   * thresholds applied to a ratio whose denominator changes with the material,
+   * so an 86% answer and a 36% one containing two factual errors both read
+   * "strong". Use progressLine() instead — do not wire this back into the UI.
+   */
   overall_verdict: 'strong' | 'partial' | 'needs_review';
   /** Absent on attempts logged before written feedback shipped. */
   written_feedback?: WrittenFeedback | null;
@@ -53,29 +90,67 @@ function parseFeedback(raw: string | null): ParsedFeedback {
   }
 }
 
-const VERDICT: Record<string, { label: string; tone: Tone }> = {
-  strong: { label: 'Strong Coverage', tone: 'good' },
-  partial: { label: 'Partial Coverage', tone: 'mid' },
-  needs_review: { label: 'Needs Review', tone: 'poor' },
-};
+/**
+ * How much the covered count must move before a direction is claimed.
+ *
+ * Free Recall's extraction step is a sampling call, so re-running the SAME text
+ * gives a different answer: measured 14, 16 and 17 covered across three runs of
+ * one material-6 submission — a spread of 3 on 28 concepts, about 11%. Calling a
+ * 1-concept difference "improvement" would be reporting that noise back to the
+ * student as progress they did not make.
+ *
+ * Proportional so it scales with the material: a 78-concept lesson has more room
+ * to wobble in absolute terms than a 28-concept one.
+ */
+const meaningfulDelta = (total: number) => Math.max(2, Math.ceil(total * 0.1));
 
 /**
- * Plain sentence under the verdict.
+ * The line under the count, and the only comparison this tab can honestly make.
  *
- * The old copy read "Based on cosine similarity against your material's
- * concepts", which tells a Junior High student nothing. The counts do the
- * explaining instead: 23% reads very differently next to "15 of 78 ideas".
+ * NOT a quality judgement. The old copy labelled attempts Strong / Partial /
+ * Needs Review from fixed thresholds, but coverage is scored against whichever
+ * material was selected, so the same standard of recall reads 86% on one lesson
+ * and 36% on another — and both came back "Strong". A percentage is comparable
+ * to ONE thing: the same student's earlier attempt at the same material, where
+ * the denominator and the person are both held still.
  */
-function verdictDescription(f: ParsedFeedback, verdict: string): string {
-  const covered = f.covered_count;
-  const total = f.total_concepts;
-  const counts = covered !== undefined && total !== undefined
-    ? `You covered ${covered} of the ${total} ideas in this material. `
-    : '';
+function progressLine(
+  current: ParsedFeedback,
+  previous: ParsedFeedback | null
+): { text: string; tone: Tone } {
+  const covered = current.covered_count;
+  const total = current.total_concepts;
 
-  if (verdict === 'strong') return `${counts}You recalled the main ideas of this lesson well.`;
-  if (verdict === 'partial') return `${counts}You remembered a fair amount — there is more to pick up.`;
-  return `${counts}Not much of this lesson came back yet. That is what practice is for.`;
+  if (covered === undefined || total === undefined) {
+    return { text: 'Scored against the ideas in this material.', tone: 'neutral' };
+  }
+  if (!previous || previous.covered_count === undefined || previous.total_concepts !== total) {
+    // Either their first go at this material, or the educator has since edited
+    // it — a changed denominator makes the two numbers incomparable.
+    return { text: 'This is your first attempt at this material.', tone: 'neutral' };
+  }
+
+  const before = previous.covered_count;
+  const delta = covered - before;
+  const was = `${before} of ${total}`;
+
+  if (Math.abs(delta) < meaningfulDelta(total)) {
+    return { text: `About the same as last time (${was}).`, tone: 'neutral' };
+  }
+  if (delta > 0) {
+    return { text: `Up from ${was} last time.`, tone: 'good' };
+  }
+  // Amber, never red. A dip between attempts is ordinary in retrieval practice
+  // and telling a student they have failed for it would be both wrong and unkind.
+  return { text: `Down from ${was} last time.`, tone: 'mid' };
+}
+
+/** The headline: the honest count, or the percentage for rows predating it. */
+function resultHeadline(f: ParsedFeedback, scorePercent: number): string {
+  if (f.covered_count === undefined || f.total_concepts === undefined) {
+    return `${scorePercent}% coverage`;
+  }
+  return `${f.covered_count} of ${f.total_concepts} ideas`;
 }
 
 export default function FreeRecallTab({ availableResources, spaceId }: FreeRecallTabProps) {
@@ -89,6 +164,8 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
   // Composer state
   const [recallText, setRecallText] = useState('');
   const [isEvaluating, setIsEvaluating] = useState(false);
+  // Guards against a double-click submitting twice; see handleEvaluate.
+  const inFlightRef = useRef(false);
   const [evalError, setEvalError] = useState<string | null>(null);
 
   // Two separate selections, deliberately. `resultLogId` is the attempt you
@@ -135,6 +212,16 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
 
   const handleEvaluate = async () => {
     if (!recallText.trim() || selectedMaterialIds.length === 0) return;
+
+    // Synchronous latch — the button's `disabled={isEvaluating}` cannot stop
+    // this on its own. React does not re-render until this handler yields, so
+    // two clicks in the same tick both see `isEvaluating === false` and both
+    // submit. Two identical submissions then run their memo lookups before
+    // either has written its row, so both miss it, both spend model calls, and
+    // the same answer can come back with two different scores.
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+
     setIsEvaluating(true);
     setEvalError(null);
 
@@ -172,6 +259,9 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
           covered_count: result.covered_count,
           total_concepts: result.total_concepts,
         }),
+        // The POST response does not echo this back, and does not need to — the
+        // client chose the material a moment ago.
+        material_ids: selectedMaterialIds,
         created_at: result.created_at ?? new Date().toISOString(),
       };
 
@@ -186,6 +276,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
       const message = err instanceof Error ? err.message : 'Something went wrong.';
       setEvalError(message);
     } finally {
+      inFlightRef.current = false;
       setIsEvaluating(false);
     }
   };
@@ -206,54 +297,93 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
       id: log.id,
       dateLabel: formatDate(log.created_at),
       scoreLabel: `${Math.round((log.similarity_score ?? 0) * 100)}%`,
-      scoreTone: VERDICT[f.overall_verdict]?.tone ?? 'mid',
+      // One fixed tone for every attempt, matching the ring. A coverage
+      // percentage is not comparable between materials, so a varying colour
+      // would rank these attempts on a scale that does not exist — an attempt
+      // on a coarse material would outrank a better one on a granular material
+      // purely because of how the document was split. See progressLine().
+      scoreTone: 'good' as Tone,
       preview: log.user_input,
     };
   });
+
+  /**
+   * The attempt immediately before `log` on the SAME material.
+   *
+   * `historyLogs` is newest-first, so the first older entry that matches is the
+   * one to compare against. Matching on material is the whole point: a space can
+   * hold attempts against several materials whose coverage denominators differ.
+   */
+  const previousAttempt = (log: CognitiveLog): ParsedFeedback | null => {
+    const materials = (log.material_ids ?? []).join(',');
+    if (!materials) return null;
+    const idx = historyLogs.findIndex(l => l.id === log.id);
+    if (idx < 0) return null;
+    const earlier = historyLogs
+      .slice(idx + 1)
+      .find(l => (l.material_ids ?? []).join(',') === materials);
+    return earlier ? parseFeedback(earlier.ai_feedback) : null;
+  };
 
   // The result view, shared by both places it can appear: inside Study right
   // after submitting, and inside History when an attempt is selected.
   const resultView = (log: CognitiveLog, feedback: ParsedFeedback, showWriteAnother: boolean) => {
     const activeFeedback = feedback;
     const activeLog = log;
+    const scorePercent = Math.round((activeLog.similarity_score ?? 0) * 100);
+    const progress = progressLine(activeFeedback, previousAttempt(activeLog));
     return (
             <div className="space-y-5 animate-in fade-in duration-300">
+              {/* The ring keeps the percentage — it is still the figure the
+                  scoring produces — at a FIXED tone.
+
+                  Constant is the requirement, not the particular colour: a tone
+                  that VARIES with this percentage would re-assert the
+                  cross-material judgement the verdict bands got wrong, because
+                  the same standard of recall reads 86% on one material and 36%
+                  on another. One unchanging colour ranks nothing. Do not swap
+                  this for `scoreTone()` — its 80/60 cutoffs are absolute too.
+                  The meaning lives on the progress line below, which compares
+                  like with like. */}
               <VerdictBanner
-                score={Math.round((activeLog.similarity_score ?? 0) * 100)}
+                score={scorePercent}
                 scoreSuffix="%"
-                tone={VERDICT[activeFeedback.overall_verdict]?.tone ?? 'mid'}
-                verdictLabel={VERDICT[activeFeedback.overall_verdict]?.label ?? 'Result'}
-                description={verdictDescription(activeFeedback, activeFeedback.overall_verdict)}
+                tone="good"
+                verdictLabel={resultHeadline(activeFeedback, scorePercent)}
+                description={progress.text}
+                descriptionTone={progress.tone}
               />
 
               {activeFeedback.written_feedback ? (
                 <div className="space-y-3">
                   <h4 className={SECTION}>Feedback</h4>
-                  {activeFeedback.written_feedback.strengths && (
+                  {/* Deliberately NOT emerald. This one passage carries both
+                      what landed and what did not, so a success colour would
+                      misrepresent half of it. */}
+                  {feedbackText(activeFeedback.written_feedback) && (
                     <FeedbackCard
-                      icon={<CheckCircle2 className="w-3.5 h-3.5" />}
-                      label="What you recalled well"
-                      tone="text-emerald-400"
+                      icon={<Brain className="w-3.5 h-3.5" />}
+                      label="How you did"
+                      tone="text-slate-300"
                     >
-                      {activeFeedback.written_feedback.strengths}
+                      {feedbackText(activeFeedback.written_feedback)}
                     </FeedbackCard>
                   )}
-                  {activeFeedback.written_feedback.gaps && (
+                  {/* Sits after the passage, not first: a 14-year-old should read
+                      what they managed before what they got wrong. */}
+                  {activeFeedback.written_feedback.corrections && (
                     <FeedbackCard
-                      icon={<Target className="w-3.5 h-3.5" />}
-                      label="What to look at again"
-                      tone="text-amber-400"
+                      icon={<AlertTriangle className="w-3.5 h-3.5" />}
+                      label="Worth double-checking"
+                      tone="text-rose-400"
                     >
-                      {activeFeedback.written_feedback.gaps}
-                    </FeedbackCard>
-                  )}
-                  {activeFeedback.written_feedback.next_steps && (
-                    <FeedbackCard
-                      icon={<Sparkles className="w-3.5 h-3.5" />}
-                      label="Try this next"
-                      tone="text-primary-fixed-dim"
-                    >
-                      {activeFeedback.written_feedback.next_steps}
+                      {activeFeedback.written_feedback.corrections}
+                      {/* Said plainly, because the tally above will still count
+                          the concept as covered — coverage measures whether you
+                          wrote about an idea, not whether you had it right. */}
+                      <p className="mt-2 text-xs text-slate-500">
+                        This doesn't change your score — it's here so you can fix it before the next test.
+                      </p>
                     </FeedbackCard>
                   )}
                 </div>
@@ -378,7 +508,13 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
       onViewModeChange={switchView}
     >
       {viewMode === 'study' ? (
-        <div className="max-w-3xl mx-auto h-full overflow-y-auto no-scrollbar pb-10">
+        // `px-2` is load-bearing, not spacing. `overflow-y-auto` makes CSS
+        // compute `overflow-x` to `auto` as well — a box cannot scroll one axis
+        // and overflow visibly on the other — so this clips horizontally at its
+        // content edge. The material dropdown sits flush at x=0, and its border,
+        // ring and shadow were being sliced off. The padding keeps anything with
+        // a shadow away from that edge.
+        <div className="max-w-3xl mx-auto h-full overflow-y-auto no-scrollbar pb-10 px-2">
           {activeLog && activeFeedback ? resultView(activeLog, activeFeedback, true) : composer}
         </div>
       ) : (
@@ -396,7 +532,8 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
             }}
           />
 
-          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10">
+          {/* Same horizontal-clip rule as the study pane above. */}
+          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10 px-2">
             {activeLog && activeFeedback ? (
               <div className="max-w-3xl">{resultView(activeLog, activeFeedback, false)}</div>
             ) : (

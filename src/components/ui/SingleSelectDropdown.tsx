@@ -53,8 +53,8 @@ export default function SingleSelectDropdown({
     setIsOpen(false);
   };
 
-  // w-fit stops a flex/grid parent from stretching the root. The panel below is
-  // anchored with `right-0`, so a stretched root would fling it to the far edge.
+  // w-fit stops a flex/grid parent from stretching the root, which would drag the
+  // panel with it — the panel is sized and positioned against this element.
   return (
     <div className={`relative inline-block w-fit text-left font-sans ${className}`} ref={containerRef}>
       <div className="relative">
@@ -74,7 +74,18 @@ export default function SingleSelectDropdown({
       </div>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 origin-top-right rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md z-[100]">
+        // `left-0 w-full` pins the panel exactly under its trigger.
+        //
+        // It was `right-0 w-64` against a `w-56` button — 32px wider than the
+        // trigger and anchored to the trigger's RIGHT edge, so the panel hung
+        // 32px past its left. Wherever the control sits flush against a
+        // container edge (Free Recall's composer aligns it left), that overhang
+        // was clipped and took the start of every label with it: "6. Information
+        // Security" rendered as "Information Security".
+        //
+        // w-full rather than a repeated w-56 so the panel tracks the button if
+        // its width is ever changed.
+        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md z-[100]">
           <div className="py-1 max-h-68 overflow-y-auto scrollbar-none" role="listbox">
             {options.map((option) => {
               const isSelected = option.value === selectedValue;
@@ -85,6 +96,9 @@ export default function SingleSelectDropdown({
                   role="option"
                   aria-selected={isSelected}
                   onClick={() => handleSelect(option.value)}
+                  // Material titles truncate in a panel this wide; keep the full
+                  // one reachable on hover.
+                  title={option.label}
                   className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${
                     isSelected
                       ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim font-semibold'
