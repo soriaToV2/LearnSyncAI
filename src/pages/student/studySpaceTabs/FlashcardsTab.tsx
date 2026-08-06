@@ -3,7 +3,11 @@ import { createPortal } from 'react-dom';
 import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Loader2, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck } from 'lucide-react';
 import FlashcardStudyView from '../components/FlashcardStudyView';
 import Modal from '../../../components/ui/Modal';
+import DueBadge from '../../../components/ui/DueBadge';
 import { api } from '../../../lib/api';
+// Shared with StudySpace, which counts due cards for the tab badge. One copy of
+// the rule on the client; the server stays authoritative.
+import { isDue } from '../../../lib/reviewSchedule';
 
 interface Flashcard {
   id: string;
@@ -13,17 +17,6 @@ interface Flashcard {
   sourceMaterialId?: string | null;
   /** When this card is next due. Past or null = due now. */
   nextReviewAt?: string | null;
-}
-
-/**
- * Mirrors `isDue()` in server/lib/reviewSchedule.ts. The server remains the
- * authority — this only decides what to show and which cards a session opens
- * with. `<=` so overdue cards still count as due; null means never scheduled.
- */
-function isDue(nextReviewAt: string | null | undefined, now: number = Date.now()): boolean {
-  if (!nextReviewAt) return true;
-  const due = new Date(nextReviewAt).getTime();
-  return Number.isNaN(due) || due <= now;
 }
 
 /** "Tue 4 Aug" — short enough for a deck tile. */
@@ -168,8 +161,11 @@ export default function FlashcardsTab({
   const deckSummary = (set: FlashcardSet): string => {
     if (set.cardCount === 0) return 'Empty — no cards yet';
     const cards = `${set.cardCount} card${set.cardCount === 1 ? '' : 's'}`;
-    const due = dueCards(set).length;
-    if (due > 0) return `${cards} · ${due} due`;
+    // Deliberately does NOT append "· N due". The tile already carries that
+    // number twice — on the badge and on the "Review N" button — and a third
+    // copy on one small tile reads as noise rather than emphasis.
+    if (dueCards(set).length > 0) return cards;
+    // Nothing due, so the tile has room to say something useful instead.
     const next = nextReviewDate(set);
     return next ? `${cards} · next review ${formatReviewDate(next)}` : cards;
   };
@@ -416,8 +412,12 @@ export default function FlashcardsTab({
                     onClick={() => setSelectedSetContent(set.id)}
                     className="bg-surface-container-lowest rounded-2xl border border-white/5 p-6 hover:-translate-y-1 transition-all duration-300 group hover:border-primary-fixed-dim/30 hover:shadow-lg hover:shadow-primary-fixed-dim/5 flex flex-col cursor-pointer"
                   >
-                    <div className="w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center group-hover:bg-primary-fixed-dim/20 group-hover:border-primary-fixed-dim/30 transition-colors mb-5">
+                    {/* The badge rides the icon rather than the title: scanning
+                        a grid of six decks for "which one has work waiting" is a
+                        visual job, and the icons form the column the eye follows. */}
+                    <div className="relative w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center group-hover:bg-primary-fixed-dim/20 group-hover:border-primary-fixed-dim/30 transition-colors mb-5">
                       <Layers className="w-6 h-6 text-slate-400 group-hover:text-primary-fixed-dim transition-colors" />
+                      <DueBadge count={due} className="absolute -top-1.5 -right-1.5 ring-2 ring-surface-container-lowest" />
                     </div>
 
                     <div className="flex-1 mb-5">

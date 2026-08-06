@@ -360,11 +360,47 @@ Card fields the tab needs: `sourceMaterialId` (deck summary, "already in this de
 **1. Deck list.** Tiles, three across on a laptop, one on a phone. **Study is on the tile** — opening
 the tab and starting a session is one click. The deck view is not on the way.
 
-| Deck state | Summary line | Button |
-|---|---|---|
-| No cards | `Empty — no cards yet` | `Add Cards` |
-| Cards due | `68 cards · 12 due` | **`Review 12`** (primary) |
-| None due | `68 cards · next review Tue 4 Aug` | `Practice all` (quiet) |
+| Deck state | Badge on icon | Summary line | Button |
+|---|---|---|---|
+| No cards | — | `Empty — no cards yet` | `Add Cards` |
+| Cards due | **`12`** | `68 cards` | **`Review 12`** (primary) |
+| None due | — | `68 cards · next review Tue 4 Aug` | `Practice all` (quiet) |
+
+⚠️ **The due count appears exactly TWICE on a due tile — badge and button — and that is deliberate.**
+`deckSummary()` used to append `· 12 due`; it no longer does. Three copies of one number on a small
+tile read as noise rather than emphasis. The badge is for *scanning* a grid of decks, the button is
+for *acting*; the summary line is facts. The not-due branch is untouched, because "next review Tue
+4 Aug" is the useful thing to say when there is nothing to do.
+
+### The due badge (added 6 August 2026)
+
+Also on the **Flashcards tab itself**, desktop and mobile, showing the whole space's due count.
+
+**It is derived, not fetched, and must stay that way.** `StudySpace.tsx` already loads every card
+with its `next_review_at` and is the same component that renders the tab bar, so the count is
+`flashcardSets.flatMap(s => s.cards).filter(c => isDue(c.nextReviewAt)).length` — no request, no
+latency. `GET /api/flashcards/due/:spaceId` was deleted for returning any space's cards to any
+logged-in user (section 14) and **does not need to come back for this.**
+
+It refreshes itself: `exitStudy()` already calls `onRefresh()` → `fetchSpaceData`, so the badge drops
+the moment a session ends.
+
+`isDue()` moved from `FlashcardsTab` to **`src/lib/reviewSchedule.ts`**, mirroring the server file of
+the same name, because `StudySpace` needs it too. One copy on the client; the server stays
+authoritative. The tab badge and the tile badges must both use it or their numbers stop agreeing —
+verified against live data: a space with two 29-card decks reads **58** on the tab and **29** on each
+tile.
+
+`DueBadge` (`src/components/ui/DueBadge.tsx`) renders nothing at zero, caps the label at `99+`, and
+carries an `aria-label` because a bare numeral tells a screen reader nothing. Cyan, not red: a due
+card is an invitation, not an error.
+
+⚠️ **A brand-new deck shows as entirely due — 29 cards, badge of 29.** Correct by design
+(`next_review_at` defaults to `now()`, so a fresh card is born due and its first pass is the one that
+counts), but it reads as a backlog the student has fallen behind on. Separating "new" from "needs
+revisiting" would change what the server treats as due, which is the single load-bearing check in
+`POST /api/flashcards/rate` (section 6). **Considered and shipped as-is** — revisit only with a
+reason, not on instinct.
 
 **2. Deck detail.** For browsing cards and managing the deck — not a step to studying. Same primary
 action, plus Add Cards / rename / delete, the source line, and an "all caught up" note when nothing

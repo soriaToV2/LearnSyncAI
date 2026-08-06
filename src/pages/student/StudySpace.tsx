@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, Plus, BookOpen, Layers, Lock, Brain, Award, BrainCircuit, ChevronDown, Loader2 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import FlashcardsTab from './studySpaceTabs/FlashcardsTab';
@@ -7,6 +7,8 @@ import FeynmanTab from './studySpaceTabs/FeynmanTab';
 import AdaptiveTestTab from './studySpaceTabs/AdaptiveTestTab';
 import ResourcesTab from './studySpaceTabs/ResourcesTab';
 import { api } from '../../lib/api';
+import { isDue } from '../../lib/reviewSchedule';
+import DueBadge from '../../components/ui/DueBadge';
 import { subjectName } from '../../data/mockEducator';
 
 interface Flashcard {
@@ -44,6 +46,23 @@ export default function StudySpace() {
   const [availableResources, setAvailableResources] = useState<
     { id: string; title: string; concept_count: number }[]
   >([]);
+
+  /**
+   * Cards waiting for review across every deck in this space.
+   *
+   * Derived, not fetched. `fetchSpaceData` already pulls every card with its
+   * `next_review_at`, so this costs nothing — and deliberately so: the old
+   * `GET /api/flashcards/due/:spaceId` was deleted for returning any space's
+   * cards to any logged-in user, and nothing here needs it back.
+   *
+   * It also refreshes itself. `FlashcardsTab.exitStudy()` calls `onRefresh`,
+   * which is `fetchSpaceData`, so finishing a session drops the badge with no
+   * extra wiring.
+   */
+  const dueCount = useMemo(
+    () => flashcardSets.flatMap(s => s.cards).filter(c => isDue(c.nextReviewAt)).length,
+    [flashcardSets]
+  );
 
   const fetchSpaceData = async () => {
     if (!spaceId) return;
@@ -164,6 +183,7 @@ export default function StudySpace() {
             >
               <Layers className="w-4 h-4" />
               Flashcards
+              <DueBadge count={dueCount} />
             </button>
             <button
               onClick={() => setActiveTab('free-recall')}
@@ -196,6 +216,10 @@ export default function StudySpace() {
             >
               <div className="flex items-center gap-2.5">
                 {activeTab === 'flashcards' && <><Layers className="w-4 h-4 text-primary-fixed-dim" /> <span>Flashcards</span></>}
+                {/* On the collapsed button the menu is shut, so the badge has to
+                    ride here too — otherwise a student on a phone only learns
+                    cards are due by opening the menu. */}
+                {activeTab !== 'flashcards' && <DueBadge count={dueCount} />}
                 {activeTab === 'free-recall' && <><Brain className="w-4 h-4 text-primary-fixed-dim" /> <span>Free Recall AI</span></>}
                 {activeTab === 'feynman' && <><Award className="w-4 h-4 text-primary-fixed-dim" /> <span>Feynman Technique</span></>}
                 {activeTab === 'adaptive-test' && <><BrainCircuit className="w-4 h-4 text-primary-fixed-dim" /> <span>Test Mode</span></>}
@@ -229,6 +253,7 @@ export default function StudySpace() {
                     >
                       <Icon className={`w-4 h-4 ${isActive ? 'text-primary-fixed-dim' : 'text-slate-400'}`} />
                       <span>{item.label}</span>
+                      {item.id === 'flashcards' && <DueBadge count={dueCount} />}
                     </button>
                   );
                 })}
