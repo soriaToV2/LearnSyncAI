@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
 import { History, PenTool, RefreshCw, ChevronDown, BookOpen } from 'lucide-react';
+import { CARD, LABEL, SECTION, toneText, scoreTone, type Tone } from '../../../components/ui/surfaces';
 
 /**
  * Layout shared by the Free Recall and Feynman tabs.
@@ -14,34 +15,14 @@ import { History, PenTool, RefreshCw, ChevronDown, BookOpen } from 'lucide-react
 
 export type ViewMode = 'study' | 'history';
 
-// ── Shared style tokens (unchanged from the originals) ──────────────────────
-export const CARD = 'bg-surface-container-lowest/40 rounded-2xl';
-export const LABEL = 'font-sans text-[11px] font-semibold text-slate-500 uppercase tracking-wider';
-export const SECTION = 'font-sans text-xs font-semibold text-slate-400 uppercase tracking-widest';
-
 /**
- * `neutral` is the "no direction to report" tone. Free Recall's progress line
- * uses it when an attempt is the student's first on a material, or when the
- * change since their last one is inside the measurement noise — cases where
- * claiming either improvement or decline would be inventing a signal.
- *
- * It renders as ordinary body text rather than a colour, which is the point:
- * good/mid/poor all assert a judgement, and there are places in these tabs where
- * no judgement is available to make.
+ * The style tokens and the tone scale now live in `components/ui/surfaces.ts`,
+ * because Test Mode needs the same card surface and was holding a byte-identical
+ * copy of the class strings. Re-exported here so every existing import through
+ * this file keeps working.
  */
-export type Tone = 'good' | 'mid' | 'poor' | 'neutral';
-
-export const toneText: Record<Tone, string> = {
-  good: 'text-emerald-400',
-  mid: 'text-amber-400',
-  poor: 'text-red-400',
-  neutral: 'text-slate-300',
-};
-
-/** 0–100 → tone. The single place the colour thresholds live. */
-export function scoreTone(score: number): Tone {
-  return score >= 80 ? 'good' : score >= 60 ? 'mid' : 'poor';
-}
+export { CARD, LABEL, SECTION, toneText, scoreTone };
+export type { Tone };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tab shell — header + the changing body below it

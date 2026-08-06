@@ -286,11 +286,7 @@ export default function StudySpace() {
         )}
 
         {activeTab === 'adaptive-test' && (
-          <AdaptiveTestTab
-            flashcardSets={flashcardSets}
-            availableResources={availableResources}
-            courseConnected={courseConnected}
-          />
+          <AdaptiveTestTab spaceId={spaceId!} availableResources={availableResources} />
         )}
 
         {activeTab === 'resources' && (
