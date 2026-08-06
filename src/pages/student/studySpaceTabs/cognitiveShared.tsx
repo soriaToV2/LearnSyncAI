@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { History, PenTool, RefreshCw, ChevronDown } from 'lucide-react';
+import { History, PenTool, RefreshCw, ChevronDown, BookOpen } from 'lucide-react';
 
 /**
  * Layout shared by the Free Recall and Feynman tabs.
@@ -261,6 +261,57 @@ export function Collapsible({
         </span>
       </button>
       {open && <div className="pt-3 animate-in fade-in duration-200">{children}</div>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Which material an attempt was graded against
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolves an attempt's stored `material_ids` to a readable label.
+ *
+ * An attempt is only interpretable next to its material: the coverage
+ * denominator, the missed list and the progress line all belong to one lesson,
+ * and a space can hold attempts against several. Without this the History list
+ * is a column of scores with nothing to attach them to.
+ *
+ * **A material can go missing, and that is normal rather than an error.**
+ * `cognitive_logs.material_ids` is a `UUID[]`, which Postgres cannot put a
+ * foreign key on, so nothing cascades: an educator deleting or archiving a
+ * material leaves the attempt intact with an id that no longer resolves. The
+ * student's work is deliberately preserved — say so plainly instead of
+ * rendering a blank or a raw uuid.
+ *
+ * Returns null only when no material was recorded at all (attempts logged
+ * before `material_ids` was populated).
+ */
+export function materialLabel(
+  materialIds: string[] | undefined,
+  resources: { id: string; title: string }[]
+): string | null {
+  const ids = materialIds ?? [];
+  if (ids.length === 0) return null;
+
+  const known = ids
+    .map((id) => resources.find((r) => r.id === id)?.title)
+    .filter((t): t is string => Boolean(t));
+
+  if (known.length === ids.length) return known.join(', ');
+  if (known.length === 0) return 'Material no longer available';
+  return `${known.join(', ')} · ${ids.length - known.length} no longer available`;
+}
+
+/** The material line above a result. Renders nothing when there is none to name. */
+export function AttemptMaterial({ label }: { label: string | null }) {
+  if (!label) return null;
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <BookOpen className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+      <span className={`${LABEL} truncate`} title={label}>
+        {label}
+      </span>
     </div>
   );
 }

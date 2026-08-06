@@ -9,6 +9,7 @@ import { api } from '../../../lib/api';
 import {
   CARD, LABEL, SECTION,
   CognitiveTabShell, VerdictBanner, FeedbackCard, Collapsible, AttemptsList,
+  AttemptMaterial, materialLabel,
   scoreTone, toneText,
   type AttemptSummary, type ViewMode,
 } from './cognitiveShared';
@@ -66,6 +67,12 @@ interface CognitiveLog {
   user_input: string;
   similarity_score: number;
   ai_feedback: string;
+  /**
+   * Which material this was graded against. Optional because attempts logged
+   * before the column was populated have none — and because a deleted material
+   * leaves the id behind unresolvable, which `materialLabel()` handles.
+   */
+  material_ids?: string[];
   created_at: string;
 }
 
@@ -265,6 +272,9 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
         user_input: userInput,
         similarity_score: feedback.accuracy_score / 100,
         ai_feedback: JSON.stringify(feedback),
+        // Not echoed by the POST response and it does not need to be — the
+        // client chose the material a moment ago.
+        material_ids: selectedMaterialIds,
         created_at,
       };
 
@@ -308,7 +318,12 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
       scoreLabel: `${accuracy}/100`,
       scoreTone: scoreTone(accuracy),
       preview: log.user_input,
-      meta: f ? `${f.concepts.length} concept${f.concepts.length === 1 ? '' : 's'}` : undefined,
+      // Material first, then how many concepts were explained. The material is
+      // the part that makes the score interpretable; the count is detail.
+      meta: [
+        materialLabel(log.material_ids, availableResources),
+        f ? `${f.concepts.length} concept${f.concepts.length === 1 ? '' : 's'}` : null,
+      ].filter(Boolean).join(' · ') || undefined,
     };
   });
 
@@ -319,6 +334,9 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
     const activeLog = log;
     return (
             <div className="space-y-5 animate-in fade-in duration-300">
+              {/* Named before the score: the concepts graded below belong to
+                  one lesson, and History can hold attempts across several. */}
+              <AttemptMaterial label={materialLabel(activeLog.material_ids, availableResources)} />
               <VerdictBanner
                 score={activeFeedback.accuracy_score}
                 tone={scoreTone(activeFeedback.accuracy_score)}

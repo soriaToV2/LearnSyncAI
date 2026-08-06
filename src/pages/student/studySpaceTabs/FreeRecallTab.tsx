@@ -5,6 +5,7 @@ import { api } from '../../../lib/api';
 import {
   CARD, LABEL, SECTION,
   CognitiveTabShell, VerdictBanner, FeedbackCard, Collapsible, AttemptsList,
+  AttemptMaterial, materialLabel,
   type AttemptSummary, type Tone, type ViewMode,
 } from './cognitiveShared';
 
@@ -303,6 +304,10 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
       // on a coarse material would outrank a better one on a granular material
       // purely because of how the document was split. See progressLine().
       scoreTone: 'good' as Tone,
+      // Which lesson this was graded against. A space can hold attempts on
+      // several materials, whose denominators differ, so a bare score in this
+      // list is not interpretable without it.
+      meta: materialLabel(log.material_ids, availableResources) ?? undefined,
       preview: log.user_input,
     };
   });
@@ -334,6 +339,10 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
     const progress = progressLine(activeFeedback, previousAttempt(activeLog));
     return (
             <div className="space-y-5 animate-in fade-in duration-300">
+              {/* Named before the score, because the score cannot be read
+                  without it: the denominator, the missed list and the progress
+                  line all belong to one lesson. */}
+              <AttemptMaterial label={materialLabel(activeLog.material_ids, availableResources)} />
               {/* The ring keeps the percentage — it is still the figure the
                   scoring produces — at a FIXED tone.
 
