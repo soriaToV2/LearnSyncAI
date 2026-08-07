@@ -140,12 +140,12 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
     setError(null);
     setScreen('generating');
     try {
+      // Formats only. The server counts concepts and re-derives the length —
+      // `allocation` here is the preview, not the instruction.
       const test = await testApi.generate({
         space_id: spaceId,
         material_id: materialId,
-        title: materialTitle(materialId) ?? 'Practice Test',
         formats: allocation.items.map((i) => i.format),
-        concept_count: conceptCount,
       });
       setActiveTest(test);
       setScreen('session');
@@ -224,8 +224,10 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
           <RefreshCw className="w-6 h-6 text-primary-fixed-dim animate-spin" />
         </div>
         <h2 className="font-display text-xl font-semibold text-white mb-2">Writing your test…</h2>
+        {/* Measured 1.6s for a 29-question test across all five sections. The
+            earlier 17-21s readings were Groq's rate-limit backoff, not writing. */}
         <p className="font-sans text-sm text-slate-500 leading-relaxed">
-          This takes 10–20 seconds. The questions are being written from{' '}
+          This usually takes a few seconds. The questions are being written from{' '}
           <span className="text-slate-300">{materialTitle(materialId)}</span>, so they only cover what
           your teacher uploaded.
         </p>
@@ -382,7 +384,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
               {total > 0 ? `Start Test · ${total} question${total === 1 ? '' : 's'}` : 'Start Test'}
             </button>
             <p className="font-sans text-[11px] text-slate-600 text-center mt-2.5">
-              Takes about 15 seconds to write.
+              Usually takes a few seconds to write.
             </p>
           </div>
         </div>

@@ -1,0 +1,693 @@
+# Adaptive Test Mode — Implementation Reference
+
+**Feature:** AI-generated practice tests built from one material's concepts, graded server-side, producing the telemetry BKT consumes.
+**Status:** Frontend and backend implemented and verified against live data. **BKT is NOT implemented** — that is Phase 3.
+**Date:** 7 August 2026
+**Migrations applied:** **none.** Every column this feature writes already existed unused — `difficulty_tier`, `mastery_snapshot` and `question_types` were added by migration `20260723090004_bkt_engine.sql` §7 for exactly this purpose and had never been populated.
+**Commits:** Phase 1 (frontend) is `7a258aa "Test mode frontend revision"`. Phase 2 (backend) is the commit this document ships with.
+
+> **Read this first if you are an AI agent debugging or extending this feature.**
+> §2 is the non-negotiable rules — breaking one does not regress a feature, it invalidates
+> something the capstone paper claims. §4 is the one rule the whole test-length design rests on.
+> §13 is the debugging playbook. **§14 lists defects deliberately left open — check it before
+> "finding a bug".** §15 is the BKT handoff.
+
+---
+
+## Table of contents
+
+1. [What this feature is](#1-what-this-feature-is)
+2. [Non-negotiable rules](#2-non-negotiable-rules)
+3. [What it was before, and why it was rebuilt](#3-what-it-was-before-and-why-it-was-rebuilt)
+4. [Test length — one question per concept](#4-test-length--one-question-per-concept)
+5. [Matching type — 4 terms against 6 definitions](#5-matching-type--4-terms-against-6-definitions)
+6. [Difficulty tiers](#6-difficulty-tiers)
+7. [Which AI model, and why](#7-which-ai-model-and-why)
+8. [Question generation](#8-question-generation)
+9. [Grading](#9-grading)
+10. [Telemetry](#10-telemetry)
+11. [Security model](#11-security-model)
+12. [Frontend structure](#12-frontend-structure)
+13. [Debugging playbook](#13-debugging-playbook)
+14. [Known issues deliberately NOT fixed](#14-known-issues-deliberately-not-fixed)
+15. [Handoff: BKT (Phase 3)](#15-handoff-bkt-phase-3)
+16. [Verification evidence](#16-verification-evidence)
+17. [Glossary](#17-glossary)
+
+---
+
+## 1. What this feature is
+
+A student picks one lesson and which question formats they want. The server counts that
+material's concepts, writes **one question per concept** across the chosen sections, and serves
+them **without the answer key**. The student works through one question per screen, can jump
+around and revise, and submits. The server grades against the key it kept, returns a result, and
+writes one `practice_telemetry` row per question — which is what Phase 3's BKT engine will turn
+into mastery observations.
+
+### The division of ownership, which is the heart of the design
+
+| Decided by | What |
+|---|---|
+| **The student** | Which lesson. Which of the five formats. Their answers. |
+| **The server** | How many questions. Which concept goes to which section. The true/false verdict. Where the correct option sits. Which concepts form a matching block. Whether an answer is right. |
+| **The model** | Prose only — the wording of questions, distractors, clues and glosses. |
+
+The model never sees a UUID, never decides a grade, and never chooses a position. Everything that
+could corrupt a mastery estimate is code.
+
+### Files
+
+**Backend**
+- `server/lib/testAllocation.ts` — **new.** Which concept goes to which section; the authoritative copy of the length rule.
+- `server/lib/testDifficulty.ts` — **new.** Mastery snapshot, tier thresholds, and the per-format tier prompt fragments.
+- `server/lib/testGeneration.ts` — **new.** Five per-format writers, validation, deterministic fallbacks.
+- `server/lib/testGrading.ts` — **new.** The deterministic answer-matching ladder.
+- `server/routes/practice.routes.ts` — **rewritten.** Six endpoints, gates, telemetry.
+- `server/types/api.ts` — reshaped `CreatePracticeTestSchema` and `SubmitAnswerSchema`; added the stored-payload interfaces.
+- `server/lib/groq.ts` — added `GroqUnavailableError`, `GroqRateLimitError`, `withGroq()` retry, and a startup key fingerprint.
+
+**Frontend**
+- `src/lib/testMode.ts` — the contract, the client mirror of the allocation rule, and the `api`-backed `testApi`.
+- `src/lib/testModeFixtures.ts` — **deleted.** Phase 1's stand-in backend.
+- `src/pages/student/studySpaceTabs/AdaptiveTestTab.tsx` — **rewritten**, 1,596 → 607 lines.
+- `src/pages/student/components/TestSessionView.tsx` — **new.** Taking a test.
+- `src/pages/student/components/TestResultsView.tsx` — **new.** Reviewing one.
+- `src/components/ui/surfaces.ts` — **new.** Style tokens promoted out of `cognitiveShared.tsx`, which re-exports them.
+
+**Tooling**
+- `scripts/set-test-mastery.ts` — **new.** Forces mastery so the tiers can be verified before BKT exists.
+- `package.json` — `dev:server` now watches `.env` (see §13).
+
+---
+
+## 2. Non-negotiable rules
+
+1. **The answer key never reaches the browser during a test.** `TestQuestion` in `src/lib/testMode.ts`
+   has no `correct_answer` field, and `stripKey()` in `practice.routes.ts` is the **only** function
+   that serialises a question toward a client. It allow-lists fields rather than deleting the key, so
+   a field added later cannot leak by omission. **Do not add a second serialiser.**
+2. **`is_correct` is computed server-side, always.** The old endpoint accepted it in the request body,
+   which let a student post arbitrary BKT evidence — the exact write RLS makes impossible from a
+   browser, handed over by the API instead. `SubmitAnswerSchema` deliberately has no `is_correct` and
+   no `concept_id`; both are derived from `questions_payload[question_index]`.
+3. **One question per concept.** See §4. This is what makes each test exactly one BKT observation per
+   concept.
+4. **A matching block is exactly 4 terms against 6 definitions.** See §5.
+5. **The model echoes an INDEX, never a `concept_id`.** Every echoed `n` is range-checked against its
+   batch. A hallucinated UUID attaches a student's mastery to the wrong concept, and nothing
+   downstream can detect it.
+6. **Difficulty thresholds are 0.50 and 0.85**, matching paper p. 81/p. 98 and `mastery_tier()` in
+   `schema.sql`. The dead prompt this replaced used 30%/70%, which matched nothing.
+7. **A concept with no `bkt_mastery` row is at P(L₀) = 0.10, not 0.** Treating a missing row as zero
+   would pin every test to `foundational` forever — invisibly, because `foundational` is also the
+   correct answer today.
+8. **Test Mode does not write `bkt_mastery` or `bkt_update_logs`.** It reads mastery to pick a tier and
+   writes telemetry. Phase 3 owns the rest.
+9. **No pyBKT, ever.** The route that was replaced fired at a Python FastAPI service running pyBKT.
+   `CLAUDE.md` and `ARCHITECTURE.md` both forbid it; the engine must be in the Express backend.
+
+---
+
+## 3. What it was before, and why it was rebuilt
+
+The old `AdaptiveTestTab.tsx` (1,596 lines) made **zero network calls.** Questions were generated in
+the browser from a hardcoded array of eight neuroscience concepts ("Presynaptic Calcium Influx").
+True/false was `Math.random() > 0.5`. History lived in `localStorage`, shared across every study
+space on the machine. BKT was faked client-side as `p + (1-p)*0.35`.
+
+The three backend endpoints had **zero callers** and six defects:
+
+| # | Defect | Consequence |
+|---|---|---|
+| 1 | `practice_telemetry` INSERT omitted `question_type`, which migration 0011 made `NOT NULL` | **Every** telemetry write failed; the error was discarded; the endpoint returned 200. BKT could never have received an observation. |
+| 2 | `generateJson(prompt)` with no options → the dead `gemini-2.5-flash` default | HTTP 404 on this key, and no try/catch, so it rejected unhandled under Express 4 |
+| 3 | No ownership check, no material-access check | Any student could generate a test from another grade's material and read its concepts back |
+| 4 | `is_correct` and `concept_id` client-supplied and trusted | Arbitrary mastery evidence |
+| 5 | Model-echoed `concept_id` UUIDs never validated | Silent mastery corruption |
+| 6 | `PUT /:id/complete` called a pyBKT FastAPI service | Forbidden by `CLAUDE.md` |
+
+There was nothing to preserve. The rebuild ran in three phases: **frontend** (against a fixture
+backend so the UI could be judged before any server work), **backend**, and **BKT** (not started).
+
+---
+
+## 4. Test length — one question per concept
+
+**The student does not choose how long a test is.** `allocateConcepts()` in
+`server/lib/testAllocation.ts` derives it: every concept in the material gets exactly one question,
+distributed across the chosen sections.
+
+**This is a BKT rule, not a simplicity rule.** The old UI let the student pick a total, and concepts
+were cycled to fill it — so a 40-item test on a 29-concept lesson asked about some concepts three or
+four times in one sitting. Four back-to-back answers on one concept are not four independent
+observations, which is precisely what BKT assumes. It is the same trap the flashcard due-check
+exists to avoid (`CLAUDE.md`: *"a retry is not one"*). One question per concept means one observation
+per concept per test, and it makes `document_mastery()` — the mean over every concept — meaningful
+after a single test rather than mostly seed values.
+
+**The paper does not specify a test length** (checked pp. 55–90), so nothing is contradicted.
+
+### The allocation rule
+
+```
+others    = chosen formats minus matching_type
+maxBlocks = n < 6 ? 0 : floor((n - others.length) / 4)   // ≥1 concept left for every other section
+blocks    = clamp(round(n / formats.length / 4), 1, maxBlocks)
+matching  = blocks * 4
+rest      = n - matching, split evenly across `others`, remainder to earlier sections
+```
+
+| N | Formats | Result |
+|---|---|---|
+| 29 | MCQ only | MCQ 29 |
+| 29 | MCQ + Matching | MCQ 13, Matching 16 (4 blocks) |
+| 29 | all five | MCQ 7, T/F 6, ID 6, FIB 6, Matching 4 |
+| 19 | all five | MCQ 4, T/F 4, ID 4, FIB 3, Matching 4 |
+| 29 | Matching only | Matching 28 — **1 concept untested**, reported via `covered` |
+| 5 | MCQ + Matching | MCQ 5, **matching dropped** (fewer than 6 concepts) |
+
+Verified by sweep: **1,860 combinations (N = 1…60 × all 31 format subsets), zero violations.**
+
+**`src/lib/testMode.ts` holds a MIRROR of this function.** The server is authoritative — it counts
+concepts itself and re-derives the allocation, because a client-supplied length is a client-chosen
+test. The client copy only drives the setup preview. Same arrangement as
+`server/lib/reviewSchedule.ts` ↔ `src/lib/reviewSchedule.ts`. **Change one, change the other.**
+
+### Consequences to leave alone
+
+- **Matching is under-weighted when all five formats are chosen** (4 items where an even split wants 6).
+  Forced: the count must be a multiple of 4 and one block is the floor.
+- **Matching-only rounds down.** The leftover concepts become the blocks' distractors, but they get no
+  question. The setup screen says so.
+
+---
+
+## 5. Matching type — 4 terms against 6 definitions
+
+Paper **p. 75**, quoted:
+
+> *Matching Type (4 terms, 6 definitions): P(G_match) = 0.17. For any individual term, the
+> probability of selecting the correct definition from the pool of six through random guessing is
+> 1/6 ≈ 0.17, **applied per matched item**.*
+
+**Two rules, load-bearing for different reasons — do not conflate them:**
+
+- **SIX OPTIONS is the BKT rule.** 1/6 is the guess probability the update applies. Any other pool
+  size makes the arithmetic wrong.
+- **FOUR TERMS is a fidelity rule.** *"Applied per matched item"* means the term count never enters
+  the formula — a 2-term block would compute correctly. It is enforced because the paper and the
+  `schema.sql` seed comment both state it, and code that quietly does otherwise misleads whoever
+  reads the spec next. **If these two ever conflict with something that genuinely affects scoring,
+  bend the term count, never the option count.**
+
+`allocateConcepts()` guarantees matching receives a multiple of 4, so a short trailing block cannot
+be produced. **One block emits four telemetry rows, not one.**
+
+---
+
+## 6. Difficulty tiers
+
+Paper **p. 81** calls this *"session-based adaptation"* — **one tier per test, not per question.**
+`practice_tests.difficulty_tier` and `mastery_snapshot` are single columns for that reason.
+
+```
+mastery_snapshot = mean over EVERY concept in the material of
+                   (bkt_mastery.latent_mastery, or 0.10 when no row exists)
+
+>= 0.85 → advanced      "analytical scenarios, synthesis, edge cases"
+>= 0.50 → intermediate  "conceptual comparisons, multi-concept recall, practical applications"
+ < 0.50 → foundational  "direct definitions, basic conceptual associations"
+```
+
+Both values are **stored at generation**, because the paper's *Difficulty Alignment* check (p. 98) is
+literally *"confirms that the adaptive calibration pipeline correctly passes the mastery parameter to
+the generative AI prompt"* — and that cannot be run against data nobody saved.
+
+### Two things that are easy to get wrong
+
+**The 0.10 default is applied at READ TIME, not stored.** `bkt_mastery` is empty and rows are
+deliberately not pre-seeded — 50 students × 57 concepts of rows all saying the same thing tells you
+nothing the default does not. The old route upserted rows at `0.0`, re-breaking what migration 0004
+§3 fixed. Mirrors `document_mastery()` in `schema.sql`, which is
+`COALESCE(avg(COALESCE(bm.latent_mastery, 0.10)), 0.10)`.
+
+**The snapshot is rounded inside `masterySnapshot()`, and that rounding is load-bearing.** Fourteen
+concepts at 0.90 and fourteen at 0.10 is exactly 0.5 on paper but accumulates to
+`0.49999999999999994`, which reads as `foundational` — a tier boundary decided by summation order.
+Rounding happens in the function so no caller can skip it.
+
+### Per-format tier prompts
+
+`FORMAT_TIER_GUIDANCE` in `testDifficulty.ts` gives each format its own instruction per tier, and
+true/false additionally has `TF_TIER_RULES`.
+
+**A single shared paragraph did not work, and this was measured.** With the tier instruction only in
+the prompt header, the true/false writer produced **byte-identical output at all three tiers** — even
+for SSDLC, the richest concept in the corpus at 643 characters. The cause was structural: the
+operative line was *"VERDICT: TRUE — write a statement the definition supports"*, and restating the
+definition is always the safest way to satisfy it. A tier hint fifteen lines above loses to the rule
+on the line the model is answering. The fix was to make the tier rule **replace** that line.
+
+---
+
+## 7. Which AI model, and why
+
+**Groq `llama-3.3-70b-versatile`.**
+
+**The paper does not require Gemini.** p. 81 says only *"the generation prompt instructions sent to
+**the large language model**"*. The Gemini claim was in our own `ARCHITECTURE.md` §7, which has been
+corrected.
+
+Three reasons, in order of weight:
+
+1. **Gemini's free quota is 20 requests/day *per model*, and concept extraction, Free Recall and
+   Feynman already spend it.** Test generation on `GEMINI_UTILITY_MODEL` would contend with features
+   that currently work.
+2. **The task shape is already proven here.** `generateQuestionsForConcepts()` in `groq.ts` does the
+   same job for flashcards with the same batch-and-echo pattern.
+3. Groq is markedly faster.
+
+**What is given up:** Gemini's `responseSchema` structurally pins output shape; Groq's `json_object`
+does not. Covered by one call **per format** (uniform shape per response instead of a five-way union)
+plus per-format validation with deterministic fallbacks.
+
+### ⚠️ Groq free-tier capacity is a real blocker for the study
+
+| Limit | Free tier | One 29-question test |
+|---|---|---|
+| Tokens per minute (TPM) | 12,000 | ~9,000 |
+| **Tokens per day (TPD)** | **100,000** | ~9,000 |
+
+**That is roughly 11 tests per day for the entire account** — not per student. A 50-student study
+does not fit. `withGroq()` handles the refusals correctly but cannot create capacity. The options are
+Groq's paid tier or Gemini with billing enabled (~$3–5 for the whole study, which makes its 20/day
+free limit irrelevant). **Decide before deployment.**
+
+`withGroq()` distinguishes the two windows, which matters: **TPM clears in seconds and is retried;
+TPD does not clear until the daily reset and fails immediately** with an honest message. Retrying a
+daily exhaustion spends four attempts to fail anyway and tells the student "try again in a moment"
+when the truth is "not today". Mirrors `classifyFailure()` in `gemini.ts`.
+
+---
+
+## 8. Question generation
+
+`server/lib/testGeneration.ts`. One exported entry point, `generateTestQuestions()`; five private
+writers, run in parallel; batches within a format stay sequential at `BATCH = 20`.
+
+| Format | Model returns | Server owns | Validation → fallback |
+|---|---|---|---|
+| `multiple_choice` | `{ n, question, correct, distractors[3] }` | **Shuffles the four options** (deterministic by index) so position never leaks the key | 3 distinct non-empty distractors, none equal to `correct` → else definition-as-correct + 3 other concepts' definitions |
+| `true_or_false` | `{ n, statement }` | **Decides the verdict itself**, alternating by index | non-empty and clean → else `"{term} means: {another concept's definition}"`, reliably false |
+| `identification` | `{ n, clue }` | key = the concept's `term` | clean **and must not contain the term** → else the raw definition with the term blanked |
+| `fill_in_the_blank` | `{ n, sentence }` with one `____` | key = the concept's `term` | exactly one `____`, term absent elsewhere → else a template |
+| `matching_type` | `{ n, gloss }` ≤90 chars | Assembles blocks, picks distractors, shuffles, **dedupes the pool** | clean, term absent → else the truncated definition |
+
+**Every format has a deterministic fallback.** A model that skips an item must not shorten the test —
+the length is "one question per concept" and a short test silently breaks that invariant along with
+the BKT coverage it buys.
+
+**`explanation` is the concept's own definition, verbatim** (`"{term} — {definition}"`). No model call,
+so the paper's Factual Correctness criterion (p. 98) holds by construction.
+
+**Matching needs a gloss and the other formats do not** because definitions run to a **643-character
+max (median 162)**. Six of those as options is unreadable at any layout.
+
+### Two bugs found in live output and fixed
+
+**The model leaked its own item number into the prose.** Observed twice in one run: *"…aim to mitigate
+through various security measures **n1**."* and *"…which is part of **n**."* `ORPHAN_INDEX` now rejects
+such items. **Rejected, not repaired** — stripping the token leaves *"…which is part of."*, which is
+still wreckage reaching the student, whereas a fallback is always a complete sentence. Only a
+*trailing* orphan is matched, so a legitimate "n" mid-sentence is untouched.
+
+**Two concepts produced identical glosses.** Asked for a ≤90-character gloss, both `XSS` and
+`SQL Injection` returned "Cyberattack risk", and a block rendered with the same text at A and C. That
+is not cosmetic: an answer is stored as the option's **text**, so two identical options are one slot
+to both the grader and the exclusive-slot UI, and the correct answer becomes ambiguous.
+`distinctPool()` now falls back to the concept's own definition, which is unique per row.
+
+---
+
+## 9. Grading
+
+`server/lib/testGrading.ts`. **Deterministic, with no model call.**
+
+- `multiple_choice` / `true_or_false` / `matching_type` — exact match after normalisation.
+- `identification` / `fill_in_the_blank` — `matchesTerm()`, which compares the answer against a set of
+  **mechanically derived aliases** of the expected term.
+
+### Why no model adjudication
+
+- A score a student is shown must be reproducible. Same principle as `findMemoisedAttempt()` in Free
+  Recall; here it comes free.
+- `P(G_id) = 0.05` (p. 75) asserts identification is near-impossible to guess. Lenient grading
+  falsifies that number and the BKT update built on it.
+- It costs no quota.
+
+### The alias ladder, and the line it must not cross
+
+`termAliases()` derives alternatives by **mechanical pattern only** — never by substring:
+
+- `foldKey()` — trailing parenthetical acronym removed (`… Life Cycle (SSDLC)` ≡ `… Life Cycle`)
+- `acronymOf()` — the abbreviation the term introduces
+- statute prefix removed (`RA 10173 – Data Privacy Act of 2012` → `Data Privacy Act of 2012`)
+- trailing year removed (`… of 2012` → `Data Privacy Act`)
+- the statute code alone (`RA 10173`)
+- leading article and trailing-s tolerance
+
+`foldKey` and `acronymOf` are imported from `conceptExtraction.ts`, where they are exported precisely
+so this rule exists once — Free Recall resolves student-typed terms through the same pair.
+
+**⚠️ NEVER add substring or containment matching.** It reads as generous and is wrong: `"Injection"`
+is contained in `"SQL Injection"`, and `"Access Control"` in `"Broken Access Control"` — different
+entries in the same lesson. Leniency here is a false positive fed into a mastery estimate.
+
+Measured, 15 cases, all passing:
+
+```
+"ssdlc"                    vs "… LIFE CYCLE (SSDLC)"                  ✓
+"the firewall" / "FIREWALL." / "firewalls"  vs "Firewall"             ✓
+"Data Privacy Act"         vs "RA 10173 – Data Privacy Act of 2012"   ✓
+"RA 10173"                 vs "RA 10173 – Data Privacy Act of 2012"   ✓
+"Injection"                vs "SQL Injection"                         ✗ (correctly)
+"Access Control"           vs "Broken Access Control"                 ✗ (correctly)
+"Privacy"                  vs "Data Privacy Act of 2012"              ✗ (correctly)
+""                         vs anything                                ✗
+```
+
+**An unanswered question is wrong, not excluded** — which is also why the score divides by the total,
+never by the number answered.
+
+---
+
+## 10. Telemetry
+
+**One `practice_telemetry` row per question, written ONCE, at completion**, as a single batch insert
+in `PUT /:id/complete`.
+
+**Not per answer, despite paper p. 80's "during active testing".** The UI lets a student jump back and
+change an answer. A per-answer write would produce two rows for one question — two BKT observations
+for one piece of evidence — and a real-time BKT update cannot be un-applied when the answer changes.
+Writing from the final answers satisfies what the paper actually requires (*"graded as a binary value
+… on a per-question basis"*, each with its own P(G)) while staying coherent with a revisable test.
+`student_answers` JSONB holds `{ answer, latency_ms }` per index in the meantime, which is what that
+column is for.
+
+**Completion is idempotent.** A second call on a `completed` test returns the stored result and writes
+nothing — otherwise a retried request doubles every observation.
+
+**Telemetry is a record of what happened; it is not yet a BKT observation.** Every completed test
+writes rows. Whether a *retake* should move mastery is Phase 3's decision (§15).
+
+A failed telemetry insert is logged loudly but does **not** fail the request — the student's score is
+already saved and showing it is what they are waiting for.
+
+---
+
+## 11. Security model
+
+`router.use(authenticate, requireRole('student'))`, then per route:
+
+```
+1. Zod safeParse                                    → 400
+2. requireOwnedSpace()                              → 404  (never 403)
+3. rejectInaccessibleMaterials([material_id])       → 403
+4. published to (space.subject, space.gradeLevel)
+   AND linked in study_space_materials              → 404
+```
+
+**404 not 403 for ownership**, because a 403 confirms the id names a real space, and space ids are
+visible in the address bar. Gate 4 is not redundant: passing the grade rule only proves the student
+may *read* the material, not that this space holds it.
+
+`/:id` routes load the row with `.eq('student_id', req.user!.id)` and 404 otherwise — **including the
+reads.** A practice test carries its own answer key and the student's answers; an unguarded read
+hands over both.
+
+The service role key bypasses RLS, so none of this is optional (migration 0008: *"The API layer must
+still enforce role and ownership itself"*).
+
+---
+
+## 12. Frontend structure
+
+Five screens, one union: `overview | setup | generating | session | results`. Session and results
+take over the tab by **early return**, the same way `FlashcardsTab` hands off to `FlashcardStudyView`
+— not a portal, not `position: fixed`.
+
+**Setup is three steps, and step 3 is read-only** — it states the derived question count and the
+section split. There is deliberately no length control (§4) and no per-format weighting, which is a
+length control wearing a different hat.
+
+**The session is one question per screen**, except matching, where the block of four shares one screen
+because the six definitions are a single pool. `ARCHITECTURE.md` §7 has the frontend record
+`latency_ms` as the student answers, which only means anything one question at a time.
+
+**The question navigator** is a numbered grid, rendered twice from one definition: a persistent rail
+at `lg:` and up, and the same grid inside a `Modal` below that, opened by tapping the `4 / 29` counter.
+A matching block contributes four cells that all jump to one screen — each term is separately
+answerable, so four cells is the truthful count.
+
+**Matching is drag-and-drop, and the TERM is what moves.** Measured over the live `concepts` table:
+terms median 18 characters (p90 40), definitions median 162 (p90 267, max 643). A two-column
+"draw a line across" layout needs both sides short. So the short thing became a draggable chip and the
+long thing became a full-width drop target. **Tap-a-chip-then-tap-a-definition is not a fallback for
+neatness** — dragging fails whenever chip and target are not on screen together, which on a phone is
+most of the time, and it is the only path a keyboard can take. Slots are exclusive; the two
+definitions left empty at the end are exactly the two distractors.
+
+**The results ring says "Test Score", never "Mastery".** Mastery is the per-concept probability in
+`bkt_mastery`. Unlike Free Recall's coverage ratio, this percentage *is* comparable across materials —
+it is correct-out-of-asked — so `scoreTone()`'s absolute thresholds are appropriate here.
+
+**There is deliberately NO mastery panel.** Until Phase 3 every `latent_mastery` is the 0.10 seed. The
+version replaced filled that gap with a hardcoded neuroscience array and a concept→material mapping
+invented by `idx % availableResources.length`. What is shown instead is real test outcomes.
+
+### Gotcha: this project has no `@types/react`
+
+React ships no types of its own and `@types/react` is not installed, so a locally-declared component's
+props are enforced exactly and **`key` is rejected on it**. Nothing in the codebase keys a local
+component. Two lists here key a wrapping `<Fragment>` instead. Do not "fix" this by adding `key` to a
+props interface — that would be a lying type.
+
+---
+
+## 13. Debugging playbook
+
+### Force a difficulty tier (the p. 98 Difficulty Alignment check)
+
+```bash
+npx tsx scripts/set-test-mastery.ts intermediate     # 0.65
+npx tsx scripts/set-test-mastery.ts advanced         # 0.92
+npx tsx scripts/set-test-mastery.ts foundational     # 0.25
+npx tsx scripts/set-test-mastery.ts 0.72             # any value
+npx tsx scripts/set-test-mastery.ts reset            # delete rows → P(L₀) 0.10
+npx tsx scripts/set-test-mastery.ts advanced "6."    # a different material
+```
+
+The script reads the value back through `masterySnapshot()` and `masteryTier()` — the same functions
+the generator calls — so it verifies rather than asserts.
+
+**`reset` is the truest foundational test.** Deleting the rows exercises the path a real student hits
+on day one (no rows, default applied at read time); writing 0.25 tests a state that will never occur.
+
+**⚠️ The tier is baked in at generation. Changing mastery does not re-tier an existing test.**
+
+### Audit what was generated
+
+```sql
+SELECT title, difficulty_tier, mastery_snapshot, status, score,
+       jsonb_array_length(questions_payload->'questions') AS questions,
+       questions_payload->>'fallback_count' AS fallbacks, created_at
+FROM practice_tests ORDER BY created_at DESC;
+```
+
+```sql
+-- One row per question, question_type always set, P(G) resolvable
+SELECT t.difficulty_tier, pt.question_type, count(*), sum(pt.is_correct::int) AS correct
+FROM practice_telemetry pt JOIN practice_tests t ON t.id = pt.practice_test_id
+GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+```sql
+-- Telemetry must exist only for completed tests, exactly once per question
+SELECT t.id, t.status, jsonb_array_length(t.questions_payload->'questions') AS questions,
+       count(pt.id) AS telemetry_rows
+FROM practice_tests t LEFT JOIN practice_telemetry pt ON pt.practice_test_id = t.id
+GROUP BY t.id, t.status, t.questions_payload;
+```
+
+### "My new Groq key doesn't work"
+
+`server/lib/groq.ts` reads `GROQ_API_KEY` **once, at module load**. Editing `.env` used to be a silent
+no-op because `.env` is not imported by anything, so `tsx watch` never restarted. Two mitigations are
+in place: `dev:server` now runs `tsx watch --include .env`, and the server logs a key fingerprint at
+startup:
+
+```
+[Groq] key loaded — fingerprint 363d6a09676f
+```
+
+If you swap keys and the fingerprint does not change, the swap did not take. **Groq limits are per
+organisation** — a second key inside the same account shares the same exhausted allowance.
+
+### Symptom → cause
+
+| Symptom | Look at |
+|---|---|
+| Every test is `foundational` | Correct until Phase 3. Confirm with `set-test-mastery.ts`. |
+| "daily limit has been reached" | TPD (100,000). Not retryable. §7. |
+| "Too many tests are being written at once" | TPM (12,000). Clears in seconds. |
+| Test has fewer questions than concepts | Matching-only rounds down (§4), or the material gained concepts after the preview |
+| A question looks like a template | `fallback_count` in `questions_payload` — the model skipped it or failed validation |
+| Answer marked wrong that looks right | §9. Add a *mechanical* alias; never containment. |
+| Duplicate options in a block | `distinctPool()` regressed |
+
+---
+
+## 14. Known issues deliberately NOT fixed
+
+1. **`latency_ms` is ~0 on almost every telemetry row.** *(OPEN, user-visible.)* Measured 25–27 of 29
+   rows at 0ms per test. Root cause in `TestSessionView.tsx`: `goTo()` calls `queueFlush()`, which
+   chains `flush` onto a promise, then **synchronously** resets `enteredAtRef.current = Date.now()`.
+   `flush` runs on a later microtask and reads the already-reset ref, so elapsed ≈ 0. The few non-zero
+   rows come from `handleFinish`, which flushes without resetting. Introduced when navigation was
+   changed from awaited to queued (to remove a 140 ms lag on *Next*). **The results screen's "Time"
+   stat is therefore wrong.** BKT is unaffected — the four-parameter update has no timing term. Fix:
+   capture the elapsed at queue time and pass it in.
+2. **A gloss collision can produce an option that names its own term.** When `distinctPool()` falls
+   back to the definition, and that definition spells out its own expansion (`XSS` →
+   *"An abbreviation for Cross-Site Scripting…"*), the option gives itself away. `withoutTerm()` strips
+   the term but not its expansion. Harmless when the concept is a distractor, a giveaway when it is one
+   of the four terms. Narrow trigger, left open.
+3. **Advanced tier is limited by the source material, not the prompt.** A concept whose definition is
+   130 characters (`XSS`) cannot support an edge-case question; one at 643 (`SSDLC`) separates cleanly.
+   **This is worth stating in the write-up rather than claiming a separation the output does not show.**
+   True/false has the narrowest gap of the five formats.
+4. **Groq free-tier capacity (~11 tests/day) does not support a 50-student study.** §7. Needs a paid
+   tier or Gemini billing; no code change helps.
+5. **`GEMINI_LEGACY_TEXT_MODEL` still exists** as `generateJson()`'s default with no callers. It is a
+   trap for the next call site and should be removed — but that is a `gemini.ts` change, not this
+   feature's.
+6. **Some extracted concepts make poor identification answers** — outcome phrases like
+   *"Protects Data and Privacy"* are hard to type exactly. That is a concept-extraction quality issue.
+
+---
+
+## 15. Handoff: BKT (Phase 3)
+
+**Everything the engine needs is already in place and verified.**
+
+| Input | Where | State |
+|---|---|---|
+| One observation per question | `practice_telemetry`, one row per question | ✅ 115 rows verified |
+| `is_correct` (obs = 1/0) | server-computed, never client-supplied | ✅ |
+| Per-format P(G) | `practice_telemetry.question_type` → `bkt_parameters` | ✅ every row resolves |
+| `concept_id` | on every row | ✅ |
+| P(L₀), P(T), P(S) | `bkt_parameters` (`p_l0` 0.10, `p_t` 0.20, `p_s` 0.15) | ✅ seeded |
+| Audit trail | `bkt_update_logs` | ✅ empty, columns ready |
+| The seam | `PUT /:id/complete`, marked `PHASE 3 SEAM`, right after the telemetry batch | ✅ |
+
+**The equations** are `ARCHITECTURE.md` §8 (two-phase: evidence update then transition update). The
+worked example the implementation must reproduce is in `databaseSchemaExplained.md`: three correct/
+correct/incorrect MCQ answers from 0.10 give 0.42, 0.77, 0.52.
+
+**Do NOT:**
+- Use pyBKT, or call `bkt_service/`. **Delete `bkt_service/` and `server/routes/bkt.routes.ts`** — both
+  proxy a pyBKT service with wrong parameters (`slip 0.1`, a single fixed `guess 0.2`).
+- Add a third mastery writer. `practice.routes.ts` and `flashcards.routes.ts` are the only two
+  permitted (`bkt_source` enum).
+- Fit parameters with EM.
+
+**Decide explicitly:** whether a **retake** of the same material writes mastery again. The flashcard
+system answers the equivalent question with the due-check ("a rating counts only if the card was
+due"). Test Mode currently writes telemetry for every completed test and leaves the policy open; rows
+carry `created_at` so any rule can be applied.
+
+**Then flip on:** the mastery panel in `AdaptiveTestTab` (§12), the "Difficulty was set from what
+you've already mastered" subtitle, and lowest-mastery concept selection for materials too large to sit
+in one go (see the ordering seam in `POST /api/practice`, currently `order('created_at')`).
+
+---
+
+## 16. Verification evidence
+
+All checks run against the live project on 7 August 2026.
+
+**Static:** `npm run lint` (`tsc --noEmit`) and `npx vite build` clean.
+
+**Allocation:** 1,860 combinations (N = 1…60 × 31 format subsets), **0 violations** — no matching
+count that is not a multiple of 4, no section with zero items, no over-count.
+
+**Grading:** 15 alias cases, **0 unexpected** (§9).
+
+**Live HTTP integration** (two throwaway accounts, deleted afterwards, 0 rows left behind) — **41
+checks, all passing:** 201 on generate; no `answer`/`explanation` anywhere in the wire payload for
+either generate or resume; `is_correct` in a request body ignored; score divides by total; skipped
+question wrong; 28 telemetry rows with every `question_type` set; idempotent completion; another
+student 404s on all five `/:id` routes; unknown material 403; no token 401.
+
+**Full-test generation:** 29 concepts, all five sections — **1.6 s**, 29 questions, 0 fallbacks, 29/29
+distinct concepts, every matching block 4×6, MCQ answer always among its options. *(Earlier readings of
+17–21 s were Groq rate-limit backoff, not generation.)*
+
+**Four real tests audited end to end** (`practice_tests` + `practice_telemetry`, 115 rows):
+
+```
+FOUNDATIONAL  snapshot 0.1   6. Information Security  28 q  0 fallbacks  54%
+INTERMEDIATE  snapshot 0.65  7. Information Security  29 q  0 fallbacks  52%
+ADVANCED      snapshot 0.92  7. Information Security  29 q  0 fallbacks  45%
+FOUNDATIONAL  snapshot 0.1   7. Information Security  29 q  0 fallbacks  55%
+```
+
+Every answer **re-graded from the stored key and compared to the stored `is_correct` — zero
+disagreements across all 115 rows**; each stored score matches what its telemetry implies; no
+duplicate `question_index`; no repeated concept; no duplicate options; no orphan `n` leaks; every
+block 4×6.
+
+**Tier separation, same concept across tiers:**
+
+```
+MULTIPLE CHOICE — SSDLC
+  foundational  What does Secure Software Development Life Cycle (SSDLC) mean?
+  intermediate  What situation is an example of the SSDLC?
+  advanced      In a scenario where a company is developing new software, what applies
+                when using the SSDLC?
+
+FILL IN THE BLANK — RA 10173 – Data Privacy Act of 2012
+  foundational  The ____ is a law in the Philippines that protects personal information…
+  intermediate  The company must comply with ____ when handling customer information…
+  advanced      If the company failed to comply with the ____, it could face severe penalties…
+```
+
+---
+
+## 17. Glossary
+
+| Term | Meaning |
+|---|---|
+| **Tier** | `foundational` / `intermediate` / `advanced`. One per test, chosen from `mastery_snapshot`. |
+| **`mastery_snapshot`** | Mean `latent_mastery` over every concept in the material, missing rows counting as P(L₀) = 0.10. EQ(4). |
+| **P(L₀)** | 0.10. Prior probability a student already knows a concept with no evidence. |
+| **P(G)** | Guess probability, per question format. MCQ 0.25, T/F 0.50, ID 0.05, FIB 0.05, Matching 0.17. |
+| **Block** | One matching screen: 4 terms, 6 definitions. Emits 4 telemetry rows. |
+| **Allocation** | Which concept goes to which section. `allocateConcepts()`. |
+| **Fallback** | A template question used when the model skipped an item or failed validation. Counted in `fallback_count`. |
+| **Orphan index** | The model's `n` field leaked into the question prose. Rejected. |
+| **`stripKey()`** | The only function permitted to serialise a question toward a browser. |
+| **Telemetry** | `practice_telemetry` — one row per question, written at completion. Not yet a BKT observation. |
+| **TPM / TPD** | Groq's tokens-per-minute (12,000) and tokens-per-day (100,000) limits. |
+
+---
+
+## Related documents
+
+- `ARCHITECTURE.md` §7 (Test Mode) and §8 (the BKT equations — the algorithm of record)
+- `LearnSyncAI artifacts/FLASHCARDS_IMPLEMENTATION.md` §15 — the other BKT writer's handoff
+- `LearnSyncAI artifacts/databaseSchemaExplained.md` Parts 11–12 — `practice_tests`, `practice_telemetry`, the BKT tables and the worked example
+- `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md` — why `gemini-2.5-flash` is dead
+- `CLAUDE.md` — the rules that apply across the whole codebase
+- The paper: **p. 75** (P(G) per format), **p. 80–81** (adaptive test algorithm), **p. 98** (the four AI verification criteria)

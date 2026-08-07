@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "vite --port=3000 --host=0.0.0.0",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "tsx watch --include .env server/index.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",

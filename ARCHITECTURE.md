@@ -125,7 +125,20 @@ Logic Flow:
 7. Test Mode (Adaptive BKT Testing)
 
 Core Tables: practice_tests, practice_telemetry, bkt_mastery
-AI Integration: Gemini (Text Generation)
+AI Integration: Groq llama-3.3-70b-versatile (question writing)
+  - Chosen over Gemini for one reason that outweighs the rest: Gemini's free quota is 20 requests
+    per day PER MODEL, and concept extraction, Free Recall and Feynman already spend it. Putting
+    test generation on the same key would trade working features for a new one during the study.
+    Groq carries a separate, far larger budget and already runs chat, flashcard question writing
+    and all three games.
+  - The paper (p. 81) specifies only "the large language model", so nothing in the write-up
+    depends on which provider this is.
+  - Generation is one call PER FORMAT, not one for the whole test: Groq's JSON mode gives no
+    structural guarantee, and a five-way union of question shapes in one response has no safe
+    recovery. Per format the shape is uniform and a malformed item falls back to a template.
+  - Grading involves NO model call. Multiple choice, true/false and matching compare exactly;
+    identification and fill-in-the-blank use a mechanical alias ladder (server/lib/testGrading.ts)
+    so a score the student is shown is reproducible.
 
 Test Type Selection:
   - Students can select one or more question types when generating a test:

@@ -2,220 +2,592 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateJson } from '../lib/gemini';
-import { CreatePracticeTestSchema, SubmitAnswerSchema } from '../types/api';
-import axios from 'axios';
+import { rejectInaccessibleMaterials, publishedMaterialIds } from '../lib/materialAccess';
+import { GroqUnavailableError } from '../lib/groq';
+import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
+import { masterySnapshot, masteryTier } from '../lib/testDifficulty';
+import { generateTestQuestions, type ConceptForTest } from '../lib/testGeneration';
+import { gradeAnswer } from '../lib/testGrading';
+import {
+  CreatePracticeTestSchema,
+  SubmitAnswerSchema,
+  type StoredAnswer,
+  type StoredTestPayload,
+  type StoredTestQuestion,
+} from '../types/api';
+
+/**
+ * Adaptive Test Mode.
+ *
+ * Rewritten from a version that had zero callers and six defects, each of which
+ * is now a rule rather than a fix:
+ *
+ *   1. `practice_telemetry.question_type` is NOT NULL and was never supplied, so
+ *      every telemetry write silently failed and BKT never received an
+ *      observation. It is written in `completeTest()` and nowhere else.
+ *   2. Generation called a dead Gemini model with no try/catch, so a quota error
+ *      rejected unhandled under Express 4 and hung the request. Every AI call is
+ *      wrapped and mapped to `err.status`.
+ *   3. There was no ownership or material-access check at all. Both gates run on
+ *      every route, in the order below.
+ *   4. `is_correct` came from the request body. It is now computed from the
+ *      stored key, always.
+ *   5. The model echoed `concept_id` UUIDs that were never validated. The model
+ *      no longer sees a UUID; see `testGeneration.ts`.
+ *   6. Completion fired at a pyBKT FastAPI service, which CLAUDE.md forbids.
+ *      Removed; Phase 3 hangs the in-process BKT engine on the seam below.
+ *
+ * NO BKT HERE. This phase reads `bkt_mastery` to pick a difficulty tier and
+ * writes `practice_telemetry`. It never writes `bkt_mastery` or
+ * `bkt_update_logs`.
+ */
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Gates
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SpaceOwner {
+  id: string;
+  subject: string;
+  gradeLevel: number;
+}
+
 /**
- * POST /api/practice
- * Generates a new adaptive practice test using BKT mastery scores.
+ * The caller's own space, or null after the caller has already been answered.
  *
- * Flow:
- * 1. Fetch student's current BKT mastery for concepts in selected materials
- * 2. Build a mastery-aware prompt for Gemini
- * 3. Generate questions (harder for high mastery, easier for low mastery)
- * 4. Save as a new practice_tests record
+ * 404 rather than 403 throughout: a 403 confirms the id names a real space, and
+ * space ids are visible in the address bar. Mirrors `loadOwnedSpace()` in
+ * `studyspaces.routes.ts`, including the active/role/grade checks — a disabled
+ * account must not be able to generate anything.
  */
+async function requireOwnedSpace(
+  spaceId: string,
+  req: Request,
+  res: Response
+): Promise<SpaceOwner | null> {
+  const { data: space } = await supabaseAdmin
+    .from('study_spaces')
+    .select('id, subject, student_id')
+    .eq('id', spaceId)
+    .maybeSingle();
+
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('grade_level, status, role')
+    .eq('id', req.user!.id)
+    .maybeSingle();
+
+  if (
+    !space ||
+    space.student_id !== req.user!.id ||
+    !profile ||
+    profile.status !== 'active' ||
+    profile.role !== 'student' ||
+    profile.grade_level === null ||
+    profile.grade_level === undefined
+  ) {
+    res.status(404).json({ error: 'Study space not found' });
+    return null;
+  }
+
+  return { id: space.id, subject: space.subject, gradeLevel: profile.grade_level };
+}
+
+interface TestRow {
+  id: string;
+  space_id: string;
+  title: string;
+  source_material_ids: string[] | null;
+  question_types: QuestionFormat[] | null;
+  questions_payload: StoredTestPayload;
+  student_answers: Record<string, StoredAnswer> | null;
+  score: number | null;
+  difficulty_tier: string | null;
+  mastery_snapshot: number | null;
+  status: 'in_progress' | 'completed';
+  created_at: string;
+  completed_at: string | null;
+}
+
+/**
+ * A test row belonging to the caller, or null after answering 404.
+ *
+ * Scoped by `student_id` on reads as tightly as on writes. A practice test
+ * carries its own answer key and the student's answers; an unguarded read would
+ * hand both to anyone holding an id.
+ */
+async function requireOwnedTest(
+  testId: string,
+  req: Request,
+  res: Response
+): Promise<TestRow | null> {
+  const { data } = await supabaseAdmin
+    .from('practice_tests')
+    .select('*')
+    .eq('id', testId)
+    .eq('student_id', req.user!.id)
+    .maybeSingle();
+
+  if (!data) {
+    res.status(404).json({ error: 'Practice test not found' });
+    return null;
+  }
+  return data as unknown as TestRow;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Serialisation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * THE ONLY FUNCTION THAT SENDS A QUESTION TO A BROWSER.
+ *
+ * It allow-lists fields rather than deleting `answer` and `explanation`, so a
+ * field added to `StoredTestQuestion` later cannot leak by omission. The whole
+ * point of storing the key server-side is undone the moment a second serialiser
+ * exists — do not add one.
+ */
+function stripKey(q: StoredTestQuestion) {
+  return {
+    index: q.index,
+    concept_id: q.concept_id,
+    concept_term: q.concept_term,
+    format: q.format,
+    difficulty: q.difficulty,
+    prompt: q.prompt,
+    ...(q.options ? { options: q.options } : {}),
+    ...(q.blockId ? { blockId: q.blockId } : {}),
+  };
+}
+
+const questionsOf = (row: TestRow): StoredTestQuestion[] => row.questions_payload?.questions ?? [];
+
+function answersOf(row: TestRow): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const [key, value] of Object.entries(row.student_answers ?? {})) {
+    if (value?.answer) out[Number(key)] = value.answer;
+  }
+  return out;
+}
+
+function toGeneratedTest(row: TestRow) {
+  return {
+    id: row.id,
+    title: row.title,
+    space_id: row.space_id,
+    material_id: row.source_material_ids?.[0] ?? '',
+    formats: row.question_types ?? [],
+    difficulty_tier: row.difficulty_tier ?? 'foundational',
+    questions: questionsOf(row).map(stripKey),
+    status: row.status,
+    created_at: row.created_at,
+    answers: answersOf(row),
+  };
+}
+
+function toSummary(row: TestRow) {
+  const questions = questionsOf(row);
+  return {
+    id: row.id,
+    title: row.title,
+    material_id: row.source_material_ids?.[0] ?? '',
+    created_at: row.created_at,
+    status: row.status,
+    score: row.score === null ? null : Number(row.score),
+    total: questions.length,
+    answered: Object.keys(row.student_answers ?? {}).length,
+    formats: row.question_types ?? [],
+  };
+}
+
+/**
+ * Grades the stored answers against the stored key.
+ *
+ * Pure and re-runnable: the result is recomputed on every read rather than
+ * cached, so a fix to the grading ladder applies to past tests too. Only `score`
+ * is denormalised onto the row, for the list view.
+ */
+function buildResult(row: TestRow) {
+  const questions = questionsOf(row);
+  const stored = row.student_answers ?? {};
+
+  const results = questions.map((q) => {
+    const given = stored[String(q.index)]?.answer ?? null;
+    return {
+      index: q.index,
+      concept_id: q.concept_id,
+      concept_term: q.concept_term,
+      format: q.format,
+      prompt: q.prompt,
+      student_answer: given,
+      correct_answer: q.answer,
+      is_correct: gradeAnswer(q.format, q.answer, given),
+      explanation: q.explanation,
+    };
+  });
+
+  const correct = results.filter((r) => r.is_correct).length;
+
+  const byConcept = new Map<string, { concept_id: string; term: string; wrong: number; asked: number }>();
+  for (const r of results) {
+    const entry = byConcept.get(r.concept_id) ?? {
+      concept_id: r.concept_id,
+      term: r.concept_term,
+      wrong: 0,
+      asked: 0,
+    };
+    entry.asked += 1;
+    if (!r.is_correct) entry.wrong += 1;
+    byConcept.set(r.concept_id, entry);
+  }
+
+  const { questions: _q, ...test } = toGeneratedTest(row);
+  const { answers: _a, ...testMeta } = test;
+
+  return {
+    test: testMeta,
+    // Divided by TOTAL, never by the number answered — skipping a question must
+    // not be a way to raise a score.
+    score: results.length > 0 ? correct / results.length : 0,
+    correct,
+    total: results.length,
+    results,
+    missed_concepts: [...byConcept.values()]
+      .filter((c) => c.wrong > 0)
+      .sort((a, b) => b.wrong - a.wrong || a.term.localeCompare(b.term)),
+    elapsed_ms: Object.values(stored).reduce((sum, a) => sum + (a?.latency_ms ?? 0), 0),
+  };
+}
+
+function failGeneration(res: Response, err: unknown): void {
+  if (err instanceof GroqUnavailableError) {
+    // 429 for a rate limit, 503 for an outage. A rate limit reported as a
+    // generic failure tells the student to retry at once, which cannot work.
+    if (err.retryAfterSeconds) res.setHeader('Retry-After', String(Math.ceil(err.retryAfterSeconds)));
+    res.status(err.status).json({ error: 'Question writer unavailable', message: err.message });
+    return;
+  }
+  const message = err instanceof Error ? err.message : 'Unknown generation error';
+  console.error('[Practice] Generation failed:', message);
+  res.status(502).json({
+    error: 'Test generation failed',
+    message: 'The questions could not be written, so nothing was saved. Please try again.',
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/space/:spaceId — the overview list
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void> => {
+  const space = await requireOwnedSpace(req.params.spaceId, req, res);
+  if (!space) return;
+
+  const { data, error } = await supabaseAdmin
+    .from('practice_tests')
+    .select('*')
+    .eq('space_id', space.id)
+    .eq('student_id', req.user!.id)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to load practice tests', message: error.message });
+    return;
+  }
+
+  res.json({ data: (data ?? []).map((row) => toSummary(row as unknown as TestRow)) });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/practice — generate
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   const parsed = CreatePracticeTestSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
     return;
   }
+  const { space_id, material_id, formats } = parsed.data;
 
-  const { space_id, title, source_material_ids } = parsed.data;
-  const studentId = req.user!.id;
+  // Gate order, copied from the deck generator: ownership, then grade/archive,
+  // then space membership. The last is not redundant — passing the grade rule
+  // only proves the student may READ the material, not that this space holds it,
+  // and a test generated from another subject would corrupt the space's picture.
+  const space = await requireOwnedSpace(space_id, req, res);
+  if (!space) return;
+  if (!(await rejectInaccessibleMaterials(req, res, [material_id]))) return;
 
-  // 1. Fetch concepts from selected materials
-  const { data: concepts, error: conceptsError } = await supabaseAdmin
+  const published = await publishedMaterialIds(space.subject, space.gradeLevel);
+  const { data: linked } = await supabaseAdmin
+    .from('study_space_materials')
+    .select('material_id')
+    .eq('space_id', space.id);
+  const linkedIds = (linked ?? []).map((r) => r.material_id as string);
+
+  if (!published.includes(material_id) || !linkedIds.includes(material_id)) {
+    res.status(404).json({ error: 'Material not found in this study space' });
+    return;
+  }
+
+  const { data: material } = await supabaseAdmin
+    .from('materials')
+    .select('title')
+    .eq('id', material_id)
+    .maybeSingle();
+
+  // Document order, which is extraction order. Phase 3's seam: replace this
+  // ordering with ascending `bkt_mastery.latent_mastery` to test the weakest
+  // concepts first once there is a mastery signal to sort by.
+  const { data: conceptRows, error: conceptError } = await supabaseAdmin
     .from('concepts')
     .select('id, term, definition')
-    .in('material_id', source_material_ids);
+    .eq('material_id', material_id)
+    .order('created_at');
 
-  if (conceptsError || !concepts?.length) {
-    res.status(400).json({ error: 'No concepts found in selected materials' });
+  if (conceptError) {
+    res.status(500).json({ error: 'Failed to load concepts', message: conceptError.message });
     return;
   }
 
-  const conceptIds = concepts.map((c) => c.id);
-
-  // 2. Fetch existing BKT mastery scores for those concepts
-  const { data: masteryScores } = await supabaseAdmin
-    .from('bkt_mastery')
-    .select('concept_id, latent_mastery')
-    .eq('student_id', studentId)
-    .in('concept_id', conceptIds);
-
-  const masteryMap = new Map(
-    (masteryScores ?? []).map((m) => [m.concept_id, m.latent_mastery ?? 0])
-  );
-
-  // 3. Build mastery-aware concept list for the prompt
-  const conceptsWithMastery = concepts.map((c) => ({
-    ...c,
-    mastery: masteryMap.get(c.id) ?? 0, // Default: 0 (no mastery data yet)
+  const concepts: ConceptForTest[] = (conceptRows ?? []).map((c) => ({
+    id: c.id as string,
+    term: c.term as string,
+    definition: c.definition as string,
   }));
 
-  const conceptList = conceptsWithMastery
-    .map((c) => `- "${c.term}" (mastery: ${Math.round((c.mastery ?? 0) * 100)}%): ${c.definition}`)
-    .join('\n');
+  if (concepts.length === 0) {
+    res.status(422).json({
+      error: 'No concepts',
+      message: 'This lesson has no concepts yet, so a test cannot be built from it.',
+    });
+    return;
+  }
 
-  const prompt = `
-You are an adaptive learning engine. Generate a personalized practice test for a student.
+  // Server-authoritative length: one question per concept.
+  const allocation = allocateConcepts(concepts.length, formats as QuestionFormat[]);
+  if (allocation.items.length === 0) {
+    res.status(422).json({
+      error: 'No questions',
+      message: 'None of the chosen question types fit this lesson. Try adding another type.',
+    });
+    return;
+  }
 
-Practice Test Title: "${title}"
+  // Difficulty, paper p. 81. Every concept without a bkt_mastery row counts as
+  // P(L0) = 0.10, so until Phase 3 this is 0.10 / foundational for everyone —
+  // correct, not broken.
+  const { snapshot } = await masterySnapshot(req.user!.id, concepts.map((c) => c.id));
+  const tier = masteryTier(snapshot);
 
-Concepts and their current mastery levels:
-${conceptList}
+  let generated;
+  try {
+    generated = await generateTestQuestions({
+      concepts,
+      allocation: allocation.items,
+      tier,
+      materialTitle: (material?.title as string) ?? 'this lesson',
+    });
+  } catch (err) {
+    failGeneration(res, err);
+    return;
+  }
 
-Adaptive Rules:
-- Mastery < 30%: Generate EASY questions (definitions, basic recall)
-- Mastery 30–70%: Generate MEDIUM questions (application, examples)
-- Mastery > 70%: Generate HARD questions (analysis, edge cases, synthesis)
+  const payload: StoredTestPayload = {
+    version: 1,
+    questions: generated.questions,
+    fallback_count: generated.fallbackCount,
+  };
 
-Generate 10 questions total, distributed across all concepts proportionally.
-
-Return a JSON object with this exact shape:
-{
-  "questions": [
-    {
-      "id": number,
-      "concept_id": "uuid-string",
-      "concept": "string",
-      "type": "multiple_choice" | "true_false" | "short_answer",
-      "difficulty": "easy" | "medium" | "hard",
-      "question": "string",
-      "options": ["A. ...", "B. ...", "C. ...", "D. ..."] | null,
-      "answer": "string",
-      "explanation": "string"
-    }
-  ]
-}
-
-IMPORTANT: Use the actual concept_id UUIDs provided above for each question's concept_id field.
-`;
-
-  const questionsPayload = await generateJson<{ questions: unknown[] }>(prompt);
-
-  // 4. Save as a new practice test
-  const { data: practiceTest, error: insertError } = await supabaseAdmin
+  const { data: row, error: insertError } = await supabaseAdmin
     .from('practice_tests')
     .insert({
-      space_id,
-      student_id: studentId,
-      title,
-      source_material_ids,
-      questions_payload: questionsPayload,
+      space_id: space.id,
+      student_id: req.user!.id,
+      title: (material?.title as string) ?? 'Practice Test',
+      source_material_ids: [material_id],
+      question_types: allocation.items.map((i) => i.format),
+      questions_payload: payload,
+      student_answers: {},
+      // Both stored because the paper's Difficulty Alignment check (p. 98)
+      // verifies that the mastery parameter reached the prompt, and it cannot
+      // be run against data that was never written.
+      difficulty_tier: tier,
+      mastery_snapshot: snapshot,
       status: 'in_progress',
     })
-    .select()
+    .select('*')
     .single();
 
-  if (insertError) {
-    res.status(500).json({ error: 'Failed to create practice test', message: insertError.message });
+  if (insertError || !row) {
+    res.status(500).json({ error: 'Failed to save practice test', message: insertError?.message });
     return;
   }
 
-  // 5. Initialize BKT mastery rows for any new concepts (upsert)
-  const newMasteryRows = conceptIds.map((concept_id) => ({
-    student_id: studentId,
-    concept_id,
-    latent_mastery: masteryMap.get(concept_id) ?? 0.0,
-  }));
-
-  await supabaseAdmin
-    .from('bkt_mastery')
-    .upsert(newMasteryRows, { onConflict: 'student_id,concept_id' });
-
-  res.status(201).json({ data: practiceTest, message: 'Adaptive practice test generated' });
+  res.status(201).json({
+    data: toGeneratedTest(row as unknown as TestRow),
+    message: 'Practice test generated',
+  });
 });
 
-/**
- * PUT /api/practice/:id/answer
- * Records a single answer + telemetry as the student works through the test.
- * This updates the student_answers JSONB and logs to practice_telemetry.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/:id — resume
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/:id', async (req: Request, res: Response): Promise<void> => {
+  const row = await requireOwnedTest(req.params.id, req, res);
+  if (!row) return;
+  res.json({ data: toGeneratedTest(row) });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/:id/result — review a finished test
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/:id/result', async (req: Request, res: Response): Promise<void> => {
+  const row = await requireOwnedTest(req.params.id, req, res);
+  if (!row) return;
+
+  if (row.status !== 'completed') {
+    res.status(409).json({
+      error: 'Test not finished',
+      message: 'This test has not been submitted yet.',
+    });
+    return;
+  }
+
+  res.json({ data: buildResult(row) });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/practice/:id/answer — record one answer
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.put('/:id/answer', async (req: Request, res: Response): Promise<void> => {
   const parsed = SubmitAnswerSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
     return;
   }
+  const { question_index, answer, latency_ms } = parsed.data;
 
-  const { question_index, answer, concept_id, is_correct, latency_ms } = parsed.data;
+  const row = await requireOwnedTest(req.params.id, req, res);
+  if (!row) return;
 
-  // 1. Log telemetry
-  await supabaseAdmin.from('practice_telemetry').insert({
-    student_id: req.user!.id,
-    concept_id,
-    practice_test_id: req.params.id,
-    is_correct,
-    latency_ms,
-  });
-
-  // 2. Update student_answers (merge into existing JSONB)
-  const { data: test } = await supabaseAdmin
-    .from('practice_tests')
-    .select('student_answers')
-    .eq('id', req.params.id)
-    .single();
-
-  const currentAnswers = (test?.student_answers as Record<string, unknown>) ?? {};
-  currentAnswers[question_index] = { answer, is_correct, latency_ms };
-
-  await supabaseAdmin
-    .from('practice_tests')
-    .update({ student_answers: currentAnswers })
-    .eq('id', req.params.id)
-    .eq('student_id', req.user!.id);
-
-  res.json({ message: 'Answer recorded' });
-});
-
-/**
- * PUT /api/practice/:id/complete
- * Marks a practice test as completed and triggers BKT recalculation.
- */
-router.put('/:id/complete', async (req: Request, res: Response): Promise<void> => {
-  const { data: test, error: fetchError } = await supabaseAdmin
-    .from('practice_tests')
-    .select('student_answers, questions_payload')
-    .eq('id', req.params.id)
-    .eq('student_id', req.user!.id)
-    .single();
-
-  if (fetchError || !test) {
-    res.status(404).json({ error: 'Practice test not found' });
+  if (row.status === 'completed') {
+    res.status(409).json({
+      error: 'Test already submitted',
+      message: 'This test has been submitted and can no longer be changed.',
+    });
     return;
   }
 
-  // Calculate score
-  const answers = (test.student_answers as Record<string, { is_correct: boolean }>) ?? {};
-  const totalAnswered = Object.keys(answers).length;
-  const correct = Object.values(answers).filter((a) => a.is_correct).length;
-  const score = totalAnswered > 0 ? correct / totalAnswered : 0;
+  const questions = questionsOf(row);
+  if (question_index >= questions.length) {
+    res.status(400).json({ error: 'Unknown question', message: 'That question is not in this test.' });
+    return;
+  }
 
-  await supabaseAdmin
+  // Read-modify-write on a JSONB column. Safe here because the client sends one
+  // answer at a time per test and a lost write is recoverable — the client keeps
+  // its own copy and re-sends everything before completing.
+  const merged: Record<string, StoredAnswer> = { ...(row.student_answers ?? {}) };
+  const previous = merged[String(question_index)]?.latency_ms ?? 0;
+  merged[String(question_index)] = { answer, latency_ms: previous + latency_ms };
+
+  const { error } = await supabaseAdmin
     .from('practice_tests')
-    .update({ status: 'completed', score, completed_at: new Date().toISOString() })
-    .eq('id', req.params.id);
+    .update({ student_answers: merged })
+    .eq('id', row.id)
+    .eq('student_id', req.user!.id);
 
-  // Trigger BKT recalculation (non-blocking)
-  const bktServiceUrl = process.env.BKT_SERVICE_URL ?? 'http://localhost:8000';
-  axios
-    .post(`${bktServiceUrl}/recalculate`, {
-      student_id: req.user!.id,
-      practice_test_id: req.params.id,
+  if (error) {
+    res.status(500).json({ error: 'Failed to record answer', message: error.message });
+    return;
+  }
+
+  // Deliberately does NOT return correctness. Nothing is graded until the test
+  // is submitted, and telling the client would also tell the student.
+  res.json({ data: { saved: true } });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/practice/:id/complete — grade and write telemetry
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.put('/:id/complete', async (req: Request, res: Response): Promise<void> => {
+  const row = await requireOwnedTest(req.params.id, req, res);
+  if (!row) return;
+
+  // Idempotent: a retried request must not write a second set of telemetry rows,
+  // which would double every BKT observation the test produces.
+  if (row.status === 'completed') {
+    res.json({ data: buildResult(row), message: 'Practice test already submitted' });
+    return;
+  }
+
+  const result = buildResult(row);
+  const questions = questionsOf(row);
+  const stored = row.student_answers ?? {};
+
+  const { error: updateError } = await supabaseAdmin
+    .from('practice_tests')
+    .update({
+      status: 'completed',
+      score: result.score,
+      completed_at: new Date().toISOString(),
     })
-    .catch((err) => console.warn('[BKT] Recalculation service unavailable:', err.message));
+    .eq('id', row.id)
+    .eq('student_id', req.user!.id);
 
-  res.json({
-    data: { score, correct, total: totalAnswered },
-    message: 'Practice test completed. BKT mastery update queued.',
-  });
+  if (updateError) {
+    res.status(500).json({ error: 'Failed to submit test', message: updateError.message });
+    return;
+  }
+
+  /*
+   * Telemetry: one row per question, written ONCE, here.
+   *
+   * Not per answer, despite paper p. 80's "during active testing". The student
+   * can jump back and change an answer, so a per-answer write would produce two
+   * rows for one question — two BKT observations for one piece of evidence — and
+   * a real-time BKT update cannot be un-applied when the answer changes. Writing
+   * from the final answers keeps what the paper actually requires ("graded as a
+   * binary value ... on a per-question basis", each with its own P(G)) while
+   * staying coherent with a test you can revise.
+   *
+   * `question_type` is the column whose omission broke this endpoint since
+   * migration 0011 made it NOT NULL. It selects the P(G) for the observation, so
+   * a missing value is not a reporting gap — it is an ungradeable row.
+   */
+  const telemetry = questions.map((q) => ({
+    student_id: req.user!.id,
+    concept_id: q.concept_id,
+    practice_test_id: row.id,
+    question_type: q.format,
+    question_index: q.index,
+    is_correct: result.results[q.index]?.is_correct ?? false,
+    latency_ms: stored[String(q.index)]?.latency_ms ?? 0,
+  }));
+
+  const { error: telemetryError } = await supabaseAdmin.from('practice_telemetry').insert(telemetry);
+
+  if (telemetryError) {
+    // Loud, but not fatal: the student's score is already saved and showing it
+    // is the thing they are waiting for. A missing telemetry batch costs BKT an
+    // observation, which Phase 3 can detect by comparing row counts.
+    console.error('[Practice] Telemetry insert failed:', telemetryError.message);
+  }
+
+  // PHASE 3 SEAM. The in-process BKT engine runs here, over `telemetry`, using
+  // the per-format P(G) from `bkt_parameters` and writing `bkt_mastery` plus
+  // `bkt_update_logs`. It must NOT be an HTTP call to the pyBKT service that
+  // used to sit here — CLAUDE.md and ARCHITECTURE.md both forbid pyBKT.
+
+  res.json({ data: buildResult({ ...row, status: 'completed' }), message: 'Practice test submitted' });
 });
 
 export default router;

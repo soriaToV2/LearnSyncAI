@@ -351,24 +351,84 @@ export interface FeynmanFeedback {
 
 // ── Practice Tests ────────────────────────────────────────
 
+/** The five formats, spelled exactly as the Postgres `question_type` enum. */
+export const QUESTION_FORMATS = [
+  'multiple_choice',
+  'true_or_false',
+  'identification',
+  'fill_in_the_blank',
+  'matching_type',
+] as const;
+
+/**
+ * Building a practice test.
+ *
+ * ONE MATERIAL, and NO LENGTH. The test is one question per concept in that
+ * material, and the count is derived server-side by `allocateConcepts()` — a
+ * client-supplied length is a client-chosen test, and a student could ask for
+ * five questions while still banking BKT evidence. The title is likewise derived
+ * from the material rather than accepted, so it cannot disagree with the row it
+ * describes.
+ */
 export const CreatePracticeTestSchema = z.object({
   space_id: z.string().uuid(),
-  title: z.string().min(1),
-  source_material_ids: z.array(z.string().uuid()).min(1),
-  question_types: z.array(
-    z.enum(['multiple_choice', 'identification', 'matching_type', 'fill_in_the_blank', 'true_or_false'])
-  ).min(1),
+  material_id: z.string().uuid(),
+  formats: z.array(z.enum(QUESTION_FORMATS)).min(1, 'Choose at least one question type'),
 });
 export type CreatePracticeTestInput = z.infer<typeof CreatePracticeTestSchema>;
 
+/**
+ * Recording one answer as the student works.
+ *
+ * `is_correct` and `concept_id` USED TO BE HERE AND MUST NOT COME BACK. Both are
+ * derivable from `questions_payload[question_index]`, and accepting them let a
+ * student post arbitrary correctness for any concept — the write RLS exists to
+ * make impossible from a browser, handed over by the API instead.
+ *
+ * `answer` is the option text, `'true'`/`'false'`, or what the student typed;
+ * capped because it lands in a JSONB column that grows with the test.
+ */
 export const SubmitAnswerSchema = z.object({
   question_index: z.number().int().nonnegative(),
-  answer: z.unknown(),
-  concept_id: z.string().uuid(),
-  is_correct: z.boolean(),
-  latency_ms: z.number().int().nonnegative(),
+  answer: z.string().max(500),
+  latency_ms: z.number().int().nonnegative().max(86_400_000),
 });
 export type SubmitAnswerInput = z.infer<typeof SubmitAnswerSchema>;
+
+/**
+ * A question as stored in `practice_tests.questions_payload`.
+ *
+ * `answer` and `explanation` are the answer key. They are stripped by
+ * `stripKey()` in `practice.routes.ts`, which is the ONLY function permitted to
+ * serialise a question toward a browser — so adding a field here cannot leak it
+ * by accident.
+ */
+export interface StoredTestQuestion {
+  index: number;
+  concept_id: string;
+  concept_term: string;
+  format: (typeof QUESTION_FORMATS)[number];
+  difficulty: 'foundational' | 'intermediate' | 'advanced';
+  prompt: string;
+  options?: string[];
+  blockId?: string;
+  answer: string;
+  explanation: string;
+}
+
+/** The envelope `questions_payload` actually holds. Versioned for future shape changes. */
+export interface StoredTestPayload {
+  version: 1;
+  questions: StoredTestQuestion[];
+  /** Items whose text came from a template because the model skipped them. */
+  fallback_count?: number;
+}
+
+/** One entry of `practice_tests.student_answers`, keyed by question index. */
+export interface StoredAnswer {
+  answer: string;
+  latency_ms: number;
+}
 
 // ── Gamification ──────────────────────────────────────────
 

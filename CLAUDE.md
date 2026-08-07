@@ -49,11 +49,13 @@ There are **three user roles**:
 | `GEMINI_EXTRACTION_MODEL` | `gemini-3.6-flash` | Educator concept extraction (`conceptExtraction.ts`) | ✅ working |
 | `GEMINI_GRADING_MODEL` | `gemini-3.6-flash` | Feynman grading (`cognitive.routes.ts`) | ✅ working |
 | `GEMINI_UTILITY_MODEL` | `gemini-3.5-flash-lite` | Free Recall extraction + coaching prose (`cognitive.routes.ts`) | ✅ working |
-| `GEMINI_LEGACY_TEXT_MODEL` | `gemini-2.5-flash` | Adaptive tests (`practice.routes.ts`) | ❌ **404 — dead** |
+| `GEMINI_LEGACY_TEXT_MODEL` | `gemini-2.5-flash` | nothing — dead default of `generateJson()` | ⚠️ **remove the default** |
+
+**Adaptive test generation is on Groq, not Gemini.** It was the last `GEMINI_LEGACY_TEXT_MODEL` caller and is now `llama-3.3-70b-versatile` in `server/lib/testGeneration.ts`. The reason is the quota line below: 20 requests/day *per model* is already spent by extraction, Free Recall and Feynman, and a 50-student study cannot add a fourth consumer to it. The paper (p. 81) says only "the large language model", so nothing in the write-up depends on the provider. `GEMINI_LEGACY_TEXT_MODEL` now has no callers and survives only as `generateJson()`'s default — that default is a trap for the next call site and should be removed.
 
 **Choosing a constant for a new call site — one question:** *does the model's own judgement become a number the student is shown?* Yes → `GEMINI_GRADING_MODEL`; no → `GEMINI_UTILITY_MODEL`. Free Recall is the instructive case: it looks like grading, but the model only enumerates what the student mentioned and the score is `coveredCount / totalConcepts` computed in code, so it belongs on the utility model. Feynman's `accuracy_score` comes straight from the model, so it does not.
 
-- **`gemini-2.5-flash` is already gone, not going.** Verified 2026-08-01 against our own API key: every call returns `HTTP 404 — "no longer available to new users"`. It is still returned by `ListModels`, which is why it looks alive from the outside. The published 2026-10-16 shutdown date is irrelevant — **adaptive test generation is broken in the running app right now.** See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
+- **`gemini-2.5-flash` is already gone, not going.** Verified 2026-08-01 against our own API key: every call returns `HTTP 404 — "no longer available to new users"`. It is still returned by `ListModels`, which is why it looks alive from the outside. Its last caller (adaptive test generation) moved to Groq on 2026-08-06, so nothing reaches it now. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
 - **Never send `temperature` to a `gemini-3*` model.** Gemini 3 dropped the sampling parameters: `temperature`, `top_p` and `top_k` are ignored today and a future model generation returns HTTP 400 for them. `generateJson()` strips `temperature` on Gemini 3 and logs a warning; treat that warning as a bug to fix at the call site, not noise.
 - **Gemini 3 thinks by default** (`medium` on 3.6-flash, `minimal` on Flash-Lite) and thinking tokens draw on `maxOutputTokens`. Set `thinkingLevel` and `maxOutputTokens` explicitly on any Gemini 3 call, or a tight budget truncates the response and surfaces as unparseable JSON.
 - **Free-tier request quota is per model** (`GenerateRequestsPerDayPerProjectPerModel`, observed limit **20/day**). Using a distinct model for utility calls is therefore not only cheaper, it buys a separate daily bucket. Embeddings are metered separately again.
@@ -359,6 +361,26 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 The rating endpoint is now the right place to hang it: ownership is enforced, `concept_id` is on both the card and the log row, and the due check already gates what counts. **The observation mapping is settled in `bkt_params`:** `g_easy = 0.05`, `g_medium = 0.25`, `g_hard = 0.10`; Easy and Medium are correct observations (obs = 1), Hard is incorrect (obs = 0). `bkt_update_logs` already carries a `flashcard_id` column and a `'flashcard'` value in the `bkt_source` enum.
 
 `StudentDashboard.tsx` still shows a hardcoded `dueToday = 12`; the whole page runs on `MOCK_STUDENTS[0]` and is a separate job.
+
+## Adaptive Test Mode
+
+> **Full reference: `LearnSyncAI artifacts/TEST_MODE_IMPLEMENTATION.md`.** Read it before changing anything here — it carries the measurements behind each rule, the debugging playbook, and the list of defects deliberately left open. What follows is only what must not be broken by accident.
+
+**Rebuilt from scratch on 6–7 August 2026** (frontend, then backend). The version replaced made zero network calls and generated questions in the browser from hardcoded neuroscience mock data; its three endpoints had zero callers and six defects, including a `practice_telemetry` insert that omitted `question_type NOT NULL` and had therefore **never once succeeded**. No migration was needed — every column already existed unused.
+
+**Generation is Groq `llama-3.3-70b-versatile`, not Gemini.** The paper (p. 81) says only "the large language model"; the Gemini claim was ours, in `ARCHITECTURE.md`, and has been corrected. The reason is the per-model 20/day Gemini quota that extraction, Free Recall and Feynman already spend. **⚠️ Groq's free tier is 12,000 tokens/minute and 100,000 tokens/day — about 11 tests/day for the whole account, which does not support a 50-student study.** Unresolved; needs a paid tier or Gemini billing.
+
+- **One question per concept, and the student cannot choose the length.** `allocateConcepts()` in `server/lib/testAllocation.ts` derives it. A length picker meant cycling concepts to fill it, so a 40-item test on a 29-concept lesson asked about some concepts three or four times in one sitting — which BKT would read as four independent observations. `src/lib/testMode.ts` holds a **mirror** for the setup preview; the server is authoritative. Change one, change the other.
+- **A matching block is exactly 4 terms against 6 definitions** (paper p. 75). The **six options** are the BKT rule — P(G_match) = 1/6 — and the **four terms** are a fidelity rule, since "applied per matched item" means the term count never enters the formula. If they ever conflict with something that affects scoring, bend the term count, never the option count. One block emits **four** telemetry rows.
+- **The answer key never reaches the browser during a test.** `stripKey()` in `practice.routes.ts` is the only function that serialises a question to a client, and it allow-lists fields. Do not add a second serialiser.
+- **`is_correct` is computed server-side, always.** `SubmitAnswerSchema` deliberately has no `is_correct` and no `concept_id` — accepting them let a student post arbitrary mastery evidence.
+- **The model echoes an INDEX, never a `concept_id`,** and every echo is range-checked against its batch. A wrong id attaches mastery to the wrong concept and nothing downstream can detect it.
+- **Difficulty is one tier per TEST, not per question** — paper p. 81 calls it "session-based adaptation", and `difficulty_tier`/`mastery_snapshot` are single columns. Thresholds are **0.50 / 0.85**, matching `mastery_tier()` in `schema.sql`. Both values are stored at generation because the paper's Difficulty Alignment check (p. 98) verifies exactly that.
+- **A concept with no `bkt_mastery` row is at P(L₀) = 0.10, not 0,** applied at read time. Rows are deliberately not pre-seeded. Treating a missing row as zero would pin every test to `foundational` invisibly, since that is also the correct answer today.
+- **Grading is deterministic — no model call.** `server/lib/testGrading.ts` reuses `foldKey()`/`acronymOf()` from `conceptExtraction.ts` so the "what counts as naming this concept" rule exists once. **Never add substring matching**: "Injection" is contained in "SQL Injection", and both are entries in the same lesson.
+- **Telemetry is written ONCE, at completion,** one row per question — not per answer, because the UI lets a student revise and a per-answer write would double the observation. Completion is idempotent.
+- **Test Mode does not write `bkt_mastery` or `bkt_update_logs`.** It reads mastery to pick a tier. The Phase 3 seam is marked in `PUT /:id/complete`.
+- **`npx tsx scripts/set-test-mastery.ts <tier|reset>`** forces mastery so the tiers can be verified before BKT exists. `reset` deletes the rows, which is the truest foundational test.
 
 ## Cognitive Tabs — Free Recall & Feynman
 

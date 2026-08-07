@@ -6,19 +6,20 @@ import {
   GitMerge,
   type LucideIcon,
 } from 'lucide-react';
-import { fixtureTestApi } from './testModeFixtures';
+import { api } from './api';
 
 /**
  * Test Mode — the contract between the UI and the backend.
  *
- * Every type here mirrors a column or enum in `schema.sql`, so the backend has
- * nothing to reconcile when it lands: the shapes the components consume are the
- * shapes the endpoints must return.
+ * Every type here mirrors a column or enum in `schema.sql`, so there is nothing
+ * to reconcile between the shapes the components consume and the shapes
+ * `server/routes/practice.routes.ts` returns.
  *
- * PHASE 1 (now): `testApi` points at `testModeFixtures`, so the whole flow is
- * clickable with no server. PHASE 2 replaces the six function bodies with
- * `api.*` calls and deletes the fixture file. No component changes either time —
- * nothing outside this module knows which implementation is live.
+ * `allocateConcepts()` below is a MIRROR. `server/lib/testAllocation.ts` is
+ * authoritative — it counts concepts itself and re-derives the allocation; this
+ * copy only drives the setup preview. Same arrangement as
+ * `src/lib/reviewSchedule.ts` ↔ `server/lib/reviewSchedule.ts`. Change one,
+ * change the other.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -425,21 +426,18 @@ export function formatElapsed(ms: number): string {
 // The API seam
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The sections the student chose, and nothing else.
+ *
+ * No length and no title. The server counts `concepts` itself and re-derives the
+ * allocation with its own copy of `allocateConcepts()` — a client-supplied
+ * length is a client-chosen test, and a student could ask for five questions
+ * while still banking BKT evidence. The title comes from the material row.
+ */
 export interface GenerateTestRequest {
   space_id: string;
   material_id: string;
-  title: string;
-  /** The sections the student chose. The per-format counts are derived, not sent. */
   formats: QuestionFormat[];
-  /**
-   * PHASE 1 ONLY — the fixture has no `concepts` table to count.
-   *
-   * PHASE 2 MUST recount from `concepts` and ignore this field, then delete it.
-   * A client-supplied count is a client-supplied test length, which is the exact
-   * thing `allocateConcepts()` exists to take away: a student could send `5` and
-   * sit a five-question test that still writes BKT observations.
-   */
-  concept_count: number;
 }
 
 export interface TestApi {
@@ -456,7 +454,48 @@ export interface TestApi {
 }
 
 /**
- * PHASE 2: replace this with the `api.*`-backed implementation and delete
- * `testModeFixtures.ts`. This is the only line that changes.
+ * The real backend, `server/routes/practice.routes.ts`.
+ *
+ * Every response goes through the `{ data }` envelope `src/lib/api.ts` unwraps,
+ * and `apiFetch` already throws `Error(message)` on a non-2xx — so a 429 from a
+ * rate-limited question writer arrives here as its own sentence rather than a
+ * generic failure, and the tab shows it verbatim.
+ *
+ * Note what is NOT here: nothing sends or receives an answer key during a test.
+ * `GeneratedTest.questions` is `TestQuestion[]`, which has no `correct_answer`
+ * field, and the server's `stripKey()` is what guarantees the wire matches.
  */
-export const testApi: TestApi = fixtureTestApi;
+export const testApi: TestApi = {
+  async list(spaceId) {
+    const res = await api.get<TestSummary[]>(`/practice/space/${spaceId}`);
+    return res.data ?? [];
+  },
+
+  async generate(req) {
+    const res = await api.post<GeneratedTest>('/practice', req);
+    return res.data;
+  },
+
+  async saveAnswer(testId, index, answer, latencyMs) {
+    await api.put(`/practice/${testId}/answer`, {
+      question_index: index,
+      answer,
+      latency_ms: latencyMs,
+    });
+  },
+
+  async complete(testId) {
+    const res = await api.put<TestResult>(`/practice/${testId}/complete`, {});
+    return res.data;
+  },
+
+  async fetchResult(testId) {
+    const res = await api.get<TestResult>(`/practice/${testId}/result`);
+    return res.data;
+  },
+
+  async resume(testId) {
+    const res = await api.get<GeneratedTest>(`/practice/${testId}`);
+    return res.data;
+  },
+};

@@ -81,7 +81,9 @@ export default function TestSessionView({
     return map;
   }, [screens]);
 
-  const dirtyRef = useRef<Set<number>>(new Set());
+  /** Question index → dwell time owed to it, in ms. Survives a failed write. */
+  const dirtyRef = useRef<Map<number, number>>(new Map());
+  /** When the current screen was entered. Read and reset only by `queueFlush`. */
   const enteredAtRef = useRef<number>(Date.now());
   /**
    * Saves are queued onto this chain rather than awaited by the navigation
@@ -100,44 +102,72 @@ export default function TestSessionView({
   // ── Saving ────────────────────────────────────────────────────────────────
 
   /**
-   * Persists whatever changed on the screen being left. Answers are saved per
-   * screen rather than per keystroke, and the screen's dwell time is split
-   * across the questions it answered.
+   * Sends whatever is owed. `dirtyRef` carries the dwell time with each index,
+   * so a retry after a failed write re-sends the real number rather than zero.
    */
   const flush = useCallback(
     async (indices: number[], current: Record<number, string>) => {
-      const dirty = indices.filter((i) => dirtyRef.current.has(i));
-      if (dirty.length === 0) return;
-      const each = Math.round((Date.now() - enteredAtRef.current) / dirty.length);
-      dirty.forEach((i) => dirtyRef.current.delete(i));
+      const owed = indices
+        .filter((i) => dirtyRef.current.has(i))
+        .map((i) => ({ index: i, latency: dirtyRef.current.get(i) ?? 0 }));
+      if (owed.length === 0) return;
+
+      owed.forEach(({ index }) => dirtyRef.current.delete(index));
       try {
-        await Promise.all(dirty.map((i) => testApi.saveAnswer(test.id, i, current[i] ?? '', each)));
+        await Promise.all(
+          owed.map(({ index, latency }) =>
+            testApi.saveAnswer(test.id, index, current[index] ?? '', latency)
+          )
+        );
         setSaveError(false);
       } catch {
         // Non-blocking: the answer is still held in component state and is sent
         // again at Finish. Stopping the student mid-test over a failed write
-        // would cost them the whole attempt.
+        // would cost them the whole attempt. The dwell goes back with it.
         setSaveError(true);
-        dirty.forEach((i) => dirtyRef.current.add(i));
+        owed.forEach(({ index, latency }) => dirtyRef.current.set(index, latency));
       }
     },
     [test.id]
   );
 
+  /**
+   * Reads the stopwatch and restarts it, then queues the write.
+   *
+   * BOTH HALVES MUST HAPPEN HERE, SYNCHRONOUSLY. `flush` runs on a later
+   * microtask, so it used to read `enteredAtRef` after `goTo` had already reset
+   * it — every question recorded ~0ms, and the results screen reported 34
+   * seconds for a test that took 13 minutes. Whoever owns the reset must also
+   * take the reading; splitting them across a scheduling boundary is what broke
+   * it, and moving the reset back into `goTo` would break it again.
+   *
+   * The screen's dwell is divided between the questions answered on it, which
+   * is the only defensible split for a matching block where four terms are
+   * answered together.
+   */
   const queueFlush = (indices: number[], current: Record<number, string>) => {
+    const now = Date.now();
+    const dwell = now - enteredAtRef.current;
+    enteredAtRef.current = now;
+
+    const dirty = indices.filter((i) => dirtyRef.current.has(i));
+    if (dirty.length > 0) {
+      const each = Math.round(dwell / dirty.length);
+      for (const i of dirty) dirtyRef.current.set(i, (dirtyRef.current.get(i) ?? 0) + each);
+    }
+
     pendingRef.current = pendingRef.current.then(() => flush(indices, current));
     return pendingRef.current;
   };
 
   const setAnswer = (index: number, value: string) => {
-    dirtyRef.current.add(index);
+    if (!dirtyRef.current.has(index)) dirtyRef.current.set(index, 0);
     setAnswers((prev) => ({ ...prev, [index]: value }));
   };
 
   const goTo = (next: number) => {
     if (next === screenIdx || next < 0 || next >= screens.length) return;
     void queueFlush(screenIndices(screen), answers);
-    enteredAtRef.current = Date.now();
     setScreenIdx(next);
   };
 
@@ -147,8 +177,9 @@ export default function TestSessionView({
     setIsFinishing(true);
     try {
       await queueFlush(screenIndices(screen), answers);
-      // Anything an earlier save failed to write, retried once before grading.
-      const stragglers = [...dirtyRef.current];
+      // Anything an earlier save failed to write, retried once before grading —
+      // with the dwell it was originally measured with, not zero.
+      const stragglers = [...dirtyRef.current.keys()];
       if (stragglers.length > 0) await flush(stragglers, answers);
       const result = await testApi.complete(test.id);
       onFinish(result);
