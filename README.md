@@ -71,7 +71,7 @@ The central hub of LearnSync AI. Study spaces are created from **educator-upload
 All study tools inside a study space are powered by **Bayesian Knowledge Tracing (BKT)**, the classical four-parameter probabilistic model implemented directly in the platform backend. BKT continuously estimates each student's latent mastery (0.0–1.0) per concept based on their sequential responses.
 
 #### Default BKT Parameters
-Since LearnSync AI has no pre-existing historical student interaction data, **Expectation Maximization (EM) fitting is not used**. The system does **NOT** use pyBKT. Instead, BKT parameters are initialized using empirically grounded default values (Bulut et al., 2023):
+Since LearnSync AI has no pre-existing historical student interaction data, **Expectation Maximization (EM) fitting is not used**. The system does **NOT** use pyBKT. The four-parameter update equations are implemented directly in the backend (`server/lib/bkt.ts`), and the parameters are read at runtime from the `bkt_parameters` table:
 
 | Parameter | Value | Description |
 | :--- | :--- | :--- |
@@ -80,7 +80,19 @@ Since LearnSync AI has no pre-existing historical student interaction data, **Ex
 | P(S) | 0.15 | Slip probability — 15% chance of careless error |
 | P(G) | Context-sensitive | Varies by assessment mode and question format |
 
+These are **selected configuration values operating within published limits**, not values derived from research data. Bulut et al. (2023) supplies the four-parameter framework; Šarić-Grgić et al. (2024) collects the acceptable ranges — Corbett & Anderson's P(G) < 0.30, Beck & Chang's P(G) + P(S) < 1, and Baker et al.'s P(G) < 0.50. Every value above was chosen to fall inside those limits, and Beck & Chang's rule is re-checked at server boot.
+
 > **Self-Correcting:** BKT is inherently self-correcting. The Bayesian updating mechanism continuously refines mastery estimates as interaction data accumulates. Default parameters serve as reasonable initialization points, and accuracy improves organically through practice.
+
+#### Verifying the BKT implementation
+
+```bash
+npm run bkt:verify                          # the arithmetic, offline
+npm run bkt:verify -- --live                # + the real flashcard endpoint
+npm run bkt:verify -- --live --live-test    # + generate and sit a real adaptive test
+```
+
+Reports the **Implementation Correctness Rate** — hand-computed expected values compared against live system output at ±0.01, per the evaluation method in the research paper. Currently **235 / 235 = 100%**. `--live` builds a throwaway student and deletes it afterwards, so it is safe to re-run.
 
 #### 🃏 Flashcards (Spaced Repetition + BKT)
 - Students can manually create flashcards or use **AI Auto-Generation**, which reads the educator-uploaded course materials to generate relevant cards automatically.

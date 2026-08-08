@@ -5,7 +5,15 @@ import { requireRole } from '../middleware/requireRole';
 import { rejectInaccessibleMaterials, publishedMaterialIds } from '../lib/materialAccess';
 import { GroqUnavailableError } from '../lib/groq';
 import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
-import { masterySnapshot, masteryTier } from '../lib/testDifficulty';
+import { applyTestCompletion, bktProblems } from '../lib/bkt';
+import {
+  documentMastery,
+  masteryRows,
+  masterySnapshot,
+  masteryTier,
+  P_L0,
+  type ConceptMasteryRow,
+} from '../lib/testDifficulty';
 import { generateTestQuestions, type ConceptForTest } from '../lib/testGeneration';
 import { gradeAnswer } from '../lib/testGrading';
 import {
@@ -35,11 +43,13 @@ import {
  *   5. The model echoed `concept_id` UUIDs that were never validated. The model
  *      no longer sees a UUID; see `testGeneration.ts`.
  *   6. Completion fired at a pyBKT FastAPI service, which CLAUDE.md forbids.
- *      Removed; Phase 3 hangs the in-process BKT engine on the seam below.
+ *      Removed; the in-process BKT engine now runs in `completeTest()`.
  *
- * NO BKT HERE. This phase reads `bkt_mastery` to pick a difficulty tier and
- * writes `practice_telemetry`. It never writes `bkt_mastery` or
- * `bkt_update_logs`.
+ * THIS IS ONE OF THE TWO PERMITTED MASTERY WRITERS. Paper p. 58 limits BKT
+ * updates to Adaptive Flashcards and Adaptive Test Mode; `flashcards.routes.ts`
+ * is the other. Games, Free Recall and Feynman read mastery and must never write
+ * it. The write happens in exactly one place — `PUT /:id/complete` — via
+ * `applyTestCompletion()` in `server/lib/bkt.ts`.
  */
 
 const router = Router();
@@ -302,6 +312,325 @@ router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void>
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Mastery — EQ(4), read-only
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The materials a space actually shows: linked to it AND still published to this
+ * subject and grade. An educator archiving a material therefore drops it from
+ * every student's space instantly, while the link row survives.
+ */
+async function spaceMaterialIds(space: SpaceOwner): Promise<string[]> {
+  const published = await publishedMaterialIds(space.subject, space.gradeLevel);
+  const { data: linked } = await supabaseAdmin
+    .from('study_space_materials')
+    .select('material_id')
+    .eq('space_id', space.id);
+
+  return (linked ?? [])
+    .map((r) => r.material_id as string)
+    .filter((id) => published.includes(id));
+}
+
+/**
+ * Most recent `last_updated` across rows already in hand — no extra query.
+ *
+ * `only` narrows it to one material's concepts. ISO-8601 UTC strings sort
+ * lexicographically in timestamp order, so this needs no Date parsing.
+ */
+function latestUpdate(
+  rows: Map<string, ConceptMasteryRow>,
+  only?: ReadonlySet<string>
+): string | null {
+  let latest: string | null = null;
+  for (const [conceptId, row] of rows) {
+    if (only && !only.has(conceptId)) continue;
+    if (row.lastUpdated && (latest === null || row.lastUpdated > latest)) latest = row.lastUpdated;
+  }
+  return latest;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/space/:spaceId/mastery — EQ(4) per material
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the student has actually mastered in this space, per material and overall.
+ *
+ * EQ(4), paper p. 81: the arithmetic mean of per-concept probabilities over every
+ * concept in the document, with an unassessed concept counting as P(L₀) = 0.10.
+ *
+ * Built from `masterySnapshot()` — the SAME function that picks a test's
+ * difficulty tier — rather than the `v_student_material_mastery` view, for two
+ * reasons. It guarantees the figure shown to the student is the exact figure the
+ * generator used, which is what the paper's Difficulty Alignment check (p. 98) is
+ * about. And that view double-counts: a material linked to two of the same
+ * student's spaces joins twice, inflating `concept_count` (the average survives).
+ *
+ * `concepts_assessed` is not decoration. Without it the UI cannot tell "10%
+ * because they have shown no evidence" from "10% because they genuinely know
+ * very little", and rendering the prior as a measured percentage would tell a
+ * student who has done nothing that they know a tenth of the lesson.
+ *
+ * Mastery is per (student, concept), so a material sitting in two of the
+ * student's spaces reports the same number in both. That is correct — it is
+ * their knowledge, not the space's.
+ */
+router.get('/space/:spaceId/mastery', async (req: Request, res: Response): Promise<void> => {
+  const space = await requireOwnedSpace(req.params.spaceId, req, res);
+  if (!space) return;
+
+  const materialIds = await spaceMaterialIds(space);
+
+  if (materialIds.length === 0) {
+    res.json({
+      data: {
+        overall: null,
+        tier: 'foundational',
+        concepts_total: 0,
+        concepts_assessed: 0,
+        last_updated: null,
+        by_material: [],
+      },
+    });
+    return;
+  }
+
+  const { data: conceptRows, error: conceptError } = await supabaseAdmin
+    .from('concepts')
+    .select('id, material_id')
+    .in('material_id', materialIds);
+
+  if (conceptError) {
+    res.status(500).json({ error: 'Failed to load mastery', message: conceptError.message });
+    return;
+  }
+
+  const byMaterial = new Map<string, string[]>();
+  for (const row of conceptRows ?? []) {
+    const id = row.material_id as string;
+    const list = byMaterial.get(id);
+    if (list) list.push(row.id as string);
+    else byMaterial.set(id, [row.id as string]);
+  }
+
+  const allConceptIds = (conceptRows ?? []).map((c) => c.id as string);
+
+  /*
+   * ONE read of `bkt_mastery`, then all the arithmetic in memory.
+   *
+   * This loop used to call `masterySnapshot()` once per material, plus a
+   * separate query for `last_updated` — `6 + N` round trips. Every one of those
+   * re-fetched rows the first call already had: EQ(4) is an arithmetic mean, and
+   * a per-material `byConcept` is provably the restriction of the full one to
+   * that material's ids. Constant now, whatever the space holds.
+   */
+  const rows = await masteryRows(req.user!.id, allConceptIds);
+  const byConcept = new Map<string, number>();
+  for (const [conceptId, row] of rows) byConcept.set(conceptId, row.mastery);
+
+  const overall = documentMastery(allConceptIds, byConcept);
+
+  const perMaterial = [];
+  for (const materialId of materialIds) {
+    const ids = byMaterial.get(materialId) ?? [];
+    if (ids.length === 0) continue;
+    const mDoc = documentMastery(ids, byConcept);
+    perMaterial.push({
+      material_id: materialId,
+      m_doc: mDoc,
+      tier: masteryTier(mDoc),
+      concept_count: ids.length,
+      assessed_concept_count: ids.filter((id) => byConcept.has(id)).length,
+    });
+  }
+
+  res.json({
+    data: {
+      // null, not 0.10, when nothing has been assessed — the caller must be able
+      // to say "not assessed yet" rather than print the prior as a score.
+      overall: byConcept.size === 0 ? null : overall,
+      tier: masteryTier(overall),
+      concepts_total: allConceptIds.length,
+      concepts_assessed: byConcept.size,
+      last_updated: latestUpdate(rows),
+      by_material: perMaterial,
+    },
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/space/:spaceId/mastery/concepts — the same, per concept
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ConceptMasteryDto {
+  concept_id: string;
+  term: string;
+  /**
+   * Exactly P(L₀) = 0.10 when `assessed` is false — a PRIOR, not a measurement.
+   * A client must not print it as a percentage in that case.
+   */
+  mastery: number;
+  /** False when the student has no `bkt_mastery` row for this concept. */
+  assessed: boolean;
+  opportunity_count: number;
+  last_updated: string | null;
+  source_pages: number[] | null;
+}
+
+interface MaterialMasteryDetailDto {
+  material_id: string;
+  /**
+   * Sent by the server rather than joined client-side. The obvious join target,
+   * `GET /spaces/:id/materials`, filters on `parsed_status = 'completed'` while
+   * this route filters on published ∩ linked — so during a re-upload a material
+   * can appear here with concepts intact and no title on the other side.
+   */
+  title: string;
+  m_doc: number;
+  tier: string;
+  concept_count: number;
+  assessed_concept_count: number;
+  last_updated: string | null;
+  /** Assessed first, weakest ascending; unassessed after, alphabetically. */
+  concepts: ConceptMasteryDto[];
+}
+
+/**
+ * GET /api/practice/space/:spaceId/mastery/concepts
+ *
+ * Everything `/mastery` returns, plus every concept of every material in the
+ * space. Owner only.
+ *
+ * A SEPARATE ROUTE, not a flag on `/mastery`, because Test Mode refetches that
+ * one on mount and after every submission — it must not start carrying a payload
+ * it discards on a hot path. One request rather than expand-on-demand because
+ * the whole space is ~10 KB gzipped at realistic sizes, and a cross-material
+ * "weakest concepts" list is impossible without it.
+ *
+ * READ-ONLY, PERMANENTLY. Paper p. 58 and the `bkt_source` enum allow exactly two
+ * mastery writers — `PUT /:id/complete` here and the flashcard rating route.
+ * Nothing served from this endpoint may ever write `bkt_mastery` or
+ * `bkt_update_logs`.
+ *
+ * The path segment is the literal `concepts`, not `:materialId`, so it can never
+ * swallow an id.
+ */
+router.get('/space/:spaceId/mastery/concepts', async (req: Request, res: Response): Promise<void> => {
+  const space = await requireOwnedSpace(req.params.spaceId, req, res);
+  if (!space) return;
+
+  const materialIds = await spaceMaterialIds(space);
+
+  if (materialIds.length === 0) {
+    res.json({
+      data: {
+        overall: null,
+        tier: 'foundational',
+        concepts_total: 0,
+        concepts_assessed: 0,
+        last_updated: null,
+        by_material: [],
+      },
+    });
+    return;
+  }
+
+  const [{ data: materialRows }, { data: conceptRows, error: conceptError }] = await Promise.all([
+    supabaseAdmin.from('materials').select('id, title').in('id', materialIds),
+    supabaseAdmin
+      .from('concepts')
+      .select('id, material_id, term, source_pages')
+      .in('material_id', materialIds)
+      .order('created_at'),
+  ]);
+
+  if (conceptError) {
+    res.status(500).json({ error: 'Failed to load mastery', message: conceptError.message });
+    return;
+  }
+
+  const titles = new Map((materialRows ?? []).map((m) => [m.id as string, m.title as string]));
+
+  const grouped = new Map<string, { id: string; term: string; source_pages: number[] | null }[]>();
+  for (const row of conceptRows ?? []) {
+    const materialId = row.material_id as string;
+    const concept = {
+      id: row.id as string,
+      term: row.term as string,
+      source_pages: (row.source_pages as number[] | null) ?? null,
+    };
+    const list = grouped.get(materialId);
+    if (list) list.push(concept);
+    else grouped.set(materialId, [concept]);
+  }
+
+  const allConceptIds = (conceptRows ?? []).map((c) => c.id as string);
+  const rows = await masteryRows(req.user!.id, allConceptIds);
+  const byConcept = new Map<string, number>();
+  for (const [conceptId, row] of rows) byConcept.set(conceptId, row.mastery);
+
+  const byMaterial: MaterialMasteryDetailDto[] = [];
+  for (const materialId of materialIds) {
+    const concepts = grouped.get(materialId) ?? [];
+    if (concepts.length === 0) continue;
+
+    const ids = concepts.map((c) => c.id);
+    const idSet = new Set(ids);
+    const mDoc = documentMastery(ids, byConcept);
+
+    const detail: ConceptMasteryDto[] = concepts.map((c) => {
+      const row = rows.get(c.id);
+      return {
+        concept_id: c.id,
+        term: c.term,
+        mastery: row ? row.mastery : P_L0,
+        assessed: row !== undefined,
+        opportunity_count: row?.opportunityCount ?? 0,
+        last_updated: row?.lastUpdated ?? null,
+        source_pages: c.source_pages,
+      };
+    });
+
+    /*
+     * Sorted here, not on the client: weakest-first is what makes the list
+     * actionable without a second widget, and it is the ordering
+     * `testDifficulty.ts` anticipated. Unassessed always sort last regardless of
+     * their 0.10 — they have no position on a scale they were never measured on.
+     */
+    detail.sort((a, b) => {
+      if (a.assessed !== b.assessed) return a.assessed ? -1 : 1;
+      if (a.assessed && a.mastery !== b.mastery) return a.mastery - b.mastery;
+      return a.term.localeCompare(b.term);
+    });
+
+    byMaterial.push({
+      material_id: materialId,
+      title: titles.get(materialId) ?? 'Untitled lesson',
+      m_doc: mDoc,
+      tier: masteryTier(mDoc),
+      concept_count: ids.length,
+      assessed_concept_count: ids.filter((id) => byConcept.has(id)).length,
+      last_updated: latestUpdate(rows, idSet),
+      concepts: detail,
+    });
+  }
+
+  const overall = documentMastery(allConceptIds, byConcept);
+
+  res.json({
+    data: {
+      overall: byConcept.size === 0 ? null : overall,
+      tier: masteryTier(overall),
+      concepts_total: allConceptIds.length,
+      concepts_assessed: byConcept.size,
+      last_updated: latestUpdate(rows),
+      by_material: byMaterial,
+    },
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/practice — generate
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -339,9 +668,24 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     .eq('id', material_id)
     .maybeSingle();
 
-  // Document order, which is extraction order. Phase 3's seam: replace this
-  // ordering with ascending `bkt_mastery.latent_mastery` to test the weakest
-  // concepts first once there is a mastery signal to sort by.
+  /*
+   * Document order, which is extraction order.
+   *
+   * THIS IS NOT A TODO. An earlier note here proposed re-ordering by ascending
+   * `bkt_mastery.latent_mastery` once BKT existed, to "test the weakest concepts
+   * first". BKT now exists and the change should NOT be made, for two reasons.
+   *
+   * It would achieve nothing. `allocateConcepts()` emits one question per
+   * concept for every concept — there is no length cap — so ordering cannot
+   * change WHICH concepts are asked about, only which format each one lands in.
+   * (The lone exception is a matching-only test, where coverage is a multiple of
+   * four and one to three concepts fall off the end.)
+   *
+   * And the sign is wrong anyway. `orderedFormats()` puts `multiple_choice`
+   * first, so weakest-first would hand the least-known concepts the format with
+   * the HIGHEST guess probability, P(G) = 0.25 — the least informative evidence
+   * for precisely the concepts most in need of measurement.
+   */
   const { data: conceptRows, error: conceptError } = await supabaseAdmin
     .from('concepts')
     .select('id, term, definition')
@@ -515,15 +859,15 @@ router.put('/:id/answer', async (req: Request, res: Response): Promise<void> => 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PUT /api/practice/:id/complete — grade and write telemetry
+// PUT /api/practice/:id/complete — grade, write telemetry, update BKT mastery
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.put('/:id/complete', async (req: Request, res: Response): Promise<void> => {
   const row = await requireOwnedTest(req.params.id, req, res);
   if (!row) return;
 
-  // Idempotent: a retried request must not write a second set of telemetry rows,
-  // which would double every BKT observation the test produces.
+  // Fast path for an obviously-finished test. The real guarantee is the
+  // compare-and-swap below, not this read — see there.
   if (row.status === 'completed') {
     res.json({ data: buildResult(row), message: 'Practice test already submitted' });
     return;
@@ -533,7 +877,18 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
   const questions = questionsOf(row);
   const stored = row.student_answers ?? {};
 
-  const { error: updateError } = await supabaseAdmin
+  /*
+   * COMPARE-AND-SWAP, not a plain update.
+   *
+   * `.eq('status', 'in_progress')` is what actually makes completion idempotent.
+   * The status check above reads a row fetched moments earlier, so two requests
+   * racing — a double-tap on Submit, or a retry after a slow response — both see
+   * `in_progress` and both fall through. Before BKT that duplicated a telemetry
+   * batch; now it would apply every observation twice and inflate mastery for
+   * the whole test. Postgres serialises the two updates, so exactly one gets a
+   * row back and the loser writes nothing.
+   */
+  const { data: claimed, error: updateError } = await supabaseAdmin
     .from('practice_tests')
     .update({
       status: 'completed',
@@ -541,10 +896,19 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
       completed_at: new Date().toISOString(),
     })
     .eq('id', row.id)
-    .eq('student_id', req.user!.id);
+    .eq('student_id', req.user!.id)
+    .eq('status', 'in_progress')
+    .select('id');
 
   if (updateError) {
     res.status(500).json({ error: 'Failed to submit test', message: updateError.message });
+    return;
+  }
+
+  if (!claimed || claimed.length === 0) {
+    // Another request completed it between our read and our write. Grading is
+    // pure, so the stored result is the same one that request returned.
+    res.json({ data: buildResult(row), message: 'Practice test already submitted' });
     return;
   }
 
@@ -577,15 +941,50 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
 
   if (telemetryError) {
     // Loud, but not fatal: the student's score is already saved and showing it
-    // is the thing they are waiting for. A missing telemetry batch costs BKT an
-    // observation, which Phase 3 can detect by comparing row counts.
+    // is the thing they are waiting for. A missing telemetry batch breaks the
+    // `count(bkt_update_logs) == count(practice_telemetry)` reconciliation,
+    // which is how the gap gets noticed.
     console.error('[Practice] Telemetry insert failed:', telemetryError.message);
   }
 
-  // PHASE 3 SEAM. The in-process BKT engine runs here, over `telemetry`, using
-  // the per-format P(G) from `bkt_parameters` and writing `bkt_mastery` plus
-  // `bkt_update_logs`. It must NOT be an HTTP call to the pyBKT service that
-  // used to sit here — CLAUDE.md and ARCHITECTURE.md both forbid pyBKT.
+  /*
+   * BKT. One observation per question, each with the P(G) its format implies.
+   *
+   * Fed from `telemetry` rather than re-derived from `questions`, so the audit
+   * rows and the telemetry rows cannot disagree about what happened. A matching
+   * block already contributes four rows — one per matched term — which is
+   * exactly paper p. 75's "applied per matched item", so it needs no special
+   * handling here.
+   *
+   * Runs even when the telemetry insert failed: mastery is the student's actual
+   * knowledge state and outranks the audit trail's completeness.
+   *
+   * Awaited and inside its own try/catch. Not fire-and-forget — Express 4 does
+   * not forward async rejections and there is no `unhandledRejection` handler,
+   * so a detached promise that rejects would take the process down. And never
+   * fatal: a BKT failure must not cost a student the score they are waiting for,
+   * the same rule that governs Free Recall's feedback call.
+   */
+  try {
+    const bkt = await applyTestCompletion({
+      studentId: req.user!.id,
+      practiceTestId: row.id,
+      items: telemetry.map((t) => ({
+        conceptId: t.concept_id,
+        questionType: t.question_type,
+        isCorrect: t.is_correct,
+        questionIndex: t.question_index,
+      })),
+    });
+    for (const problem of bktProblems(bkt)) {
+      console.error(`[BKT] test=${row.id} student=${req.user!.id}: ${problem}`);
+    }
+  } catch (err) {
+    console.error(
+      `[BKT] engine threw for test=${row.id} student=${req.user!.id}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
 
   res.json({ data: buildResult({ ...row, status: 'completed' }), message: 'Practice test submitted' });
 });

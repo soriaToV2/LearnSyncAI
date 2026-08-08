@@ -460,12 +460,15 @@ export const GenerateGameContentSchema = z.object({
 });
 export type GenerateGameContentInput = z.infer<typeof GenerateGameContentSchema>;
 
-// ── BKT ───────────────────────────────────────────────────
-
-export const BktRecalculateSchema = z.object({
-  concept_ids: z.array(z.string().uuid()).min(1).optional(),
-});
-export type BktRecalculateInput = z.infer<typeof BktRecalculateSchema>;
+/*
+ * There is deliberately no BKT request schema.
+ *
+ * `BktRecalculateSchema` lived here for a `POST /api/bkt/recalculate` that
+ * proxied to a pyBKT microservice. BKT is not something a client asks for — it
+ * is a consequence of completing a test or rating a due flashcard, and both of
+ * those already validate their own bodies. A recalculate endpoint would also be
+ * a third mastery writer, which paper p. 58 does not allow.
+ */
 
 // ── Chat (Study Assistant) ────────────────────────────────
 

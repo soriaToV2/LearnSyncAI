@@ -47,20 +47,95 @@ export function masteryTier(mastery: number): DifficultyTier {
   return 'foundational';
 }
 
+/** One student's stored mastery for one concept. */
+export interface ConceptMasteryRow {
+  /** `bkt_mastery.latent_mastery`, already `Number()`-coerced. */
+  mastery: number;
+  /** Reporting metadata — never enters the BKT arithmetic. */
+  opportunityCount: number;
+  lastUpdated: string | null;
+}
+
+/**
+ * Supabase serialises `.in()` into the QUERY STRING, so a long id list becomes a
+ * long URL. Four hundred concepts at 37 characters each is roughly 15 KB of URL,
+ * past the default header buffer on common gateways. Chunking is eight lines and
+ * closes the whole class of failure permanently.
+ */
+const IN_CHUNK = 200;
+
+/**
+ * Every `bkt_mastery` row this student has for `conceptIds`.
+ *
+ * Concepts with no row are simply absent from the map — that absence is the
+ * difference between "not assessed yet" and "assessed and low", and every caller
+ * depends on being able to tell those apart.
+ */
+export async function masteryRows(
+  studentId: string,
+  conceptIds: string[]
+): Promise<Map<string, ConceptMasteryRow>> {
+  const rows = new Map<string, ConceptMasteryRow>();
+  if (conceptIds.length === 0) return rows;
+
+  for (let i = 0; i < conceptIds.length; i += IN_CHUNK) {
+    const chunk = conceptIds.slice(i, i + IN_CHUNK);
+    const { data } = await supabaseAdmin
+      .from('bkt_mastery')
+      .select('concept_id, latent_mastery, opportunity_count, last_updated')
+      .eq('student_id', studentId)
+      .in('concept_id', chunk);
+
+    for (const row of data ?? []) {
+      // NUMERIC and INTEGER both arrive as strings over PostgREST.
+      const mastery = Number(row.latent_mastery);
+      if (!Number.isFinite(mastery)) continue;
+      const opportunities = Number(row.opportunity_count);
+      rows.set(row.concept_id as string, {
+        mastery,
+        opportunityCount: Number.isFinite(opportunities) ? opportunities : 0,
+        lastUpdated: (row.last_updated as string) ?? null,
+      });
+    }
+  }
+
+  return rows;
+}
+
 /**
  * EQ(4), document mastery: the arithmetic mean of per-concept probabilities over
- * EVERY concept in the material.
+ * EVERY concept in the material, computed from values already in hand.
  *
- * **A concept with no `bkt_mastery` row counts as P(L₀), not as zero.** That is
- * the easy thing to get wrong here, and getting it wrong would drag every
- * snapshot toward 0 and pin every test to `foundational` forever — invisibly,
- * because `foundational` is also the correct answer today. Mirrors
+ * **A concept absent from `byConcept` counts as P(L₀), not as zero.** That is the
+ * easy thing to get wrong here, and getting it wrong would drag every snapshot
+ * toward 0 and pin every test to `foundational` forever — invisibly, because
+ * `foundational` is also the correct answer for a new student. Mirrors
  * `document_mastery()` in schema.sql, which is
  * `COALESCE(avg(COALESCE(bm.latent_mastery, 0.10)), 0.10)`.
  *
- * Read directly rather than through the SQL function so the per-concept rows are
- * in hand — Phase 3 needs them to order concepts by weakest-first, and that is
- * the same query.
+ * THE ONLY PLACE THE MEAN AND ITS ROUNDING ARE WRITTEN. The rounding is
+ * load-bearing rather than cosmetic: fourteen concepts at 0.90 and fourteen at
+ * 0.10 is exactly 0.5 on paper but accumulates to 0.49999999999999994 in
+ * floating point, which `masteryTier` reads as `foundational` — a tier boundary
+ * decided by summation order. Rounding before the comparison removes that, and
+ * it also stops `mastery_snapshot` being stored as 0.10000000000000005 in a
+ * column a human reads for the Difficulty Alignment check.
+ */
+export function documentMastery(
+  conceptIds: readonly string[],
+  byConcept: ReadonlyMap<string, number>
+): number {
+  if (conceptIds.length === 0) return P_L0;
+  const total = conceptIds.reduce((sum, id) => sum + (byConcept.get(id) ?? P_L0), 0);
+  return Math.round((total / conceptIds.length) * 10_000) / 10_000;
+}
+
+/**
+ * EQ(4) for one concept set, fetching the rows it needs.
+ *
+ * Prefer `masteryRows()` + `documentMastery()` when more than one subset of the
+ * same concepts is needed — calling this in a loop re-fetches rows the first call
+ * already had, which is what the mastery endpoint used to do once per material.
  */
 export async function masterySnapshot(
   studentId: string,
@@ -69,27 +144,11 @@ export async function masterySnapshot(
   const byConcept = new Map<string, number>();
   if (conceptIds.length === 0) return { snapshot: P_L0, byConcept };
 
-  const { data } = await supabaseAdmin
-    .from('bkt_mastery')
-    .select('concept_id, latent_mastery')
-    .eq('student_id', studentId)
-    .in('concept_id', conceptIds);
-
-  for (const row of data ?? []) {
-    const value = Number(row.latent_mastery);
-    if (Number.isFinite(value)) byConcept.set(row.concept_id as string, value);
+  for (const [conceptId, row] of await masteryRows(studentId, conceptIds)) {
+    byConcept.set(conceptId, row.mastery);
   }
 
-  const total = conceptIds.reduce((sum, id) => sum + (byConcept.get(id) ?? P_L0), 0);
-
-  // Rounded HERE, not at the call site, because the rounding is load-bearing
-  // rather than cosmetic. Fourteen concepts at 0.90 and fourteen at 0.10 is
-  // exactly 0.5 on paper but accumulates to 0.49999999999999994 in floating
-  // point, which `masteryTier` reads as `foundational` — a tier boundary decided
-  // by summation order. Rounding before the comparison removes that, and it also
-  // stops `mastery_snapshot` being stored as 0.10000000000000005 in a column a
-  // human reads for the Difficulty Alignment check.
-  return { snapshot: Math.round((total / conceptIds.length) * 10_000) / 10_000, byConcept };
+  return { snapshot: documentMastery(conceptIds, byConcept), byConcept };
 }
 
 /**

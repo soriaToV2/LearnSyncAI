@@ -1,7 +1,7 @@
 # Adaptive Test Mode — Implementation Reference
 
 **Feature:** AI-generated practice tests built from one material's concepts, graded server-side, producing the telemetry BKT consumes.
-**Status:** Frontend and backend implemented and verified against live data. **BKT is NOT implemented** — that is Phase 3.
+**Status:** Frontend and backend implemented and verified against live data. **BKT is now implemented too** — the engine landed on 7 August 2026; see `BKT_IMPLEMENTATION.md` for it, and §15 here for what changed on the Test Mode side.
 **Date:** 7 August 2026
 **Migrations applied:** **none.** Every column this feature writes already existed unused — `difficulty_tier`, `mastery_snapshot` and `question_types` were added by migration `20260723090004_bkt_engine.sql` §7 for exactly this purpose and had never been populated.
 **Commits:** Phase 1 (frontend) is `7a258aa "Test mode frontend revision"`. Phase 2 (backend) is the commit this document ships with.
@@ -550,14 +550,14 @@ organisation** — a second key inside the same account shares the same exhauste
 
 ## 14. Known issues deliberately NOT fixed
 
-1. **`latency_ms` is ~0 on almost every telemetry row.** *(OPEN, user-visible.)* Measured 25–27 of 29
-   rows at 0ms per test. Root cause in `TestSessionView.tsx`: `goTo()` calls `queueFlush()`, which
-   chains `flush` onto a promise, then **synchronously** resets `enteredAtRef.current = Date.now()`.
-   `flush` runs on a later microtask and reads the already-reset ref, so elapsed ≈ 0. The few non-zero
-   rows come from `handleFinish`, which flushes without resetting. Introduced when navigation was
-   changed from awaited to queued (to remove a 140 ms lag on *Next*). **The results screen's "Time"
-   stat is therefore wrong.** BKT is unaffected — the four-parameter update has no timing term. Fix:
-   capture the elapsed at queue time and pass it in.
+1. ~~**`latency_ms` is ~0 on almost every telemetry row.**~~ *(FIXED, 7 August 2026.)* `goTo()` called
+   `queueFlush()`, which chained `flush` onto a microtask, then **synchronously** reset
+   `enteredAtRef.current` — so `flush` read the already-reset ref and elapsed came out ≈ 0. Introduced
+   when navigation went from awaited to queued, to remove a 140 ms lag on *Next*. Fixed by having
+   `queueFlush` read **and** reset the ref in the same synchronous breath and bank the dwell into a
+   per-index map, which also survives a failed write. Simulated against a student spending
+   1200/800/1500/600 ms: the old code recorded `0, 0, 0, 605`, the new records `1215, 805, 1507, 608`.
+   BKT never depended on this — the four-parameter update has no timing term.
 2. **A gloss collision can produce an option that names its own term.** When `distinctPool()` falls
    back to the definition, and that definition spells out its own expansion (`XSS` →
    *"An abbreviation for Cross-Site Scripting…"*), the option gives itself away. `withoutTerm()` strips
@@ -577,39 +577,60 @@ organisation** — a second key inside the same account shares the same exhauste
 
 ---
 
-## 15. Handoff: BKT (Phase 3)
+## 15. BKT (Phase 3) — ✅ DONE, 7 August 2026
 
-**Everything the engine needs is already in place and verified.**
+The engine is `server/lib/bkt.ts`. This section is now a record of what was built, not a handoff.
+**`CLAUDE.md` § "BKT Engine" carries the rules that must not be broken.**
 
-| Input | Where | State |
-|---|---|---|
-| One observation per question | `practice_telemetry`, one row per question | ✅ 115 rows verified |
-| `is_correct` (obs = 1/0) | server-computed, never client-supplied | ✅ |
-| Per-format P(G) | `practice_telemetry.question_type` → `bkt_parameters` | ✅ every row resolves |
-| `concept_id` | on every row | ✅ |
-| P(L₀), P(T), P(S) | `bkt_parameters` (`p_l0` 0.10, `p_t` 0.20, `p_s` 0.15) | ✅ seeded |
-| Audit trail | `bkt_update_logs` | ✅ empty, columns ready |
-| The seam | `PUT /:id/complete`, marked `PHASE 3 SEAM`, right after the telemetry batch | ✅ |
+**What landed here.** `applyTestCompletion()` runs at the old `PHASE 3 SEAM` in `PUT /:id/complete`,
+fed the **same `telemetry` array that was just inserted** — not a re-derivation from
+`questions_payload` — so the observations and the telemetry can never disagree, and
+`count(bkt_update_logs) == count(practice_telemetry)` stays a valid reconciliation. A matching block
+already emitted four telemetry rows, one per matched term, so p. 75's "applied per matched item"
+needed no code at all.
 
-**The equations** are `ARCHITECTURE.md` §8 (two-phase: evidence update then transition update). The
-worked example the implementation must reproduce is in `databaseSchemaExplained.md`: three correct/
-correct/incorrect MCQ answers from 0.10 give 0.42, 0.77, 0.52.
+**The completion UPDATE became a compare-and-swap** (`.eq('status', 'in_progress').select('id')`).
+The pre-existing status check reads a row fetched moments earlier, so two racing requests both fell
+through it. That used to mean a duplicate telemetry batch; with BKT attached it would have doubled
+every observation in the test.
 
-**Do NOT:**
-- Use pyBKT, or call `bkt_service/`. **Delete `bkt_service/` and `server/routes/bkt.routes.ts`** — both
-  proxy a pyBKT service with wrong parameters (`slip 0.1`, a single fixed `guess 0.2`).
-- Add a third mastery writer. `practice.routes.ts` and `flashcards.routes.ts` are the only two
-  permitted (`bkt_source` enum).
-- Fit parameters with EM.
+**The three decisions the old handoff asked for:**
 
-**Decide explicitly:** whether a **retake** of the same material writes mastery again. The flashcard
-system answers the equivalent question with the due-check ("a rating counts only if the card was
-due"). Test Mode currently writes telemetry for every completed test and leaves the policy open; rows
-carry `created_at` so any rule can be applied.
+1. **Retakes DO write mastery.** Paper p. 81 describes generating a new test on the same topic and
+   querying "this historical BKT mastery probability" to scale it — a continuing chain is the
+   documented behaviour. Idempotency stops one test counting twice; a *retake* is a new test with
+   freshly generated questions, and rising mastery escalates the tier against the student.
+2. **No backfill of the pre-existing telemetry.** At the time: 143 rows / 5 tests / one QA account,
+   with identification 0-correct out of 24 and mastery force-set by `set-test-mastery.ts` between
+   runs. 57 concepts spanned more than one test and 29 were touched by *both* `practice_telemetry`
+   and `spaced_repetition_logs`, so a faithful replay would need those two sources interleaved
+   chronologically — and BKT is order-dependent. The rows were left in place; they are still the
+   evidence §16 cites.
+3. **The update runs inline, awaited, in its own `try/catch`**, before `res.json`. Not
+   fire-and-forget: Express 4 does not forward async rejections and there is no
+   `unhandledRejection` handler, so a detached promise that rejects takes the process down. Never
+   fatal, either — a BKT failure must not cost a student the score they are waiting for.
 
-**Then flip on:** the mastery panel in `AdaptiveTestTab` (§12), the "Difficulty was set from what
-you've already mastered" subtitle, and lowest-mastery concept selection for materials too large to sit
-in one go (see the ordering seam in `POST /api/practice`, currently `order('created_at')`).
+**Deleted:** `bkt_service/` (FastAPI, `slip 0.1`, a single flat `guess 0.2`) and
+`server/routes/bkt.routes.ts` (its proxy, zero callers). `axios` went with them — it had no other
+importer. `BKT_SERVICE_URL` and the `bkt_service/` `.gitignore` entries are gone too.
+
+**Turned on:** a Mastery tile on the overview, a past-tense subtitle, and — the useful one — a line
+under the lesson dropdown on setup step 1 reading *"Your mastery here is 42%, so this test will be
+built at intermediate level."* That is the only place the adaptivity is visible to a human, and it is
+exactly what the p. 98 Difficulty Alignment check is about. All three read
+`GET /api/practice/space/:spaceId/mastery`, which is `requireOwnedSpace`-gated and built from
+`masterySnapshot()` — the same function that picks the tier, so the number shown is provably the
+number used.
+
+**Not built, and why:** lowest-mastery concept ordering. `allocateConcepts()` emits one question per
+concept for *every* concept, so ordering cannot change which concepts appear — only which format each
+lands in. And the sign is wrong: `orderedFormats()` puts `multiple_choice` first, so weakest-first
+would give the least-known concepts the *highest* guess probability. The stale TODO at
+`practice.routes.ts:342` was rewritten to record this.
+
+**Verification:** `npm run bkt:verify` — 165 offline cases at ICR 100%, plus 70 more through the live
+HTTP endpoints with `--live --live-test`. See §16.
 
 ---
 
@@ -685,8 +706,10 @@ FILL IN THE BLANK — RA 10173 – Data Privacy Act of 2012
 
 ## Related documents
 
+- **`LearnSyncAI artifacts/BKT_IMPLEMENTATION.md` — the BKT engine this feature feeds. Read it before touching anything that produces telemetry.**
+- `LearnSyncAI artifacts/ANALYTICS_IMPLEMENTATION.md` — the Analytics tab, which shares `masteryApi.space()` and `src/lib/mastery.ts` with this tab. The mastery tile and setup-screen tier line here must agree with it exactly.
 - `ARCHITECTURE.md` §7 (Test Mode) and §8 (the BKT equations — the algorithm of record)
-- `LearnSyncAI artifacts/FLASHCARDS_IMPLEMENTATION.md` §15 — the other BKT writer's handoff
+- `LearnSyncAI artifacts/FLASHCARDS_IMPLEMENTATION.md` §15 — the other BKT writer
 - `LearnSyncAI artifacts/databaseSchemaExplained.md` Parts 11–12 — `practice_tests`, `practice_telemetry`, the BKT tables and the worked example
 - `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md` — why `gemini-2.5-flash` is dead
 - `CLAUDE.md` — the rules that apply across the whole codebase

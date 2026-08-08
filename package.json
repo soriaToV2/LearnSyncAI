@@ -10,14 +10,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "bkt:verify": "tsx scripts/bkt-verify.ts"
   },
   "dependencies": {
     "@google/genai": "^1.50.0",
     "@supabase/supabase-js": "^2.49.4",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
-    "axios": "^1.9.0",
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",

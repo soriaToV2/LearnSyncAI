@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, Plus, BookOpen, Layers, Lock, Brain, Award, BrainCircuit, ChevronDown, Loader2 } from 'lucide-react';
+import { ChevronLeft, Plus, BookOpen, Layers, Lock, Brain, Award, BrainCircuit, ChartColumn, ChevronDown, Loader2 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import FlashcardsTab from './studySpaceTabs/FlashcardsTab';
 import FreeRecallTab from './studySpaceTabs/FreeRecallTab';
 import FeynmanTab from './studySpaceTabs/FeynmanTab';
 import AdaptiveTestTab from './studySpaceTabs/AdaptiveTestTab';
 import ResourcesTab from './studySpaceTabs/ResourcesTab';
+import AnalyticsTab from './studySpaceTabs/AnalyticsTab';
 import { api } from '../../lib/api';
 import { isDue } from '../../lib/reviewSchedule';
 import DueBadge from '../../components/ui/DueBadge';
@@ -31,7 +32,7 @@ interface FlashcardSet {
 
 export default function StudySpace() {
   const { spaceId } = useParams();
-  const [activeTab, setActiveTab] = useState<'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources'>('flashcards');
+  const [activeTab, setActiveTab] = useState<'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources' | 'analytics'>('flashcards');
   const [isMobileTabMenuOpen, setIsMobileTabMenuOpen] = useState(false);
   const [courseConnected, setCourseConnected] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
@@ -206,6 +207,15 @@ export default function StudySpace() {
               <BrainCircuit className="w-4 h-4" />
               Test Mode
             </button>
+            <button
+              onClick={() => setActiveTab('analytics')}
+              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'analytics' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+            >
+              {/* No `hidden sm:inline` split: the other labels drop a long half
+                  on small screens, and "Analytics" is already one short word. */}
+              <ChartColumn className="w-4 h-4" />
+              Analytics
+            </button>
           </div>
 
           {/* Mobile Tab Select Button & Dropdown */}
@@ -224,6 +234,7 @@ export default function StudySpace() {
                 {activeTab === 'feynman' && <><Award className="w-4 h-4 text-primary-fixed-dim" /> <span>Feynman Technique</span></>}
                 {activeTab === 'adaptive-test' && <><BrainCircuit className="w-4 h-4 text-primary-fixed-dim" /> <span>Test Mode</span></>}
                 {activeTab === 'resources' && <><BookOpen className="w-4 h-4 text-primary-fixed-dim" /> <span>Learning Resources</span></>}
+                {activeTab === 'analytics' && <><ChartColumn className="w-4 h-4 text-primary-fixed-dim" /> <span>Analytics</span></>}
               </div>
               <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isMobileTabMenuOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -236,6 +247,7 @@ export default function StudySpace() {
                   { id: 'feynman', label: 'Feynman Technique', icon: Award },
                   { id: 'adaptive-test', label: 'Test Mode', icon: BrainCircuit },
                   { id: 'resources', label: 'Course Resources', icon: BookOpen },
+                  { id: 'analytics', label: 'Analytics', icon: ChartColumn },
                 ].map((item) => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
@@ -287,6 +299,15 @@ export default function StudySpace() {
 
         {activeTab === 'adaptive-test' && (
           <AdaptiveTestTab spaceId={spaceId!} availableResources={availableResources} />
+        )}
+
+        {/* Read-only. `<main key={activeTab}>` remounts this on every entry, so
+            its own fetch is always fresh — which is why it takes no `onRefresh`
+            and holds no cache. `flashcardSets` is deliberately not passed: it
+            carries no review count, and `opportunity_count` in the mastery
+            payload is the writer-of-record's own figure across both sources. */}
+        {activeTab === 'analytics' && (
+          <AnalyticsTab spaceId={spaceId!} availableResources={availableResources} />
         )}
 
         {activeTab === 'resources' && (

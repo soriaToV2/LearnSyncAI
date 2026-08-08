@@ -62,14 +62,15 @@ There are **three user roles**:
 - **Cost is not the lever people assume.** Across the paper's 50-student study the entire spread between "3.6-flash everywhere" and "Flash-Lite everywhere" is roughly $14 vs $3. Never trade grading quality for that.
 
 ### BKT Implementation
-- BKT is implemented **directly in the platform backend** using the classical four-parameter update equations.
-- The system does **NOT** use pyBKT.
+- BKT is implemented **directly in the platform backend** — `server/lib/bkt.ts` — using the classical four-parameter update equations. ✅ **Implemented and verified.**
+- The system does **NOT** use pyBKT. `bkt_service/` and `server/routes/bkt.routes.ts` were deleted when the engine landed; do not reintroduce either.
 - Data-driven parameter estimation methods such as **Expectation Maximization (EM) are not used** because the platform has no pre-existing historical student interaction data.
-- Default parameters are initialized from established educational data mining research (Bulut et al., 2023):
+- Parameters are **read from the `bkt_parameters` table**, never hardcoded at a call site:
   - `P(L₀) = 0.10` (initial knowledge state)
   - `P(T) = 0.20` (transition/learning rate)
   - `P(S) = 0.15` (slip probability)
   - `P(G)` = context-sensitive, varies by assessment mode and question format
+- **Cite these values carefully.** Bulut et al. (2023) is the source of the four-parameter *framework*, and Šarić-Grgić et al. (2024) collects the *limits* the values must fall inside (Corbett & Anderson P(G) < 0.30; Beck & Chang P(G) + P(S) < 1; Baker et al. P(G) < 0.50). The paper is explicit on p. 71 that *"the knowledge tracing literature does not recommend specific numbers for these parameters"* and on p. 76 describes them as *"selected configuration values operating within published limits"*. Do not describe them as empirically derived from research.
 - BKT mastery estimates are updated exclusively through **Adaptive Flashcards** and **Adaptive Test Mode**. AI-generated games, Feynman Technique, and Free Recall use mastery estimates for personalization but do NOT update them.
 
 ---
@@ -114,7 +115,7 @@ LearnSyncAI/
 │   │   ├── cognitive.routes.ts    # /api/cognitive (free recall, Feynman)
 │   │   ├── practice.routes.ts     # /api/practice (adaptive tests)
 │   │   ├── gamification.routes.ts # /api/gamification (games, XP, badges)
-│   │   ├── bkt.routes.ts          # /api/bkt (mastery recalculation)
+│   │   │                          # (no bkt.routes.ts — BKT is not client-triggered)
 │   │   ├── chat.routes.ts         # /api/chat (RAG-based study assistant)
 │   │   └── educator.routes.ts     # /api/educator (material management, analytics)
 │   └── types/
@@ -298,7 +299,7 @@ APP_URL=http://localhost:3000
 - **`schema.sql` is the DB source of truth.** When DB changes are made, update `schema.sql` to reflect them.
 - **The `ai_feedback` column in `cognitive_logs` stores a JSON string.** Parse it with `JSON.parse()` before using it on the frontend. Treat every key inside it as optional — payloads have gained fields over time (`written_feedback`, `covered_count`, `analogy_used`), and older rows do not carry them.
 - **`cognitive_logs.student_id` is `NOT NULL`.** Set it on every insert. It is not defaulted and no trigger fills it in; omitting it fails the write *after* the AI work is already done and paid for.
-- **Free Recall and Feynman must never write mastery.** The paper's Scope section limits BKT updates to Adaptive Flashcards and Adaptive Test Mode. `bkt_mastery` has exactly one writer in the codebase: `practice.routes.ts`. Do not add a second from `cognitive.routes.ts`.
+- **Free Recall and Feynman must never write mastery.** The paper's Scope section (p. 58) limits BKT updates to Adaptive Flashcards and Adaptive Test Mode. `bkt_mastery` has exactly **two** writers, both going through `server/lib/bkt.ts`: `practice.routes.ts` (`PUT /:id/complete`) and `flashcards.routes.ts` (the `counted: true` branch of `POST /rate`). The `bkt_source` enum has exactly two values for the same reason. Do not add a third from `cognitive.routes.ts`, `games.routes.ts`, or anywhere else.
 - **AI feedback that a student is scored on must be reproducible, and `findMemoisedAttempt()` is the only thing guaranteeing it.** `temperature: 0` used to be the mechanism; Gemini 3 dropped the sampling parameters, so there is no model-side knob left. Instead, an identical resubmission is answered from the row it produced last time — exact, and true whichever model is configured. **This is what makes the model a free variable rather than part of the guarantee**, so do not remove it when swapping models. It also means a resubmission costs zero API calls, which matters on a 20/day free tier.
 - **The memo is keyed on a content fingerprint, not a timestamp.** `concepts` has **no `updated_at` column**, so an educator editing a definition changes nothing observable — `fingerprintConcepts()` hashes the concept id/term/definition set (plus the glossary, for Feynman) and stores it as `concepts_fingerprint` inside `ai_feedback`. An educator edit changes the hash and correctly forces a fresh evaluation. Rows written before the field existed have no fingerprint and are deliberately never reused.
 - **A memo hit still writes a `cognitive_logs` row.** A resubmission is a real attempt and must appear in the student's history exactly as before; only the model calls are skipped.
@@ -356,11 +357,55 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 `GET /api/flashcards/due/:spaceId` was deleted — unused, and it returned any space's cards to any logged-in user. Due-ness is derived from cards the tab already loads. It can return, properly guarded, when the dashboard becomes real.
 
-### BKT on top of this (still NOT implemented)
+### BKT on top of this ✅ implemented
 
-The rating endpoint is now the right place to hang it: ownership is enforced, `concept_id` is on both the card and the log row, and the due check already gates what counts. **The observation mapping is settled in `bkt_params`:** `g_easy = 0.05`, `g_medium = 0.25`, `g_hard = 0.10`; Easy and Medium are correct observations (obs = 1), Hard is incorrect (obs = 0). `bkt_update_logs` already carries a `flashcard_id` column and a `'flashcard'` value in the `bkt_source` enum.
+`applyFlashcardRating()` runs inside the `counted: true` branch, so the due-check gates mastery exactly as it gates the schedule. Easy and Medium are correct observations (obs = 1) at `g_easy = 0.05` and `g_medium = 0.25`; **Hard is an incorrect observation** (obs = 0) at `g_hard = 0.10` — a low guess rate is what makes the drop steep, so Hard is not a weak pass.
+
+**The schedule UPDATE is a compare-and-swap** (`.or('next_review_at.is.null,next_review_at.lte.<now>')` plus `.select('id')`), because the `isDue()` test reads a row fetched a moment earlier and a double-tap would otherwise apply the rating twice. It must be `.or(...)`, not `.lte(...)`: `isDue()` treats a NULL schedule as due, and `next_review_at = NULL` never satisfies `<=`, so a plain `.lte` would make such a card permanently unratable.
+
+**Two Easy ratings put a concept at 0.98** (0.10 → 0.7231 → 0.9824), which clears the `advanced` threshold — far faster than the test path (two correct MCQs reach 0.7685). That is what P(G) = 0.05 means and the paper specifies it; the brake is the due-check pushing the card seven days out. Do not "fix" it.
 
 `StudentDashboard.tsx` still shows a hardcoded `dueToday = 12`; the whole page runs on `MOCK_STUDENTS[0]` and is a separate job.
+
+## BKT Engine
+
+> **Full reference: `LearnSyncAI artifacts/BKT_IMPLEMENTATION.md`.** Read it before changing anything
+> here — it carries the equations with their page citations, the measurements behind every rule, the
+> debugging playbook with verified SQL, and §4's three behaviours that look exactly like bugs and are
+> not. What follows is only what must not be broken by accident.
+
+**`server/lib/bkt.ts` is the only implementation.** Two-phase update per observation — evidence (EQ 1/2) then transition (EQ 3) — with the post-transition value persisted as `latent_mastery`. Parameters come from the `bkt_parameters` table via a process-lifetime cache, warmed at boot in `server/index.ts` so a bad row shows up in the boot log rather than mid-assessment.
+
+**`npx tsx scripts/bkt-verify.ts` is the paper's evidence, not a test script.** The study reports an *Implementation Correctness Rate* (EQ 6, p. 96): hand-compute a value, compare against the system, pass within ±0.01. The harness prints an appendix-ready table and exits non-zero below 100%. `--live` adds sections that drive the real HTTP endpoints; it builds a throwaway student and deletes it, so it is safe to re-run. `--live-test` also sits a full generated test and **burns one of ~11 daily Groq generations**.
+
+**Its non-circularity rules are the point of it, and are easy to destroy.** §2 imports `bktStep` and nothing else — every P(G) is a literal, because looking one up through `GUESS_KEY_BY_FORMAT` would let a wrong mapping pass on both sides. §3 checks the engine against an independent **odds-ratio derivation** of the same equations. §5 checks convergence against closed-form roots solved by hand. If you add cases, keep the rule.
+
+**Three behaviours that look like bugs and are not:**
+- **Getting everything wrong RAISES mastery.** `posterior = e + (1−e)·P(T)` bottoms out at 0.20, above the 0.10 prior. Twelve wrong MCQs run 0.10 → 0.2174 → … → 0.2500, the root of `4L² − 5L + 1 = 0`. Every such limit is below the 0.50 tier threshold, so failure can never buy a harder test. **Consecutive-incorrect ICR literals therefore go up** — do not "correct" them downward.
+- **Mastery is clamped to `[1e-9, 1 − 1e-9]`, not `[0, 1]`.** At exactly 1.0 an incorrect answer computes `evidence = P(S)/P(S) = 1`, so the concept can never be marked not-known again — and 13 consecutive Easy ratings reach exactly 1.0 in floating point. Continuous BKT asymptotes but never arrives, so the absorbing state is a float artifact, not the model.
+- **A missing `bkt_mastery` row means P(L₀) = 0.10, not 0**, applied at read time. Rows are never pre-seeded.
+
+**`bkt_update_logs` is evidence, not a debug log.** Every row carries the prior, all three applied parameters, and *both* phases (`p_l_evidence` = EQ 1/2, `p_l_posterior` = EQ 3) so the ICR comparison is one query. `p_slip`/`p_transit` are written explicitly rather than left to the column DEFAULTs — the trail must record what was applied, not what the schema assumed. `created_at` is staggered a millisecond per row in chain order, because Postgres `now()` is transaction-start time and a batch insert would otherwise give every row an identical timestamp and scramble `ORDER BY created_at`.
+
+**Write order is mastery first, then logs, and a failed upsert writes no logs at all.** `bkt_mastery` is the state everything reads; the audit trail has no runtime reader. Mastery-written-log-missing is reconstructable from telemetry; log-written-mastery-missing leaves the next row's `p_l_prior` contradicting this row's `p_l_posterior`, which is permanent corruption of the thing the paper rests on.
+
+**A BKT failure must never cost a student their score.** Both call sites await it inside their own `try/catch` and log through `bktProblems()`. Not fire-and-forget: Express 4 does not forward async rejections and there is no `unhandledRejection` handler.
+
+**`opportunity_count` is reporting metadata and must never enter the arithmetic.** The paper uses "learning opportunity" only as the time index `t`.
+
+## Analytics Tab — showing mastery to students
+
+> **Full reference: `LearnSyncAI artifacts/ANALYTICS_IMPLEMENTATION.md`.**
+
+**A concept with no `bkt_mastery` row must never be shown a percentage.** It sits at P(L₀) = 0.10, which is an assumption, not a measurement — a 29-concept lesson where six questions were answered leaves 23 concepts reading 0.10. Gate on `assessed` (per concept) or `assessed_concept_count` (per material), **never on `mastery === 0.1`**. Assessed concepts get a bar and a percentage; untested ones get their name and nothing else.
+
+**The sharper reason, which makes this correctness rather than kindness:** the transition step floors every posterior at P(T) = 0.20, so *any* assessed concept is ≥ 0.20 and an unassessed one at 0.10 would rank **below every genuinely struggling concept**. A weakest-first list including them would fill with concepts the student has never seen.
+
+**Two read endpoints, both read-only forever.** `GET /api/practice/space/:spaceId/mastery` is the summary and Test Mode's hot path — do not widen it. `GET /api/practice/space/:spaceId/mastery/concepts` adds every concept, in one request (~190 bytes each; 10.7 KB measured for 57 concepts). Both go through `requireOwnedSpace()` and compute EQ(4) with `documentMastery()`, which is **the only place the mean and its 4dp rounding live**.
+
+**`src/lib/mastery.ts` owns the client side** — types, `TIER_TONE`/`TIER_LABEL`, `masteryCaption()` and both API calls. Not `testMode.ts`: mastery is fed by flashcards as well as tests. `foundational` renders `neutral`, never `poor` — everyone starts there.
+
+**Do not add a client cache.** `<main key={activeTab}>` remounts the tab on entry, so data is fresh by construction — including on return from Test Mode having just moved the number, which is exactly when a cache would be stale.
 
 ## Adaptive Test Mode
 
@@ -379,8 +424,12 @@ The rating endpoint is now the right place to hang it: ownership is enforced, `c
 - **A concept with no `bkt_mastery` row is at P(L₀) = 0.10, not 0,** applied at read time. Rows are deliberately not pre-seeded. Treating a missing row as zero would pin every test to `foundational` invisibly, since that is also the correct answer today.
 - **Grading is deterministic — no model call.** `server/lib/testGrading.ts` reuses `foldKey()`/`acronymOf()` from `conceptExtraction.ts` so the "what counts as naming this concept" rule exists once. **Never add substring matching**: "Injection" is contained in "SQL Injection", and both are entries in the same lesson.
 - **Telemetry is written ONCE, at completion,** one row per question — not per answer, because the UI lets a student revise and a per-answer write would double the observation. Completion is idempotent.
-- **Test Mode does not write `bkt_mastery` or `bkt_update_logs`.** It reads mastery to pick a tier. The Phase 3 seam is marked in `PUT /:id/complete`.
-- **`npx tsx scripts/set-test-mastery.ts <tier|reset>`** forces mastery so the tiers can be verified before BKT exists. `reset` deletes the rows, which is the truest foundational test.
+- **Test Mode writes `bkt_mastery` and `bkt_update_logs` at completion**, via `applyTestCompletion()` in `PUT /:id/complete`. It is fed the *same* `telemetry` array that was inserted, never a re-derivation from `questions_payload`, so the observations and the telemetry cannot disagree — and `count(bkt_update_logs) == count(practice_telemetry)` stays a valid reconciliation. A matching block already emits four telemetry rows, one per matched term, which is exactly p. 75's "applied per matched item"; it needs no special handling.
+- **The completion UPDATE is a compare-and-swap** (`.eq('status', 'in_progress').select('id')`). The status check above it reads a row fetched moments earlier, so two racing requests both fall through — which before BKT duplicated telemetry and now would double every observation in the test.
+- **An unanswered question is still an observation.** `buildResult` already grades a skip as incorrect and the score already divides by total, so mastery must agree. Abandoning a test therefore nudges mastery *up* slightly, per the P(T) floor — the abuse vector is inverted and weak.
+- **`mastery_snapshot` is pre-test and must stay pre-test.** After completion writes mastery, the value on that row is still the one its tier was chosen from, which is exactly what the Difficulty Alignment check (p. 98) needs. Do not "refresh" it.
+- **Concept ordering in `POST /` is document order and should stay that way.** Weakest-first would change nothing — `allocateConcepts()` emits one question per concept for *every* concept — and its sign is wrong anyway, since `orderedFormats()` would hand the least-known concepts the highest P(G).
+- **`npx tsx scripts/set-test-mastery.ts <tier|reset>`** forces mastery to check the tiers directly. It now *competes* with the live engine — real answers overwrite whatever it sets — so `reset` before a genuine run.
 
 ## Cognitive Tabs — Free Recall & Feynman
 

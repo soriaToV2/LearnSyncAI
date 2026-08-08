@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { RateFlashcardSchema } from '../types/api';
 import { REVIEW_INTERVALS, nextReviewAt, isDue } from '../lib/reviewSchedule';
+import { applyFlashcardRating, bktProblems } from '../lib/bkt';
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
@@ -21,12 +22,21 @@ router.use(authenticate, requireRole('student'));
  * after being rated is no longer due, so the second rating is ignored; without
  * this a student could rate Hard, immediately rate Easy after reading the
  * answer, and push the card a week out on the strength of their short-term
- * memory. When BKT is attached here the same protection applies to mastery,
- * which is the more important half — otherwise mastery would climb fastest on
- * exactly the concepts a student re-drills because they are struggling.
+ * memory.
+ *
+ * THAT PROTECTION NOW GUARDS BKT MASTERY TOO, which is the more important half.
+ * This is one of the two writers paper p. 58 permits (`practice.routes.ts` is
+ * the other), and without the due-check mastery would climb fastest on exactly
+ * the concepts a student re-drills BECAUSE they are struggling — while BKT
+ * assumes each observation is an independent test of latent knowledge, which a
+ * re-read thirty seconds later is not. Do not relax it.
  *
  * The client is never trusted to decide this. It posts every rating; the server
  * answers `counted` and the UI reports what actually happened.
+ *
+ * Ratings map to observations per paper pp. 78-79: Easy and Medium both record a
+ * CORRECT answer (obs = 1) differing only in P(G); Hard records an INCORRECT one
+ * (obs = 0). Hard is not a weak pass.
  *
  * Body: { flashcard_id: UUID, rating: 'easy' | 'medium' | 'hard' }
  */
@@ -95,17 +105,42 @@ router.post('/rate', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // 3. Schedule.
+  // 3. Schedule — as a COMPARE-AND-SWAP, which is what makes the due-check
+  // hold under a double-tap.
+  //
+  // The `isDue` test above reads a row fetched a moment earlier, so two racing
+  // requests both see the card as due and both fall through. Re-asserting
+  // due-ness inside the UPDATE lets Postgres serialise them: the first moves
+  // `next_review_at` into the future, the second matches nothing, and only one
+  // BKT observation is recorded. Without this a double-click would apply the
+  // rating twice — measured elsewhere in this codebase, where one Feynman
+  // answer was graded twice three seconds apart from identical input.
+  //
+  // `.or(...)` rather than `.lte(...)`: `isDue()` treats a NULL schedule as due,
+  // and `next_review_at = NULL` never satisfies `<=`, so a plain `.lte` would
+  // make a card that lost its schedule permanently unratable.
   const intervalDays = REVIEW_INTERVALS[rating];
   const dueAt = nextReviewAt(now, intervalDays).toISOString();
 
-  const { error: updateError } = await supabaseAdmin
+  const { data: rescheduled, error: updateError } = await supabaseAdmin
     .from('flashcards')
     .update({ next_review_at: dueAt, ease_rating: rating })
-    .eq('id', flashcard_id);
+    .eq('id', flashcard_id)
+    .or(`next_review_at.is.null,next_review_at.lte.${now.toISOString()}`)
+    .select('id');
 
   if (updateError) {
     res.status(500).json({ error: 'Failed to update flashcard schedule', message: updateError.message });
+    return;
+  }
+
+  if (!rescheduled || rescheduled.length === 0) {
+    // A concurrent request already claimed this rating. Answer exactly as the
+    // not-due branch does, so the UI reports one counted rating, not two.
+    res.status(200).json({
+      data: { flashcard_id, rating, counted: false, next_review_at: card.next_review_at },
+      message: 'Practice rating — this card was not due, so its schedule is unchanged.',
+    });
     return;
   }
 
@@ -127,6 +162,34 @@ router.post('/rate', async (req: Request, res: Response): Promise<void> => {
     // The card is already rescheduled. Losing the audit row is worse than
     // silent, so it is reported — but the student's schedule stands.
     console.error(`[Flashcards] Rating logged failed for card=${flashcard_id}`, logError.message);
+  }
+
+  /*
+   * 5. BKT. Reached only on a counted rating, which is the point.
+   *
+   * A hand-written card has no `concept_id` and produces no observation — the
+   * engine skips it rather than failing, since there is no concept to trace.
+   *
+   * Awaited and caught, never fire-and-forget: Express 4 does not forward async
+   * rejections and there is no `unhandledRejection` handler. Never fatal
+   * either — the card is already rescheduled and the student is owed their
+   * confirmation.
+   */
+  try {
+    const bkt = await applyFlashcardRating({
+      studentId,
+      conceptId: card.concept_id,
+      flashcardId: flashcard_id,
+      rating,
+    });
+    for (const problem of bktProblems(bkt)) {
+      console.error(`[BKT] card=${flashcard_id} student=${studentId}: ${problem}`);
+    }
+  } catch (err) {
+    console.error(
+      `[BKT] engine threw for card=${flashcard_id} student=${studentId}:`,
+      err instanceof Error ? err.message : err
+    );
   }
 
   res.status(200).json({

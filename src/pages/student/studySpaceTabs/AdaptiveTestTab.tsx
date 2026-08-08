@@ -10,7 +10,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
-import { CARD, SECTION, scoreTone, toneText } from '../../../components/ui/surfaces';
+import { CARD, SECTION, scoreTone, toneText, type Tone } from '../../../components/ui/surfaces';
 import TestSessionView from '../components/TestSessionView';
 import TestResultsView from '../components/TestResultsView';
 import {
@@ -28,6 +28,13 @@ import {
   type TestResult,
   type TestSummary,
 } from '../../../lib/testMode';
+import {
+  masteryApi,
+  masteryPercent,
+  TIER_LABEL,
+  TIER_TONE,
+  type SpaceMastery,
+} from '../../../lib/mastery';
 
 /**
  * Test Mode.
@@ -36,15 +43,27 @@ import {
  * session and results screens take over the tab by early return, the same way
  * `FlashcardsTab` hands off to `FlashcardStudyView`.
  *
- * There is deliberately NO mastery panel. BKT is not implemented yet, so every
- * `latent_mastery` is still the 0.10 seed; the version of this tab being
- * replaced filled that gap with a hardcoded array of neuroscience concepts and
- * a concept→material mapping invented by `idx % availableResources.length`.
- * What is shown instead is real test outcomes, which exist without BKT. The
- * mastery panel arrives with the BKT engine.
+ * MASTERY IS NOT REPORTED HERE — the Analytics tab owns it, with the per-lesson
+ * and per-concept breakdown behind it. A space-wide mastery tile briefly sat in
+ * the stat row and was removed as a second readout of a figure that already had
+ * a home; two of them can only ever agree or be a bug.
+ *
+ * What mastery IS still used for in this tab is the sentence on the setup
+ * screen, and that is not a duplicate: it states the reading and the tier BEFORE
+ * a test is generated, which is what makes the adaptation visible to a human and
+ * is exactly the paper's Difficulty Alignment check (p. 98). It is shown only
+ * once `assessed_concept_count > 0`, because every unassessed concept counts as
+ * the P(L₀) = 0.10 prior inside EQ(4) — so a student who has done nothing still
+ * averages 0.10, and printing that as "10%" would tell them they know a tenth of
+ * a lesson they have never touched.
  */
 
 type Screen = 'overview' | 'setup' | 'generating' | 'session' | 'results';
+
+/* `TIER_TONE` and `TIER_LABEL` moved to `src/lib/mastery.ts` when the Analytics
+   tab became a second consumer — mastery is fed by flashcards as well as tests,
+   so it is not a Test Mode concept. The reasoning for `foundational` being
+   NEUTRAL rather than `poor` travelled with them. */
 
 interface AdaptiveTestTabProps {
   spaceId: string;
@@ -54,6 +73,7 @@ interface AdaptiveTestTabProps {
 export default function AdaptiveTestTab({ spaceId, availableResources }: AdaptiveTestTabProps) {
   const [screen, setScreen] = useState<Screen>('overview');
   const [summaries, setSummaries] = useState<TestSummary[]>([]);
+  const [mastery, setMastery] = useState<SpaceMastery | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [activeTest, setActiveTest] = useState<GeneratedTest | null>(null);
   const [activeResult, setActiveResult] = useState<TestResult | null>(null);
@@ -72,6 +92,15 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
   const materialTitle = (id: string | undefined | null) =>
     availableResources.find((r) => r.id === id)?.title ?? null;
 
+  /*
+   * Mastery is refreshed HERE rather than on its own, so it reloads at every
+   * point the list already does — including straight after a test is submitted,
+   * which is the one moment the number has just changed and the student is
+   * looking at it. A separate fetch would go stale exactly then.
+   *
+   * A mastery failure must not blank the past-tests list, so it has its own
+   * catch: the list is real data the student can still use.
+   */
   const refreshList = async () => {
     setIsLoadingList(true);
     try {
@@ -80,6 +109,11 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
       console.error('[TestMode] Failed to load tests:', err);
     } finally {
       setIsLoadingList(false);
+    }
+    try {
+      setMastery(await masteryApi.space(spaceId));
+    } catch (err) {
+      console.error('[TestMode] Failed to load mastery:', err);
     }
   };
 
@@ -93,6 +127,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
   const chosenFormats = useMemo(() => orderedFormats(formats), [formats]);
   const material = availableResources.find((r) => r.id === materialId) ?? null;
   const conceptCount = material?.concept_count ?? 0;
+  const selectedMastery = mastery?.by_material.find((m) => m.material_id === materialId) ?? null;
 
   /** Matching needs six definitions for its option pool, so six concepts minimum. */
   const matchingTooSmall =
@@ -260,6 +295,24 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
                 {conceptCount} concept{conceptCount === 1 ? '' : 's'} available in this lesson.
               </p>
             )}
+            {/* The one place the adaptivity is visible to a human, and precisely
+                what the paper's Difficulty Alignment check (p. 98) is about:
+                the mastery reading, and the tier it produces, BEFORE the prompt
+                is written. Shown only once there is evidence — at a cold start
+                the tier is foundational for everyone, which says nothing. */}
+            {selectedMastery && selectedMastery.assessed_concept_count > 0 && (
+              <p className="font-sans text-xs text-slate-400 mt-2">
+                Your mastery here is{' '}
+                <span className={`font-semibold ${toneText[TIER_TONE[selectedMastery.tier]]}`}>
+                  {masteryPercent(selectedMastery.m_doc)}%
+                </span>
+                , so this test will be built at{' '}
+                <span className={`font-semibold ${toneText[TIER_TONE[selectedMastery.tier]]}`}>
+                  {TIER_LABEL[selectedMastery.tier].toLowerCase()}
+                </span>{' '}
+                level.
+              </p>
+            )}
           </Step>
 
           <Step n={2} title="Question types">
@@ -415,11 +468,13 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
             <h2 className="font-display text-xl font-semibold text-white tracking-tight truncate">
               Test Mode
             </h2>
-            {/* Says nothing about BKT on purpose. It is not implemented, and when
-                it is, difficulty is chosen when the test is BUILT from a mastery
-                snapshot — the old copy claimed it adapted mid-test. */}
+            {/* PAST TENSE, deliberately. Difficulty is chosen once, when the
+                test is BUILT, from a mastery snapshot taken at that moment —
+                paper p. 81 calls it session-based adaptation. An older version
+                of this copy claimed the test adapted mid-session, which it has
+                never done. */}
             <p className="font-sans text-xs text-slate-500 mt-0.5 truncate">
-              Practice tests built from your lesson materials.
+              Practice tests built from your lesson materials, set to what you have already mastered.
             </p>
           </div>
         </div>
@@ -439,6 +494,13 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
         </div>
       )}
 
+      {/* Three tiles, all of them about TESTS. A space-wide mastery figure used
+          to sit here as a fourth; it moved to the Analytics tab, which shows the
+          same number with the per-lesson and per-concept breakdown behind it.
+          Two readouts of one figure invite them to disagree. What stays in this
+          tab is the mastery sentence on the setup screen, which is not a
+          duplicate — it explains why the test about to be generated is the
+          difficulty it is. */}
       <div className="grid grid-cols-3 gap-3 mt-6">
         <Stat label="Tests taken" value={String(completed.length)} />
         <Stat

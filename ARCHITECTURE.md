@@ -177,7 +177,9 @@ BKT Recalculation (Per-Question, Context-Sensitive P(G)):
 BKT is the classical four-parameter probabilistic learner model implemented directly in the platform backend. It operates as a dynamic hidden Markov model (HMM) with observable nodes, continuously analyzing a student's sequential interactions to trace their latent knowledge state for any given concept.
 
 Default Parameter Initialization:
-  Since LearnSync AI is a newly developed platform with no pre-existing historical student interaction data, the system cannot utilize data-driven parameter estimation methods such as Expectation Maximization (EM) fitting. Instead, BKT parameters are initialized using empirically grounded default values from established educational data mining research (Bulut et al., 2023):
+  Since LearnSync AI is a newly developed platform with no pre-existing historical student interaction data, the system cannot utilize data-driven parameter estimation methods such as Expectation Maximization (EM) fitting. It therefore uses fixed values.
+
+  These are SELECTED CONFIGURATION VALUES OPERATING WITHIN PUBLISHED LIMITS, not values derived from research data — the distinction matters and an earlier version of this document got it wrong. Bulut et al. (2023) is the source of the four-parameter framework; the literature does not recommend specific numbers, because published values are computed from each study's own dataset. What it provides instead are acceptable ranges, collected in Šarić-Grgić et al. (2024): Corbett and Anderson's P(G) < 0.30 and P(S) < 0.10, Beck and Chang's P(G) + P(S) < 1, and Baker, Corbett and Aleven's P(G) < 0.50 and P(S) < 0.50. Every value below was chosen to fall inside those limits and is verified against Beck and Chang's rule at boot.
 
   - P(L₀) = 0.10 — Initial knowledge state. Conservative 10% prior probability of pre-existing mastery.
   - P(T) = 0.20 — Transition probability (learning rate). 20% probability of transitioning from unmastered to mastered after each learning opportunity. Moderately conservative for self-directed learning contexts.
@@ -206,6 +208,14 @@ Document Mastery Aggregation:
 Note: BKT is inherently self-correcting. Even if default parameters do not perfectly represent a given student's learning behavior, the Bayesian updating mechanism continuously refines mastery estimates as more interaction data accumulates. The system's accuracy improves organically as students complete more practice attempts.
 
 Note: The system does NOT use pyBKT or any external BKT library. The four-parameter BKT update equations are implemented directly in the platform backend code. Data-driven parameter estimation methods such as Expectation Maximization (EM) are not used due to the lack of pre-existing historical student interaction data.
+
+Implementation status: BUILT AND VERIFIED. The engine is `server/lib/bkt.ts`. Parameters are read from the `bkt_parameters` table rather than hardcoded. There are exactly two writers — `PUT /api/practice/:id/complete` and the counted branch of `POST /api/flashcards/rate` — matching the `bkt_source` enum and the Scope statement above. Every update appends a row to `bkt_update_logs` carrying the prior, the three applied parameters and both update phases, which is what the Implementation Correctness Rate is measured from. Run `npm run bkt:verify` for that measurement; `-- --live --live-test` extends it through the real HTTP endpoints.
+
+Two consequences of the equations worth stating, because both look like defects:
+
+  1. A wholly incorrect run raises mastery slightly rather than lowering it. P(L_{t+1}) = e + (1 - e)P(T) is minimised at P(T) = 0.20, above the P(L₀) = 0.10 prior, so repeated wrong answers converge upward to a fixed point — 0.25 for multiple choice, 2/7 for true/false. Both sit below the 0.50 tier threshold, so failing cannot unlock a harder test.
+
+  2. Mastery is held strictly below 1. At exactly 1.0 the incorrect-answer update returns P(S)/P(S) = 1, making the state absorbing: no evidence could ever lower it again. Continuous BKT approaches 1 without reaching it, so the engine clamps to 1 - 1e-9 and preserves that property.
 
 ---
 

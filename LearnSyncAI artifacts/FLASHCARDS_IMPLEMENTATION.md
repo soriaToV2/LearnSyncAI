@@ -1,8 +1,8 @@
 # Flashcards Tab — Implementation Reference
 
 **Feature:** Student flashcards — deck management, generation from vetted concepts, spaced repetition
-**Status:** Implemented and verified (`tsc --noEmit` clean, `vite build` clean, verified against live data)
-**Date:** 31 July 2026
+**Status:** Implemented and verified (`tsc --noEmit` clean, `vite build` clean, verified against live data). **BKT is wired in as of 7 August 2026** — see §15, and `BKT_IMPLEMENTATION.md` for the engine.
+**Date:** 31 July 2026 · BKT wiring 7 August 2026
 **Migrations applied:** **none** — every column and constraint this feature needs already existed unused
 
 > **Read this first if you are an AI agent debugging or extending this feature.**
@@ -565,28 +565,43 @@ Intervals, day boundaries and concept linkage confirmed end to end in production
 
 ---
 
-## 15. Handoff: wiring BKT
+## 15. BKT — ✅ WIRED, 7 August 2026
 
-The rating endpoint is now the right place. Everything BKT needs is in place:
+`applyFlashcardRating()` (from `server/lib/bkt.ts`) runs inside the `counted: true` branch of
+`POST /api/flashcards/rate`, after the `spaced_repetition_logs` insert and before the response.
+**`CLAUDE.md` § "BKT Engine" carries the rules.**
 
-- **Ownership is enforced** — mastery cannot be written against another student's concepts.
-- **`concept_id` is on both the card and the log row** — no extra join.
-- **The due check already gates what counts** — hook BKT inside the `counted: true` branch of
-  `POST /api/flashcards/rate` and retries, practice and cramming are excluded for free.
+| Rating | Observation | P(G) | From P(L₀) = 0.10 |
+|---|---|---|---|
+| Easy | 1 (correct) | `g_easy = 0.05` | → **0.7231** |
+| Medium | 1 (correct) | `g_medium = 0.25` | → **0.4194** |
+| Hard | **0 (incorrect)** | `g_hard = 0.10` | → **0.2145** |
 
-Settled inputs, already seeded in `bkt_params`:
+Hard is not a weak pass. It is a wrong answer with a *low* guess rate, and the low value is precisely
+what makes the drop steep — P(G) appears as `(1 − P(G))` in the incorrect denominator.
 
-| Rating | Observation | P(G) |
-|---|---|---|
-| Easy | 1 (correct) | `g_easy = 0.05` |
-| Medium | 1 (correct) | `g_medium = 0.25` |
-| Hard | 0 (incorrect) | `g_hard = 0.10` |
+**The due-check is what made this safe, and it is now load-bearing twice.** A card re-drilled thirty
+seconds after being rated is not due, so it produces no observation at all. Without that, mastery
+would climb fastest on exactly the concepts a student re-drills *because* they are struggling — and
+BKT's assumption that each observation independently tests latent knowledge would be false. Verified
+live: re-rating a just-rated card returns `counted: false`, leaves `latent_mastery` at 0.7231 and does
+not increment `opportunity_count`.
 
-Plus `p_l0 = 0.10`, `p_t = 0.20`, `p_s = 0.15`. `bkt_update_logs` already carries a `flashcard_id`
-column and a `'flashcard'` value in the `bkt_source` enum, waiting.
+**The schedule UPDATE became a compare-and-swap** — `.or('next_review_at.is.null,next_review_at.lte.<now>')`
+plus `.select('id')`, bailing to the not-due response on zero rows. `isDue()` reads a row fetched a
+moment earlier, so a double-tap would otherwise apply the rating twice. It must be `.or(...)`, not
+`.lte(...)`: `isDue()` treats a NULL schedule as due, and `next_review_at = NULL` never satisfies
+`<=`, so a plain `.lte` would leave such a card permanently unratable.
 
-**Do not** add a second mastery writer elsewhere, and **do not** relax the due check to "log every
-rating" — that is the whole protection.
+**Worth knowing before someone reports it as a bug:** two Easy ratings reach **0.98**, clearing the
+`advanced` threshold — far faster than the test path, where two correct multiple-choice answers reach
+0.7685. That is what P(G) = 0.05 means and the paper specifies it (p. 72). The brake is the schedule:
+Easy pushes the card seven days out, so it takes weeks, not minutes.
+
+**A hand-written card has no `concept_id`** and produces no observation; the engine skips it rather
+than failing.
+
+**Still true: do not add a third mastery writer, and do not relax the due check.**
 
 ---
 
@@ -601,4 +616,15 @@ rating" — that is the whole protection.
 | **Counted** | Server's answer for whether a rating actually moved the schedule. |
 | **Session Score** | `(easy + medium × 0.5) / cards` for one session. **Not** BKT mastery. |
 | **Reconcile** | Refresh strategy that updates/inserts/deletes by `concept_id` instead of wiping, to preserve rating history. |
+
+---
+
+## Related documents
+
+| Document | What it covers |
+|---|---|
+| **`LearnSyncAI artifacts/BKT_IMPLEMENTATION.md`** | **The mastery engine this feature feeds. Read it before changing the rating route or the due-check.** |
+| `LearnSyncAI artifacts/TEST_MODE_IMPLEMENTATION.md` | The other BKT writer |
+| `ARCHITECTURE.md` §4 (spaced repetition) and §8 (the BKT equations) | The rules of record |
+| `CLAUDE.md` | The condensed rules, always in an agent's context |
 | **Fallback** | A question-format card that shows the term because the model skipped that concept. |
