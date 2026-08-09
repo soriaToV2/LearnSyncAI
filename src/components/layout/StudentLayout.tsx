@@ -1,10 +1,40 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { Home, Layers, Gamepad2, BrainCircuit, LogOut, Settings as SettingsIcon, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
-import { MOCK_STUDENTS } from '../../data/mockStudents';
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
+import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } from '../../context/AuthContext';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-sidebar-collapsed';
+
+/**
+ * The avatar. `profiles` carries no image column and no email, so there is
+ * nothing to fetch and nothing may be invented — this replaced three `<img>`
+ * tags pointing at an Unsplash URL that lived in mock data.
+ *
+ * Renders an empty tinted circle while the profile is loading rather than a
+ * spinner: the sidebar is persistent chrome and should not flash on every
+ * navigation. It is tinted with the live theme accent, matching the logo bubble.
+ */
+function Monogram({
+  user,
+  size,
+  accent,
+}: {
+  user: ReturnType<typeof useAuth>['user'];
+  size: 'sm' | 'lg';
+  accent: string;
+}) {
+  const box = size === 'lg' ? 'w-10 h-10 text-xs' : 'w-8 h-8 text-[10px]';
+  return (
+    <div
+      className={`${box} rounded-full flex items-center justify-center border font-display font-bold shrink-0 select-none`}
+      style={{ backgroundColor: `${accent}20`, borderColor: `${accent}40`, color: accent }}
+      aria-hidden={!user}
+    >
+      {initials(user)}
+    </div>
+  );
+}
 
 function StudentLayoutInner() {
   const location = useLocation();
@@ -13,7 +43,7 @@ function StudentLayoutInner() {
   const [isCollapsed, setIsCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
   );
-  const currentStudent = MOCK_STUDENTS[0];
+  const { user } = useAuth();
   const { theme } = useStudentTheme();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -117,15 +147,11 @@ function StudentLayoutInner() {
 
       <button
         onClick={() => setShowLogout(!showLogout)}
-        title={currentStudent.name}
+        title={fullName(user)}
         className={`flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-all duration-300 border border-white/5 w-full text-left group active:scale-98 focus:outline-none ${collapsed ? 'justify-center' : ''}`}
       >
         <div className="relative shrink-0">
-          <img
-            src={currentStudent.avatar}
-            alt={currentStudent.name}
-            className="w-10 h-10 rounded-full object-cover border border-white/10"
-          />
+          <Monogram user={user} size="lg" accent={theme.accent} />
           <span
             className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-page"
             style={{ backgroundColor: theme.accent }}
@@ -137,11 +163,9 @@ function StudentLayoutInner() {
               className="font-display text-sm font-bold text-white transition-colors truncate"
               style={{ color: showLogout ? theme.accent : undefined }}
             >
-              {currentStudent.name}
+              {fullName(user) || displayName(user)}
             </p>
-            <p className="font-sans text-[11px] text-slate-400 truncate">
-              {currentStudent.university}
-            </p>
+            <p className="font-sans text-[11px] text-slate-400 truncate">{subtitleFor(user)}</p>
           </div>
         )}
       </button>
@@ -178,8 +202,8 @@ function StudentLayoutInner() {
           </span>
         </div>
 
-        <NavLink to="/student/settings" className="w-8 h-8 rounded-full overflow-hidden border border-white/10">
-          <img src={currentStudent.avatar} alt={currentStudent.name} className="w-full h-full object-cover" />
+        <NavLink to="/student/settings" title={fullName(user)}>
+          <Monogram user={user} size="sm" accent={theme.accent} />
         </NavLink>
       </header>
 
@@ -293,10 +317,22 @@ function StudentLayoutInner() {
   );
 }
 
+/**
+ * `AuthProvider` is mounted HERE, not at the App root.
+ *
+ * At the root it would fire `GET /api/auth/me` on `/login` and `/register`,
+ * where there is no session — a 401 on every cold page load, and an error state
+ * the login screen would have to know to ignore. Mounted on the layout, it runs
+ * exactly once per portal entry, on routes that already require a signed-in user.
+ * `EducatorLayout` can adopt the same provider unchanged; nothing in it is
+ * student-specific.
+ */
 export default function StudentLayout() {
   return (
-    <StudentThemeProvider>
-      <StudentLayoutInner />
-    </StudentThemeProvider>
+    <AuthProvider>
+      <StudentThemeProvider>
+        <StudentLayoutInner />
+      </StudentThemeProvider>
+    </AuthProvider>
   );
 }

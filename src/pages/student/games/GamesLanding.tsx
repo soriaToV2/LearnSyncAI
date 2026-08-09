@@ -21,8 +21,54 @@ import {
 import clsx from 'clsx';
 import Modal from '../../../components/ui/Modal';
 import { api } from '../../../lib/api';
+import {
+  masteryApi,
+  masteryTier,
+  masteryPercent,
+  TIER_LABEL,
+  TIER_TONE,
+  type SpaceMastery,
+} from '../../../lib/mastery';
+import { toneText } from '../../../components/ui/surfaces';
 import { getCourseDisplayInfo } from './gamesData';
 import { SessionDetail } from './gameUi';
+
+/**
+ * What the game about to be generated will be calibrated to.
+ *
+ * EQ(4) over the UNION of the selected materials — the same figure the server
+ * will compute and store as `game_content.mastery_snapshot`. Reconstructed here
+ * from the per-material numbers the summary endpoint already returns, because
+ * `M_union = Σ(m_doc_i · n_i) / Σ n_i` and `by_material` carries both.
+ *
+ * ⚠️ FILTERED TO THE SELECTED IDS, never `mastery.overall`. `overall` is the
+ * whole space; the server snapshots only the materials the game is built from.
+ * Using it here is the likeliest way to make this preview disagree with the row
+ * it is predicting.
+ *
+ * The per-material `m_doc` values are already rounded to 4dp by
+ * `documentMastery()`, so this reconstruction can differ from the server's own
+ * value by at most ~1e-4. That can only change the tier when the true M_doc lies
+ * inside a ~2e-4 band around 0.50 or 0.85, and the stage header shows the
+ * server's own tier a moment later either way.
+ */
+function unionMastery(
+  mastery: SpaceMastery | null,
+  selectedIds: string[]
+): { mDoc: number; assessed: number } | null {
+  if (!mastery || selectedIds.length === 0) return null;
+
+  const selected = new Set(selectedIds);
+  const rows = mastery.by_material.filter((m) => selected.has(m.material_id));
+  const concepts = rows.reduce((sum, m) => sum + m.concept_count, 0);
+  if (concepts === 0) return null;
+
+  const weighted = rows.reduce((sum, m) => sum + m.m_doc * m.concept_count, 0);
+  return {
+    mDoc: Math.round((weighted / concepts) * 10_000) / 10_000,
+    assessed: rows.reduce((sum, m) => sum + m.assessed_concept_count, 0),
+  };
+}
 
 type GameTypeUi = 'matching' | 'crossword' | 'trivia';
 type GameTypeApi = 'term_matcher' | 'crossword' | 'timed_trivia';
@@ -138,6 +184,7 @@ export default function GamesLanding() {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
+  const [mastery, setMastery] = useState<SpaceMastery | null>(null);
 
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
@@ -195,19 +242,29 @@ export default function GamesLanding() {
   // Load materials whenever the selected space changes. Only parsed materials
   // have extracted concepts, so those are the only ones eligible for generation.
   // Nothing is pre-selected — the student picks what the game draws from.
+  //
+  // Mastery rides along in the same effect and shares the one loading flag, so
+  // the tier preview is in hand before the student has finished ticking boxes —
+  // no second spinner, no separate state machine. A failed mastery call becomes
+  // null and hides the sentence; it must never block generation, because the
+  // server computes the authoritative figure itself.
   useEffect(() => {
     if (!isBuildModalOpen || !selectedSpaceId) return;
 
     let cancelled = false;
     setMaterialsLoading(true);
     setGenError(null);
-    api
-      .get<{ materials: Material[] }>(`/spaces/${selectedSpaceId}/materials`)
-      .then((res) => {
+
+    Promise.all([
+      api.get<{ materials: Material[] }>(`/spaces/${selectedSpaceId}/materials`),
+      masteryApi.space(selectedSpaceId).catch(() => null),
+    ])
+      .then(([res, spaceMastery]) => {
         if (cancelled) return;
         const completed = (res.data?.materials ?? []).filter((m) => m.parsed_status === 'completed');
         setMaterials(completed);
         setSelectedMaterialIds([]);
+        setMastery(spaceMastery);
       })
       .catch((err: unknown) => {
         if (!cancelled) setGenError(err instanceof Error ? err.message : 'Failed to load materials');
@@ -254,6 +311,7 @@ export default function GamesLanding() {
   };
 
   const allSelected = materials.length > 0 && selectedMaterialIds.length === materials.length;
+  const preview = unionMastery(mastery, selectedMaterialIds);
 
   return (
     <div className="space-y-10 animate-in fade-in duration-300">
@@ -547,6 +605,31 @@ export default function GamesLanding() {
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>Select at least one material to build the game.</span>
               </div>
+            )}
+
+            {/* The calibration, stated BEFORE anything is generated — which is what
+                makes the paper's p. 99 test case ("educational game generation and
+                difficulty calibration") observable without database access.
+
+                Shown only once something has been assessed, matching the identical
+                sentence in AdaptiveTestTab: at a cold start every student is
+                foundational, which says nothing, and every unassessed concept sits
+                at P(L₀) = 0.10, which must never be printed as a score. The tier
+                still reaches the student a moment later on the game's own header,
+                where it is the server's own value rather than a prediction. */}
+            {preview && preview.assessed > 0 && (
+              <p className="font-sans text-xs text-slate-400 p-2.5">
+                Your mastery across{' '}
+                {selectedMaterialIds.length === 1 ? 'this lesson' : 'these lessons'} is{' '}
+                <span className={clsx('font-semibold', toneText[TIER_TONE[masteryTier(preview.mDoc)]])}>
+                  {masteryPercent(preview.mDoc)}%
+                </span>
+                , so this game will be built at{' '}
+                <span className={clsx('font-semibold', toneText[TIER_TONE[masteryTier(preview.mDoc)]])}>
+                  {TIER_LABEL[masteryTier(preview.mDoc)].toLowerCase()}
+                </span>{' '}
+                level.
+              </p>
             )}
           </div>
 

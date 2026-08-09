@@ -440,23 +440,47 @@ export const GameSessionDetailSchema = z.object({
   items: z.array(z.record(z.string(), z.unknown())),
 });
 
-// XP was removed as a feature (not in the official spec).
+/**
+ * A finished game. XP was removed as a feature (not in the official spec).
+ *
+ * EVERYTHING IDENTIFYING WHAT WAS PLAYED COMES FROM THE `game_content` ROW, not
+ * from the client — `space_id`, `material_id`, `game_type` and `mastery_snapshot`
+ * are all read server-side from the row `content_id` names, after checking the
+ * caller owns it. Same principle as `SubmitAnswerSchema` deliberately carrying no
+ * `is_correct`: a client-asserted mastery snapshot is a client-chosen one, and
+ * this one is the evidence the paper's Difficulty Alignment check (p. 98) reads.
+ *
+ * `material_id` used to be here as a bare uuid gated by nothing, which CLAUDE.md's
+ * "every student-reachable route that takes a material ID must gate it" forbids.
+ *
+ * `content_id` is REQUIRED, not optional. Mock mode is not a counter-argument —
+ * `recordSession()` already returns early when there is no content id, so it has
+ * never reached this endpoint. Optional would let a real caller forget it and
+ * silently write an uncalibrated row.
+ */
 export const CreateGameSessionSchema = z.object({
-  material_id: z.string().uuid(),
-  game_type: z.enum(['term_matcher', 'crossword', 'timed_trivia']),
+  content_id: z.string().uuid(),
   accuracy: z.number().min(0).max(1).optional(),
   time_spent_ms: z.number().int().nonnegative().optional(),
   detail: GameSessionDetailSchema.optional(),
 });
 export type CreateGameSessionInput = z.infer<typeof CreateGameSessionSchema>;
 
-// AI generation of game content from a study space's materials.
-// `difficulty` is a seam for future BKT calibration; it currently only tunes the prompt.
+/**
+ * AI generation of game content from a study space's materials.
+ *
+ * THERE IS DELIBERATELY NO `difficulty` FIELD. It is derived server-side from the
+ * student's M_doc over the selected materials (paper p. 83), because a
+ * client-supplied difficulty is a client-chosen difficulty and would defeat the
+ * calibration entirely — the same reasoning as `testAllocation.ts` re-deriving
+ * test length rather than accepting one. A stale client still sending `difficulty`
+ * has it silently stripped, which is correct; verify by reading the stored row,
+ * not the response code.
+ */
 export const GenerateGameContentSchema = z.object({
   space_id: z.string().uuid(),
   material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
   game_type: z.enum(['term_matcher', 'crossword', 'timed_trivia']),
-  difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
 });
 export type GenerateGameContentInput = z.infer<typeof GenerateGameContentSchema>;
 

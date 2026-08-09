@@ -11,7 +11,7 @@ const router = Router();
  * Called immediately after Supabase Auth signup on the frontend.
  * Creates the corresponding row in the `profiles` table.
  *
- * Body: { email, password, first_name, last_name, role, institution_id? }
+ * Body: { email, password, first_name, last_name, role }
  */
 router.post('/register', async (req: Request, res: Response): Promise<void> => {
   const parsed = RegisterSchema.safeParse(req.body);
@@ -59,12 +59,23 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
 /**
  * GET /api/auth/me
  *
- * Returns the authenticated user's profile.
+ * The authenticated user's own profile. Backs `AuthContext` on the client — the
+ * one place a real name, role and grade level enter the UI.
+ *
+ * THIS ROUTE WAS BROKEN AND NOTHING NOTICED. It selected `*, institutions(name)`
+ * against a table that has never existed in `schema.sql`, so PostgREST rejected
+ * the embed and every call fell into the 404 below. It went unseen because no
+ * client code called it until the dashboard rebuild needed a real name.
+ *
+ * Columns are listed explicitly rather than `*` because the client types against
+ * this shape; a column added to `profiles` should not silently widen the payload.
+ * `status` is returned rather than enforced here — `authenticate` deliberately
+ * does not check it (only `requireRole` does), so the caller decides.
  */
 router.get('/me', authenticate, async (req: Request, res: Response): Promise<void> => {
   const { data: profile, error } = await supabaseAdmin
     .from('profiles')
-    .select('*, institutions(name)')
+    .select('id, role, first_name, last_name, grade_level, status, created_at')
     .eq('id', req.user!.id)
     .single();
 

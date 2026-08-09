@@ -1,315 +1,584 @@
+import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Flame, Clock, Award, TrendingUp, Layers, ArrowRight, Lock,
-  Gamepad2, PenLine, ClipboardList, BookOpen, Sparkles,
+  ArrowRight,
+  ChartColumn,
+  ClipboardList,
+  Gamepad2,
+  Layers,
+  PenLine,
+  RefreshCw,
+  Sparkles,
+  Target,
 } from 'lucide-react';
-import { MOCK_STUDENTS } from '../../data/mockStudents';
+import { CARD, SECTION, toneText } from '../../components/ui/surfaces';
+import MeterBar from '../../components/ui/MeterBar';
+import DueBadge from '../../components/ui/DueBadge';
+import SubjectBadge from '../../components/educator/SubjectBadge';
+import MasteryCurve from './components/MasteryCurve';
+import { useAuth, displayName } from '../../context/AuthContext';
+import {
+  masteryPercent,
+  masteryTier,
+  relativeTime,
+  TIER_LABEL,
+  TIER_TONE,
+} from '../../lib/mastery';
+import { scorePercent } from '../../lib/testMode';
+import {
+  dashboardApi,
+  type ActivityItem,
+  type DashboardData,
+  type FocusConcept,
+  type SpaceMasteryRow,
+} from '../../lib/dashboard';
 
-/* ------------------------------------------------------------------
-   Static placeholder data (UI only — no backend wiring yet).
-   Shapes mirror the tables these will eventually come from:
-   gamification_profiles, bkt_mastery, study_spaces, flashcards,
-   user_badges, cognitive_logs / practice_tests / game_sessions.
-------------------------------------------------------------------- */
+/**
+ * The student dashboard.
+ *
+ * Rebuilt from a version that made ZERO network calls — every number on it was a
+ * literal, the three study-space links pointed at ids `'1'`, `'2'` and `'3'`, and
+ * it greeted every student as "Sarah". It was also the only student page outside
+ * the design system, which is why it was the one page the theme switcher did not
+ * reach.
+ *
+ * ══ WHAT IS NOT HERE, AND WHY ══
+ * The paper (p. 65) lists four things for this screen: mastery curves, study
+ * hours, daily streaks and earned badges. Only the first has data behind it.
+ * Nothing writes `activity_logs`, so `duration_ms` (study hours) and any weekly
+ * chart have no source; nothing awards `user_badges`; and `day_streak` is frozen
+ * for the one student who has a non-zero value — a stale number that looks real,
+ * which is worse than none. All three are omitted rather than faked. If they are
+ * ever wanted, the missing piece is a writer, not a widget.
+ *
+ * ══ ONE REQUEST ══
+ * `GET /api/dashboard`. Everything below comes from that payload, including the
+ * curve — which matters because the curve's last point must equal the headline
+ * number, and that is only enforceable inside a single response.
+ *
+ * No cache and no refresh button: the page is fresh on mount like every other
+ * screen, and a button would advertise a staleness the mount already handles.
+ */
 
-const stats = [
-  { label: 'Overall Progress', value: '72%', hint: 'Across all your topics', icon: TrendingUp, color: '#22d3ee' },
-  { label: 'Day Streak', value: '7 days', hint: 'Keep it going!', icon: Flame, color: '#fb923c' },
-  { label: 'Study Time', value: '14.5 hrs', hint: 'Total so far', icon: Clock, color: '#818cf8' },
-  { label: 'Badges Earned', value: '4', hint: 'Out of 8', icon: Award, color: '#fbbf24' },
-];
-
-const spaces = [
-  { id: '1', title: 'Biology — Cell Structure', progress: 84, materials: 3, lastStudied: 'Studied today' },
-  { id: '2', title: 'Math — Quadratic Equations', progress: 61, materials: 2, lastStudied: 'Studied yesterday' },
-  { id: '3', title: 'History — World War II', progress: 38, materials: 4, lastStudied: 'Studied 3 days ago' },
-];
-
-const topics = [
-  { term: 'Photosynthesis', space: 'Biology', mastery: 91 },
-  { term: 'Mitosis', space: 'Biology', mastery: 76 },
-  { term: 'Completing the Square', space: 'Math', mastery: 54 },
-  { term: 'The Treaty of Versailles', space: 'History', mastery: 32 },
-  { term: 'Discriminant', space: 'Math', mastery: 21 },
-];
-
-const badges = [
-  { name: 'First Upload', earned: true },
-  { name: '7-Day Streak', earned: true },
-  { name: 'Flashcard Pro', earned: true },
-  { name: 'Game Champ', earned: true },
-  { name: '10-Day Streak', earned: false },
-  { name: 'Test Master', earned: false },
-];
-
-const activity = [
-  { text: 'You scored 8 out of 10 on a practice test in Biology.', time: '2 hours ago', icon: ClipboardList, color: '#34d399' },
-  { text: 'You reviewed 12 flashcards in Math.', time: '5 hours ago', icon: Layers, color: '#22d3ee' },
-  { text: 'You explained "Mitosis" in your own words.', time: 'Yesterday', icon: PenLine, color: '#818cf8' },
-  { text: 'You played Term Matching and got 90% correct.', time: '2 days ago', icon: Gamepad2, color: '#fbbf24' },
-];
-
-/** Turns a 0–100 score into words a Grade 10 student can act on. */
-function masteryLabel(mastery: number) {
-  if (mastery >= 80) return { text: 'Strong', color: '#34d399' };
-  if (mastery >= 50) return { text: 'Getting there', color: '#fbbf24' };
-  return { text: 'Needs practice', color: '#fb7185' };
-}
+const FOCUS_ICON_BY_KIND: Record<ActivityItem['kind'], typeof ClipboardList> = {
+  test: ClipboardList,
+  free_recall: PenLine,
+  feynman: Sparkles,
+  game: Gamepad2,
+};
 
 export default function StudentDashboard() {
-  const student = MOCK_STUDENTS[0];
-  const firstName = student.name.split(' ')[0];
+  const { user } = useAuth();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const dueToday = 12;
-  const weeklyMinutes = [30, 45, 0, 60, 25, 50, 40];
-  const weekDays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-  const peakMinutes = Math.max(...weeklyMinutes);
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+
+    dashboardApi
+      .load()
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load your dashboard.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const name = displayName(user);
+  const m = data?.mastery;
+  const nothingAssessed = m !== undefined && m.concepts_assessed === 0;
+  const noSpaces = data !== null && data.counts.spaces === 0;
+  const noMaterials = data !== null && data.counts.spaces > 0 && data.counts.materials === 0;
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-[1200px] mx-auto px-4 md:px-8 py-8 md:py-12">
-
-        {/* Greeting */}
         <header className="mb-8">
-          <h1 className="font-display text-3xl md:text-4xl font-bold text-white tracking-tight">
-            Hi, {firstName}
+          <h1 className="font-display text-3xl md:text-4xl font-bold text-on-surface tracking-tight">
+            {name ? `Hi, ${name}` : 'Your progress'}
           </h1>
-          <p className="font-sans text-sm text-slate-400 mt-1.5">
-            Here's how your studying is going.
+          <p className="font-sans text-sm text-slate-500 mt-1.5">
+            Everything you have learned so far, across all of your study spaces.
           </p>
         </header>
 
-        {/* Stats */}
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
-          {stats.map(stat => {
-            const Icon = stat.icon;
-            return (
-              <div
-                key={stat.label}
-                className="rounded-2xl bg-white/[0.02] border border-white/5 p-5 transition-colors hover:bg-white/[0.04]"
-              >
-                <div
-                  className="w-9 h-9 rounded-lg flex items-center justify-center mb-4"
-                  style={{ backgroundColor: `${stat.color}1a`, color: stat.color }}
-                >
-                  <Icon className="w-4.5 h-4.5" />
-                </div>
-                <p className="font-display text-2xl font-bold text-white tracking-tight">{stat.value}</p>
-                <p className="font-sans text-sm text-slate-300 font-medium mt-0.5">{stat.label}</p>
-                <p className="font-sans text-xs text-slate-500 mt-0.5">{stat.hint}</p>
-              </div>
-            );
-          })}
-        </section>
-
-        <div className="grid grid-cols-12 gap-6">
-
-          {/* ---------------- Main column ---------------- */}
-          <div className="col-span-12 lg:col-span-8 flex flex-col gap-6">
-
-            {/* Study spaces */}
-            <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="font-display text-lg font-bold text-white">Your Study Spaces</h2>
-                <Link
-                  to="/student/spaces"
-                  className="font-sans text-xs text-cyan-400 font-semibold flex items-center gap-1 hover:gap-1.5 transition-all"
-                >
-                  See all <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                {spaces.map(space => (
-                  <Link
-                    key={space.id}
-                    to={`/student/space/${space.id}`}
-                    className="group flex items-center gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-colors"
-                  >
-                    <div className="w-10 h-10 rounded-lg bg-cyan-400/10 text-cyan-400 flex items-center justify-center shrink-0">
-                      <BookOpen className="w-5 h-5" />
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <p className="font-sans text-sm font-semibold text-white truncate group-hover:text-cyan-400 transition-colors">
-                        {space.title}
-                      </p>
-                      <p className="font-sans text-xs text-slate-500 mt-0.5">
-                        {space.materials} files · {space.lastStudied}
-                      </p>
-                    </div>
-
-                    <div className="w-28 shrink-0 hidden sm:block">
-                      <div className="flex justify-between items-center mb-1.5">
-                        <span className="font-sans text-[11px] text-slate-500">Progress</span>
-                        <span className="font-sans text-[11px] font-bold text-white">{space.progress}%</span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-cyan-400"
-                          style={{ width: `${space.progress}%` }}
-                        />
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </section>
-
-            {/* Topics */}
-            <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-              <div className="mb-5">
-                <h2 className="font-display text-lg font-bold text-white">What to Study Next</h2>
-                <p className="font-sans text-xs text-slate-500 mt-1">
-                  Topics at the bottom need the most practice.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                {[...topics].sort((a, b) => b.mastery - a.mastery).map(topic => {
-                  const label = masteryLabel(topic.mastery);
-                  return (
-                    <div key={topic.term} className="flex items-center gap-4">
-                      <div className="w-40 sm:w-52 shrink-0 min-w-0">
-                        <p className="font-sans text-sm text-white font-medium truncate">{topic.term}</p>
-                        <p className="font-sans text-xs text-slate-500">{topic.space}</p>
-                      </div>
-
-                      <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{ width: `${topic.mastery}%`, backgroundColor: label.color }}
-                        />
-                      </div>
-
-                      <span
-                        className="font-sans text-[11px] font-semibold w-28 text-right shrink-0"
-                        style={{ color: label.color }}
-                      >
-                        {label.text}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* This week */}
-            <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-              <div className="flex items-end justify-between mb-6">
-                <div>
-                  <h2 className="font-display text-lg font-bold text-white">This Week</h2>
-                  <p className="font-sans text-xs text-slate-500 mt-1">How long you studied each day.</p>
-                </div>
-                <p className="font-sans text-xs text-slate-400">
-                  <span className="text-white font-bold">4 hrs 10 min</span> total
-                </p>
-              </div>
-
-              <div className="flex items-end justify-between gap-2 sm:gap-4 h-32">
-                {weeklyMinutes.map((minutes, i) => (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
-                    <span className="font-sans text-[10px] text-slate-500">
-                      {minutes > 0 ? `${minutes}m` : '—'}
-                    </span>
-                    <div
-                      className="w-full rounded-md bg-cyan-400/70 min-h-[4px] transition-all"
-                      style={{ height: `${(minutes / peakMinutes) * 100}%` }}
-                    />
-                    <span className="font-sans text-[11px] text-slate-500 font-medium">{weekDays[i]}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
+        {error && (
+          <div className="rounded-xl border border-red-400/20 bg-red-400/5 px-4 py-3 mb-6">
+            <p className="font-sans text-sm text-red-300">{error}</p>
           </div>
+        )}
 
-          {/* ---------------- Side column ---------------- */}
-          <div className="col-span-12 lg:col-span-4 flex flex-col gap-6">
-
-            {/* Flashcards due */}
-            <section className="rounded-2xl bg-cyan-400/[0.06] border border-cyan-400/20 p-6">
-              <div className="w-9 h-9 rounded-lg bg-cyan-400/15 text-cyan-400 flex items-center justify-center mb-4">
-                <Sparkles className="w-4.5 h-4.5" />
-              </div>
-              <h2 className="font-display text-lg font-bold text-white">
-                {dueToday} flashcards to review
-              </h2>
-              <p className="font-sans text-xs text-slate-400 mt-1 leading-relaxed">
-                These are ready for you today. Reviewing them now helps you remember them longer.
-              </p>
-              <Link
-                to="/student/spaces"
-                className="mt-4 flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-cyan-400 text-page font-sans text-sm font-bold hover:bg-cyan-300 transition-colors"
-              >
-                Start Reviewing <ArrowRight className="w-4 h-4" />
-              </Link>
-            </section>
-
-            {/* Badges */}
-            <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="font-display text-lg font-bold text-white">Badges</h2>
-                <span className="font-sans text-xs text-slate-500">
-                  {badges.filter(b => b.earned).length} of {badges.length}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                {badges.map(badge => (
-                  <div
-                    key={badge.name}
-                    className={`flex flex-col items-center text-center gap-2 p-3 rounded-xl border ${
-                      badge.earned
-                        ? 'bg-amber-400/[0.08] border-amber-400/20'
-                        : 'bg-white/[0.02] border-white/5'
-                    }`}
-                  >
-                    <div
-                      className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                        badge.earned ? 'bg-amber-400/15 text-amber-400' : 'bg-white/5 text-slate-600'
-                      }`}
-                    >
-                      {badge.earned ? <Award className="w-4.5 h-4.5" /> : <Lock className="w-4 h-4" />}
-                    </div>
-                    <span
-                      className={`font-sans text-[11px] font-medium leading-tight ${
-                        badge.earned ? 'text-slate-200' : 'text-slate-500'
-                      }`}
-                    >
-                      {badge.name}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* Recent activity */}
-            <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-              <h2 className="font-display text-lg font-bold text-white mb-5">Recent Activity</h2>
-
-              <div className="flex flex-col gap-4">
-                {activity.map((item, i) => {
-                  const Icon = item.icon;
-                  return (
-                    <div key={i} className="flex items-start gap-3">
-                      <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                        style={{ backgroundColor: `${item.color}1a`, color: item.color }}
-                      >
-                        <Icon className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-sans text-xs text-slate-300 leading-relaxed">{item.text}</p>
-                        <span className="font-sans text-[11px] text-slate-500">{item.time}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-24">
+            <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />
           </div>
-        </div>
+        ) : !data || noSpaces ? (
+          <EmptyCard
+            title="No study spaces yet."
+            body="Create a study space and the lessons for your grade will be added to it automatically. Your progress shows up here as soon as you start."
+            cta={{ to: '/student/spaces', label: 'Create a study space' }}
+          />
+        ) : noMaterials ? (
+          <EmptyCard
+            title="No lessons in your spaces yet."
+            body="Your teacher has not published anything to your grade for these subjects yet. Once they do, it appears in your spaces and your progress starts tracking here."
+            cta={{ to: '/student/spaces', label: 'Open your spaces' }}
+          />
+        ) : (
+          <>
+            {/* ── Summary strip ────────────────────────────────────────────── */}
+            <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
+              <Stat label="Study spaces" value={String(data.counts.spaces)} />
+              <Stat label="Lessons" value={String(data.counts.materials)} />
+              <Stat
+                label="Concepts assessed"
+                value={`${m!.concepts_assessed} / ${m!.concepts_total}`}
+              />
+              <Stat
+                label="Concepts mastered"
+                value={nothingAssessed ? '—' : String(m!.concepts_mastered)}
+                className={nothingAssessed ? '' : toneText.good}
+              />
+            </section>
+
+            <div className="grid grid-cols-12 gap-6">
+              {/* ── Main column ────────────────────────────────────────────── */}
+              <div className="col-span-12 lg:col-span-8 space-y-6">
+                <MasteryCard data={data} />
+                <FocusCard focus={data.focus} assessed={m!.concepts_assessed} total={m!.concepts_total} />
+                <SpacesCard spaces={m!.by_space} />
+              </div>
+
+              {/* ── Side column ────────────────────────────────────────────── */}
+              <div className="col-span-12 lg:col-span-4 space-y-6">
+                <DueCard total={data.flashcards_due} spaces={m!.by_space} />
+                {data.resume_test && <ResumeCard test={data.resume_test} />}
+                <RecentCard items={data.recent} />
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </main>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Stat({ label, value, className = '' }: { label: string; value: string; className?: string }) {
+  return (
+    <div className={`${CARD} p-4 text-center`}>
+      <p className={`font-display text-xl font-bold tabular-nums ${className || 'text-white'}`}>{value}</p>
+      <p className="font-sans text-[10px] uppercase tracking-widest text-slate-500 font-semibold mt-1">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function EmptyCard({
+  title,
+  body,
+  cta,
+}: {
+  title: string;
+  body: string;
+  cta?: { to: string; label: string };
+}) {
+  return (
+    <div className={`${CARD} py-16 px-6 text-center`}>
+      <Layers className="w-10 h-10 text-slate-500 opacity-20 mx-auto mb-4" />
+      <p className="font-sans text-sm text-slate-400 mb-1">{title}</p>
+      <p className="font-sans text-xs text-slate-600 max-w-md mx-auto leading-relaxed">{body}</p>
+      {cta && (
+        <Link
+          to={cta.to}
+          className="inline-flex items-center gap-2 mt-6 px-5 py-2.5 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-container transition-all active:scale-[0.98]"
+        >
+          {cta.label} <ArrowRight className="w-4 h-4" />
+        </Link>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The paper's p. 81 deliverable: EQ(4) document mastery "displayed as a progress
+ * bar on the user dashboard" — with its history directly beneath it.
+ *
+ * The number and the curve live in ONE card on purpose. The curve's last point
+ * equals this number by construction, and putting them in separate cards is how
+ * someone later sources them differently and the invariant quietly dies.
+ */
+function MasteryCard({ data }: { data: DashboardData }) {
+  const m = data.mastery;
+  const nothingAssessed = m.concepts_assessed === 0;
+  const updated = relativeTime(m.last_updated);
+
+  // Tier from the ROUNDED value so the colour cannot contradict the number:
+  // 0.849 prints "85%" but tiers as intermediate on the raw value.
+  const percent = m.overall === null ? 0 : masteryPercent(m.overall);
+  const tier = masteryTier(percent / 100);
+  const tone = TIER_TONE[tier];
+
+  return (
+    <div className={`${CARD} p-5`}>
+      <div className="flex items-center gap-2">
+        <ChartColumn className="w-4 h-4 text-primary-fixed-dim" />
+        <h2 className={SECTION}>Overall mastery</h2>
+      </div>
+
+      <div className="flex items-end justify-between gap-4 mt-4">
+        <div className="min-w-0">
+          <p className={`font-display text-4xl font-bold tabular-nums ${nothingAssessed ? 'text-white' : toneText[tone]}`}>
+            {nothingAssessed || m.overall === null ? '—' : `${percent}%`}
+          </p>
+          <p className={`font-sans text-xs font-semibold mt-1 ${nothingAssessed ? 'text-slate-500' : toneText[tone]}`}>
+            {nothingAssessed ? 'Not measured yet' : TIER_LABEL[tier]}
+          </p>
+        </div>
+        <p className="font-sans text-[11px] text-slate-600 text-right shrink-0">
+          {m.concepts_assessed} of {m.concepts_total} concepts
+          {m.total_attempts > 0 && (
+            <>
+              <br />
+              {m.total_attempts} attempt{m.total_attempts === 1 ? '' : 's'}
+            </>
+          )}
+        </p>
+      </div>
+
+      <MeterBar
+        value={nothingAssessed ? null : m.overall}
+        tone={tone}
+        label="Overall mastery across all study spaces"
+        className="mt-4"
+      />
+
+      {nothingAssessed ? (
+        <p className="font-sans text-xs text-slate-500 mt-4 leading-relaxed">
+          Your mastery updates when you rate a flashcard or finish a test. Until then there is
+          nothing to measure — your lessons are waiting, not scored at zero.
+        </p>
+      ) : (
+        <>
+          {data.curve && (
+            <div className="mt-6">
+              <MasteryCurve points={data.curve.points} toneClass={toneText[tone]} />
+              <div className="flex items-center justify-between mt-2">
+                <p className="font-sans text-[11px] text-slate-600">
+                  {masteryPercent(data.curve.points[0].m_doc)}% →{' '}
+                  <span className="text-slate-400 font-semibold">
+                    {masteryPercent(data.curve.points[data.curve.points.length - 1].m_doc)}%
+                  </span>
+                </p>
+                <p className="font-sans text-[11px] text-slate-600">
+                  {data.curve.total_updates} update{data.curve.total_updates === 1 ? '' : 's'}
+                  {data.curve.stride > 1 && ` · showing every ${ordinal(data.curve.stride)}`}
+                  {data.curve.truncated && ' · most recent only'}
+                </p>
+              </div>
+            </div>
+          )}
+          <p className="font-sans text-[11px] text-slate-600 mt-3 leading-relaxed">
+            Your average across the {m.concepts_total} concept{m.concepts_total === 1 ? '' : 's'} you
+            are tracking today, one point per answer.
+            {updated ? ` Updated ${updated}.` : ''}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The weakest concepts across EVERY space — the one thing this page can show that
+ * no per-space screen can. The Analytics tab is scoped to one space by design, so
+ * "what should I work on next, overall" had no home until now.
+ */
+function FocusCard({
+  focus,
+  assessed,
+  total,
+}: {
+  focus: FocusConcept[];
+  assessed: number;
+  total: number;
+}) {
+  if (assessed === 0) return null;
+
+  return (
+    <div className={`${CARD} p-5`}>
+      <div className="flex items-center gap-2">
+        <Target className="w-4 h-4 text-primary-fixed-dim" />
+        <h2 className={SECTION}>Focus next</h2>
+      </div>
+      {/* The honesty guard, same wording as the Analytics tab. Without it a student
+          wonders why a concept they know they are weak at is missing — the answer
+          is always "it has not come up yet". */}
+      <p className="font-sans text-[11px] text-slate-600 mt-1.5">
+        Ranked from the {assessed} concept{assessed === 1 ? '' : 's'} you have been tested on.
+      </p>
+
+      {focus.length === 0 || focus[0].mastery >= 0.85 ? (
+        <p className="font-sans text-sm text-slate-300 mt-4">
+          You are above 85% on everything you have been tested on.
+          {assessed < total && (
+            <span className="text-slate-500">
+              {' '}
+              {total - assessed} concept{total - assessed === 1 ? ' has' : 's have'} not come up yet.
+            </span>
+          )}
+        </p>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {focus.map((c) => (
+            <Fragment key={c.concept_id}>
+              <FocusRow concept={c} />
+            </Fragment>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One assessed concept. Never rendered for an unassessed one — it has no percentage. */
+function FocusRow({ concept }: { concept: FocusConcept }) {
+  const percent = masteryPercent(concept.mastery);
+  const tone = TIER_TONE[masteryTier(percent / 100)];
+
+  return (
+    <Link
+      to={concept.space_id ? `/student/space/${concept.space_id}` : '/student/spaces'}
+      className="block group"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-sans text-sm text-slate-200 truncate group-hover:text-white transition-colors">
+            {concept.term}
+          </p>
+          <p className="font-sans text-[11px] text-slate-600 truncate">
+            {concept.material_title}
+            {concept.space_title && ` · ${concept.space_title}`}
+          </p>
+        </div>
+        <span className={`font-display text-sm font-bold tabular-nums shrink-0 ${toneText[tone]}`}>
+          {percent}%
+        </span>
+      </div>
+      <MeterBar value={concept.mastery} tone={tone} label={`Mastery of ${concept.term}`} className="mt-1.5" />
+    </Link>
+  );
+}
+
+function SpacesCard({ spaces }: { spaces: SpaceMasteryRow[] }) {
+  if (spaces.length === 0) return null;
+
+  return (
+    <div>
+      <h2 className={`${SECTION} mb-4`}>Your study spaces</h2>
+      <div className="space-y-2">
+        {spaces.map((s) => (
+          <Fragment key={s.space_id}>
+            <SpaceRow space={s} />
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SpaceRow({ space }: { space: SpaceMasteryRow }) {
+  const started = space.assessed_concept_count > 0;
+  const percent = masteryPercent(space.m_doc);
+  const tone = TIER_TONE[masteryTier(percent / 100)];
+
+  return (
+    <Link
+      to={`/student/space/${space.space_id}`}
+      className={`${CARD} block p-4 hover:bg-surface-container-lowest/70 transition-colors group`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <SubjectBadge code={space.subject} />
+          <p className="font-sans text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors">
+            {space.title}
+          </p>
+          <DueBadge count={space.due_count} />
+        </div>
+        <div className="text-right shrink-0">
+          {started ? (
+            <>
+              <span className={`font-display text-sm font-bold tabular-nums ${toneText[tone]}`}>
+                {percent}%
+              </span>
+              <p className={`font-sans text-[10px] uppercase tracking-widest ${toneText[tone]}`}>
+                {TIER_LABEL[masteryTier(percent / 100)]}
+              </p>
+            </>
+          ) : (
+            <span className="font-sans text-[11px] text-slate-600">Not started</span>
+          )}
+        </div>
+      </div>
+
+      {/* null, never 0 — an unmeasured space has no bar to fill. */}
+      <MeterBar
+        value={started ? space.m_doc : null}
+        tone={tone}
+        label={`Mastery in ${space.title}`}
+        className="mt-3"
+      />
+
+      <p className="font-sans text-[11px] text-slate-600 mt-2">
+        {space.assessed_concept_count} of {space.concept_count} concepts assessed ·{' '}
+        {space.material_count} lesson{space.material_count === 1 ? '' : 's'}
+      </p>
+    </Link>
+  );
+}
+
+function DueCard({ total, spaces }: { total: number; spaces: SpaceMasteryRow[] }) {
+  // Nothing due is not a state worth a card saying "0".
+  if (total <= 0) return null;
+
+  // Link to where the work actually is, rather than to the spaces list.
+  const busiest = [...spaces].sort((a, b) => b.due_count - a.due_count)[0];
+
+  return (
+    <Link
+      to={busiest ? `/student/space/${busiest.space_id}` : '/student/spaces'}
+      className={`${CARD} block p-5 hover:bg-surface-container-lowest/70 transition-colors group`}
+    >
+      <div className="flex items-center gap-2">
+        <Layers className="w-4 h-4 text-primary-fixed-dim" />
+        <h2 className={SECTION}>Flashcards due</h2>
+      </div>
+      <p className="font-display text-3xl font-bold text-white tabular-nums mt-3">{total}</p>
+      <p className="font-sans text-xs text-slate-500 mt-1">
+        {busiest && busiest.due_count > 0
+          ? `${busiest.due_count} in ${busiest.title}`
+          : 'Ready to review'}
+      </p>
+      <span className="inline-flex items-center gap-1.5 font-sans text-xs font-semibold text-primary-fixed-dim mt-4 group-hover:gap-2.5 transition-all">
+        Start reviewing <ArrowRight className="w-3.5 h-3.5" />
+      </span>
+    </Link>
+  );
+}
+
+function ResumeCard({ test }: { test: NonNullable<DashboardData['resume_test']> }) {
+  return (
+    <Link
+      to={`/student/space/${test.space_id}`}
+      className={`${CARD} block p-5 hover:bg-surface-container-lowest/70 transition-colors group`}
+    >
+      <div className="flex items-center gap-2">
+        <ClipboardList className="w-4 h-4 text-amber-400" />
+        <h2 className={SECTION}>Unfinished test</h2>
+      </div>
+      <p className="font-sans text-sm font-semibold text-slate-200 mt-3 truncate">{test.title}</p>
+      <p className="font-sans text-xs text-slate-500 mt-1">
+        {test.answered} of {test.total} answered
+        {test.space_title && ` · ${test.space_title}`}
+      </p>
+      <MeterBar
+        value={test.total > 0 ? test.answered / test.total : null}
+        tone="mid"
+        label={`${test.answered} of ${test.total} answered`}
+        className="mt-3"
+      />
+      <span className="inline-flex items-center gap-1.5 font-sans text-xs font-semibold text-amber-400 mt-4 group-hover:gap-2.5 transition-all">
+        Pick up where you left off <ArrowRight className="w-3.5 h-3.5" />
+      </span>
+    </Link>
+  );
+}
+
+function RecentCard({ items }: { items: ActivityItem[] }) {
+  return (
+    <div className={`${CARD} p-5`}>
+      <h2 className={SECTION}>Recent activity</h2>
+      {items.length === 0 ? (
+        <p className="font-sans text-xs text-slate-600 mt-3 leading-relaxed">
+          Nothing yet. Study a deck, take a test or play a game and it shows up here.
+        </p>
+      ) : (
+        <div className="mt-4 space-y-3.5">
+          {items.map((item) => (
+            <Fragment key={`${item.kind}-${item.id}`}>
+              <ActivityRow item={item} />
+            </Fragment>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActivityRow({ item }: { item: ActivityItem }) {
+  const Icon = FOCUS_ICON_BY_KIND[item.kind];
+  const when = relativeTime(item.at);
+
+  return (
+    <div className="flex items-start gap-3">
+      <div className="w-7 h-7 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center shrink-0 mt-0.5">
+        <Icon className="w-3.5 h-3.5 text-slate-400" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-sans text-xs text-slate-300 leading-snug">{activityText(item)}</p>
+        <p className="font-sans text-[11px] text-slate-600 mt-0.5">
+          {[item.space_title, when].filter(Boolean).join(' · ')}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One sentence per activity.
+ *
+ * Free Recall and Feynman deliberately carry NO number. Free Recall's score is a
+ * coverage ratio whose denominator is however finely that document happened to be
+ * split, so it means nothing stripped of its context — and a dashboard is exactly
+ * the context that strips context. Printing "31%" beside a test's "80%" invites
+ * the comparison the codebase spends a paragraph forbidding.
+ */
+function activityText(item: ActivityItem): string {
+  switch (item.kind) {
+    case 'test':
+      return `Scored ${scorePercent(item.score)}% on ${item.title}.`;
+    case 'free_recall':
+      return 'Wrote a free recall attempt.';
+    case 'feynman':
+      return 'Explained a concept in your own words.';
+    case 'game':
+      return item.accuracy === null
+        ? `Played ${GAME_LABEL[item.game_type] ?? 'a game'}.`
+        : `Played ${GAME_LABEL[item.game_type] ?? 'a game'} — ${Math.round(item.accuracy * 100)}% correct.`;
+  }
+}
+
+const GAME_LABEL: Record<string, string> = {
+  term_matcher: 'Term Matching',
+  crossword: 'Crossword',
+  timed_trivia: 'Timed Trivia',
+};
+
+/** "2nd", "3rd", "4th" — for the curve's "showing every Nth" caption. */
+function ordinal(n: number): string {
+  const suffix = n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th';
+  return `${n}${suffix}`;
 }

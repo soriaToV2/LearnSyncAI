@@ -2,7 +2,8 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { rejectInaccessibleMaterials, publishedMaterialIds } from '../lib/materialAccess';
+import { rejectInaccessibleMaterials } from '../lib/materialAccess';
+import { requireOwnedSpace, spaceMaterialIds, type SpaceOwner } from '../lib/spaceAccess';
 import { GroqUnavailableError } from '../lib/groq';
 import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
 import { applyTestCompletion, bktProblems } from '../lib/bkt';
@@ -58,53 +59,6 @@ router.use(authenticate, requireRole('student'));
 // ─────────────────────────────────────────────────────────────────────────────
 // Gates
 // ─────────────────────────────────────────────────────────────────────────────
-
-interface SpaceOwner {
-  id: string;
-  subject: string;
-  gradeLevel: number;
-}
-
-/**
- * The caller's own space, or null after the caller has already been answered.
- *
- * 404 rather than 403 throughout: a 403 confirms the id names a real space, and
- * space ids are visible in the address bar. Mirrors `loadOwnedSpace()` in
- * `studyspaces.routes.ts`, including the active/role/grade checks — a disabled
- * account must not be able to generate anything.
- */
-async function requireOwnedSpace(
-  spaceId: string,
-  req: Request,
-  res: Response
-): Promise<SpaceOwner | null> {
-  const { data: space } = await supabaseAdmin
-    .from('study_spaces')
-    .select('id, subject, student_id')
-    .eq('id', spaceId)
-    .maybeSingle();
-
-  const { data: profile } = await supabaseAdmin
-    .from('profiles')
-    .select('grade_level, status, role')
-    .eq('id', req.user!.id)
-    .maybeSingle();
-
-  if (
-    !space ||
-    space.student_id !== req.user!.id ||
-    !profile ||
-    profile.status !== 'active' ||
-    profile.role !== 'student' ||
-    profile.grade_level === null ||
-    profile.grade_level === undefined
-  ) {
-    res.status(404).json({ error: 'Study space not found' });
-    return null;
-  }
-
-  return { id: space.id, subject: space.subject, gradeLevel: profile.grade_level };
-}
 
 interface TestRow {
   id: string;
@@ -314,23 +268,6 @@ router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void>
 // ─────────────────────────────────────────────────────────────────────────────
 // Mastery — EQ(4), read-only
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The materials a space actually shows: linked to it AND still published to this
- * subject and grade. An educator archiving a material therefore drops it from
- * every student's space instantly, while the link row survives.
- */
-async function spaceMaterialIds(space: SpaceOwner): Promise<string[]> {
-  const published = await publishedMaterialIds(space.subject, space.gradeLevel);
-  const { data: linked } = await supabaseAdmin
-    .from('study_space_materials')
-    .select('material_id')
-    .eq('space_id', space.id);
-
-  return (linked ?? [])
-    .map((r) => r.material_id as string)
-    .filter((id) => published.includes(id));
-}
 
 /**
  * Most recent `last_updated` across rows already in hand — no extra query.
@@ -650,14 +587,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   if (!space) return;
   if (!(await rejectInaccessibleMaterials(req, res, [material_id]))) return;
 
-  const published = await publishedMaterialIds(space.subject, space.gradeLevel);
-  const { data: linked } = await supabaseAdmin
-    .from('study_space_materials')
-    .select('material_id')
-    .eq('space_id', space.id);
-  const linkedIds = (linked ?? []).map((r) => r.material_id as string);
-
-  if (!published.includes(material_id) || !linkedIds.includes(material_id)) {
+  if (!(await spaceMaterialIds(space)).includes(material_id)) {
     res.status(404).json({ error: 'Material not found in this study space' });
     return;
   }

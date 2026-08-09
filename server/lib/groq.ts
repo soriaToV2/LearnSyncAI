@@ -1,5 +1,13 @@
 import Groq from 'groq-sdk';
 import { createHash } from 'node:crypto';
+import type { DifficultyTier } from './testAllocation';
+import { TIER_GUIDANCE } from './testDifficulty';
+import {
+  CROSSWORD_TIER_RULES,
+  MATCH_TIER_RULES,
+  TRIVIA_TIER_RULES,
+  TRIVIA_QUESTION_MS,
+} from './gameDifficulty';
 
 /**
  * Read ONCE, at module load. That is normal, but it makes swapping the key in
@@ -311,12 +319,20 @@ ${list}`;
 // ──────────────────────────────────────────────────────────────
 // Game content generation (PlayMe module)
 //
-// Each helper takes pre-extracted concepts and returns strict JSON matching
-// the frontend CourseGameData sub-shapes. `difficulty` tunes the prompt only —
-// it is a seam for future BKT calibration and does not touch mastery scores.
+// Each helper takes pre-extracted concepts and returns strict JSON matching the
+// frontend CourseGameData sub-shapes. `tier` is derived server-side from the
+// student's M_doc (paper p. 83) and reaches the model as prompt text only —
+// nothing here touches mastery scores. See server/lib/gameDifficulty.ts.
+//
+// PLACEMENT IS THE WHOLE POINT OF THE RESTRUCTURE BELOW. These prompts used to
+// carry one bare `DIFFICULTY_GUIDANCE` line buried mid-bullet-list, which is
+// exactly the placement testDifficulty.ts records as measured-failed: with the
+// tier only in a shared header, output came back byte-identical across tiers
+// because the specific imperative rules after it won. So each prompt now states
+// the tier three times — the paper's framing as a standalone paragraph, a
+// game-specific focus paragraph, and the operative fields spliced onto the
+// bullets that actually decide the output.
 // ──────────────────────────────────────────────────────────────
-
-export type GameDifficulty = 'easy' | 'medium' | 'hard';
 
 /** A term/definition pair for the Term Matching game (matches frontend TermItem). */
 export interface GeneratedTerm {
@@ -329,7 +345,6 @@ export interface GeneratedTrivia {
   question: string;
   options: string[];
   correct: string;
-  difficulty: GameDifficulty;
 }
 
 /** A crossword answer + clue. The grid layout is computed separately in code. */
@@ -338,16 +353,21 @@ export interface GeneratedCrosswordWord {
   clue: string;
 }
 
-const DIFFICULTY_GUIDANCE: Record<GameDifficulty, string> = {
-  easy: 'Target foundational recall. Keep language simple and unambiguous.',
-  medium: 'Target solid understanding. Mix straightforward and moderately challenging items.',
-  hard: 'Target deep mastery. Favor nuanced, application-level items and subtle distractors.',
-};
-
-/** Builds the numbered concept list shared by every game prompt. */
+/**
+ * Builds the numbered concept list shared by every game prompt.
+ *
+ * THE ORDER IS MEANINGFUL. `pickConceptsByMastery()` sorts by how much the
+ * student needs the practice, and every prompt tells the model to prefer items
+ * listed earlier when it has to choose. Do not sort or shuffle this.
+ */
 function conceptListOf(concepts: ConceptInput[]): string {
   return concepts.map((c, i) => `${i + 1}. Term: "${c.term}" — Definition: ${c.definition}`).join('\n');
 }
+
+/** The one line every game prompt uses to spend the surplus in SELECT_BUFFER. */
+const ORDERING_RULE =
+  'When two candidates are equally suitable, prefer the one listed EARLIER — the concepts are ' +
+  'ordered by what this student most needs to practise.';
 
 /** Parses a Groq JSON-mode response or throws a consistent, truncated error. */
 function parseGroqJson<T>(rawText: string | null | undefined): T {
@@ -368,15 +388,22 @@ function parseGroqJson<T>(rawText: string | null | undefined): T {
 export async function generateTermMatches(
   concepts: ConceptInput[],
   count = 4,
-  difficulty: GameDifficulty = 'medium'
+  tier: DifficultyTier = 'foundational'
 ): Promise<GeneratedTerm[]> {
+  const rules = MATCH_TIER_RULES[tier];
+
   const prompt = `You are building a term-matching study game.
 
-From the concepts below, select the ${count} best pairs and rewrite each as a concise, game-friendly card:
+${TIER_GUIDANCE[tier]}
+
+FOR THIS GAME SPECIFICALLY: ${rules.focus}
+
+From the concepts below, ${rules.selection}, and rewrite ${count} of them as game-friendly cards:
 - "term": a short label (1–4 words), no trailing punctuation.
-- "definition": one clear sentence (max ~18 words) that unambiguously matches its term.
-${DIFFICULTY_GUIDANCE[difficulty]}
-Every definition must be distinct enough that a student can match it to exactly one term.
+- "definition": ${rules.definition}
+- Keep every definition to one sentence of at most ~18 words.
+- Every definition must be distinct enough that a student can match it to exactly one term.
+- ${ORDERING_RULE}
 
 Respond ONLY with valid JSON in this EXACT format (no markdown, no extra text):
 {
@@ -414,18 +441,37 @@ ${conceptListOf(concepts)}`;
 export async function generateTrivia(
   concepts: ConceptInput[],
   count = 6,
-  difficulty: GameDifficulty = 'medium'
+  tier: DifficultyTier = 'foundational'
 ): Promise<GeneratedTrivia[]> {
+  const rules = TRIVIA_TIER_RULES[tier];
+  const seconds = Math.round(TRIVIA_QUESTION_MS[tier] / 1000);
+  // A reading budget, stated as a TARGET rather than a ceiling. An earlier
+  // version said only "the student has N seconds, anything they cannot finish
+  // reading measures nothing" — and the model optimised the one thing it could
+  // check, collapsing advanced to 2.5-word questions like "What is XSS?" with
+  // two-word options: the EASIEST output of the three tiers. Time pressure has
+  // to be two-sided or terseness becomes a way to comply with "make it hard".
+  const budget = seconds * 4;
+
   const prompt = `You are writing multiple-choice trivia questions for a timed study game.
+
+${TIER_GUIDANCE[tier]}
+
+FOR THIS GAME SPECIFICALLY: ${rules.focus}
+
+READING BUDGET: the student has ${seconds} seconds per question, which is room for about ${budget}
+words across the question and its four options together. USE THAT ROOM — aim for roughly ${budget}
+words, not far under it. Coming in short does not make a question harder; it makes it easier, and a
+question a student can answer at a glance measures nothing.
 
 Generate ${count} questions drawn from the concepts below.
 Rules for EACH question:
-- "options": EXACTLY 4 distinct answer choices.
+- "question": ${rules.question}
+- "options": EXACTLY 4 distinct answer choices. They ${rules.options}
 - "correct": MUST be copied verbatim from one of the 4 options.
-- The 3 wrong options must be plausible distractors (related to the topic, not obviously wrong).
-- "difficulty": one of "easy", "medium", or "hard". Include a spread across tiers.
-${DIFFICULTY_GUIDANCE[difficulty]}
 - Questions must be self-contained (do not say "according to the text").
+- NEVER state a relationship a definition does not support. If a concept's definition does not say what it causes, prevents or costs, do not ask — and never answer — as though it did. A wrong fact taught confidently is worse than an easy question.
+- ${ORDERING_RULE}
 
 Respond ONLY with valid JSON in this EXACT format (no markdown, no extra text):
 {
@@ -433,8 +479,7 @@ Respond ONLY with valid JSON in this EXACT format (no markdown, no extra text):
     {
       "question": "<question text>",
       "options": ["<a>", "<b>", "<c>", "<d>"],
-      "correct": "<one of the options, verbatim>",
-      "difficulty": "easy"
+      "correct": "<one of the options, verbatim>"
     }
   ]
 }
@@ -451,7 +496,6 @@ ${conceptListOf(concepts)}`;
   });
 
   const parsed = parseGroqJson<{ trivia: GeneratedTrivia[] }>(completion.choices[0]?.message?.content);
-  const allowed: GameDifficulty[] = ['easy', 'medium', 'hard'];
   const trivia = (parsed.trivia ?? []).filter(
     (q) =>
       q &&
@@ -461,8 +505,7 @@ ${conceptListOf(concepts)}`;
       q.options.length === 4 &&
       q.options.every((o) => typeof o === 'string' && o.trim()) &&
       typeof q.correct === 'string' &&
-      q.options.includes(q.correct) &&
-      allowed.includes(q.difficulty)
+      q.options.includes(q.correct)
   );
 
   if (trivia.length === 0) {
@@ -478,17 +521,31 @@ ${conceptListOf(concepts)}`;
  */
 export async function generateCrosswordWords(
   concepts: ConceptInput[],
-  difficulty: GameDifficulty = 'medium'
+  tier: DifficultyTier = 'foundational'
 ): Promise<GeneratedCrosswordWord[]> {
+  const rules = CROSSWORD_TIER_RULES[tier];
+
+  // The two hard constraints below stay tier-INDEPENDENT and immediately after
+  // the tier'd "answer" line, because they are what keeps the puzzle buildable:
+  // words outside 3–10 letters are filtered out, buildCrossword() needs at least
+  // two survivors, and the route throws on an empty layout. Advanced answers name
+  // consequences and are the longest, so this is exactly where a 502 would come
+  // from if the length rule got diluted by tier prose.
   const prompt = `You are creating clues for a crossword puzzle built from study material.
+
+${TIER_GUIDANCE[tier]}
+
+FOR THIS GAME SPECIFICALLY: ${rules.focus}
 
 From the concepts below, produce 8–12 crossword entries.
 Rules for EACH entry:
-- "answer": a SINGLE, COMPLETE, real word, letters A–Z only (no spaces, digits, hyphens, or punctuation), 3–10 letters long.
-- NEVER abbreviate, truncate, or invent a token to fit the length (e.g. do not shorten "VULNERABLE" to "VULNER"). If a concept's key word is longer than 10 letters, choose a different word the clue can point to instead.
-- "clue": a concise definition-style clue that unambiguously points to the full answer word. Do NOT include the answer word in the clue.
-${DIFFICULTY_GUIDANCE[difficulty]}
+- "answer": ${rules.answer}
+- The answer must be a SINGLE, COMPLETE, real word, letters A–Z only (no spaces, digits, hyphens, or punctuation), 3–10 letters long.
+- NEVER abbreviate, truncate, or invent a token to fit the length (e.g. do not shorten "VULNERABLE" to "VULNER"). If the word you want is longer than 10 letters, choose a different word from the same concept that a clue can point to instead.
+- "clue": ${rules.clue}
+- Do NOT include the answer word in the clue.
 - Prefer answers that share letters with each other so they can interlock.
+- ${ORDERING_RULE}
 
 Respond ONLY with valid JSON in this EXACT format (no markdown, no extra text):
 {

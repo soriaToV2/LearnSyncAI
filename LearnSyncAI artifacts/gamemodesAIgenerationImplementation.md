@@ -10,10 +10,17 @@ fetched by the game pages.
 The mock `COURSE_DATABASE` in `src/pages/student/games/gamesData.ts` remains **only as a dev/demo
 fallback** — used when a game route is opened without a `?contentId=` param.
 
-**BKT/mastery difficulty calibration is not wired yet.** Per the capstone paper (v4 PDF, lines
-808–810, 538) mastery is only a *prompt parameter* that games read without writing back. The seam is
-in place — a `difficulty` field flows end-to-end, and concept selection happens in code (the natural
-place to later order by mastery) — but `bkt_mastery` is not queried.
+> ⚠️ **SUPERSEDED IN PART, 9 August 2026.** BKT difficulty calibration has since landed — see
+> **`GAMES_CALIBRATION_IMPLEMENTATION.md`**. What changed from this document: `difficulty` is no
+> longer a client-supplied `easy|medium|hard` field (it is derived server-side as
+> `foundational|intermediate|advanced` from M_doc and removed from the request schema);
+> `pickConcepts()`'s uniform shuffle is now `pickConceptsByMastery()`; `DIFFICULTY_GUIDANCE` is
+> replaced by three per-game tier tables in `server/lib/gameDifficulty.ts`; Timed Trivia's timer is
+> server-supplied; and `POST /generate` gained the three access gates it was missing. Everything
+> below about the generation pipeline, the crossword layout algorithm and the payload contract is
+> still accurate.
+
+Mastery is a *prompt parameter only* — games read it and never write back (paper p. 58).
 
 Key decisions (as implemented):
 - **Models (Groq):** Term Matching → `llama-3.1-8b-instant`; Timed Trivia → `llama-3.3-70b-versatile`; Crossword words/clues → `llama-3.3-70b-versatile`.

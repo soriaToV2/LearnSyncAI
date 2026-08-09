@@ -267,10 +267,16 @@ export interface GamificationProfile {
 export interface GameSession {
   id: string;
   student_id: string | null;
+  /** The game_content row this session played. Everything below is copied from it. */
+  content_id: string | null;
+  space_id: string | null;
   material_id: string | null;
   game_type: GameType;
   accuracy: number | null;
   time_spent_ms: number | null;
+  /** M_doc at generation. Recorded for the Difficulty Alignment check (paper p. 98);
+   *  games never write back to bkt_mastery. Tier = mastery_tier(mastery_snapshot). */
+  mastery_snapshot: number | null;
   detail: Record<string, unknown> | null; // Per-item response log for review
   completed_at: string | null;
 }
@@ -290,7 +296,12 @@ export interface GameContent {
   space_id: string | null;
   material_ids: string[];
   game_type: GameType;
-  difficulty: string;                 // 'easy' | 'medium' | 'hard' — BKT calibration seam
+  /** 'foundational' | 'intermediate' | 'advanced' — derived from mastery_snapshot
+   *  via masteryTier(), never client-supplied. CHECK-constrained in schema.sql. */
+  difficulty: string;
+  /** M_doc passed to the generation prompt (paper p. 83). NULL on rows generated
+   *  before calibration existed — which is what the audit query filters on. */
+  mastery_snapshot: number | null;
   payload: Record<string, unknown>;   // JSONB — full CourseGameData for this game_type
   created_at: string | null;
 }

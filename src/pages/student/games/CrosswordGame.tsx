@@ -43,7 +43,7 @@ const keyOf = (r: number, c: number) => `${r}-${c}`;
 const sameCoord = (a: Coord, b: Coord) => a.r === b.r && a.c === b.c;
 
 export default function CrosswordGame() {
-  const { data: targetData, resources, loading, error, regenerate, regenerating, recordSession } =
+  const { data: targetData, resources, loading, error, calibration, regenerate, regenerating, recordSession } =
     useGameContent();
   const cells = useMemo(() => targetData?.crossword ?? [], [targetData]);
   const crosswordClues = useMemo(() => targetData?.crosswordClues ?? [], [targetData]);
@@ -398,6 +398,7 @@ export default function CrosswordGame() {
         icon={HelpCircle}
         title="Crossword"
         subtitle={targetData.courseName}
+        tier={calibration?.tier ?? null}
         resources={resources}
         hud={
           <>

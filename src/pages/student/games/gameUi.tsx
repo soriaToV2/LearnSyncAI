@@ -5,6 +5,8 @@ import clsx from 'clsx';
 import { api } from '../../../lib/api';
 import { useMuted, setMuted } from './gameAudio';
 import { MOCK_COURSES } from '../../../data/mockCourses';
+import { TIER_LABEL, TIER_TONE, type DifficultyTier } from '../../../lib/mastery';
+import { toneText } from '../../../components/ui/surfaces';
 import {
   COURSE_DATABASE,
   CourseGameData,
@@ -264,6 +266,12 @@ interface GameStageProps {
   icon: LucideIcon;
   title: string;
   subtitle: string;
+  /**
+   * The mastery tier this game was generated at. Null in mock mode and on rows
+   * generated before calibration existed — both render no chip rather than
+   * guessing `foundational`, which would assert a calibration that never ran.
+   */
+  tier?: DifficultyTier | null;
   hud?: React.ReactNode;
   actions?: React.ReactNode;
   resources: string[];
@@ -275,6 +283,7 @@ export function GameStage({
   icon: Icon,
   title,
   subtitle,
+  tier,
   hud,
   actions,
   resources,
@@ -315,7 +324,25 @@ export function GameStage({
 
           <div className="min-w-0">
             <h1 className="font-display text-base font-bold text-white leading-tight truncate">{title}</h1>
-            <p className="font-sans text-[11px] text-slate-500 truncate">{subtitle}</p>
+            {/* The one place the calibration is visible while playing, and what the
+                paper's Difficulty Alignment check (p. 98) is about. It sits beside
+                the subtitle rather than in `hud`, which is per-game stats and is
+                already tight on mobile with two HudStats plus the audio toggle. */}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <p className="font-sans text-[11px] text-slate-500 truncate">{subtitle}</p>
+              {tier && (
+                <span
+                  title={`Built from your mastery on this material — ${TIER_LABEL[tier].toLowerCase()} level`}
+                  className={clsx(
+                    'shrink-0 px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06]',
+                    'font-sans text-[10px] font-bold uppercase tracking-widest',
+                    toneText[TIER_TONE[tier]]
+                  )}
+                >
+                  {TIER_LABEL[tier]}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -494,11 +521,27 @@ interface GameSource {
   space_id: string;
   material_ids: string[];
   game_type: string;
-  difficulty: string;
 }
 
 interface GameContentResponse extends GameSource {
   payload: CourseGameData;
+  difficulty: DifficultyTier;
+  mastery_snapshot: number | null;
+}
+
+/**
+ * What the server derived from this student's mastery when it built the game.
+ *
+ * All of it is server-supplied. The client never picks a tier or a timer — see
+ * `server/lib/gameDifficulty.ts`, and `GenerateGameContentSchema`, which
+ * deliberately has no `difficulty` field to send.
+ */
+export interface GameCalibration {
+  tier: DifficultyTier;
+  /** M_doc over the selected materials. Null on pre-calibration rows. */
+  masterySnapshot: number | null;
+  /** Timed Trivia only — undefined for the two untimed games. */
+  questionMs?: number;
 }
 
 /**
@@ -539,10 +582,12 @@ interface GameContentState {
   resources: string[];
   loading: boolean;
   error: string | null;
+  /** The tier and timer the server derived from mastery. Null in mock mode. */
+  calibration: GameCalibration | null;
   /** Generates a brand-new game from the same materials ("Play Again"). Undefined in mock mode. */
   regenerate?: () => void;
   regenerating: boolean;
-  /** Logs a finished game to the student's history. No-op in mock mode (no source). */
+  /** Logs a finished game to the student's history. No-op in mock mode (no content id). */
   recordSession: (result: GameResult) => void;
 }
 
@@ -562,6 +607,7 @@ export function useGameContent(): GameContentState {
 
   const [data, setData] = useState<CourseGameData | null>(null);
   const [source, setSource] = useState<GameSource | null>(null);
+  const [calibration, setCalibration] = useState<GameCalibration | null>(null);
   const [loading, setLoading] = useState<boolean>(!!contentId);
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -579,6 +625,9 @@ export function useGameContent(): GameContentState {
       const info = getCourseDisplayInfo(course);
       setData(COURSE_DATABASE[info.gameKey]);
       setSource(null);
+      // Mock content was never calibrated against anyone's mastery, so it shows
+      // no tier chip and falls back to the default timer.
+      setCalibration(null);
       setLoading(false);
       setError(null);
       return;
@@ -599,7 +648,11 @@ export function useGameContent(): GameContentState {
           space_id: res.data.space_id,
           material_ids: res.data.material_ids,
           game_type: res.data.game_type,
-          difficulty: res.data.difficulty,
+        });
+        setCalibration({
+          tier: res.data.difficulty,
+          masterySnapshot: res.data.mastery_snapshot ?? null,
+          questionMs: res.data.payload?.settings?.questionMs,
         });
         loadedId.current = contentId;
       })
@@ -620,14 +673,28 @@ export function useGameContent(): GameContentState {
     setRegenerating(true);
     setError(null);
     try {
-      const res = await api.post<{ id: string; payload: CourseGameData }>('/games/generate', {
+      // No `difficulty` — the server re-derives it from mastery, which may have
+      // moved since the last generation (a test or a flashcard session between
+      // rounds is exactly the point). THE CALIBRATION MUST BE REFRESHED FROM THE
+      // RESPONSE: it varies per generation now, so leaving the old one in state
+      // would show the previous game's tier chip and, worse, its clock.
+      const res = await api.post<{
+        id: string;
+        payload: CourseGameData;
+        difficulty: DifficultyTier;
+        mastery_snapshot: number | null;
+      }>('/games/generate', {
         space_id: source.space_id,
         material_ids: source.material_ids,
         game_type: source.game_type,
-        difficulty: source.difficulty,
       });
       loadedId.current = res.data.id;
       setData(res.data.payload);
+      setCalibration({
+        tier: res.data.difficulty,
+        masterySnapshot: res.data.mastery_snapshot ?? null,
+        questionMs: res.data.payload?.settings?.questionMs,
+      });
       // Point the URL at the new content without triggering a redundant refetch.
       const next = new URLSearchParams(searchParams);
       next.set('contentId', res.data.id);
@@ -641,24 +708,34 @@ export function useGameContent(): GameContentState {
 
   const recordSession = useCallback(
     (result: GameResult) => {
-      if (!source) return; // mock mode — nothing to persist
+      // Read the ref, not `source` — it is what `regenerate` updates, so a session
+      // played after "Play Again" is logged against the content actually played.
+      const contentPlayed = loadedId.current;
+      if (!contentPlayed) return; // mock mode — nothing to persist
+
       const accuracy = Number.isFinite(result.accuracy)
         ? Math.max(0, Math.min(1, result.accuracy))
         : undefined;
-      // Best-effort: a failed log must never disrupt the result screen.
+
+      // The body carries only the OUTCOME. `space_id`, `material_id`, `game_type`
+      // and `mastery_snapshot` are read server-side from the content row, because
+      // that snapshot is the evidence the Difficulty Alignment check reads.
+      //
+      // Best-effort: a failed log must never disrupt the result screen. The warn
+      // matters — this catch is silent, so a schema mismatch here would otherwise
+      // stop session logging entirely without a single visible symptom.
       void api
         .post('/gamification/session', {
-          material_id: source.material_ids[0],
-          game_type: source.game_type,
+          content_id: contentPlayed,
           accuracy,
           time_spent_ms: result.timeMs,
           detail: result.detail,
         })
-        .catch(() => {
-          /* swallow — history logging is non-critical */
+        .catch((err: unknown) => {
+          console.warn('[games] session log failed:', err);
         });
     },
-    [source]
+    []
   );
 
   return {
@@ -666,6 +743,7 @@ export function useGameContent(): GameContentState {
     resources,
     loading,
     error,
+    calibration,
     regenerate: contentId ? regenerate : undefined,
     regenerating,
     recordSession,

@@ -46,13 +46,24 @@ router.get('/profile', async (req: Request, res: Response): Promise<void> => {
  * POST /api/gamification/session
  * Logs a completed game session.
  *
- * The DB trigger `trigger_update_streak` automatically:
- *  - Increments or resets the streak (48-hour window)
- *  - Updates last_active_at
+ * Body: { content_id, accuracy?, time_spent_ms?, detail? }
  *
- * XP was removed as a feature; the `xp_earned` column has been dropped.
+ * ONLY THE OUTCOME COMES FROM THE CLIENT. `space_id`, `material_id`, `game_type`
+ * and `mastery_snapshot` are read from the `game_content` row `content_id` names,
+ * after confirming the caller owns it — the same principle as `SubmitAnswerSchema`
+ * having no `is_correct`. `mastery_snapshot` in particular is the evidence the
+ * paper's Difficulty Alignment check (p. 98) reads, so a client-supplied value
+ * would be a client-chosen finding.
  *
- * Body: { material_id, game_type, accuracy?, time_spent_ms? }
+ * The insert lists its fields explicitly. It used to be `{ ...parsed.data }`,
+ * which silently binds the request shape to the table's columns — add a field to
+ * the schema and the next insert fails with PGRST204, invisibly, because the
+ * client swallows every error from this endpoint.
+ *
+ * There is no streak or badge write here, and no XP. The `trigger_update_streak`
+ * trigger fires on `activity_logs`, not on this table, and nothing in the server
+ * writes an activity log yet — so `day_streak` is still 0 for everyone. The
+ * previous version of this comment claimed otherwise.
  */
 router.post('/session', async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateGameSessionSchema.safeParse(req.body);
@@ -61,9 +72,37 @@ router.post('/session', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  const { content_id, accuracy, time_spent_ms, detail } = parsed.data;
+
+  // 404 rather than 403, matching GET /api/games/content/:id, so a student cannot
+  // probe which content ids exist.
+  const { data: content } = await supabaseAdmin
+    .from('game_content')
+    .select('id, space_id, material_ids, game_type, mastery_snapshot')
+    .eq('id', content_id)
+    .eq('student_id', req.user!.id)
+    .maybeSingle();
+
+  if (!content) {
+    res.status(404).json({ error: 'Game content not found' });
+    return;
+  }
+
   const { data, error } = await supabaseAdmin
     .from('game_sessions')
-    .insert({ ...parsed.data, student_id: req.user!.id })
+    .insert({
+      student_id: req.user!.id,
+      content_id: content.id,
+      space_id: content.space_id,
+      // Nullable by design — a game may be generated from several materials, and
+      // this column exists only for the `materials(title)` join in GET /sessions.
+      material_id: (content.material_ids as string[] | null)?.[0] ?? null,
+      game_type: content.game_type,
+      mastery_snapshot: content.mastery_snapshot,
+      accuracy,
+      time_spent_ms,
+      detail,
+    })
     .select()
     .single();
 
@@ -72,10 +111,7 @@ router.post('/session', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // Note: XP update and streak logic are handled entirely by the
-  // `trigger_update_streak` PostgreSQL trigger — no additional code needed.
-
-  res.status(201).json({ data, message: 'Game session logged. XP and streak updated.' });
+  res.status(201).json({ data, message: 'Game session logged' });
 });
 
 /**

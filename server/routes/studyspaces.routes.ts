@@ -11,6 +11,7 @@ import {
   SyncSpaceMaterialsSchema,
 } from '../types/api';
 import { publishedMaterialIds, rejectInaccessibleMaterials } from '../lib/materialAccess';
+import { loadOwnedSpace, type SpaceOwner } from '../lib/spaceAccess';
 import { generateQuestionsForConcepts } from '../lib/groq';
 import type { SpaceMaterial } from '../types/database';
 
@@ -32,45 +33,6 @@ router.use(authenticate);
 /** Columns the student side is allowed to see. No educator_id, no storage_path. */
 const SPACE_MATERIAL_COLUMNS =
   'id, title, description, subject, file_size_bytes, page_count, is_scanned, parsed_status, parse_error';
-
-interface SpaceOwner {
-  id: string;
-  title: string;
-  subject: string;
-  gradeLevel: number;
-}
-
-/**
- * Loads the space plus its owner's grade level, but only for the owner.
- *
- * 404 rather than 403 for someone else's space, so a student cannot probe which
- * space ids exist. Returns null on any failure; the caller sends the 404.
- */
-async function loadOwnedSpace(spaceId: string, userId: string): Promise<SpaceOwner | null> {
-  const { data: space } = await supabaseAdmin
-    .from('study_spaces')
-    .select('id, title, subject, student_id')
-    .eq('id', spaceId)
-    .maybeSingle();
-
-  if (!space || space.student_id !== userId) return null;
-
-  const { data: profile } = await supabaseAdmin
-    .from('profiles')
-    .select('grade_level, status, role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile || profile.status !== 'active' || profile.role !== 'student') return null;
-  if (profile.grade_level === null || profile.grade_level === undefined) return null;
-
-  return {
-    id: space.id,
-    title: space.title,
-    subject: space.subject,
-    gradeLevel: profile.grade_level,
-  };
-}
 
 /** Material ids currently linked to a space, in the order they were added. */
 async function linkedMaterialIds(spaceId: string): Promise<string[]> {

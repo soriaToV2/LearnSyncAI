@@ -16,6 +16,7 @@ import practiceRoutes from './routes/practice.routes';
 import gamificationRoutes from './routes/gamification.routes';
 import gamesRoutes from './routes/games.routes';
 import chatRoutes from './routes/chat.routes';
+import dashboardRoutes from './routes/dashboard.routes';
 import { loadBktParameters } from './lib/bkt';
 
 const app = express();
@@ -49,6 +50,7 @@ app.use('/api/practice', practiceRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/games', gamesRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 /*
  * `/api/bkt` is gone, and should not come back.
@@ -58,9 +60,20 @@ app.use('/api/chat', chatRoutes);
  * single flat P(G) = 0.2 in place of the eight context-sensitive values. Nothing
  * ever called it. BKT now runs in-process (`server/lib/bkt.ts`) at the only two
  * moments the paper permits: completing an adaptive test and rating a due
- * flashcard. Mastery is read back through
- * `GET /api/practice/space/:spaceId/mastery`, which is scoped to one owned space
- * rather than returning every row a student has.
+ * flashcard.
+ *
+ * Mastery is read back in exactly two shapes, and both are read-only:
+ *
+ *   - per space, via `GET /api/practice/space/:spaceId/mastery`, gated by
+ *     `requireOwnedSpace()`. This is the default and every feature uses it.
+ *   - globally, via `GET /api/dashboard` — the documented exception, because a
+ *     dashboard is by definition about all of a student's spaces at once, and
+ *     fanning out client-side would cost 1 + N requests.
+ *
+ * The global route is safe for a reason worth stating: it accepts NO body, NO
+ * query and NO path parameter, so every set it reads is derived from the caller's
+ * own id. It cannot be pointed at another student's data because there is nothing
+ * to point with. Any future global read should meet the same bar.
  */
 
 // ─────────────────────────────────────────────

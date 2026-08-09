@@ -103,6 +103,43 @@ export async function masteryRows(
 }
 
 /**
+ * Every `bkt_mastery` row this student has, whatever material it belongs to.
+ *
+ * The global counterpart of `masteryRows()`, and it needs none of that function's
+ * machinery: `bkt_mastery` carries `student_id` directly, so there is no concept
+ * id list to pass and therefore nothing to chunk. One query, whatever the size of
+ * the student's library. That is what makes a single global dashboard read
+ * possible where the per-space endpoints cost N.
+ *
+ * Callers MUST intersect the result with their own concept set. A student keeps
+ * mastery rows for concepts whose material has since been archived or unlinked —
+ * mastery is per (student, concept) and survives both — and counting those would
+ * quietly inflate every denominator on the page.
+ */
+export async function allMasteryRows(studentId: string): Promise<Map<string, ConceptMasteryRow>> {
+  const rows = new Map<string, ConceptMasteryRow>();
+
+  const { data } = await supabaseAdmin
+    .from('bkt_mastery')
+    .select('concept_id, latent_mastery, opportunity_count, last_updated')
+    .eq('student_id', studentId);
+
+  for (const row of data ?? []) {
+    // NUMERIC and INTEGER both arrive as strings over PostgREST.
+    const mastery = Number(row.latent_mastery);
+    if (!Number.isFinite(mastery)) continue;
+    const opportunities = Number(row.opportunity_count);
+    rows.set(row.concept_id as string, {
+      mastery,
+      opportunityCount: Number.isFinite(opportunities) ? opportunities : 0,
+      lastUpdated: (row.last_updated as string) ?? null,
+    });
+  }
+
+  return rows;
+}
+
+/**
  * EQ(4), document mastery: the arithmetic mean of per-concept probabilities over
  * EVERY concept in the material, computed from values already in hand.
  *

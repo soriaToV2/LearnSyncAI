@@ -1,3 +1,16 @@
+/**
+ * ⚠️ MOCK DATA, AND NO LONGER THE SOURCE OF IDENTITY.
+ *
+ * `StudentLayout` and `StudentDashboard` used to read `MOCK_STUDENTS[0]` and show
+ * "Sarah Jenkins / MIT" to every student in the app. Both now use
+ * `useAuth()` from `src/context/AuthContext.tsx`, backed by `GET /api/auth/me`.
+ *
+ * Only `Settings.tsx` and `StudentProfile.tsx` still read this file. They show
+ * fields that have no column in `profiles` — `university`, `followers`,
+ * `following`, `achievements` — so moving them onto real data is a design
+ * question (what IS a student profile page here?), not a wiring one. When that is
+ * answered, this file can go.
+ */
 export interface Student {
   id: string;
   name: string;

@@ -78,7 +78,7 @@ BKT Integration (Flashcard Mode):
       * Hard   → obs = 0 (incorrect), P(G_hard) = 0.10 (vague partial recall allowance)
   - The two-phase BKT update (evidence update then transition update) produces the student's new mastery P(L_{t+1}).
   - The updated latent_mastery in bkt_mastery reflects the student's knowledge state.
-  - Future adaptive features (test difficulty, game difficulty) consume this updated mastery value.
+  - Three read-only consumers use this value without writing it: Adaptive Test difficulty, game difficulty calibration, and the student Analytics tab.
 
 ---
 
@@ -205,6 +205,15 @@ Document Mastery Aggregation:
 
   This aggregated score is displayed as a progress bar on the student dashboard and is used by the gamification module to calibrate game difficulty.
 
+Student Dashboard (learning analytics display): [IMPLEMENTED]
+  - GET /api/dashboard is the only global (all-spaces) student endpoint. Everything else is scoped to one owned space; a dashboard is about all of them, so fanning out client-side would cost 1 + N requests.
+  - It accepts no body, no query and no path parameter. Every set is derived from the caller's own id, so it cannot be pointed at another student's data. It is read-only.
+  - It returns: M_doc across every concept in every space (the p. 81 progress bar) with a per-space breakdown; a mastery curve; the weakest assessed concepts across all spaces; the global flashcards-due count; any unfinished test; and a merged recent-activity feed.
+  - The mastery curve is reconstructed BACKWARD from bkt_mastery using the p_l_prior column of bkt_update_logs, so its final point equals the displayed mastery number by construction. bkt_mastery remains authoritative for the current value; the audit log only draws the history, which is why a failed log write stays non-fatal.
+  - The curve's x axis is the learning-opportunity index t, not wall-clock time: updates within a session share a timestamp, and BKT has no forgetting term, so a time axis would misrepresent both.
+  - Study streaks, digital badges and total study hours are NOT displayed. Nothing writes activity_logs and nothing awards user_badges, so those figures have no source; they are omitted rather than shown as zeros or stale values.
+  - Identity comes from GET /api/auth/me via src/context/AuthContext.tsx.
+
 Note: BKT is inherently self-correcting. Even if default parameters do not perfectly represent a given student's learning behavior, the Bayesian updating mechanism continuously refines mastery estimates as more interaction data accumulates. The system's accuracy improves organically as students complete more practice attempts.
 
 Note: The system does NOT use pyBKT or any external BKT library. The four-parameter BKT update equations are implemented directly in the platform backend code. Data-driven parameter estimation methods such as Expectation Maximization (EM) are not used due to the lack of pre-existing historical student interaction data.
@@ -228,14 +237,16 @@ Games Available:
   - Term Matching: AI generates term-definition pairs for a card matching game based on study space content.
   - Timed Trivia: AI generates timed trivia questions drawn from the educator-uploaded learning resources.
 
-BKT-Adaptive Difficulty (Gamification Calibration):
+BKT-Adaptive Difficulty (Gamification Calibration): [IMPLEMENTED]
   - Game content difficulty is dynamically adjusted based on the student's BKT mastery score (M_doc).
-  - When a game session is initialized, the system retrieves the current M_doc value and applies it as a baseline parameter to the generative AI prompt.
-  - The game engine uses this value to adjust vocabulary complexity, clue difficulty, and trivia response timers to align with the student's knowledge threshold.
-  - AI-generated educational games utilize existing mastery estimates only to personalize question selection, generated content, and difficulty level. Games do NOT modify the learner's BKT mastery state.
+  - When a game is generated, the system computes M_doc (EQ 4) over the selected materials' concepts and derives one tier from it: foundational (< 0.50), intermediate (0.50-0.85), advanced (>= 0.85). Both the tier and the snapshot are stored on game_content, so the Difficulty Alignment check can be run against them.
+  - The tier adjusts vocabulary complexity (which answer word a crossword clue points at, which terms reach a matching board), clue difficulty (three per-game guidance tables in server/lib/gameDifficulty.ts), and trivia response timers (20s / 15s / 10s).
+  - Question selection is mastery-weighted: each concept's chance of reaching the prompt rises as its mastery falls, with a concept that has never been assessed treated as neutral rather than as its P(L0) prior — so "known weak" outranks "unknown", which outranks "known strong".
+  - Difficulty is never client-supplied. The request body carries no difficulty field.
+  - AI-generated educational games utilize existing mastery estimates only to personalize question selection, generated content, and difficulty level. Games do NOT modify the learner's BKT mastery state — nothing under the games path imports the BKT engine.
 
 Session Logging:
-  - When a game session concludes, the frontend posts final stats (game_type, accuracy, time_spent_ms) to game_sessions.
+  - When a game session concludes, the frontend posts { content_id, accuracy, time_spent_ms, detail } to game_sessions. Everything identifying what was played — space_id, material_id, game_type and mastery_snapshot — is copied server-side from the owner-checked game_content row, so the recorded mastery snapshot is the one the prompt was actually built from.
 
 Database Autopilot (Triggers):
   - An AFTER INSERT PostgreSQL trigger intercepts the new game session.

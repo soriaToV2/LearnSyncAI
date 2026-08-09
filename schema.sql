@@ -621,9 +621,41 @@ CREATE TABLE gamification_profiles (
 COMMENT ON COLUMN gamification_profiles.last_active_on IS
     'Asia/Manila calendar date of the most recent activity. Streak succession is measured against this, not a 48-hour clock.';
 
+-- AI-generated game content (crossword grids, term/definition sets, trivia).
+-- Declared before game_sessions, which carries an FK to it.
+CREATE TABLE game_content (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    student_id       UUID   NOT NULL REFERENCES profiles(id)     ON DELETE CASCADE,
+    space_id         UUID   REFERENCES study_spaces(id) ON DELETE CASCADE,
+    material_ids     UUID[] NOT NULL,
+    game_type        game_type NOT NULL,
+    difficulty       TEXT   NOT NULL,
+    mastery_snapshot NUMERIC,
+    payload          JSONB  NOT NULL,
+    created_at       TIMESTAMPTZ DEFAULT now(),
+
+    -- Same three tiers as practice_tests.difficulty_tier and mastery_tier(), and
+    -- deliberately no DEFAULT: an insert that forgets this column must fail
+    -- loudly rather than write a plausible-looking value outside the vocabulary.
+    CONSTRAINT game_content_difficulty_tier
+        CHECK (difficulty IN ('foundational', 'intermediate', 'advanced')),
+    CONSTRAINT game_content_mastery_snapshot_check
+        CHECK (mastery_snapshot IS NULL OR (mastery_snapshot >= 0 AND mastery_snapshot <= 1))
+);
+
+COMMENT ON COLUMN game_content.difficulty IS
+    'Tier derived server-side from mastery_snapshot via masteryTier(). Never client-supplied — GenerateGameContentSchema deliberately has no difficulty field.';
+
+COMMENT ON COLUMN game_content.mastery_snapshot IS
+    'M_doc passed to the generation prompt. Games personalise from mastery but never modify it. NULL on rows generated before calibration existed.';
+
+CREATE INDEX idx_game_content_student ON game_content (student_id);
+CREATE INDEX idx_game_content_space   ON game_content (space_id);
+
 CREATE TABLE game_sessions (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id       UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    content_id       UUID REFERENCES game_content(id) ON DELETE SET NULL,
     space_id         UUID REFERENCES study_spaces(id) ON DELETE SET NULL,
     material_id      UUID REFERENCES materials(id)    ON DELETE CASCADE,
     game_type        game_type NOT NULL,
@@ -639,33 +671,15 @@ CREATE TABLE game_sessions (
         CHECK (mastery_snapshot IS NULL OR (mastery_snapshot >= 0 AND mastery_snapshot <= 1))
 );
 
+COMMENT ON COLUMN game_sessions.content_id IS
+    'The game_content row this session played. space_id, material_id, game_type and mastery_snapshot are all copied from it at insert; the client supplies only the outcome.';
+
 COMMENT ON COLUMN game_sessions.mastery_snapshot IS
     'M_doc at session start. Recorded for the Difficulty Alignment check; games never write back to bkt_mastery.';
 
 CREATE INDEX idx_game_sessions_student  ON game_sessions (student_id, completed_at DESC);
 CREATE INDEX idx_game_sessions_material ON game_sessions (material_id);
-
--- AI-generated game content (crossword grids, term/definition sets, trivia).
-CREATE TABLE game_content (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    student_id       UUID   NOT NULL REFERENCES profiles(id)     ON DELETE CASCADE,
-    space_id         UUID   REFERENCES study_spaces(id) ON DELETE CASCADE,
-    material_ids     UUID[] NOT NULL,
-    game_type        game_type NOT NULL,
-    difficulty       TEXT   NOT NULL DEFAULT 'medium',
-    mastery_snapshot NUMERIC,
-    payload          JSONB  NOT NULL,
-    created_at       TIMESTAMPTZ DEFAULT now(),
-
-    CONSTRAINT game_content_mastery_snapshot_check
-        CHECK (mastery_snapshot IS NULL OR (mastery_snapshot >= 0 AND mastery_snapshot <= 1))
-);
-
-COMMENT ON COLUMN game_content.mastery_snapshot IS
-    'M_doc passed to the generation prompt. Games personalise from mastery but never modify it.';
-
-CREATE INDEX idx_game_content_student ON game_content (student_id);
-CREATE INDEX idx_game_content_space   ON game_content (space_id);
+CREATE INDEX idx_game_sessions_content  ON game_sessions (content_id);
 
 CREATE TABLE user_badges (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

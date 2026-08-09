@@ -29,7 +29,7 @@ const shuffle = <T,>(items: T[]): T[] => {
 };
 
 export default function TermMatchingGame() {
-  const { data: targetData, resources, loading, error, regenerate, regenerating, recordSession } =
+  const { data: targetData, resources, loading, error, calibration, regenerate, regenerating, recordSession } =
     useGameContent();
 
   const { flash, fire } = useGameFlash();
@@ -293,6 +293,7 @@ export default function TermMatchingGame() {
         icon={BrainCircuit}
         title="Term Matching"
         subtitle={targetData.courseName}
+        tier={calibration?.tier ?? null}
         resources={resources}
         hud={
           <>

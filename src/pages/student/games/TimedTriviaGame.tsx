@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Trophy, Hourglass, CheckCircle2, XCircle, Flame, Target, Zap } from 'lucide-react';
 import clsx from 'clsx';
 import { Question } from './gamesData';
@@ -18,10 +18,23 @@ import { useGameAudio } from './gameAudio';
 type TriviaReviewItem = Extract<SessionDetail, { type: 'trivia' }>['items'][number];
 
 const QUESTION_COUNT = 10;
-const QUESTION_MS = 15_000;
 const TICK_MS = 100;
 const TIMEOUT_SENTINEL = '__timeout__';
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
+
+/**
+ * Fallback only — for mock mode and for rows generated before calibration
+ * existed. The authority is `TRIVIA_QUESTION_MS` in `server/lib/gameDifficulty.ts`
+ * (20s / 15s / 10s by tier, paper p. 83), written into the payload at generation.
+ * 15s is the intermediate value, so this fallback matches the middle tier.
+ */
+const DEFAULT_QUESTION_MS = 15_000;
+
+/** Guards a corrupt stored payload from producing a 0ms or hour-long question. */
+function clampQuestionMs(ms: number | undefined): number {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return DEFAULT_QUESTION_MS;
+  return Math.min(Math.max(ms, 5_000), 60_000);
+}
 
 // The run always plays to the end; the summary copy reflects how well it went.
 function summaryFor(score: number, total: number): { title: string; message: string } {
@@ -38,18 +51,24 @@ function summaryFor(score: number, total: number): { title: string; message: str
   return { title: 'Run Complete', message: 'Every question is practice. Revisit the material and go again — it climbs fast.' };
 }
 
-const DIFFICULTY_STYLES: Record<Question['difficulty'], string> = {
-  easy: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
-  medium: 'bg-amber-500/10 border-amber-500/25 text-amber-400',
-  hard: 'bg-rose-500/10 border-rose-500/25 text-rose-400',
-};
-
 export default function TimedTriviaGame() {
-  const { data: targetData, resources, loading, error, regenerate, regenerating, recordSession } =
-    useGameContent();
+  const {
+    data: targetData,
+    resources,
+    loading,
+    error,
+    calibration,
+    regenerate,
+    regenerating,
+    recordSession,
+  } = useGameContent();
 
   const { flash, fire } = useGameFlash();
   const { play } = useGameAudio();
+
+  // Paper p. 83 names "trivia response timers" as one of the three levers
+  // document mastery calibrates. Server-supplied; see gameDifficulty.ts.
+  const questionMs = useMemo(() => clampQuestionMs(calibration?.questionMs), [calibration]);
 
   const [queue, setQueue] = useState<Question[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -57,7 +76,7 @@ export default function TimedTriviaGame() {
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
-  const [timeLeftMs, setTimeLeftMs] = useState(QUESTION_MS);
+  const [timeLeftMs, setTimeLeftMs] = useState(questionMs);
   const [finished, setFinished] = useState(false);
 
   const timers = useRef<number[]>([]);
@@ -82,7 +101,7 @@ export default function TimedTriviaGame() {
     setScore(0);
     setStreak(0);
     setBestStreak(0);
-    setTimeLeftMs(QUESTION_MS);
+    setTimeLeftMs(questionMs);
     setFinished(false);
     startedAt.current = Date.now();
     recorded.current = false;
@@ -94,7 +113,7 @@ export default function TimedTriviaGame() {
       return;
     }
     setQueue(Array.from({ length: QUESTION_COUNT }, (_, i) => pool[i % pool.length]));
-  }, [targetData, clearTimers]);
+  }, [targetData, clearTimers, questionMs]);
 
   useEffect(() => {
     startGame();
@@ -111,11 +130,11 @@ export default function TimedTriviaGame() {
     if (currentIdx < queue.length - 1) {
       setCurrentIdx((prev) => prev + 1);
       setSelected(null);
-      setTimeLeftMs(QUESTION_MS);
+      setTimeLeftMs(questionMs);
     } else {
       setFinished(true);
     }
-  }, [currentIdx, queue.length]);
+  }, [currentIdx, queue.length, questionMs]);
 
   // Countdown ticks in milliseconds so the ring sweeps smoothly.
   useEffect(() => {
@@ -209,7 +228,10 @@ export default function TimedTriviaGame() {
   }, [finished, answered, current, handleAnswer]);
 
   const secondsLeft = Math.ceil(timeLeftMs / 1000);
-  const isUrgent = timeLeftMs <= 5000 && !answered;
+  // Proportional, not a fixed 5s. At the advanced tier's 10-second clock a flat
+  // 5000ms threshold would leave the ring red for half of every question, which
+  // stops reading as urgency and starts reading as the default state.
+  const isUrgent = timeLeftMs <= questionMs / 3 && !answered;
   const answeredWrong = answered && !timedOut && selected !== current?.correct;
 
   // Clock tick on every second of a live question's countdown.
@@ -277,6 +299,7 @@ export default function TimedTriviaGame() {
         icon={Hourglass}
         title="Timed Trivia"
         subtitle={targetData.courseName}
+        tier={calibration?.tier ?? null}
         resources={resources}
         hud={
           <>
@@ -302,23 +325,19 @@ export default function TimedTriviaGame() {
             {/* Question header: ring + prompt */}
             <div className="flex flex-col sm:flex-row items-center gap-6">
               <TimerRing
-                progress={timeLeftMs / QUESTION_MS}
+                progress={timeLeftMs / questionMs}
                 seconds={secondsLeft}
                 urgent={isUrgent}
               />
 
               <div className="flex-1 text-center sm:text-left">
+                {/* The per-question easy/medium/hard badge that used to sit here
+                    is gone. Difficulty is one tier per SESSION (paper p. 81), and
+                    it is stated once on the stage header — a "HARD" chip inside a
+                    Foundational game contradicted the calibration on screen. */}
                 <div className="flex items-center justify-center sm:justify-start gap-2 mb-3">
                   <span className="px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06] font-sans text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     {currentIdx + 1} / {queue.length}
-                  </span>
-                  <span
-                    className={clsx(
-                      'px-2 py-0.5 rounded-md border font-sans text-[10px] font-bold uppercase tracking-widest',
-                      DIFFICULTY_STYLES[current.difficulty]
-                    )}
-                  >
-                    {current.difficulty}
                   </span>
                 </div>
 

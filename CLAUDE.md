@@ -313,7 +313,7 @@ APP_URL=http://localhost:3000
 
 **A deck's summary line is derived, not stored.** `deckSummary()` reads the distinct `sourceMaterialId`s of the deck's cards and resolves them against `availableResources`, giving "68 cards · from 6. Information Security" or "· from 2 lessons". Nothing on `flashcard_decks` records this — see the rule above about not adding `source_material_id` to the deck.
 
-**The due-card badge is DERIVED from cards already loaded — do not add an endpoint for it.** `StudySpace.tsx` already fetches every deck with every card including `next_review_at`, and it is the same component that renders the tab bar, so the count is a filter over data in memory: `flashcardSets.flatMap(s => s.cards).filter(c => isDue(c.nextReviewAt))`. `GET /api/flashcards/due/:spaceId` was deleted for returning any space's cards to any logged-in user and **is not needed back**. It also self-refreshes: `exitStudy()` calls `onRefresh()` → `fetchSpaceData`, so finishing a session drops the badge with no extra wiring.
+**The IN-SPACE due-card badge is DERIVED from cards already loaded — do not add a per-space endpoint for it.** `StudySpace.tsx` already fetches every deck with every card including `next_review_at`, and it is the same component that renders the tab bar, so the count is a filter over data in memory: `flashcardSets.flatMap(s => s.cards).filter(c => isDue(c.nextReviewAt))`. `GET /api/flashcards/due/:spaceId` was deleted for returning any space's cards to any logged-in user and **is not needed back**. It also self-refreshes: `exitStudy()` calls `onRefresh()` → `fetchSpaceData`, so finishing a session drops the badge with no extra wiring. (The **dashboard** is the documented exception: it is global, loads no cards, and gets its counts inside `GET /api/dashboard` — see the Student Dashboard section.)
 
 **`isDue()` lives in `src/lib/reviewSchedule.ts`, mirroring the server file of the same name.** It moved out of `FlashcardsTab` when `StudySpace` needed it — a tab exporting a utility up to its own parent is backwards, and two copies of a scheduling rule drift. The server stays authoritative; this only decides what to *show* and which cards a session opens with. The tab badge and the per-deck badges must both use it, or their numbers stop agreeing.
 
@@ -355,7 +355,7 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **`POST /api/flashcards/rate` walks card → deck → space and 404s unless the space is the caller's.** It previously took any card UUID from any student. Once BKT hangs here, that would have written mastery against a stranger's concepts.
 
-`GET /api/flashcards/due/:spaceId` was deleted — unused, and it returned any space's cards to any logged-in user. Due-ness is derived from cards the tab already loads. It can return, properly guarded, when the dashboard becomes real.
+`GET /api/flashcards/due/:spaceId` was deleted — unused, and it returned any space's cards to any logged-in user. Due-ness is derived from cards the tab already loads. **It did not come back for the dashboard**: that page counts due cards itself inside `GET /api/dashboard`, joining `flashcards → flashcard_decks → study_spaces` on the caller's own id, so no space id ever crosses the wire.
 
 ### BKT on top of this ✅ implemented
 
@@ -365,7 +365,7 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **Two Easy ratings put a concept at 0.98** (0.10 → 0.7231 → 0.9824), which clears the `advanced` threshold — far faster than the test path (two correct MCQs reach 0.7685). That is what P(G) = 0.05 means and the paper specifies it; the brake is the due-check pushing the card seven days out. Do not "fix" it.
 
-`StudentDashboard.tsx` still shows a hardcoded `dueToday = 12`; the whole page runs on `MOCK_STUDENTS[0]` and is a separate job.
+`StudentDashboard.tsx` now shows the real global due count from `GET /api/dashboard`, computed with the same `next_review_at <= now()` rule.
 
 ## BKT Engine
 
@@ -407,6 +407,58 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **Do not add a client cache.** `<main key={activeTab}>` remounts the tab on entry, so data is fresh by construction — including on return from Test Mode having just moved the number, which is exactly when a cache would be stale.
 
+## Student Dashboard — the one global read
+
+**`GET /api/dashboard` is the ONLY global student endpoint, and it is the documented exception to the per-space rule** recorded in `server/index.ts`. Everything else a student reads is scoped to one owned space; a dashboard is by definition about all of them, and a client-side fan-out would cost 1 + N requests with each per-space mastery call being ~6 DB round trips on its own.
+
+**It accepts NOTHING — no body, no query, no path parameter.** Every set is derived from `req.user!.id`, so it has zero IDOR surface: it cannot be pointed at another student's space, deck, test or concept because there is nothing to point with. That is a stronger guarantee than `requireOwnedSpace()` gives, and it is why there is no Zod schema — there is no input to validate. **Any future global read must meet the same bar.**
+
+**Read-only, permanently.** In particular it must never call `GET /api/gamification/profile`, which INSERTs a row on a GET.
+
+**One endpoint, not several, because of the anchor.** The curve's last point must equal the headline mastery number, and that is only *enforceable* inside a single request — split across two calls, a test completing between them leaves the chart ending somewhere other than the number beside it. The route asserts it (`console.error` on a >1e-9 mismatch), which is the same idiom as `bktProblems()`.
+
+**`allMasteryRows()` is the architectural payoff.** `masteryRows()` chunks a concept-id list into the query string at 200/query; globally there is no id list at all, because `bkt_mastery` carries `student_id` directly. One query whatever the library size. **Callers must intersect the result with their own concept set** — mastery rows survive their material being archived or unlinked, and counting those would quietly inflate every denominator on the page.
+
+**The visibility filter must reproduce `spaceMaterialIds()` exactly** — linked **and** published to (subject, grade) **and** `material.subject === space.subject`. Drop the third clause and a stray cross-subject link row makes the dashboard disagree with the Analytics tab for the same space. Every mean goes through `documentMastery()`, which is what makes the two screens show *the same number* rather than two computations that happen to agree.
+
+**Per-space rows do NOT average to the global figure, and that is correct.** The global set is the union over materials (deduplicated), so a material in two spaces contributes its concepts once; each per-space set is its own, where it contributes to both. Mastery is per (student, concept). It will look like a bug to the next reader — the DTO says so.
+
+### The mastery curve
+
+**Reconstructed BACKWARD from `bkt_mastery`, never forward from P(L₀).** `bkt_update_logs` stores both phases per row, so walking newest→oldest and stepping each concept back to its `p_l_prior` starts *at* the authoritative value. **The last point equals `overall` by construction — there is no reconciliation branch, so there is no branch to get wrong.**
+
+**This is what makes reading `bkt_update_logs` safe at all.** The Analytics work rejected it because `applyBktObservations()` treats a failed log write as non-fatal by design, and a UI reader threatened to turn a tolerated failure into a visibly wrong chart — forcing the error fatal and inverting a documented failure-ordering decision. Backward reconstruction dissolves that: the chart never sources the current number, and a dropped row leaves one concept reading slightly too-new in one window (at most 1/N of one BKT step) instead of stale through the end. **`logWriteError` stays non-fatal. Do not promote it because this reader exists.**
+
+**Verified on real data:** every concept's oldest log row has `p_l_prior = 0.10` and every newest row's `p_l_posterior` equals its stored `latent_mastery`, zero exceptions across 28 concepts / 56 rows — so backward and forward provably agree today, and backward stays correct when they stop agreeing.
+
+**The X axis is a learning-opportunity index, not wall clock.** Every update in one session shares a timestamp to the millisecond, so a time axis renders a real study day as a **vertical line**. And BKT has no forgetting term, so a two-week gap is a perfectly flat segment that reads as "you stalled" when the model cannot move without evidence. The paper's own time index is `t`. Points still carry `at` for date context.
+
+**The Y axis is fixed 0–100 and must stay that way.** Auto-scaling a 10%→55% series to fill the box makes it read as mastery of everything. Fixed bounds are also what make the 50/85 tier lines mean anything.
+
+**Downsampling never interpolates.** Every emitted point is a real reconstructed mean at a real event boundary. The usual objection (hidden extrema) does not apply: one event moves one concept, so the mean moves by at most ~1/N, making single-event spikes structurally impossible — which is also why a moving average would be *worse*.
+
+**The denominator is fixed at "now"** — the current visible concept set. Log rows for concepts outside it are dropped, so `total_updates` can be below the student's row count. Expected, not a bug.
+
+### What is deliberately absent
+
+**Streaks, badges and study hours are OUT, and must not be added back without a writer.** Nothing writes `activity_logs` (30 rows exist, all from one migration backfill, newest 2026-07-17), nothing awards `user_badges`, and one student carries a **non-zero `day_streak` frozen since July** — a stale number that looks real, which is worse than none. The paper names all three on p. 65; the missing piece is a writer, not a widget.
+
+**Free Recall's coverage ratio never appears here.** Its denominator is however finely that document happened to be split, so it means nothing stripped of context — and a dashboard is exactly the context that strips context. Printing "31%" beside a test's "80%" invites the cross-metric comparison the Cognitive Tabs section forbids. Recall and Feynman rows in the activity feed carry a sentence and a timestamp, no number.
+
+**No activity heatmap.** Buildable from real timestamps and rejected: with 6 tests and 17 cognitive attempts *ever*, an honest heatmap renders as an accusation.
+
+**No refresh button.** Fresh on mount like every other screen; a button would advertise a staleness the mount already handles.
+
+### Identity
+
+**`GET /api/auth/me` was broken and nothing noticed** — it embedded `institutions(name)` against a table that has never existed, so every call 404'd. No client code called it until this page needed a real name. It now selects explicit columns.
+
+**`src/context/AuthContext.tsx` is mounted inside `StudentLayout`, not at the App root.** At the root it would fire `/auth/me` on `/login` and 401 on every cold page load. It holds identity and nothing else — a context that accumulates "things several screens need" becomes a second, invisible data layer with its own staleness rules.
+
+**`profiles` has no avatar, no email and no institution.** The sidebar renders an initials monogram tinted by the theme accent; the line under the name is `Grade {n}`, a real column. Do not invent any of the three — the layout used to render an Unsplash URL and "MIT" from mock data.
+
+**`src/data/mockStudents.ts` still exists** for `Settings.tsx` and `StudentProfile.tsx`. It is no longer read by the layout or the dashboard.
+
 ## Adaptive Test Mode
 
 > **Full reference: `LearnSyncAI artifacts/TEST_MODE_IMPLEMENTATION.md`.** Read it before changing anything here — it carries the measurements behind each rule, the debugging playbook, and the list of defects deliberately left open. What follows is only what must not be broken by accident.
@@ -430,6 +482,46 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 - **`mastery_snapshot` is pre-test and must stay pre-test.** After completion writes mastery, the value on that row is still the one its tier was chosen from, which is exactly what the Difficulty Alignment check (p. 98) needs. Do not "refresh" it.
 - **Concept ordering in `POST /` is document order and should stay that way.** Weakest-first would change nothing — `allocateConcepts()` emits one question per concept for *every* concept — and its sign is wrong anyway, since `orderedFormats()` would hand the least-known concepts the highest P(G).
 - **`npx tsx scripts/set-test-mastery.ts <tier|reset>`** forces mastery to check the tiers directly. It now *competes* with the live engine — real answers overwrite whatever it sets — so `reset` before a genuine run.
+
+## Games — BKT difficulty calibration
+
+> **Full reference: `LearnSyncAI artifacts/GAMES_CALIBRATION_IMPLEMENTATION.md`.** It carries the
+> nine tier cells with the measurements behind each, the prompt failures that shaped them, and the
+> acceptance evidence. What follows is only what must not be broken by accident.
+
+**Games READ mastery and never write it.** Paper p. 58 permits games to "utilize existing mastery estimates only ... without modifying the learner's mastery state". Nothing under the games path imports `server/lib/bkt.ts`; there is no `applyGameCompletion`; `bkt_source` stays a two-value enum. This is the same rule that governs Free Recall and Feynman.
+
+**The tier vocabulary is `foundational | intermediate | advanced`, not `easy | medium | hard`.** Paper p. 98's Difficulty Alignment criterion is stated in exactly those words and is applied to "educational game content", so `game_content.difficulty` must be readable against it directly. The old vocabulary is gone and CHECK-constrained out.
+
+**`GenerateGameContentSchema` deliberately has NO `difficulty` field.** The server derives it from M_doc over the selected materials — a client-supplied difficulty is a client-chosen difficulty, the same reasoning as `testAllocation.ts` re-deriving test length. A stale client still sending one has it silently stripped by Zod, so **verify by reading the stored row, not the response code.**
+
+**`server/lib/gameDifficulty.ts` owns everything games-specific** — selection, the timer table, the nine tier cells, `SELECT_BUFFER`. It imports from `testDifficulty.ts`; nothing game-shaped goes back the other way. `TIER_GUIDANCE` is reused because it is the paper's own p. 81 framing.
+
+**An unassessed concept counts as 0.50 in the SELECTION weight and P(L₀) = 0.10 inside `documentMastery()`, and that disagreement is deliberate.** EQ(4) estimates what a student knows, so an unmeasured concept must enter it at the prior. Selection asks what is worth *practising*, and there the prior is wrong twice over: the P(T) floor puts every assessed concept at ≥ 0.20, so ranking by raw mastery would put every concept nobody has asked about **above** every concept the student is measurably failing. On a 57-concept lesson with six assessed, all fourteen trivia slots would go to never-seen concepts and mastery would change nothing. 0.50 gives *known weak > unknown > known strong*. **Do not "fix" it to `P_L0`.**
+
+**Selection is weighted sampling (Efraimidis–Spirakis A-Res), not a sort.** A deterministic weakest-first sort makes "Play Again" rebuild a byte-identical game; the shuffle it replaced existed for that variety. `WEIGHT_FLOOR = 0.05` keeps a mastered concept reachable and bounds the exponent at 20 — **raise the floor, never the exponent.** Measured over 10,000 trials at n=8 of 20: weak 62%, unknown 47%, mastered 6%.
+
+**The trivia timer is server-authoritative and stored in the payload**, not derived client-side from the tier. `TRIVIA_QUESTION_MS` is 20s / 15s / 10s (paper p. 83 names "trivia response timers" explicitly). Storing it means a stored game replays with the clock its questions were written for. `isUrgent` is `questionMs / 3`, never a fixed 5s — at the advanced 10s clock that would paint the ring red for half of every question.
+
+**There is no per-question difficulty badge, and it must not come back.** Difficulty is one tier per session (p. 81, "session-based adaptation"); a "HARD" chip inside a Foundational game contradicts the calibration on screen. The tier is stated once, on `GameStage`, for all three games.
+
+**The build-modal preview is gated on `assessed > 0`,** matching `AdaptiveTestTab` — at a cold start every student is foundational, which says nothing, and P(L₀) must never print as a score. It reconstructs EQ(4) over the union as `Σ(m_doc·n) / Σn` from `by_material`, **filtered to the selected ids — never `overall`**, which is the whole space. The 4dp rounding makes it differ from the server by ≤ 1e-4.
+
+**⚠️ THE DIFFICULTY LIVES IN THE DISTRACTORS, AND EVERY ATTEMPT TO PUT IT IN THE QUESTION FAILED — measured, three times.** Asking the model to make advanced questions harder produced, in order: a four-verb template applied to all ten items that **invented facts** ("What does Cross-Site Scripting *prevent*?" → "Malicious script execution", which XSS *causes*); then ungrammatical fragments; then subjectless stems ("Ensures reliable data transfer?") naming no concept at all. The ceiling `FORMAT_TIER_GUIDANCE` documents is the cause — most of this corpus is OWASP names and OSI layers defined in one line, and a one-line definition cannot support a consequence question. What works is an ordinary question plus **options drawn from the lesson's own neighbouring concepts**, which the model can check against the list it was given. About two items in ten still come back definitional; that is the ceiling, and chasing it is what produced the falsehoods.
+
+**Trivia's reading budget must stay two-sided.** Stated only as "the student has N seconds, anything they cannot finish reading measures nothing", the model optimised the one thing it could check and collapsed advanced to 2.5-word questions like "What is XSS?" — the *easiest* output of the three tiers. It is now a word target to aim for, not a ceiling to duck under.
+
+**Trivia cannot reuse `FORMAT_TIER_GUIDANCE.multiple_choice`, and the reason is arithmetic.** Its `advanced` cell says "Open with a one-sentence scenario"; advanced trivia runs on a 10-second clock, and ~52 words at ~4 words/sec is thirteen seconds of reading before one second of thinking.
+
+**Keep the crossword's `A–Z, 3–10 letters` and `NEVER abbreviate` bullets tier-independent and adjacent to the tier'd `"answer"` line.** Advanced answers name consequences and are the longest; `groq.ts` filters that range, `crossword.ts` needs ≥2 survivors, and the route throws on an empty layout, so this is where a 502 would come from.
+
+**`POST /api/gamification/session` takes only `content_id` plus the outcome.** `space_id`, `material_id`, `game_type` and `mastery_snapshot` are read from the owner-checked `game_content` row — the snapshot is the evidence p. 98 reads, so a client-supplied one would be a client-chosen finding. The insert **lists its fields explicitly**: it used to be `{ ...parsed.data }`, which binds the request shape to the table's columns, and `recordSession()` swallows every error, so a mismatch would stop session logging entirely with no visible symptom.
+
+**`POST /api/games/generate` gate order is `requireOwnedSpace` (404) → `rejectInaccessibleMaterials` (403) → linked-to-this-space (404).** Gates 2–4 were all missing before calibration landed. Gate 4 is not redundant with gate 3: passing the grade rule proves the student may *read* the material, not that this space holds it, and the route stores a `mastery_snapshot` attributed to `space_id`.
+
+**`regenerate()` must refresh the calibration from the POST response.** It never called `setSource`, which was harmless while the source params were identical across generations — but tier and timer now vary per generation, so "Play Again" would show the previous game's chip and clock.
+
+**`server/lib/spaceAccess.ts` is the single home for space ownership.** `loadOwnedSpace`/`requireOwnedSpace`/`spaceMaterialIds` had three private copies plus a fourth inlined in `practice.routes.ts`; games would have been the fifth. The active/role/grade checks are the part that must not drift.
 
 ## Cognitive Tabs — Free Recall & Feynman
 
