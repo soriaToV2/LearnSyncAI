@@ -92,10 +92,10 @@ export async function requireOwnedMaterial(
 }
 
 /**
- * The class for a material: every ACTIVE student in a grade it is published to.
+ * Every ACTIVE student in any of these grades — the one definition of "the class".
  *
  * This is the same population `v_grade_level_mastery` defines, minus that view's
- * one real defect — it has no `p.status = 'active'` filter, so a disabled account
+ * one real defect: it has no `p.status = 'active'` filter, so a disabled account
  * still appears in it. An educator must not see performance rows for an account an
  * admin has switched off.
  *
@@ -103,18 +103,26 @@ export async function requireOwnedMaterial(
  * `grade_level` a scalar on the profile, so this is `.in('grade_level', …)` — the
  * scalar column against the array literal — never `.contains()`.
  *
+ * ⚠️ TAKES GRADES, NOT A MATERIAL, so the dashboard can fetch the UNION across an
+ * educator's whole library in ONE query and partition it per material in memory.
+ * `GET /api/educator/overview` calling `rosterFor()` in a loop would be one query
+ * per material for an identical result. The role/status/grade triple lives here and
+ * only here — that is the part that must not drift, exactly as this file's header
+ * says of ownership.
+ *
  * Sorted by name so the "not started" tail, which has no mastery to rank on, has a
  * stable order without the caller sorting again.
  */
-export async function rosterFor(material: OwnedMaterial): Promise<RosterStudent[]> {
-  if (material.gradeLevels.length === 0) return [];
+export async function rosterForGrades(grades: number[]): Promise<RosterStudent[]> {
+  const distinct = [...new Set(grades)];
+  if (distinct.length === 0) return [];
 
   const { data } = await supabaseAdmin
     .from('profiles')
     .select('id, first_name, last_name, grade_level')
     .eq('role', 'student')
     .eq('status', 'active')
-    .in('grade_level', material.gradeLevels)
+    .in('grade_level', distinct)
     .order('last_name')
     .order('first_name');
 
@@ -124,6 +132,11 @@ export async function rosterFor(material: OwnedMaterial): Promise<RosterStudent[
     lastName: (row.last_name as string) ?? '',
     gradeLevel: row.grade_level as number,
   }));
+}
+
+/** The class for ONE material. A thin call through to `rosterForGrades()`. */
+export async function rosterFor(material: OwnedMaterial): Promise<RosterStudent[]> {
+  return rosterForGrades(material.gradeLevels);
 }
 
 /**

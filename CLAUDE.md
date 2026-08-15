@@ -133,10 +133,10 @@ LearnSyncAI/
 │   │   ├── auth/                  # Login, Register pages
 │   │   ├── admin/                 # Admin account management pages
 │   │   ├── educator/              # Educator Portal pages
-│   │   │   ├── EducatorDashboard.tsx   # ⚠️ still mock data — due a rebuild
+│   │   │   ├── EducatorDashboard.tsx   # across every material — the one global educator read
 │   │   │   ├── MaterialsLibrary.tsx    # Upload + list
 │   │   │   ├── MaterialDetail.tsx      # Concepts tab + Class Performance tab
-│   │   │   └── components/ClassPerformance.tsx  # the class analytics
+│   │   │   └── components/ClassPerformance.tsx  # per-material class analytics
 │   │   │   # (no StudentsRoster / StudentMasteryDetail — removed, see below)
 │   │   └── student/
 │   │       ├── StudySpace.tsx     # Main container — hosts all 5 study tabs
@@ -503,7 +503,37 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **`TIER_STYLE.foundational` is slate, not rose.** It was `#fb7185`, which `MeterBar`'s JSDoc cited by name as its reason for refusing to reuse `MasteryBar`, and which contradicted `TIER_TONE.foundational = 'neutral'`. Everyone starts foundational — it is the P(L₀) cold start — so red marks every new student as failing at something nobody has asked them.
 
-**`EducatorDashboard.tsx` is still entirely mock and is due a rebuild.** Its three links into the deleted routes were neutralised (the "All students →" link removed, two wrappers turned into `<div>`s) rather than repointed: a real destination reached from invented numbers is worse than no destination. `mockEducator.ts` survives for it — and for three **student-side** files that import `subjectName`/`SUBJECTS`.
+## Educator Dashboard — the global educator read
+
+**`GET /api/educator/overview` is the educator counterpart of `GET /api/dashboard`, and it accepts NOTHING** — no body, no query, no path parameter. Every set is derived from `req.user!.id`, so it has zero IDOR surface and no Zod schema, because there is no input to validate. Same bar as the student global read; any future one must meet it too.
+
+**Four round trips whatever the library size:** materials → concepts (chunked) ‖ roster → `classMasteryRows()`. **`rosterFor()` must never be called in a loop** — `rosterForGrades()` in `educatorScope.ts` fetches the union of grades in one query and the per-material class is partitioned in memory. `rosterFor(material)` is now a thin call through to it, so the role/status/grade triple keeps one home.
+
+**⚠️ FIVE FIGURES, TWO COMPUTATIONS — only one kind is EQ(4).** Over CONCEPTS via `documentMastery()`, where an unassessed concept correctly enters at P(L₀): `students[].m_doc` (one student, the union of concepts they can see) and `students[].by_material[].m_doc`. Over STUDENTS via `meanOrNull()`, where an absent student must never be filled with the prior: `materials[].m_doc`, `concepts[].avg_mastery`, `class.m_doc`, `grades[].m_doc`. `students[].m_doc` is the *same computation the student's own dashboard performs on themselves*, narrowed to this educator's materials — so it differs from what the student sees whenever another educator publishes to them, and the caption says so.
+
+**THE CONSISTENCY INVARIANT: `materials[].m_doc` here is the same expression over the same population as `class.m_doc` on that material's Class Performance tab.** The two screens show one number, not two computations that happen to agree. Verified end to end; if they ever differ, the roster or the started-filter has drifted.
+
+**Live materials only.** Archived materials are excluded from every figure and surface only as a count. `bkt_mastery` rows **survive archiving and re-grading**, so counting them would inflate every denominator — the same intersection rule `allMasteryRows()` states. Class Performance stays archive-blind, which is not a contradiction: an archived material simply is not on this page. Verified: a mastery row on an archived material, and one belonging to a student no longer in the material's grade, are both correctly ignored.
+
+**`attention` is the operational signal and the most valuable thing on the page** — one reason per material, chosen server-side by blocking-ness: `parse_failed` → `parse_pending` → `no_concepts` → `no_students` → `nobody_started`. A failed parse also leaves zero concepts, so reporting both would say one thing twice. **Rendered only when non-empty** — a green "all clear" card would be a permanent widget reporting nothing.
+
+**`students[].by_material` is inline and carries STARTED materials only.** ~45 KB at 50 students × 10 materials, well under the ~256 KB that made the per-concept matrix a separate route — and it means **no student id ever appears in a URL** on this page, so the route keeps its zero-IDOR property. Per-concept detail still belongs to `/materials/:id/students/:id/concepts`.
+
+**`concepts` is capped at the weakest 20 ASSESSED.** Unassessed are excluded by construction, not filtered after: they sit at P(L₀), below every genuinely struggling concept, so including them would fill the list with concepts nobody has been asked about. `counts.concepts_assessed` is the real total behind the list.
+
+**Deliberately absent — a class mastery curve over time.** The student curve anchors its last point to `bkt_mastery` by construction; a class mean cannot, because its denominator changes as students start. Fix it at "started now" and every student who had not yet begun contributes an all-P(L₀) EQ(4), which is printing the prior; let it move and **the class average drops when a new student begins**, reading as "the class got worse" because someone joined. Both are wrong. Revisit only with a count, never a mean. Streaks, study hours, badges, per-student activity feeds and Free Recall percentages are out for the same reasons they are out of the student dashboard.
+
+**Measured float boundary, recorded not fixed:** `meanOrNull([0.6, 0.1333])` gives **0.3666**, not the 0.3667 exact decimal arithmetic implies — IEEE754 puts `0.6 + 0.1333` at `0.7332999999999999`, just below the 4dp rounding boundary. Both routes go through the same `meanOrNull`, so the two screens still agree, and it is the fourth decimal of a figure that renders as "37%" either way.
+
+**`src/data/mockEducator.ts` no longer contains any invented data.** `EDUCATOR`, `STUDENTS`, `MATERIALS`, `CONCEPTS`, `CONCEPT_MASTERY` and `GRADE_LEVEL_MASTERY` are gone, along with every helper deriving from them; what remains is `SUBJECTS`, `ALL_GRADE_LEVELS`, the formatters and three types, all real. **The file is misnamed now** and a rename is nine mechanical import edits, deliberately not bundled. `components/educator/MasteryBar.tsx` was deleted with its last consumer — it took a bare `number` and so could not express "not assessed", which is the common case on real data.
+
+**🐛 `formatRelativeTime()` measured against a FROZEN `NOW` of 2026-07-23**, correct while every caller passed mock timestamps and wrong the moment `MaterialsLibrary` started passing real ones: a material uploaded after that date gave a negative difference and printed **"Just now" forever, for every material**. It uses `Date.now()` now.
+
+**Identity is real in the educator portal, and there is no email anywhere in it.** `AuthProvider` is mounted on `EducatorLayout` (its `StudentLayout` counterpart already said it could be adopted unchanged), so the sidebar, the dashboard greeting and Settings all read `GET /api/auth/me`. **`profiles` has no email column** — Settings used to print `liza.mendoza@pca.edu.ph` to every educator; that field is deleted, not repointed.
+
+**`MaterialDetail` seeds its tab from `?tab=`**, read once as the initial value. The dashboard's material, student-breakdown and concept rows are all about performance, so they link with `?tab=performance`; Recent uploads does not, because that link is about the upload. The tab bar owns the state after mount — mirroring it back into the URL would add a history entry per toggle.
+
+**`materials.educator_id` is `ON DELETE RESTRICT`.** An educator's materials must be deleted before the account, or the auth delete fails silently and leaves the whole fixture behind. This bit a verification harness; anything that creates a throwaway educator must tear down in that order.
 
 ## Adaptive Test Mode
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Search, Archive, ArchiveRestore, Trash2,
   AlertTriangle, BookOpen, Pencil, Check, X, Plus, Loader2, ExternalLink,
@@ -56,6 +56,7 @@ const pagesToInput = (pages: number[] | null): string => (pages ?? []).join(', '
 export default function MaterialDetail() {
   const { materialId } = useParams<{ materialId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [material, setMaterial] = useState<MaterialRow | null>(null);
   const [concepts, setConcepts] = useState<ConceptRow[]>([]);
@@ -73,7 +74,17 @@ export default function MaterialDetail() {
   const [savingMeta, setSavingMeta] = useState(false);
   const [conceptSearch, setConceptSearch] = useState('');
   const [showDelete, setShowDelete] = useState(false);
-  const [activeTab, setActiveTab] = useState<Tab>('concepts');
+  /*
+   * Seeded from `?tab=`, which is how the dashboard links here: its material,
+   * student and concept rows are all about performance, so landing them on the
+   * Concepts tab would put the educator one click away from what they clicked for.
+   * Read ONCE as the initial value rather than kept in sync — the tab bar is the
+   * owner after mount, and mirroring it into the URL would add history entries for
+   * every toggle.
+   */
+  const [activeTab, setActiveTab] = useState<Tab>(
+    searchParams.get('tab') === 'performance' ? 'performance' : 'concepts'
+  );
 
   // Concept editing state
   const [addingNew, setAddingNew] = useState(false);

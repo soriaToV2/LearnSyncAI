@@ -171,6 +171,30 @@ export function classCaption(c: MaterialPerformance['class'], conceptCount: numb
   return `Averaged across the ${c.started} of ${c.size} student${c.size === 1 ? '' : 's'} who have started.`;
 }
 
+/**
+ * The same sentence for the DASHBOARD's class average, which is over every material
+ * the educator has published rather than one.
+ *
+ * Deliberately adjacent to `classCaption()` rather than filed with the overview's
+ * own types: they are one sentence at two scopes, and the moment they live in two
+ * files one of them starts naming its denominator and the other stops.
+ */
+export function overviewCaption(
+  c: MaterialPerformance['class'],
+  conceptCount: number
+): string {
+  if (conceptCount === 0) {
+    return 'Concepts appear once extraction finishes — mastery starts tracking after that.';
+  }
+  if (c.size === 0) {
+    return 'No active student accounts are in the grade levels you publish to.';
+  }
+  if (c.started === 0) {
+    return `None of the ${c.size} student${c.size === 1 ? '' : 's'} in your grades has been assessed yet.`;
+  }
+  return `Averaged across the ${c.started} of ${c.size} student${c.size === 1 ? '' : 's'} who have started.`;
+}
+
 /** "3 of 5 struggling" — the concept row's caption, or null when untouched. */
 export function conceptCaption(c: ConceptPerformance): string | null {
   if (c.assessed_students === 0) return null;

@@ -283,11 +283,17 @@ Educator Dashboard:
   - Row-Level Security (RLS) restricts educators to viewing mastery data only for students within their selected grade level.
 
 Implementation (as built):
-  - The analytics live inside a material — Materials → a material → Class Performance — served by GET /api/educator/materials/:materialId/performance, with GET /api/educator/materials/:materialId/students/:studentId/concepts for the per-student drill-down. There is no separate students roster; the pages that were one were mock data end to end and were removed.
+  - The analytics have two scopes. GET /api/educator/overview is the portal's landing page, across every material the educator has published; the /api/educator/materials/:materialId/* routes are the per-material drill-down reached through Materials → a material → Class Performance. There is no separate students roster; the pages that were one were mock data end to end and were removed — a student ACROSS materials now lives on the dashboard instead.
+  - GET /api/educator/overview accepts nothing at all: no body, no query, no path parameter. Every set is derived from the caller's own id, so it has no IDOR surface, the same guarantee GET /api/dashboard gives on the student side. It costs four database round trips regardless of how many materials, students or concepts the educator has.
+  - The dashboard covers LIVE materials only; archived ones are excluded from every figure and reported as a count. bkt_mastery rows survive archiving and re-grading, so they are intersected against the live concept set rather than counted.
+  - The dashboard's per-material average is the same expression, over the same population, as the Class Performance tab's class average. The two screens show one number rather than two computations that happen to agree.
+  - Alongside the averages the dashboard reports operational problems each material can have — extraction failed, still processing, no concepts extracted, published to a grade with no active students, or reaching students but nobody has started. Each is a different problem with a different fix, so exactly one reason is reported per material and the section disappears when there is nothing to report.
+  - There is deliberately no class mastery curve over time. A per-student curve can be anchored to the student's stored mastery; a class mean cannot, because its denominator changes as students start — either absent students enter at the P(L₀) prior (printing an assumption as a measurement) or the class average falls whenever a new student begins, which reads as the class getting worse because someone joined.
   - "The class" for a material is every ACTIVE student whose grade_level is in that material's grade_levels. An educator's assigned grades are therefore derived from what they have published, not stored — there is no educator-grade table.
   - RLS is the design intent but NOT the enforcement mechanism at runtime: Express holds the Supabase service role, which bypasses RLS by design, so every route enforces ownership itself through server/lib/educatorScope.ts. The same reason v_grade_level_mastery (security_invoker) is not queried from the server.
   - Read-only. Mastery still has exactly two writers, both on the student side (adaptive flashcards and Adaptive Test Mode), per the paper's Scope section.
   - A student with no bkt_mastery row is at P(L₀) = 0.10 by assumption, so every mastery figure is nullable and unassessed students and concepts are shown as "not started" rather than as a percentage.
+  - The educator's own name comes from their profile, like the student portal's. profiles carries no email column, so no email is displayed anywhere in the educator portal.
 
 ---
 

@@ -1,16 +1,23 @@
 import { useState } from 'react';
 import {
-  User, Palette, BookOpen, Check, ShieldCheck, Mail, Sparkles,
+  User, Palette, BookOpen, Check, ShieldCheck, GraduationCap, Sparkles,
 } from 'lucide-react';
 import { useEducatorTheme, THEMES } from '../../context/ThemeContext';
-import { EDUCATOR } from '../../data/mockEducator';
+import { useAuth, fullName, initials } from '../../context/AuthContext';
 
 type Tab = 'profile' | 'appearance';
 
+/**
+ * ⚠️ THERE IS NO EMAIL HERE, AND NONE MAY BE ADDED. `profiles` has no email column;
+ * this page used to print "liza.mendoza@pca.edu.ph" from `mockEducator.EDUCATOR` to
+ * every educator. Everything below now comes from `GET /api/auth/me` via
+ * `AuthContext`, which `EducatorLayout` mounts.
+ */
 export default function EducatorSettings() {
   const [activeTab, setActiveTab] = useState<Tab>('profile');
   const { theme: activeTheme, setTheme } = useEducatorTheme();
   const [toast, setToast] = useState<string | null>(null);
+  const { user } = useAuth();
 
   const TABS: Array<{ id: Tab; label: string; icon: typeof User }> = [
     { id: 'profile', label: 'Profile', icon: User },
@@ -69,35 +76,27 @@ export default function EducatorSettings() {
                     color: activeTheme.accent,
                   }}
                 >
-                  {EDUCATOR.first_name[0]}{EDUCATOR.last_name[0]}
+                  {initials(user)}
                 </div>
                 <div className="min-w-0">
                   <h2 className="font-display text-xl font-semibold text-white">
-                    {EDUCATOR.first_name} {EDUCATOR.last_name}
+                    {fullName(user) || 'Your account'}
                   </h2>
                   <div className="flex flex-wrap items-center gap-2 mt-1.5">
                     <span className="px-2 py-0.5 rounded-md bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 text-primary-fixed-dim font-sans text-[10px] font-bold uppercase tracking-wider">
                       Educator
                     </span>
-                    <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-sans text-[10px] font-bold uppercase tracking-wider">
-                      <ShieldCheck className="w-3 h-3" />
-                      {EDUCATOR.status}
-                    </span>
+                    {user && (
+                      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-sans text-[10px] font-bold uppercase tracking-wider">
+                        <ShieldCheck className="w-3 h-3" />
+                        {user.status}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
 
               <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-white/[0.02] border border-white/5">
-                  <Mail className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <dt className="font-sans text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">
-                      Email
-                    </dt>
-                    <dd className="font-sans text-sm text-slate-200 truncate">{EDUCATOR.email}</dd>
-                  </div>
-                </div>
-
                 <div className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-white/[0.02] border border-white/5">
                   <User className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
                   <div className="min-w-0">
@@ -106,6 +105,18 @@ export default function EducatorSettings() {
                     </dt>
                     <dd className="font-sans text-sm text-slate-200">
                       Educator — uploads materials and monitors mastery
+                    </dd>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-white/[0.02] border border-white/5">
+                  <GraduationCap className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <dt className="font-sans text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">
+                      Grade access
+                    </dt>
+                    <dd className="font-sans text-sm text-slate-200">
+                      Set per material as you upload it
                     </dd>
                   </div>
                 </div>

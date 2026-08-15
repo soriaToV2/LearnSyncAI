@@ -5,12 +5,13 @@ import {
   Menu, X, ChevronLeft, ChevronRight, BrainCircuit,
 } from 'lucide-react';
 import { useEducatorTheme, EducatorThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
-import { EDUCATOR } from '../../data/mockEducator';
+import { AuthProvider, useAuth, fullName, initials, subtitleFor } from '../../context/AuthContext';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-educator-sidebar-collapsed';
 
 function EducatorLayoutInner() {
   const location = useLocation();
+  const { user } = useAuth();
   const [showLogout, setShowLogout] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(
@@ -19,9 +20,16 @@ function EducatorLayoutInner() {
   const { theme } = useEducatorTheme();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  const educatorName = `${EDUCATOR.first_name} ${EDUCATOR.last_name}`;
-  const initials = `${EDUCATOR.first_name[0]}${EDUCATOR.last_name[0]}`;
-  const subtitle = EDUCATOR.email;
+  /*
+   * The real signed-in profile, not `mockEducator.EDUCATOR` — which rendered
+   * "Liza Mendoza / liza.mendoza@pca.edu.ph" to every educator. `profiles` carries
+   * NO EMAIL COLUMN and no avatar, so the subtitle is the role (`subtitleFor()`
+   * returns "Educator" for a null `grade_level`) and the avatar is a monogram.
+   * Nothing here may be invented.
+   */
+  const educatorName = fullName(user);
+  const monogram = initials(user);
+  const subtitle = subtitleFor(user);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isCollapsed));
@@ -116,7 +124,7 @@ function EducatorLayoutInner() {
             className="w-10 h-10 rounded-full flex items-center justify-center border border-white/10 font-display text-sm font-bold"
             style={{ backgroundColor: theme.accentSoft, color: theme.accent }}
           >
-            {initials}
+            {monogram}
           </div>
           <span
             className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-page"
@@ -176,7 +184,7 @@ function EducatorLayoutInner() {
           className="w-8 h-8 rounded-full overflow-hidden border border-white/10 flex items-center justify-center font-display text-[11px] font-bold"
           style={{ backgroundColor: theme.accentSoft, color: theme.accent }}
         >
-          {initials}
+          {monogram}
         </NavLink>
       </header>
 
@@ -291,10 +299,19 @@ function EducatorLayoutInner() {
   );
 }
 
+/**
+ * `AuthProvider` is mounted HERE, not at the App root — the same placement, and the
+ * same reason, as `StudentLayout`: at the root it would fire `GET /api/auth/me` on
+ * `/login` and `/register`, where there is no session, giving a 401 on every cold
+ * page load. Mounted on the layout it runs once per portal entry, on routes that
+ * already require a signed-in user. Nothing in the provider is student-specific.
+ */
 export default function EducatorLayout() {
   return (
-    <EducatorThemeProvider>
-      <EducatorLayoutInner />
-    </EducatorThemeProvider>
+    <AuthProvider>
+      <EducatorThemeProvider>
+        <EducatorLayoutInner />
+      </EducatorThemeProvider>
+    </AuthProvider>
   );
 }

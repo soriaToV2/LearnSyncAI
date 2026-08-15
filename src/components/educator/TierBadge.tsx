@@ -1,11 +1,14 @@
-import type { MasteryTier } from '../../data/mockEducator';
+import type { DifficultyTier } from '../../lib/mastery';
 
 /**
  * Colour and wording for each mastery tier. Kept in one place so the badge, the
  * bar, and any chart that needs a tier colour all agree.
  *
- * Tier boundaries themselves live in masteryTier() in mockEducator.ts, which
- * mirrors the database function public.mastery_tier().
+ * Tier boundaries themselves live in `masteryTier()` in `src/lib/mastery.ts`, which
+ * mirrors `masteryTier()` in `server/lib/testDifficulty.ts` and the database
+ * function `public.mastery_tier()`. The tier UNION comes from there too — it used
+ * to be `MasteryTier` from `mockEducator.ts`, which meant the educator portal's
+ * vocabulary was declared in a mock file.
  *
  * ⚠️ `foundational` is NEUTRAL, never rose. It was `#fb7185`, which
  * `src/components/ui/MeterBar.tsx` cites by name as the reason it refused to
@@ -16,7 +19,7 @@ import type { MasteryTier } from '../../data/mockEducator';
  * marks every new student as failing at something nobody has asked them yet.
  * The two portals must not colour one number two ways.
  */
-export const TIER_STYLE: Record<MasteryTier, { label: string; color: string; hint: string }> = {
+export const TIER_STYLE: Record<DifficultyTier, { label: string; color: string; hint: string }> = {
   advanced: {
     label: 'Advanced',
     color: '#34d399',
@@ -35,7 +38,7 @@ export const TIER_STYLE: Record<MasteryTier, { label: string; color: string; hin
 };
 
 interface TierBadgeProps {
-  tier: MasteryTier;
+  tier: DifficultyTier;
   className?: string;
 }
 
