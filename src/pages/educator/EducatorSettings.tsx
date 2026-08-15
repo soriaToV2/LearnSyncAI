@@ -123,7 +123,7 @@ export default function EducatorSettings() {
                 {[
                   'Choose the subject and the grade levels for each material as you upload it. Nothing is assigned to you in advance.',
                   'Students in the grades you selected can pull that material into a study space.',
-                  'Your Students roster shows exactly those grades — publish to Grade 8 and Grade 8 appears.',
+                  "Open a material and its Class Performance tab shows exactly those grades — publish to Grade 8 and you see Grade 8's students.",
                   'An administrator manages accounts only, and never sees student learning data.',
                 ].map((line, i) => (
                   <div

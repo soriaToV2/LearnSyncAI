@@ -1,20 +1,19 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Search, Archive, ArchiveRestore, Trash2,
-  AlertTriangle, Users, BookOpen, Pencil, Check, X, Plus, Loader2, ExternalLink,
+  AlertTriangle, BookOpen, Pencil, Check, X, Plus, Loader2, ExternalLink,
 } from 'lucide-react';
 import Modal from '../../components/ui/Modal';
-import MultiSelectDropdown from '../../components/ui/MultiSelectDropdown';
+import Dropdown from '../../components/ui/Dropdown';
 import SubjectBadge from '../../components/educator/SubjectBadge';
 import GradeChips from '../../components/educator/GradeChips';
 import ParseStatusPill from '../../components/educator/ParseStatusPill';
-import MasteryBar from '../../components/educator/MasteryBar';
-import TierBadge from '../../components/educator/TierBadge';
+import ClassPerformance from './components/ClassPerformance';
 import {
-  masteryRowsForMaterial, ALL_GRADE_LEVELS,
-  subjectName, formatFileSize, formatDate, formatPercent, studentName,
-  type EducatorMaterial, type MasteryTier,
+  ALL_GRADE_LEVELS,
+  subjectName, formatFileSize, formatDate,
+  type EducatorMaterial,
 } from '../../data/mockEducator';
 import { api } from '../../lib/api';
 
@@ -32,8 +31,6 @@ interface ConceptRow {
 type Tab = 'concepts' | 'performance';
 type Draft = { term: string; definition: string; pages: string };
 const EMPTY_DRAFT: Draft = { term: '', definition: '', pages: '' };
-
-const TIERS: MasteryTier[] = ['advanced', 'intermediate', 'foundational'];
 
 /** Renders source pages as "p. 3" or "pp. 3–5" for the traceability badge. */
 function formatPages(pages: number[] | null): string | null {
@@ -65,9 +62,15 @@ export default function MaterialDetail() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
-  const [grades, setGrades] = useState<string[]>([]);
-  const [isArchived, setIsArchived] = useState(false);
+  /*
+   * Grade access and archive were LOCAL STATE ONLY until `PATCH /api/materials/:id`
+   * existed — both controls looked functional and persisted nothing. They now
+   * hold the *draft* (what the educator is editing) while `material` holds the
+   * saved truth; `gradeDraft` is only meaningful while `isEditingGrades`.
+   */
+  const [gradeDraft, setGradeDraft] = useState<string>('');
   const [isEditingGrades, setIsEditingGrades] = useState(false);
+  const [savingMeta, setSavingMeta] = useState(false);
   const [conceptSearch, setConceptSearch] = useState('');
   const [showDelete, setShowDelete] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('concepts');
@@ -94,8 +97,6 @@ export default function MaterialDetail() {
       ]);
       setMaterial(mat);
       setConcepts(cons);
-      setGrades(mat.grade_levels.map((g) => `Grade ${g}`));
-      setIsArchived(mat.is_archived);
       setNotFound(false);
     } catch {
       setNotFound(true);
@@ -106,9 +107,50 @@ export default function MaterialDetail() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Don't let a background refetch disrupt an in-progress edit.
+  // Don't let a background refetch disrupt an in-progress edit. Grade editing is
+  // included for the same reason concept editing is: the poll calls `load()`,
+  // which replaces `material`, and a refetch mid-edit would swap the row out from
+  // under an unsaved grade choice.
   const busyRef = useRef(false);
-  busyRef.current = addingNew || editingId !== null || saving;
+  busyRef.current =
+    addingNew || editingId !== null || saving || isEditingGrades || savingMeta;
+
+  /**
+   * The one writer for archive and grade access.
+   *
+   * Replaces the whole row from the response rather than merging a field, so the
+   * page cannot drift from the server — `PATCH` deliberately returns the same
+   * shape as `GET /:id`.
+   */
+  const patchMaterial = useCallback(
+    async (body: { is_archived?: boolean; grade_levels?: number[] }) => {
+      if (!materialId) return false;
+      setSavingMeta(true);
+      setActionError(null);
+      try {
+        const { data } = await api.patch<MaterialRow>(`/materials/${materialId}`, body);
+        setMaterial(data);
+        return true;
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : 'Could not save that change.');
+        return false;
+      } finally {
+        setSavingMeta(false);
+      }
+    },
+    [materialId]
+  );
+
+  const saveGrade = async () => {
+    const next = Number(gradeDraft);
+    if (!Number.isInteger(next)) return;
+    // No-op edits shouldn't cost a request or bump updated_at.
+    if (material && material.grade_levels[0] === next) {
+      setIsEditingGrades(false);
+      return;
+    }
+    if (await patchMaterial({ grade_levels: [next] })) setIsEditingGrades(false);
+  };
 
   // Poll while extraction is still running so concepts + status appear on their own.
   const inFlight = material?.parsed_status === 'pending' || material?.parsed_status === 'processing';
@@ -118,25 +160,13 @@ export default function MaterialDetail() {
     return () => clearInterval(id);
   }, [inFlight, load]);
 
-  const masteryRows = useMemo(
-    () => (materialId ? masteryRowsForMaterial(materialId) : []),
-    [materialId]
-  );
-
   const filteredConcepts = concepts.filter((c) => {
     const q = conceptSearch.trim().toLowerCase();
     return !q || c.term.toLowerCase().includes(q) || c.definition.toLowerCase().includes(q);
   });
 
-  const gradeValues = grades.map((g) => Number(g.replace('Grade ', ''))).sort((a, b) => a - b);
-
-  const averageMastery = masteryRows.length
-    ? masteryRows.reduce((sum, r) => sum + r.m_doc, 0) / masteryRows.length
-    : 0;
-  const tierCounts = TIERS.map((tier) => ({
-    tier,
-    count: masteryRows.filter((r) => r.tier === tier).length,
-  }));
+  const gradeValues = material?.grade_levels ?? [];
+  const isArchived = material?.is_archived ?? false;
 
   const canEdit = material?.parsed_status === 'completed' || material?.parsed_status === 'failed';
 
@@ -325,10 +355,18 @@ export default function MaterialDetail() {
               View PDF
             </button>
             <button
-              onClick={() => setIsArchived(!isArchived)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface-container/60 border border-white/10 text-slate-300 font-sans text-xs font-semibold hover:bg-surface-container/85 hover:text-white transition-all"
+              onClick={() => void patchMaterial({ is_archived: !isArchived })}
+              disabled={savingMeta}
+              title={
+                isArchived
+                  ? 'Make this available to students again'
+                  : 'Hide from students’ study spaces. Concepts and mastery are kept.'
+              }
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface-container/60 border border-white/10 text-slate-300 font-sans text-xs font-semibold hover:bg-surface-container/85 hover:text-white transition-all disabled:opacity-50"
             >
-              {isArchived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
+              {savingMeta
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : isArchived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
               {isArchived ? 'Restore' : 'Archive'}
             </button>
             <button
@@ -371,29 +409,69 @@ export default function MaterialDetail() {
           ))}
         </div>
 
-        {/* Grade access */}
-        <section className="flex flex-col sm:flex-row sm:items-center gap-3 py-3.5 px-4 rounded-xl bg-white/[0.02] border border-white/5 mb-8">
-          <span className="font-sans text-xs font-semibold text-slate-300 shrink-0">Grade access</span>
-          <div className="flex-1 min-w-0">
+        {/* Grade access — one grade per material (materials_grade_levels_valid) */}
+        <section className="flex flex-col gap-2.5 py-3.5 px-4 rounded-xl bg-white/[0.02] border border-white/5 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <span className="font-sans text-xs font-semibold text-slate-300 shrink-0">Grade access</span>
+            <div className="flex-1 min-w-0">
+              {isEditingGrades ? (
+                <Dropdown
+                  value={gradeDraft}
+                  onChange={setGradeDraft}
+                  options={ALL_GRADE_LEVELS.map((g) => ({ value: String(g), label: `Grade ${g}` }))}
+                  className="w-full sm:w-44"
+                />
+              ) : (
+                <GradeChips grades={gradeValues} />
+              )}
+            </div>
+
             {isEditingGrades ? (
-              <MultiSelectDropdown
-                selectedValues={grades}
-                onChange={setGrades}
-                options={ALL_GRADE_LEVELS.map((g) => ({ value: `Grade ${g}`, label: `Grade ${g}` }))}
-                placeholder="Select grades..."
-                itemNoun="grade"
-              />
+              <div className="flex items-center gap-3 shrink-0">
+                <button
+                  onClick={() => setIsEditingGrades(false)}
+                  disabled={savingMeta}
+                  className="font-sans text-xs text-slate-400 font-semibold hover:text-slate-200 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveGrade()}
+                  disabled={savingMeta}
+                  className="flex items-center gap-1.5 font-sans text-xs text-primary-fixed-dim font-semibold hover:opacity-80 transition-opacity disabled:opacity-50"
+                >
+                  {savingMeta ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Save
+                </button>
+              </div>
             ) : (
-              <GradeChips grades={gradeValues} />
+              <button
+                onClick={() => {
+                  setGradeDraft(String(gradeValues[0] ?? ALL_GRADE_LEVELS[0]));
+                  setIsEditingGrades(true);
+                }}
+                className="flex items-center gap-1.5 font-sans text-xs text-primary-fixed-dim font-semibold hover:opacity-80 transition-opacity shrink-0"
+              >
+                <Pencil className="w-3 h-3" />
+                Edit
+              </button>
             )}
           </div>
-          <button
-            onClick={() => setIsEditingGrades(!isEditingGrades)}
-            className="flex items-center gap-1.5 font-sans text-xs text-primary-fixed-dim font-semibold hover:opacity-80 transition-opacity shrink-0"
-          >
-            {isEditingGrades ? <Check className="w-3.5 h-3.5" /> : <Pencil className="w-3 h-3" />}
-            {isEditingGrades ? 'Done' : 'Edit'}
-          </button>
+
+          {/*
+            Stated before saving, not after. Moving a material between grades is
+            reversible and destroys nothing — the study_space_materials link rows
+            and every bkt_mastery row survive, so setting the grade back restores
+            exactly what was there — but "the students who were studying this lose
+            it" is not something to discover afterwards.
+          */}
+          {isEditingGrades && (
+            <p className="font-sans text-[11px] text-slate-500 leading-relaxed">
+              Students in the current grade will stop seeing this material, and students in the new
+              grade will find it in their study spaces. Nothing is deleted — their existing progress
+              is kept and returns if you change the grade back.
+            </p>
+          )}
         </section>
 
         {/* Tabs */}
@@ -579,65 +657,15 @@ export default function MaterialDetail() {
           </section>
         )}
 
-        {/* ── Class Performance tab ── */}
-        {activeTab === 'performance' && (
-          <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-            <div className="flex items-center gap-2 mb-5">
-              <Users className="w-4 h-4 text-slate-400" />
-              <h2 className="font-display text-lg font-bold text-white">Class Performance</h2>
-            </div>
-
-            {masteryRows.length === 0 ? (
-              <p className="font-sans text-sm text-slate-400 py-4">
-                No mastery data yet. Scores appear once students study this material through
-                adaptive flashcards or a test.
-              </p>
-            ) : (
-              <>
-                <div className="flex items-baseline gap-3 mb-2">
-                  <span className="font-display text-3xl font-bold text-white tracking-tight">
-                    {formatPercent(averageMastery)}
-                  </span>
-                  <span className="font-sans text-xs text-slate-400">
-                    average across {masteryRows.length} student{masteryRows.length === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <MasteryBar mastery={averageMastery} showValue={false} className="mb-5" />
-
-                <div className="grid grid-cols-3 gap-3 mb-6">
-                  {tierCounts.map(({ tier, count }) => (
-                    <div key={tier} className="rounded-xl bg-white/[0.02] border border-white/5 p-3.5">
-                      <p className="font-display text-xl font-bold text-white tabular-nums">{count}</p>
-                      <TierBadge tier={tier} className="mt-1.5" />
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  {[...masteryRows]
-                    .sort((a, b) => a.m_doc - b.m_doc)
-                    .map((r) => (
-                      <button
-                        key={r.student_id}
-                        onClick={() => navigate(`/educator/students/${r.student_id}`)}
-                        className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-white/10 transition-all text-left group"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-surface-container border border-white/10 flex items-center justify-center shrink-0 font-display text-[11px] font-bold text-slate-300">
-                          {r.first_name[0]}{r.last_name[0]}
-                        </div>
-                        <span className="font-sans text-sm text-white font-medium w-40 truncate group-hover:text-primary-fixed-dim transition-colors">
-                          {studentName(r)}
-                        </span>
-                        <span className="font-sans text-[11px] text-slate-500 tabular-nums w-16 shrink-0 hidden sm:block">
-                          {r.assessed_concept_count}/{r.concept_count}
-                        </span>
-                        <MasteryBar mastery={r.m_doc} className="flex-1" />
-                      </button>
-                    ))}
-                </div>
-              </>
-            )}
-          </section>
+        {/*
+          ── Class Performance tab ──
+          Rendered only while active, so entering the tab mounts it and fetches
+          fresh — the same freshness-by-construction the student tabs get from
+          `<main key={activeTab}>`. Deliberately NOT wired into the parse poll
+          above: a class read has no reason to repeat every three seconds.
+        */}
+        {activeTab === 'performance' && materialId && (
+          <ClassPerformance materialId={materialId} />
         )}
       </div>
 

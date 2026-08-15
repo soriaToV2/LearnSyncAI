@@ -4,12 +4,13 @@ import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { generateEmbedding } from '../lib/gemini';
 import {
-  CreateMaterialSchema,
+  CreateMaterialSchema, UpdateMaterialSchema,
   CreateConceptSchema, UpdateConceptSchema,
 } from '../types/api';
 import { extractPdfPages, type PdfPage } from '../lib/pdfText';
 import { extractConcepts } from '../lib/conceptExtraction';
 import { requireMaterialAccess, rejectInaccessibleMaterials } from '../lib/materialAccess';
+import { loadOwnedMaterial } from '../lib/educatorScope';
 import multer from 'multer';
 
 const router = Router();
@@ -231,6 +232,84 @@ router.get('/:id', requireRole('educator'), async (req: Request, res: Response):
 });
 
 /**
+ * PATCH /api/materials/:id
+ *
+ * The only writer for `is_archived` and `grade_levels`. Both controls existed in
+ * the UI as local `useState` toggles that looked functional and persisted
+ * nothing, because there was no endpoint behind them — the seven educator routes
+ * were upload, list, get, delete and concept CRUD, and none of them mutated the
+ * material row.
+ *
+ * `UpdateMaterialSchema` accepts those two fields and nothing else; the reasons
+ * per excluded field are on the schema itself.
+ *
+ * ── Archiving needs no cascade, and must not have one ────────────────────────
+ *
+ * Every READ already honours `is_archived`: `accessibleMaterialIds()` and
+ * `publishedMaterialIds()` filter it for students (the educator branch is
+ * archive-blind on purpose, so an educator keeps access to their own archived
+ * lesson), and `spaceMaterialIds()` intersects the stored
+ * `study_space_materials` list against the live published set. So archiving
+ * removes the material from every student's space at their next read while the
+ * LINK ROW SURVIVES — un-archiving brings it back on its own, with no
+ * bookkeeping. Deleting `study_space_materials` here would break exactly that.
+ *
+ * BKT mastery is keyed on (student, concept) and is untouched either way.
+ * Archive is reversible; DELETE is not, because it cascades concepts → mastery.
+ *
+ * ── Changing the grade level is the same mechanism ───────────────────────────
+ *
+ * Students in the old grade stop seeing it, their link rows and mastery rows
+ * survive, and setting the grade back restores everything. Class Performance
+ * follows too: `rosterFor()` re-derives the class from `grade_levels`, so the old
+ * grade's students disappear and the new grade's appear as "not started".
+ */
+router.patch('/:id', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
+  const parsed = UpdateMaterialSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+    return;
+  }
+
+  // 404, never 403 — a 403 confirms the id names a real material, and material
+  // ids are visible in the address bar.
+  if (!(await loadOwnedMaterial(req.params.id, req.user!.id))) {
+    res.status(404).json({ error: 'Material not found' });
+    return;
+  }
+
+  const update: Record<string, unknown> = {
+    // `updated_at` is NOT NULL DEFAULT now() with no trigger behind it, so an
+    // unset value here would leave the row claiming its upload time forever.
+    updated_at: new Date().toISOString(),
+  };
+  if (parsed.data.is_archived !== undefined) update.is_archived = parsed.data.is_archived;
+  if (parsed.data.grade_levels !== undefined) update.grade_levels = parsed.data.grade_levels;
+
+  const { data: material, error } = await supabaseAdmin
+    .from('materials')
+    .update(update)
+    .eq('id', req.params.id)
+    .eq('educator_id', req.user!.id)
+    .select('*')
+    .maybeSingle();
+
+  if (error || !material) {
+    res.status(500).json({ error: 'Failed to update material' });
+    return;
+  }
+
+  // Same shape as GET /:id so the client can replace its row wholesale rather
+  // than merging fields and drifting.
+  const { count } = await supabaseAdmin
+    .from('concepts')
+    .select('*', { count: 'exact', head: true })
+    .eq('material_id', material.id);
+
+  res.json({ data: { ...material, concept_count: count ?? 0 } });
+});
+
+/**
  * DELETE /api/materials/:id
  * Deletes one of the calling educator's own materials and its storage file.
  * Educators only; ownership is checked explicitly because the service role
@@ -329,16 +408,11 @@ router.get('/:id/concepts', requireMaterialAccess(), async (req: Request, res: R
 
 const CONCEPT_RETURN = 'id, term, definition, parent_concept_id, source_pages, created_at';
 
-/** Returns the material if it exists AND belongs to the caller, else null. */
-async function ownedMaterial(userId: string, materialId: string) {
-  const { data } = await supabaseAdmin
-    .from('materials')
-    .select('id, educator_id')
-    .eq('id', materialId)
-    .maybeSingle();
-  if (!data || data.educator_id !== userId) return null;
-  return data;
-}
+// The private `ownedMaterial()` that used to live here is now
+// `loadOwnedMaterial()` in `server/lib/educatorScope.ts`. It moved when
+// `educator.routes.ts` needed the same check: educator material ownership gets
+// one home before it acquires a second copy, which is exactly how
+// `loadOwnedSpace` reached four before `spaceAccess.ts` collected it.
 
 /**
  * POST /api/materials/:id/concepts
@@ -350,7 +424,7 @@ router.post('/:id/concepts', requireRole('educator'), async (req: Request, res: 
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
     return;
   }
-  if (!(await ownedMaterial(req.user!.id, req.params.id))) {
+  if (!(await loadOwnedMaterial(req.params.id, req.user!.id))) {
     res.status(404).json({ error: 'Material not found' });
     return;
   }
@@ -397,7 +471,7 @@ router.put(
       res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
       return;
     }
-    if (!(await ownedMaterial(req.user!.id, req.params.materialId))) {
+    if (!(await loadOwnedMaterial(req.params.materialId, req.user!.id))) {
       res.status(404).json({ error: 'Material not found' });
       return;
     }
@@ -445,7 +519,7 @@ router.delete(
   '/:materialId/concepts/:conceptId',
   requireRole('educator'),
   async (req: Request, res: Response): Promise<void> => {
-    if (!(await ownedMaterial(req.user!.id, req.params.materialId))) {
+    if (!(await loadOwnedMaterial(req.params.materialId, req.user!.id))) {
       res.status(404).json({ error: 'Material not found' });
       return;
     }

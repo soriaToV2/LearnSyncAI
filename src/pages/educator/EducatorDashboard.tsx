@@ -164,14 +164,16 @@ export default function EducatorDashboard() {
 
           {/* ---------------- Needs attention ---------------- */}
           <section className="col-span-12 lg:col-span-5 rounded-2xl bg-white/[0.02] border border-white/5 p-6">
+            {/*
+              The "All students →" link went to `/educator/students`, which no
+              longer exists — the roster pages were mock data end to end. This
+              page is still on mock data itself and is due a rebuild against
+              `/api/educator`; until then the links out of it are neutralised
+              rather than repointed, because a real destination reached from
+              invented numbers is worse than no destination.
+            */}
             <div className="flex items-center justify-between mb-5">
               <h2 className="font-display text-lg font-bold text-white">Needs Attention</h2>
-              <Link
-                to="/educator/students"
-                className="font-sans text-xs text-primary-fixed-dim font-semibold flex items-center gap-1 hover:gap-1.5 transition-all"
-              >
-                All students <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
             </div>
 
             {needsAttention.length === 0 ? (
@@ -189,16 +191,15 @@ export default function EducatorDashboard() {
             ) : (
               <div className="flex flex-col gap-2">
                 {needsAttention.slice(0, 6).map(({ student, mastery, rows }) => (
-                  <button
+                  <div
                     key={student.id}
-                    onClick={() => navigate(`/educator/students/${student.id}`)}
-                    className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-white/10 transition-all text-left w-full group"
+                    className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 text-left w-full"
                   >
                     <div className="w-8 h-8 rounded-full bg-surface-container border border-white/10 flex items-center justify-center shrink-0 font-display text-[11px] font-bold text-slate-300">
                       {student.first_name[0]}{student.last_name[0]}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-sans text-sm font-semibold text-white truncate group-hover:text-primary-fixed-dim transition-colors">
+                      <p className="font-sans text-sm font-semibold text-white truncate">
                         {studentName(student)}
                       </p>
                       <p className="font-sans text-[11px] text-slate-500">
@@ -206,7 +207,7 @@ export default function EducatorDashboard() {
                       </p>
                       <MasteryBar mastery={mastery} className="mt-1.5" />
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -233,10 +234,9 @@ export default function EducatorDashboard() {
                 };
 
                 return (
-                  <Link
+                  <div
                     key={grade}
-                    to="/educator/students"
-                    className="rounded-xl bg-white/[0.02] border border-white/5 p-5 hover:bg-white/[0.05] hover:border-white/10 transition-all"
+                    className="rounded-xl bg-white/[0.02] border border-white/5 p-5"
                   >
                     <div className="flex items-baseline justify-between mb-3">
                       <h3 className="font-display text-base font-bold text-white">Grade {grade}</h3>
@@ -271,7 +271,7 @@ export default function EducatorDashboard() {
                     <p className="font-sans text-[11px] text-slate-500 mt-3">
                       Counts are student–material pairs, not students.
                     </p>
-                  </Link>
+                  </div>
                 );
               })}
             </div>

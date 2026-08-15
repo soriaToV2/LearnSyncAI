@@ -183,10 +183,12 @@ ALTER TABLE study_spaces
 -- 6. MATERIALS & CONCEPT EXTRACTION
 -- ============================================================================
 -- Only educators upload materials. Access is granted by grade level, not by
--- study space, so one upload can serve every student in the chosen grades.
--- The educator chooses both subject and grade_levels at upload; the only
--- constraints are that the subject exists in the catalogue and the grades are
--- real JHS grades.
+-- study space, so one upload serves every student in that grade.
+-- The educator chooses subject and grade level at upload; both are editable
+-- afterwards only in the case of the grade (PATCH /api/materials/:id) -- the
+-- subject is fixed, because a study space is built from its subject plus the
+-- materials published to it, and re-pointing one would strand it in every space
+-- already holding it.
 
 CREATE TABLE materials (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -199,15 +201,24 @@ CREATE TABLE materials (
     file_size_bytes BIGINT,
     page_count      INTEGER,
     is_scanned      BOOLEAN    NOT NULL DEFAULT false,
-    parsed_status   parsed_status DEFAULT 'pending',
+    parsed_status   parsed_status NOT NULL DEFAULT 'pending',
     parse_error     TEXT,
     is_archived     BOOLEAN    NOT NULL DEFAULT false,
     created_at      TIMESTAMPTZ DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
+    -- EXACTLY ONE grade level per material.
+    --
+    -- The column stays SMALLINT[] rather than becoming a scalar because every
+    -- grade-access path is built on the array form: `grade_levels @> ARRAY[n]`
+    -- in the API layer, `= ANY (m.grade_levels)` in five RLS policies and in
+    -- v_grade_level_mastery, `unnest(m.grade_levels)` in
+    -- private.auth_assigned_grades(), and the GIN index below. This CHECK
+    -- enforces the rule just as hard without touching any of it, which makes the
+    -- array an implementation detail rather than a modelling claim.
     CONSTRAINT materials_grade_levels_valid
         CHECK (grade_levels <@ ARRAY[7, 8, 9, 10]::SMALLINT[]
-               AND array_length(grade_levels, 1) >= 1),
+               AND array_length(grade_levels, 1) = 1),
     -- Documented ingest limit: plain-text PDF modules up to 20 MB.
     CONSTRAINT materials_file_size_limit
         CHECK (file_size_bytes IS NULL OR file_size_bytes <= 20971520),
@@ -223,7 +234,7 @@ COMMENT ON COLUMN materials.educator_id IS
 COMMENT ON COLUMN materials.subject IS
     'Subject this material is filed under, from the subjects catalogue. Chosen by the uploading educator.';
 COMMENT ON COLUMN materials.grade_levels IS
-    'JHS grade levels the educator chose to grant access to. Drives student-side RLS and, in turn, which students the educator can monitor.';
+    'The ONE JHS grade level this material is published to, held as a single-element array (see materials_grade_levels_valid). Drives student-side RLS and, in turn, which students the educator can monitor. Editable after upload via PATCH /api/materials/:id.';
 COMMENT ON COLUMN materials.is_scanned IS
     'True for image-based/scanned PDFs, which are limited to 20 pages.';
 COMMENT ON COLUMN materials.parse_error IS

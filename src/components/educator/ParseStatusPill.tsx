@@ -4,16 +4,26 @@ import type { ParsedStatus } from '../../data/mockEducator';
 /**
  * The four values of the parsed_status enum, in the order a material moves
  * through them: pending -> processing -> completed, or -> failed.
+ *
+ * ⚠️ THE LABEL IS THE ENUM VALUE, title-cased. It used to be friendlier wording
+ * ('Queued', 'Ready'), which meant an educator reporting a problem and a
+ * developer reading `materials.parsed_status` were using different vocabularies
+ * for the same four states. Keep them identical — if a new status is ever added
+ * to the enum, its label is its name.
+ *
+ * The STUDENT side deliberately does NOT follow this rule: `ResourcesTab` says
+ * "Being prepared" / "Ready" / "Not available", because a student seeing
+ * "Failed" on their lesson learns something alarming they cannot act on.
  */
 const STATUS_STYLE: Record<
   ParsedStatus,
   { label: string; color: string; icon: typeof Clock; spin?: boolean; hint: string }
 > = {
   pending: {
-    label: 'Queued',
+    label: 'Pending',
     color: '#94a3b8',
     icon: Clock,
-    hint: 'Waiting for concept extraction to start',
+    hint: 'Queued — waiting for concept extraction to start',
   },
   processing: {
     label: 'Processing',
@@ -23,7 +33,7 @@ const STATUS_STYLE: Record<
     hint: 'Extracting concepts and generating embeddings',
   },
   completed: {
-    label: 'Ready',
+    label: 'Completed',
     color: '#34d399',
     icon: CheckCircle2,
     hint: 'Concepts extracted — students can study this material',
@@ -32,7 +42,7 @@ const STATUS_STYLE: Record<
     label: 'Failed',
     color: '#fb7185',
     icon: AlertTriangle,
-    hint: 'Concept extraction did not finish',
+    hint: 'Concept extraction did not finish — see the reason on the material',
   },
 };
 

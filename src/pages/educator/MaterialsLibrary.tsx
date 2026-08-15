@@ -20,11 +20,20 @@ import { api } from '../../lib/api';
 /** A material row as returned by GET /api/materials — the DB row plus a joined count. */
 type MaterialRow = EducatorMaterial & { concept_count: number };
 
+/**
+ * `all` plus exactly the four `parsed_status` enum values, labelled with the enum
+ * value itself so the filter, the pill and the database column all use one
+ * vocabulary. See `ParseStatusPill` for why the student side does not.
+ *
+ * "Archived" does not belong here — `is_archived` is an orthogonal boolean with
+ * its own toggle, and folding it in would make a material's status ambiguous
+ * (an archived material still has a real parse status).
+ */
 const STATUS_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Any status', value: 'all' },
-  { label: 'Ready', value: 'completed' },
+  { label: 'Completed', value: 'completed' },
   { label: 'Processing', value: 'processing' },
-  { label: 'Queued', value: 'pending' },
+  { label: 'Pending', value: 'pending' },
   { label: 'Failed', value: 'failed' },
 ];
 
@@ -99,15 +108,34 @@ export default function MaterialsLibrary() {
 
   const archivedCount = materials.filter((m) => m.is_archived).length;
 
-  // Archive is presentation-only for now (there is no archive endpoint yet, and it
-  // is outside this task's scope). A poll refetch while a material is processing
-  // will reset an optimistic toggle.
-  const toggleArchive = (id: string) => {
-    setMaterials((prev) =>
-      prev.map((m) =>
-        m.id === id ? { ...m, is_archived: !m.is_archived, updated_at: new Date().toISOString() } : m
-      )
-    );
+  /**
+   * Archive / restore, persisted.
+   *
+   * This used to be an optimistic local toggle with no endpoint behind it, which
+   * the 3s parse poll above would silently revert. It now writes through
+   * `PATCH /api/materials/:id` and replaces the row from the response, so the
+   * poll and the UI cannot disagree.
+   *
+   * Archiving hides the material from every student's study space at their next
+   * read while keeping its concepts, its `study_space_materials` link rows and
+   * every student's BKT mastery — restoring brings all of it back untouched.
+   * That is what makes it the safe alternative to Delete, which cascades.
+   */
+  const [archiving, setArchiving] = useState<string | null>(null);
+
+  const toggleArchive = async (target: MaterialRow) => {
+    setArchiving(target.id);
+    try {
+      const { data } = await api.patch<MaterialRow>(`/materials/${target.id}`, {
+        is_archived: !target.is_archived,
+      });
+      setMaterials((prev) => prev.map((m) => (m.id === data.id ? data : m)));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update material.');
+    } finally {
+      setArchiving(null);
+    }
   };
 
   const confirmDelete = async () => {
@@ -244,13 +272,20 @@ export default function MaterialsLibrary() {
                         <Eye className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); toggleArchive(m.id); }}
-                        title={m.is_archived ? 'Restore material' : 'Archive material'}
-                        className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-all"
+                        onClick={(e) => { e.stopPropagation(); void toggleArchive(m); }}
+                        disabled={archiving === m.id}
+                        title={
+                          m.is_archived
+                            ? 'Restore — students can study this again'
+                            : 'Archive — hides it from students, keeps concepts and progress'
+                        }
+                        className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-all disabled:opacity-50"
                       >
-                        {m.is_archived
-                          ? <ArchiveRestore className="w-3.5 h-3.5" />
-                          : <Archive className="w-3.5 h-3.5" />}
+                        {archiving === m.id
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : m.is_archived
+                            ? <ArchiveRestore className="w-3.5 h-3.5" />
+                            : <Archive className="w-3.5 h-3.5" />}
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); setPendingDelete(m); }}

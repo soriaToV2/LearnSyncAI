@@ -71,7 +71,8 @@ There are **three user roles**:
   - `P(S) = 0.15` (slip probability)
   - `P(G)` = context-sensitive, varies by assessment mode and question format
 - **Cite these values carefully.** Bulut et al. (2023) is the source of the four-parameter *framework*, and Šarić-Grgić et al. (2024) collects the *limits* the values must fall inside (Corbett & Anderson P(G) < 0.30; Beck & Chang P(G) + P(S) < 1; Baker et al. P(G) < 0.50). The paper is explicit on p. 71 that *"the knowledge tracing literature does not recommend specific numbers for these parameters"* and on p. 76 describes them as *"selected configuration values operating within published limits"*. Do not describe them as empirically derived from research.
-- BKT mastery estimates are updated exclusively through **Adaptive Flashcards** and **Adaptive Test Mode**. AI-generated games, Feynman Technique, and Free Recall use mastery estimates for personalization but do NOT update them.
+- BKT mastery estimates are updated exclusively through **Adaptive Flashcards** and **Adaptive Test Mode**. AI-generated games, Feynman Technique, and Free Recall never update them.
+  - ⚠️ **On the READ side the build differs from the paper, and this bullet used to hide it.** Paper p. 58 says all three "utilize existing mastery estimates" for personalisation. **Only the games actually do** (`server/lib/gameDifficulty.ts` — tier selection, the timer table, concept weighting). `server/routes/cognitive.routes.ts` contains neither the word `mastery` nor `bkt`: **Free Recall and Feynman neither read nor write mastery.** Their personalisation is the material's concept set, not the student's mastery of it. Do not repeat the old phrasing in UI copy — it was on the educator Class Performance tab and was wrong there.
 
 ---
 
@@ -117,7 +118,9 @@ LearnSyncAI/
 │   │   ├── gamification.routes.ts # /api/gamification (games, XP, badges)
 │   │   │                          # (no bkt.routes.ts — BKT is not client-triggered)
 │   │   ├── chat.routes.ts         # /api/chat (RAG-based study assistant)
-│   │   └── educator.routes.ts     # /api/educator (material management, analytics)
+│   │   ├── dashboard.routes.ts    # /api/dashboard (the one global student read)
+│   │   └── educator.routes.ts     # /api/educator (class-level mastery analytics)
+│   │                              # educators UPLOAD via materials.routes.ts, not here
 │   └── types/
 │       ├── api.ts                 # All Zod validation schemas + inferred types
 │       └── database.ts            # TypeScript types mirroring DB table shapes
@@ -130,8 +133,11 @@ LearnSyncAI/
 │   │   ├── auth/                  # Login, Register pages
 │   │   ├── admin/                 # Admin account management pages
 │   │   ├── educator/              # Educator Portal pages
-│   │   │   ├── EducatorDashboard.tsx   # Material upload + student analytics
-│   │   │   └── ...
+│   │   │   ├── EducatorDashboard.tsx   # ⚠️ still mock data — due a rebuild
+│   │   │   ├── MaterialsLibrary.tsx    # Upload + list
+│   │   │   ├── MaterialDetail.tsx      # Concepts tab + Class Performance tab
+│   │   │   └── components/ClassPerformance.tsx  # the class analytics
+│   │   │   # (no StudentsRoster / StudentMasteryDetail — removed, see below)
 │   │   └── student/
 │   │       ├── StudySpace.tsx     # Main container — hosts all 5 study tabs
 │   │       ├── StudentDashboard.tsx
@@ -283,6 +289,12 @@ APP_URL=http://localhost:3000
 - **Three user roles exist: `student`, `educator`, and `admin`.** Use the appropriate `requireRole()` middleware for each endpoint. Admin manages accounts only. Educators manage materials and view analytics. Students access learning features.
 - **BKT is implemented directly in the backend.** Do NOT use pyBKT or any external BKT library. Do NOT implement Expectation Maximization (EM) parameter fitting. Use the default parameters specified in ARCHITECTURE.md.
 - **Only educators upload materials.** Students access materials uploaded by their educators. Students cannot upload instructional materials, and the student UI must contain no upload control, no file picker, and no delete control.
+- **A material is published to EXACTLY ONE grade level**, enforced in three places that must agree: `materials_grade_levels_valid` (`array_length(grade_levels, 1) = 1`), `GradeLevelsField` in `server/types/api.ts` (`.length(1)`), and a single-select `Dropdown` in the two educator forms. **`grade_levels` stays `SMALLINT[]`** — a scalar column would be a cleaner model but would rewrite every grade-access path (`@>` in `materialAccess.ts`, `= ANY` in five RLS policies and `v_grade_level_mastery`, `unnest()` in `private.auth_assigned_grades()`, the GIN index). The CHECK enforces the rule just as hard; the array is an implementation detail, so **do not "simplify" a caller by assuming a scalar**.
+- **`PATCH /api/materials/:id` is the ONLY writer for `is_archived` and `grade_levels`, and it accepts nothing else.** Before it existed both controls were local `useState` toggles that looked functional and persisted nothing. `UpdateMaterialSchema` deliberately omits `subject` (a study space is built from its subject plus the materials published to it — re-pointing one would strand it in every space holding it, the mirror of `UpdateStudySpaceSchema`), `parsed_status`/`parse_error`/`is_scanned` (owned by the ingest pipeline; accepting them lets an educator mark a failed material Ready and push a concept-less material into student spaces), and `title`/`description` (no UI asks, and this must not become a general row editor). It sets `updated_at` explicitly — the column is `NOT NULL DEFAULT now()` with **no trigger**.
+- **Archiving and re-grading need no cascade, and must not have one.** Both work purely because reads filter live: `accessibleMaterialIds()`/`publishedMaterialIds()` drop archived material for students (the educator branch is archive-blind on purpose), and `spaceMaterialIds()` intersects the stored `study_space_materials` list against the live published set. So the **link rows and every `bkt_mastery` row survive untouched**, and un-archiving or moving the grade back restores exactly what was there. Verified: archive → restore and grade 9 → 8 → 9 both return the identical `m_doc`. Deleting link rows here would destroy that property. **Delete is the destructive one** (it cascades concepts → mastery), which is what the delete-modal copy already says.
+- **`materials.parsed_status` is `NOT NULL`.** It was nullable-with-a-default while `ParseStatusPill` indexed its style table directly and would have thrown on a null. The column, `server/types/database.ts` and the pill now all agree; do not reintroduce a nullable typing "for safety".
+- **On the EDUCATOR side a parse status is labelled with its enum value, title-cased** — Pending / Processing / Completed / Failed, in both `ParseStatusPill` and the materials-library filter. It used to read Queued / Processing / Ready / Failed, which meant an educator reporting a problem and a developer reading `materials.parsed_status` had two vocabularies for four states. A new enum value's label is its name. **The STUDENT side deliberately does not follow this** — `ResourcesTab` says "Being prepared" / "Ready" / "Not available", because "Failed" tells a student something alarming they cannot act on.
+- **The materials-library status filter is `all` plus exactly those four values. "Archived" does not belong in it** — `is_archived` is an orthogonal boolean with its own toggle, and an archived material still has a real parse status, so folding them into one control would make both ambiguous.
 - **Every flashcard route is owner-checked, reads included.** All of `GET/POST/PUT/DELETE /api/spaces/:id/decks*` and `POST /api/flashcards/rate` resolve to the caller's own space via `loadOwnedSpace()` (or card → deck → space) and answer **404** otherwise. Reads are guarded as tightly as writes on purpose: a space id is visible in the address bar (`/student/space/:spaceId`), and a deck carries its owner's `ease_rating` and `next_review_at` — a direct readout of the concepts they are struggling with. Migration 0003 removed peer sharing to guarantee data isolation between students; an unguarded read contradicts that.
 - **Students own decks but not cards.** A deck is the student's own folder for organising lessons: create, rename and delete are all theirs (`POST/PUT/DELETE /api/spaces/:id/decks`). The **cards inside are not** — there is no add/edit/delete card control and no such endpoint. Every card assesses a `concepts` row an educator uploaded and vetted (educators curate concepts via `POST/PUT/DELETE /api/materials/:id/concepts`), so a hand-written card would have no concept to attach mastery to, or would inject unvetted text into the knowledge base that also feeds Free Recall scoring, Feynman grading, the chatbot and adaptive tests. **Cards enter a deck by generation against a selected material and by no other route.** A new deck is empty by design.
 - **A deck may gather several materials.** Decks are organisational, so "have I already generated this material?" is a question about cards, not decks: it is `flashcards.source_material_id` scoped to a `deck_id`. Do not add a `source_material_id` to `flashcard_decks` — it would force one deck per material and defeat the point.
@@ -459,6 +471,40 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **`src/data/mockStudents.ts` still exists** for `Settings.tsx` and `StudentProfile.tsx`. It is no longer read by the layout or the dashboard.
 
+## Educator Class Performance — the only cross-student read
+
+**The educator "Students" tab is GONE and must not come back as a roster.** `StudentsRoster.tsx` and `StudentMasteryDetail.tsx` were 571 lines with **no `lib/api` import between them** — eighteen invented students from `mockEducator.ts`. Student performance now lives in `MaterialDetail.tsx` → Class Performance, where it is scoped to a material the educator actually uploaded. The one thing genuinely lost is a student *across* materials; that belongs to the `EducatorDashboard.tsx` rebuild, not to a per-material tab.
+
+**`/api/educator` is the third endpoint shape and the only one that reads ACROSS students.** Per-space (`requireOwnedSpace`) is the default; `GET /api/dashboard` is the global student exception; this is scoped by a material the caller uploaded. `requireOwnedMaterial()` 404s on anyone else's material, and the one route naming a student in its path re-derives that student through `rosterStudent()` rather than trusting the id — it is the only user id an educator can put in a URL anywhere in the app.
+
+**Educators READ mastery and never write it**, exactly as games do. Nothing under `/api/educator` imports `server/lib/bkt.ts`; `bkt_source` stays a two-value enum.
+
+**`v_grade_level_mastery` is NOT used, and its arithmetic is not the reason.** The view is correct (verified: `m_doc` 0.5477 / 28 assessed / 5 mastered matches this route and the student dashboard exactly — the old "it double-counts" claim in `BKT_IMPLEMENTATION.md` was stale and has been corrected). It is unused because it is `WITH (security_invoker = on)` and **Express holds the service role, which bypasses RLS entirely** — selected from here it returns every educator's rows and `auth.uid()` is NULL — and because it has **no `p.status = 'active'` filter**, so a disabled student appears in it.
+
+**"The class" = active students whose `grade_level ∈ material.grade_levels`**, via `rosterFor()` in `server/lib/educatorScope.ts` (the educator counterpart of `spaceAccess.ts`; `ownedMaterial()` moved there out of `materials.routes.ts`). Students who never opened the material are **included and reported as not started** — "nineteen of twenty have not touched this" is the finding, and filtering them out would hide it.
+
+**⚠️ THE THREE MEANS ON THIS SCREEN ARE NOT THE SAME COMPUTATION.** Only `students[].m_doc` is EQ(4) — a mean over CONCEPTS for one student, where an unassessed concept correctly enters at P(L₀) — and only that one goes through `documentMastery()`. `class.m_doc` and `concepts[].avg_mastery` are means over **STUDENTS**, and filling an absent student with P(L₀) there would invent a measurement for someone who never opened the lesson. They use `meanOrNull()` with the same 4dp rounding.
+
+**The class average covers STARTED students only, and its caption must always name that denominator.** `classCaption()` renders "Averaged across the 3 of 20 students who have started". Including the other seventeen would drag the figure toward the prior in proportion to how many have not begun.
+
+**Never print P(L₀), enforced three ways.** `students[].m_doc` is null when `assessed_concept_count === 0`; `concepts[].avg_mastery` is null when `assessed_students === 0`; `class.m_doc` is null when `started === 0`. The UI renders `—` with `<MeterBar value={null} />`, which draws an empty track rather than a short bar. Gate on the counts, **never on `m_doc === 0.1`**.
+
+**Students are partitioned before sorting, not sorted as one list.** A null `m_doc` in a numeric comparator yields NaN and a comparator returning NaN gives an arbitrary order. It also matters semantically: the P(T) floor puts every assessed concept at ≥ 0.20, so ranking a not-started student at 0.10 would place everyone who has done nothing **above** everyone measurably struggling. Same rule for concepts.
+
+**Three routes: a summary plus BOTH drill-downs of one matrix.** `/performance` carries the class summary, per-student rows and the per-concept breakdown. `/students/:id/concepts` expands a **row** (this student's concepts); `/concepts/:id/students` expands a **column** (this concept's students) — the transpose, and the reason the second one exists: "3 struggling" is not actionable without names, and getting them otherwise meant expanding every student and reading down. Both are fetched on expansion because shipping the full matrix inline is ~256 KB at 50 students × 57 concepts against ~5 KB per expansion. That is what makes this differ from `GET /api/practice/space/:spaceId/mastery/concepts`, where there is only ever one student and so no matrix.
+
+**`/concepts/:conceptId/students` must check the concept belongs to the material.** `requireOwnedMaterial()` only proves the caller owns the material named in the path; a concept id pasted beside it could name a row in another educator's lesson. Mismatch is **404**.
+
+**"Struggling" = ASSESSED and below 0.50** — the foundational band, per concept, per student. The `assessed` gate is the load-bearing half: a student nobody has asked about a concept sits at P(L₀) = 0.10, which is below 0.50 and means nothing. That gate is also what lets `TIER_STYLE.foundational` be slate (a cold start is not a failure) while a struggling count is still flagged amber. `STRUGGLING_BELOW` in `educatorAnalytics.ts` mirrors the server's `STRUGGLING`; any client-side use must reproduce the `assessed` check too.
+
+**`classMasteryRows()` chunks BOTH id lists.** It is the first reader in the codebase with two `.in()` lists in one URL. The student filter leads because `idx_bkt_student_concept` is `(student_id, concept_id)` — a concept-only filter cannot use it and would drag in other grades' rows to discard.
+
+**No client cache.** The tab is rendered only while active, so entering it remounts and refetches — the same freshness-by-construction `<main key={activeTab}>` gives the student tabs. It is deliberately **not** wired into `MaterialDetail`'s 3s parse poll.
+
+**`TIER_STYLE.foundational` is slate, not rose.** It was `#fb7185`, which `MeterBar`'s JSDoc cited by name as its reason for refusing to reuse `MasteryBar`, and which contradicted `TIER_TONE.foundational = 'neutral'`. Everyone starts foundational — it is the P(L₀) cold start — so red marks every new student as failing at something nobody has asked them.
+
+**`EducatorDashboard.tsx` is still entirely mock and is due a rebuild.** Its three links into the deleted routes were neutralised (the "All students →" link removed, two wrappers turned into `<div>`s) rather than repointed: a real destination reached from invented numbers is worse than no destination. `mockEducator.ts` survives for it — and for three **student-side** files that import `subjectName`/`SUBJECTS`.
+
 ## Adaptive Test Mode
 
 > **Full reference: `LearnSyncAI artifacts/TEST_MODE_IMPLEMENTATION.md`.** Read it before changing anything here — it carries the measurements behind each rule, the debugging playbook, and the list of defects deliberately left open. What follows is only what must not be broken by accident.
@@ -489,7 +535,7 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 > nine tier cells with the measurements behind each, the prompt failures that shaped them, and the
 > acceptance evidence. What follows is only what must not be broken by accident.
 
-**Games READ mastery and never write it.** Paper p. 58 permits games to "utilize existing mastery estimates only ... without modifying the learner's mastery state". Nothing under the games path imports `server/lib/bkt.ts`; there is no `applyGameCompletion`; `bkt_source` stays a two-value enum. This is the same rule that governs Free Recall and Feynman.
+**Games READ mastery and never write it.** Paper p. 58 permits games to "utilize existing mastery estimates only ... without modifying the learner's mastery state". Nothing under the games path imports `server/lib/bkt.ts`; there is no `applyGameCompletion`; `bkt_source` stays a two-value enum. Free Recall and Feynman obey the same *no-write* rule — but they do not read it either, so **games are the only reader outside Test Mode, the dashboard and the educator analytics.**
 
 **The tier vocabulary is `foundational | intermediate | advanced`, not `easy | medium | hard`.** Paper p. 98's Difficulty Alignment criterion is stated in exactly those words and is applied to "educational game content", so `game_content.difficulty` must be readable against it directly. The old vocabulary is gone and CHECK-constrained out.
 

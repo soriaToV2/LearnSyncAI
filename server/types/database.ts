@@ -75,7 +75,7 @@ export interface SpaceMaterial {
   file_size_bytes: number | null;
   page_count: number | null;
   is_scanned: boolean;
-  parsed_status: ParsedStatus | null;
+  parsed_status: ParsedStatus;
   parse_error: string | null;
   concept_count: number;
   added_at: string;
@@ -88,12 +88,18 @@ export interface Material {
   title: string;
   description: string | null;
   subject: string;                 // FK → subjects.code
-  grade_levels: number[];          // smallint[] — which JHS grades may access it
+  /**
+   * smallint[] holding EXACTLY ONE grade — `materials_grade_levels_valid` is
+   * `array_length(grade_levels, 1) = 1`. Still an array because the whole
+   * grade-access layer (`@>`, `= ANY`, `unnest`, the GIN index) is built on it.
+   */
+  grade_levels: number[];
   storage_path: string;            // Path within the private "materials" bucket
   file_size_bytes: number | null;
   page_count: number | null;
   is_scanned: boolean;
-  parsed_status: ParsedStatus | null;
+  /** NOT NULL DEFAULT 'pending' — never null, despite the old nullable typing here. */
+  parsed_status: ParsedStatus;
   parse_error: string | null;
   is_archived: boolean;
   created_at: string;

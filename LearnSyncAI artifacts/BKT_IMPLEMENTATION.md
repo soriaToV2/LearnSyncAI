@@ -931,17 +931,27 @@ test; generate a new one.
    milliseconds. A lost `opportunity_count` increment is acceptable because it is reporting metadata.
    *If this ever matters, the right shape is a `bkt_apply_batch(uuid, jsonb)` RPC that is a **pure
    writer** — taking already-computed values from TypeScript, not recomputing them.*
-2. **`v_student_material_mastery` and `v_grade_level_mastery` double-count** a material linked to two
-   of the same student's spaces (`concept_count` and `mastered_concept_count` inflate; the average is
-   fine). Both views are unused by any code. The new mastery endpoint sidesteps them entirely. Left
-   alone rather than migrated.
+2. **`v_student_material_mastery` double-counts** a material linked to two of the same student's
+   spaces (`concept_count` and `mastered_concept_count` inflate; the average is fine). Unused by any
+   code; the mastery endpoints sidestep it entirely. Left alone rather than migrated.
+
+   *Corrected 2026-08-14:* this used to name `v_grade_level_mastery` alongside it. **That was wrong.**
+   Migration `20260723090016_fix_educator_analytics_view.sql` rebuilt that view directly over
+   `materials → concepts → profiles` with no study-space join, so it cannot double-count. Verified
+   against live data: its `m_doc` 0.5477 / 28 assessed / 5 mastered for *6. Information Security*
+   matches both the student dashboard and `GET /api/educator/materials/:id/performance` exactly.
+   It has two REAL defects instead — no `p.status = 'active'` filter, so a disabled student still
+   appears; and `security_invoker = on`, which is inert for the service-role client Express uses.
+   Both are why the educator route computes in TypeScript rather than selecting from it.
 3. **`StudentDashboard.tsx` still runs on `MOCK_STUDENTS[0]`** with a hardcoded `dueToday = 12`. It is
    where mastery would naturally surface next, and it is a separate job.
 4. **Groq's free tier is ~11 test generations per day for the whole account.** Unchanged by this work
    and no code fixes it; a 50-student study needs a paid tier. Also caps how often `--live-test` can
    run.
-5. **The educator analytics path is untouched.** Mastery now exists for the views to read, but nothing
-   queries them yet.
+5. ~~**The educator analytics path is untouched.**~~ **Resolved 2026-08-14.**
+   `server/routes/educator.routes.ts` reads mastery across a material's class through
+   `classMasteryRows()` + `documentMastery()`. Read-only: nothing under `/api/educator` imports
+   `bkt.ts`, and `bkt_source` is still a two-value enum.
 6. **`opportunity_count` counts observations, not sessions.** A 29-question test increments 29
    different concepts by 1 each, not one counter by 29. That is the intended reading of "learning
    opportunity" (paper p. 71: *"a flashcard review or a single test item"*), but the column name

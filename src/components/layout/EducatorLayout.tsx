@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
-  Home, FileText, Users, LogOut, Settings as SettingsIcon,
+  Home, FileText, LogOut, Settings as SettingsIcon,
   Menu, X, ChevronLeft, ChevronRight, BrainCircuit,
 } from 'lucide-react';
 import { useEducatorTheme, EducatorThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
@@ -53,10 +53,15 @@ function EducatorLayoutInner() {
   const collapsedNavClass = (collapsed: boolean) =>
     collapsed ? 'justify-center px-0 gap-0' : '';
 
+  /*
+   * `Students` was removed with the roster pages it pointed at. Student
+   * performance is reached through Materials → a material → Class Performance,
+   * where it is scoped to real concepts and real mastery rather than the
+   * eighteen invented students that page rendered.
+   */
   const NAV_ITEMS = [
     { to: '/educator/dashboard', label: 'Dashboard', icon: Home },
     { to: '/educator/materials', label: 'Materials', icon: FileText },
-    { to: '/educator/students', label: 'Students', icon: Users },
   ];
 
   const renderNavLinks = (collapsed = false) => (

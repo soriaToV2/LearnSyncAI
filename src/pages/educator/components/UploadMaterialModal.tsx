@@ -2,7 +2,6 @@ import { useState, useRef, FormEvent, DragEvent } from 'react';
 import { UploadCloud, FileText, X, AlertCircle, Info, Loader2 } from 'lucide-react';
 import Modal from '../../../components/ui/Modal';
 import Dropdown from '../../../components/ui/Dropdown';
-import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
 import SubjectBadge from '../../../components/educator/SubjectBadge';
 import { SUBJECTS, formatFileSize, ALL_GRADE_LEVELS } from '../../../data/mockEducator';
 import { api } from '../../../lib/api';
@@ -10,15 +9,28 @@ import { api } from '../../../lib/api';
 /** Documented platform limit (Scope & Limitations): plain-text PDF, ≤ 20 MB. */
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
+/**
+ * A material is published to EXACTLY ONE grade level, so this is a single-select.
+ *
+ * It was a `MultiSelectDropdown`. The rule is enforced in three places that must
+ * agree: `materials_grade_levels_valid` (`array_length = 1`), `GradeLevelsField`
+ * in `server/types/api.ts` (`.length(1)`), and this control. The wire format is
+ * still a one-element array because `materials.grade_levels` is still SMALLINT[]
+ * — see the schema comment for why the column did not become a scalar.
+ *
+ * `Dropdown` falls back to its FIRST option when `value` matches nothing, so the
+ * empty placeholder below is what gives this an unselected state. Without it the
+ * control would silently sit on Grade 7 and an educator could publish to the
+ * wrong grade without ever touching the field.
+ */
+const NO_GRADE = '';
+
 interface UploadMaterialModalProps {
   isOpen: boolean;
   onClose: () => void;
   /** Called after a successful upload so the library can refetch from the server. */
   onUploaded: () => void;
 }
-
-const gradeLabel = (g: number) => `Grade ${g}`;
-const gradeValue = (label: string) => Number(label.replace('Grade ', ''));
 
 export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: UploadMaterialModalProps) {
   // The full catalogue: an educator is not pre-assigned to any subject.
@@ -28,22 +40,24 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [subject, setSubject] = useState(subjects[0]?.code ?? '');
-  const [grades, setGrades] = useState<string[]>([]);
+  const [grade, setGrade] = useState<string>(NO_GRADE);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** Grade access is the educator's own decision, so all four JHS grades are offered. */
-  // Grade labels are unique, so label doubles as the option value.
-  const gradeOptions = ALL_GRADE_LEVELS.map((g) => ({ value: gradeLabel(g), label: gradeLabel(g) }));
+  const gradeOptions = [
+    { value: NO_GRADE, label: 'Select a grade level…' },
+    ...ALL_GRADE_LEVELS.map((g) => ({ value: String(g), label: `Grade ${g}` })),
+  ];
 
   const reset = () => {
     setFile(null);
     setTitle('');
     setDescription('');
     setSubject(subjects[0]?.code ?? '');
-    setGrades([]);
+    setGrade(NO_GRADE);
     setError(null);
     setIsUploading(false);
   };
@@ -85,16 +99,15 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
 
     if (!file) return setError('Choose a PDF to upload.');
     if (!title.trim()) return setError('Give the material a title.');
-    if (grades.length === 0) return setError('Select at least one grade level.');
-
-    const gradeNumbers = grades.map(gradeValue).sort((a, b) => a - b);
+    if (grade === NO_GRADE) return setError('Select the grade level this material is for.');
 
     const formData = new FormData();
     formData.append('file', file);
     formData.append('title', title.trim());
     formData.append('subject', subject);
     if (description.trim()) formData.append('description', description.trim());
-    formData.append('grade_levels', JSON.stringify(gradeNumbers));
+    // Still an array on the wire — the column is SMALLINT[] with a length-1 CHECK.
+    formData.append('grade_levels', JSON.stringify([Number(grade)]));
 
     setError(null);
     setIsUploading(true);
@@ -217,13 +230,12 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
             />
           </div>
           <div>
-            <label className="block font-sans text-sm font-medium text-slate-300 mb-1.5">Grade Levels</label>
-            <MultiSelectDropdown
-              selectedValues={grades}
-              onChange={setGrades}
+            <label className="block font-sans text-sm font-medium text-slate-300 mb-1.5">Grade Level</label>
+            <Dropdown
+              value={grade}
+              onChange={setGrade}
               options={gradeOptions}
-              placeholder="Select grades..."
-              itemNoun="grade"
+              className="w-full"
             />
           </div>
         </div>
@@ -231,10 +243,12 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
         <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/5">
           <Info className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
           <p className="font-sans text-xs text-slate-400">
-            Subject and grade access are both your call. Students in the grades you select will find
-            this
+            Subject and grade level are both your call. A material goes to
+            {' '}<span className="text-slate-200 font-medium">one grade level</span> — students in
+            {grade === NO_GRADE ? ' that grade' : ` Grade ${grade}`} will find this
             <SubjectBadge code={subject} className="mx-1 align-middle" />
-            material, and those grades then appear in your Students roster.
+            material, and their progress on it appears in its Class Performance tab. You can change
+            the grade later from the material's page.
           </p>
         </div>
 
@@ -249,7 +263,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
           </button>
           <button
             type="submit"
-            disabled={!file || !title.trim() || grades.length === 0 || isUploading}
+            disabled={!file || !title.trim() || grade === NO_GRADE || isUploading}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isUploading ? (

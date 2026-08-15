@@ -39,9 +39,14 @@ Core Tables: materials, concepts
 AI Integration: Gemini API (gemini-embedding-001)
 
 Upload Flow:
-  1. Educator uploads a PDF learning resource through the Educator Portal and selects the grade level(s) that can access it.
+  1. Educator uploads a PDF learning resource through the Educator Portal and selects the ONE grade level that can access it. A material serves exactly one grade; the rule is enforced by the materials_grade_levels_valid CHECK, by Zod, and by a single-select control.
   2. Backend inserts a record into materials with parsed_status = 'pending'.
   3. The platform accepts plain-text PDF learning modules with a maximum file size of 20 MB, and also supports image-based or scanned PDF documents with a maximum of 20 pages.
+
+Post-Upload Changes (PATCH /api/materials/:id, educator, own material only):
+  - Grade level and archive state are the only editable fields. Subject is fixed after upload because a study space is built from its subject plus the materials published to it; parse fields are owned by the ingest pipeline.
+  - Archiving hides a material from every student's study space at their next read. It is NOT a delete: the concepts, the study_space_materials link rows and every student's BKT mastery survive, so restoring brings all of it back with no bookkeeping. Deleting a material is the destructive path -- it cascades to concepts and to mastery.
+  - Changing the grade level works by the same mechanism. Students in the old grade stop seeing it, students in the new grade gain it, the educator's Class Performance roster follows, and nothing is destroyed -- setting the grade back restores the original figures exactly.
 
 Processing Flow (Background Job):
   - A backend worker detects the pending material.
@@ -91,7 +96,7 @@ Logic Flow:
   - Student submits user_input (free-form text).
   - Scoring: see Section 11 for the authoritative algorithm. In brief, the backend extracts the discrete concepts the student discussed, embeds each one separately, and scores coverage against the material's stored concepts. Cosine similarity is computed in the backend, NOT via a pgvector <=> query — an earlier design did the latter, and migration 0006 dropped the evaluate_recall() function that implemented it.
   - The missed_concepts list and overall_verdict are stored in cognitive_logs.ai_feedback as a JSON string, alongside similarity_score.
-  - Free Recall provides personalized explanations and feedback but does not directly update BKT mastery estimates.
+  - Free Recall provides personalized explanations and feedback but does not directly update BKT mastery estimates. As built it does not READ them either — server/routes/cognitive.routes.ts contains no reference to bkt_mastery. Its personalization comes from the material's concept set, not from the student's mastery of it. (Paper p. 58 groups it with the games as a mastery reader; only the games actually are one.)
 
 ---
 
@@ -118,7 +123,7 @@ Logic Flow:
   - Grading runs at temperature 0, so an identical resubmission cannot drift across a verdict band boundary.
   - The audience is fixed at a 10-year-old child. FEYNMAN_AUDIENCES is a single-value enum so adding an audience later is one rubric plus one entry, not a data migration.
   - The ai_feedback is stored in cognitive_logs as a JSON string and surfaced to the student.
-  - The Feynman Technique provides personalized feedback but does not directly update BKT mastery estimates.
+  - The Feynman Technique provides personalized feedback but does not directly update BKT mastery estimates, and like Free Recall it does not read them either — its grading is against the stored concept definition and the audience rubric, neither of which depends on mastery.
 
 ---
 
@@ -276,6 +281,13 @@ Educator Dashboard:
   - The educator analytics dashboard aggregates student mastery data at the concept and document level into a real-time grade-level monitoring interface.
   - Educators can view individual student mastery levels and learning progress for students within their assigned grade level.
   - Row-Level Security (RLS) restricts educators to viewing mastery data only for students within their selected grade level.
+
+Implementation (as built):
+  - The analytics live inside a material — Materials → a material → Class Performance — served by GET /api/educator/materials/:materialId/performance, with GET /api/educator/materials/:materialId/students/:studentId/concepts for the per-student drill-down. There is no separate students roster; the pages that were one were mock data end to end and were removed.
+  - "The class" for a material is every ACTIVE student whose grade_level is in that material's grade_levels. An educator's assigned grades are therefore derived from what they have published, not stored — there is no educator-grade table.
+  - RLS is the design intent but NOT the enforcement mechanism at runtime: Express holds the Supabase service role, which bypasses RLS by design, so every route enforces ownership itself through server/lib/educatorScope.ts. The same reason v_grade_level_mastery (security_invoker) is not queried from the server.
+  - Read-only. Mastery still has exactly two writers, both on the student side (adaptive flashcards and Adaptive Test Mode), per the paper's Scope section.
+  - A student with no bkt_mastery row is at P(L₀) = 0.10 by assumption, so every mastery figure is nullable and unassessed students and concepts are shown as "not started" rather than as a percentage.
 
 ---
 

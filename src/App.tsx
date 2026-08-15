@@ -20,8 +20,6 @@ import EducatorLayout from './components/layout/EducatorLayout';
 import EducatorDashboard from './pages/educator/EducatorDashboard';
 import MaterialsLibrary from './pages/educator/MaterialsLibrary';
 import MaterialDetail from './pages/educator/MaterialDetail';
-import StudentsRoster from './pages/educator/StudentsRoster';
-import StudentMasteryDetail from './pages/educator/StudentMasteryDetail';
 import EducatorSettings from './pages/educator/EducatorSettings';
 
 import OrientationGate from './components/common/OrientationGate';
@@ -58,8 +56,14 @@ export default function App() {
           <Route path="/educator/dashboard" element={<EducatorDashboard />} />
           <Route path="/educator/materials" element={<MaterialsLibrary />} />
           <Route path="/educator/materials/:materialId" element={<MaterialDetail />} />
-          <Route path="/educator/students" element={<StudentsRoster />} />
-          <Route path="/educator/students/:studentId" element={<StudentMasteryDetail />} />
+          {/*
+            `/educator/students` and `/educator/students/:studentId` are gone.
+            Both pages were built entirely on mock data — eighteen invented
+            students, with no `lib/api` import between them. Student performance
+            now lives where it is scoped to something real: a material's Class
+            Performance tab, which reads BKT mastery for the students in the
+            grades that material is published to.
+          */}
           <Route path="/educator/settings" element={<EducatorSettings />} />
         </Route>
 

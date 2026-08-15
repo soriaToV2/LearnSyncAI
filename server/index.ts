@@ -17,6 +17,7 @@ import gamificationRoutes from './routes/gamification.routes';
 import gamesRoutes from './routes/games.routes';
 import chatRoutes from './routes/chat.routes';
 import dashboardRoutes from './routes/dashboard.routes';
+import educatorRoutes from './routes/educator.routes';
 import { loadBktParameters } from './lib/bkt';
 
 const app = express();
@@ -51,6 +52,7 @@ app.use('/api/gamification', gamificationRoutes);
 app.use('/api/games', gamesRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/educator', educatorRoutes);
 
 /*
  * `/api/bkt` is gone, and should not come back.
@@ -74,6 +76,15 @@ app.use('/api/dashboard', dashboardRoutes);
  * query and NO path parameter, so every set it reads is derived from the caller's
  * own id. It cannot be pointed at another student's data because there is nothing
  * to point with. Any future global read should meet the same bar.
+ *
+ * `/api/educator` is the third shape and the only one that reads ACROSS students,
+ * because a class-level dashboard (paper p. 61, p. 90) is by definition about a
+ * set of them. It is scoped by a material the caller uploaded rather than by the
+ * caller's own id, so ownership is a check rather than a construction:
+ * `requireOwnedMaterial()` 404s on anyone else's material, and the one route that
+ * names a student in its path re-derives that student's role, status and grade
+ * membership through `rosterStudent()` instead of trusting the id. Read-only —
+ * mastery still has exactly two writers, both on the student side.
  */
 
 // ─────────────────────────────────────────────

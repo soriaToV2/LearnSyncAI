@@ -80,6 +80,10 @@ export const api = {
   put: <T>(endpoint: string, body: unknown) =>
     apiFetch<T>(endpoint, { method: 'PUT', body: JSON.stringify(body) }),
 
+  /** Partial update — send only the fields being changed. */
+  patch: <T>(endpoint: string, body: unknown) =>
+    apiFetch<T>(endpoint, { method: 'PATCH', body: JSON.stringify(body) }),
+
   delete: <T>(endpoint: string) =>
     apiFetch<T>(endpoint, { method: 'DELETE' }),
 

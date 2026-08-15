@@ -140,6 +140,97 @@ export async function allMasteryRows(studentId: string): Promise<Map<string, Con
 }
 
 /**
+ * Most recent `last_updated` across rows already in hand — no extra query.
+ *
+ * `only` narrows it to one material's concepts. ISO-8601 UTC strings sort
+ * lexicographically in timestamp order, so this needs no Date parsing.
+ *
+ * Lives here rather than in `practice.routes.ts`, where it started, because the
+ * educator analytics needs it against a map produced by `masteryRows()` too — and
+ * a routes file exporting a helper up to another routes file is backwards.
+ *
+ * ⚠️ Keyed by CONCEPT id. A `classMasteryRows()` map is keyed by `classKey()`, so
+ * this cannot be pointed at one; take the max as you fold that map instead.
+ */
+export function latestUpdate(
+  rows: ReadonlyMap<string, ConceptMasteryRow>,
+  only?: ReadonlySet<string>
+): string | null {
+  let latest: string | null = null;
+  for (const [conceptId, row] of rows) {
+    if (only && !only.has(conceptId)) continue;
+    if (row.lastUpdated && (latest === null || row.lastUpdated > latest)) latest = row.lastUpdated;
+  }
+  return latest;
+}
+
+/** Key for `classMasteryRows()`. The only place this composition is written. */
+export function classKey(studentId: string, conceptId: string): string {
+  return `${studentId}:${conceptId}`;
+}
+
+/**
+ * Every `bkt_mastery` row for THESE students over THESE concepts, keyed by
+ * `classKey()`.
+ *
+ * The class counterpart of `masteryRows()`, and the first reader in the codebase
+ * that is not about one student. Everything else — `masteryRows`,
+ * `allMasteryRows`, `masterySnapshot` — is single-student by signature, because
+ * until the educator analytics landed nothing on the server ever needed to name a
+ * set of students.
+ *
+ * BOTH id lists are chunked. `.in()` serialises into the QUERY STRING (see
+ * `IN_CHUNK` above), and this is the first place two lists multiply into one URL:
+ * a grade of 50 students against a 400-concept lesson is ~17 KB of ids. The nested
+ * loop degenerates to a single query at realistic sizes (50 × 57) and stays
+ * correct at any size.
+ *
+ * The student filter leads on purpose. `idx_bkt_student_concept` is
+ * `(student_id, concept_id)`, so constraining students lets the index be used as a
+ * prefix; filtering on concepts alone cannot use it at all, and would additionally
+ * drag in rows for students in other grades that the caller must then discard.
+ *
+ * As with `masteryRows()`, a missing entry means NOT ASSESSED — not zero, and not
+ * P(L₀). Callers must be able to tell those apart, which is the whole reason this
+ * returns a sparse map rather than a filled grid.
+ */
+export async function classMasteryRows(
+  studentIds: string[],
+  conceptIds: string[]
+): Promise<Map<string, ConceptMasteryRow>> {
+  const rows = new Map<string, ConceptMasteryRow>();
+  if (studentIds.length === 0 || conceptIds.length === 0) return rows;
+
+  for (let s = 0; s < studentIds.length; s += IN_CHUNK) {
+    const students = studentIds.slice(s, s + IN_CHUNK);
+
+    for (let c = 0; c < conceptIds.length; c += IN_CHUNK) {
+      const concepts = conceptIds.slice(c, c + IN_CHUNK);
+
+      const { data } = await supabaseAdmin
+        .from('bkt_mastery')
+        .select('student_id, concept_id, latent_mastery, opportunity_count, last_updated')
+        .in('student_id', students)
+        .in('concept_id', concepts);
+
+      for (const row of data ?? []) {
+        // NUMERIC and INTEGER both arrive as strings over PostgREST.
+        const mastery = Number(row.latent_mastery);
+        if (!Number.isFinite(mastery)) continue;
+        const opportunities = Number(row.opportunity_count);
+        rows.set(classKey(row.student_id as string, row.concept_id as string), {
+          mastery,
+          opportunityCount: Number.isFinite(opportunities) ? opportunities : 0,
+          lastUpdated: (row.last_updated as string) ?? null,
+        });
+      }
+    }
+  }
+
+  return rows;
+}
+
+/**
  * EQ(4), document mastery: the arithmetic mean of per-concept probabilities over
  * EVERY concept in the material, computed from values already in hand.
  *

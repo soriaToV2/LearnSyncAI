@@ -6,6 +6,15 @@ import type { MasteryTier } from '../../data/mockEducator';
  *
  * Tier boundaries themselves live in masteryTier() in mockEducator.ts, which
  * mirrors the database function public.mastery_tier().
+ *
+ * ⚠️ `foundational` is NEUTRAL, never rose. It was `#fb7185`, which
+ * `src/components/ui/MeterBar.tsx` cites by name as the reason it refused to
+ * reuse `MasteryBar`, and which contradicts `TIER_TONE.foundational = 'neutral'`
+ * on the student side. The three tiers describe where a learner currently IS,
+ * not how well they did: everyone starts foundational — it is the P(L₀) cold
+ * start and by far the most common state during a study — so painting it red
+ * marks every new student as failing at something nobody has asked them yet.
+ * The two portals must not colour one number two ways.
  */
 export const TIER_STYLE: Record<MasteryTier, { label: string; color: string; hint: string }> = {
   advanced: {
@@ -20,7 +29,7 @@ export const TIER_STYLE: Record<MasteryTier, { label: string; color: string; hin
   },
   foundational: {
     label: 'Foundational',
-    color: '#fb7185',
+    color: '#94a3b8',
     hint: 'Mastery below 50%',
   },
 };

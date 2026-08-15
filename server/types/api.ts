@@ -43,10 +43,24 @@ export type RegisterInput = z.infer<typeof RegisterSchema>;
 // ── Materials ─────────────────────────────────────────────
 
 /**
+ * A material is published to EXACTLY ONE grade level.
+ *
+ * Mirrors `materials_grade_levels_valid`, which is
+ * `grade_levels <@ ARRAY[7,8,9,10] AND array_length(grade_levels, 1) = 1`.
+ * The column stays SMALLINT[] because every grade-access path in the app is
+ * built on the array form — `@>` in `materialAccess.ts`, `= ANY(...)` in five
+ * RLS policies and `v_grade_level_mastery`, `unnest()` in
+ * `private.auth_assigned_grades()`, and a GIN index. The single-element rule is
+ * the CHECK's job, not the column type's.
+ */
+const GradeLevelsField = z
+  .array(z.coerce.number().int().min(7).max(10))
+  .length(1, 'A material is published to exactly one grade level');
+
+/**
  * Validates an educator's material upload. The file itself is handled by multer;
  * this guards the accompanying form fields. `grade_levels` arrives as a multipart
- * string (e.g. "[7,8]"), so it is JSON-parsed before the array is validated.
- * Mirrors the CHECK constraints on public.materials: grades ⊆ {7,8,9,10}, ≥ 1.
+ * string (e.g. "[8]"), so it is JSON-parsed before the array is validated.
  */
 export const CreateMaterialSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
@@ -61,13 +75,39 @@ export const CreateMaterialSchema = z.object({
         return value;
       }
     },
-    z
-      .array(z.coerce.number().int().min(7).max(10))
-      .min(1, 'Select at least one grade level')
-      .max(4)
+    GradeLevelsField
   ),
 });
 export type CreateMaterialInput = z.infer<typeof CreateMaterialSchema>;
+
+/**
+ * The two things an educator may change about a material after upload.
+ *
+ * ⚠️ EVERYTHING ELSE IS DELIBERATELY ABSENT, and this is not an oversight to be
+ * filled in later:
+ *
+ *  - `subject` — a study space is built from its subject plus the materials
+ *    published to it, so re-pointing a material's subject would strand it in
+ *    every space already holding it. `UpdateStudySpaceSchema` omits subject for
+ *    the mirror-image reason.
+ *  - `parsed_status` / `parse_error` / `is_scanned` / `page_count` — owned by the
+ *    ingest pipeline. Accepting them would let an educator mark a failed material
+ *    Ready and push a concept-less material into students' study spaces.
+ *  - `title` / `description` — no UI asks for them, and this route must stay the
+ *    answer to "archive and grade access", not become a general row editor.
+ *
+ * At least one field must be present, or the request is a no-op that would still
+ * bump `updated_at`.
+ */
+export const UpdateMaterialSchema = z
+  .object({
+    is_archived: z.boolean().optional(),
+    grade_levels: GradeLevelsField.optional(),
+  })
+  .refine((v) => v.is_archived !== undefined || v.grade_levels !== undefined, {
+    message: 'Provide is_archived or grade_levels',
+  });
+export type UpdateMaterialInput = z.infer<typeof UpdateMaterialSchema>;
 
 export const FetchConceptsBatchSchema = z.object({
   material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),

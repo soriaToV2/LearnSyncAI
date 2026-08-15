@@ -24,10 +24,13 @@ interface MeterBarProps {
  * consumer of `toneBg`, which had been exported and unused; `cognitiveShared`
  * inlines a ternary that is exactly `toneBg` minus `neutral`.
  *
- * `components/educator/MasteryBar.tsx` was deliberately NOT reused: it imports
- * `masteryTier` from `src/data/mockEducator.ts` and a palette whose
- * `foundational` is rose, which contradicts the student side's deliberate
- * neutral.
+ * `components/educator/MasteryBar.tsx` is still not reused, but the reason has
+ * narrowed: its `foundational` was rose, contradicting the student side's
+ * deliberate neutral, and that has since been fixed at the source
+ * (`TIER_STYLE` in `components/educator/TierBadge.tsx`). What remains is that it
+ * takes a bare `number`, so it cannot express "not assessed" — the one
+ * distinction this component exists for. New code uses this; `MasteryBar`
+ * survives only where the educator dashboard's mock data still feeds it.
  */
 export default function MeterBar({ value, tone = 'neutral', label, className = '' }: MeterBarProps) {
   /*

@@ -9,11 +9,11 @@ import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
 import { applyTestCompletion, bktProblems } from '../lib/bkt';
 import {
   documentMastery,
+  latestUpdate,
   masteryRows,
   masterySnapshot,
   masteryTier,
   P_L0,
-  type ConceptMasteryRow,
 } from '../lib/testDifficulty';
 import { generateTestQuestions, type ConceptForTest } from '../lib/testGeneration';
 import { gradeAnswer } from '../lib/testGrading';
@@ -269,23 +269,8 @@ router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void>
 // Mastery — EQ(4), read-only
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Most recent `last_updated` across rows already in hand — no extra query.
- *
- * `only` narrows it to one material's concepts. ISO-8601 UTC strings sort
- * lexicographically in timestamp order, so this needs no Date parsing.
- */
-function latestUpdate(
-  rows: Map<string, ConceptMasteryRow>,
-  only?: ReadonlySet<string>
-): string | null {
-  let latest: string | null = null;
-  for (const [conceptId, row] of rows) {
-    if (only && !only.has(conceptId)) continue;
-    if (row.lastUpdated && (latest === null || row.lastUpdated > latest)) latest = row.lastUpdated;
-  }
-  return latest;
-}
+// `latestUpdate()` moved to `server/lib/testDifficulty.ts` when the educator
+// analytics needed it against a `masteryRows()` map of its own.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/practice/space/:spaceId/mastery — EQ(4) per material
