@@ -78,6 +78,7 @@ $$;
 CREATE TABLE profiles (
     id          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     role        user_role      NOT NULL DEFAULT 'student',
+    username    TEXT,
     first_name  TEXT           NOT NULL,
     last_name   TEXT           NOT NULL,
     grade_level SMALLINT,
@@ -89,13 +90,39 @@ CREATE TABLE profiles (
         CHECK (grade_level IS NULL OR grade_level BETWEEN 7 AND 10),
     -- A student without a grade level cannot be matched to any material.
     CONSTRAINT profiles_student_needs_grade
-        CHECK (role <> 'student' OR grade_level IS NOT NULL)
+        CHECK (role <> 'student' OR grade_level IS NOT NULL),
+    -- 3-30 chars, lowercase alphanumerics plus dot and underscore, never opening
+    -- or closing on punctuation. NULL is permitted: see the note below.
+    CONSTRAINT profiles_username_format
+        CHECK (username IS NULL OR username ~ '^[a-z0-9][a-z0-9._]{1,28}[a-z0-9]$')
 );
 
 COMMENT ON COLUMN profiles.grade_level IS
     'Junior High School grade level (7-10). Required for students, NULL for educators and admins.';
 COMMENT ON COLUMN profiles.status IS
     'Set to disabled by an admin to revoke access without deleting the account.';
+COMMENT ON COLUMN profiles.username IS
+    'Login identifier. POST /api/auth/login resolves it to auth.users.email server-side, so the email is never disclosed to an unauthenticated caller. Unique case-insensitively. NULL means the account cannot sign in.';
+
+-- THE USERNAME IS THE LOGIN IDENTIFIER, AND auth.users.email IS NOT.
+-- Sign-in used to run straight on auth.users.email, which on the development
+-- project held 'student', 'educ1' and 'admin' — usernames squatting in the email
+-- column, leaving nowhere to store a contactable address. Migration 0021 split
+-- them: POST /api/auth/login resolves username -> email server-side and signs in,
+-- so the browser never learns anyone's email and a public username->email oracle
+-- never exists. auth.users.email is now purely a contact address the user owns.
+--
+-- NULLABLE ON PURPOSE. handle_new_user() fires on the auth.users INSERT and
+-- cannot invent a unique name without a retry loop inside a trigger that must
+-- never raise (an exception there aborts the INSERT and surfaces as an opaque
+-- Supabase Auth failure). It takes one from user_metadata when the admin API
+-- supplies it and leaves NULL otherwise. An account with a NULL username cannot
+-- sign in, which is a loud recoverable failure rather than a silent duplicate.
+
+-- Case-insensitive: 'Juan' and 'juan' must not be two accounts, which would be an
+-- impersonation vector where the username IS the credential. A functional index
+-- rather than the citext extension, which would be a new extension for one column.
+CREATE UNIQUE INDEX ux_profiles_username_lower ON profiles (lower(username));
 
 -- An educator's grade levels are NOT stored here, and not stored anywhere on the
 -- educator. They are derived from the grade levels of the materials that
@@ -786,8 +813,9 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    v_role  user_role;
-    v_grade SMALLINT;
+    v_role     user_role;
+    v_grade    SMALLINT;
+    v_username TEXT;
 BEGIN
     v_role := COALESCE(NULLIF(NEW.raw_user_meta_data ->> 'role', ''), 'student')::user_role;
 
@@ -799,13 +827,26 @@ BEGIN
         v_grade := 7;
     END IF;
 
-    INSERT INTO public.profiles (id, first_name, last_name, role, grade_level)
+    -- A malformed or already-taken username degrades to NULL rather than raising,
+    -- for the same reason the defaults above do: an exception here aborts the
+    -- auth.users INSERT. The account is then created without a login identifier,
+    -- which an admin fixes, instead of not being created at all.
+    v_username := NULLIF(lower(NEW.raw_user_meta_data ->> 'username'), '');
+
+    IF v_username IS NOT NULL
+       AND (v_username !~ '^[a-z0-9][a-z0-9._]{1,28}[a-z0-9]$'
+            OR EXISTS (SELECT 1 FROM public.profiles WHERE lower(username) = v_username)) THEN
+        v_username := NULL;
+    END IF;
+
+    INSERT INTO public.profiles (id, first_name, last_name, role, grade_level, username)
     VALUES (
         NEW.id,
         COALESCE(NEW.raw_user_meta_data ->> 'first_name', ''),
         COALESCE(NEW.raw_user_meta_data ->> 'last_name', ''),
         v_role,
-        CASE WHEN v_role = 'student' THEN v_grade END
+        CASE WHEN v_role = 'student' THEN v_grade END,
+        v_username
     )
     ON CONFLICT (id) DO NOTHING;
 

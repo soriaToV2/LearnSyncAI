@@ -1,18 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Home, FileText, LogOut, Settings as SettingsIcon,
+  Home, FileText, LogOut, UserCircle,
   Menu, X, ChevronLeft, ChevronRight, BrainCircuit,
 } from 'lucide-react';
 import { useEducatorTheme, EducatorThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, fullName, initials, subtitleFor } from '../../context/AuthContext';
+import { signOut } from '../../lib/signOut';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-educator-sidebar-collapsed';
 
 function EducatorLayoutInner() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user } = useAuth();
-  const [showLogout, setShowLogout] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
@@ -30,6 +32,27 @@ function EducatorLayoutInner() {
   const educatorName = fullName(user);
   const monogram = initials(user);
   const subtitle = subtitleFor(user);
+
+  /*
+   * `replace: true` is load-bearing: without it the browser Back button returns
+   * to the portal shell, which is exactly the "still signed in" impression this
+   * change exists to remove.
+   *
+   * The redirect happens even if `signOut()` throws. Being stranded inside the
+   * account on a network blip is the worse failure of the two, and the local
+   * session is cleared before the network call in the Supabase client anyway.
+   */
+  const handleSignOut = async () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    try {
+      await signOut();
+    } catch (err) {
+      console.error('[auth] sign-out failed, redirecting anyway', err);
+    } finally {
+      navigate('/login', { replace: true });
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isCollapsed));
@@ -70,6 +93,7 @@ function EducatorLayoutInner() {
   const NAV_ITEMS = [
     { to: '/educator/dashboard', label: 'Dashboard', icon: Home },
     { to: '/educator/materials', label: 'Materials', icon: FileText },
+    { to: '/educator/profile', label: 'Profile', icon: UserCircle },
   ];
 
   const renderNavLinks = (collapsed = false) => (
@@ -91,33 +115,33 @@ function EducatorLayoutInner() {
     </div>
   );
 
+  /*
+   * Logout, then the identity card — nothing else. Profile is a destination like
+   * Dashboard and Materials, so it lives with them in `NAV_ITEMS` above; the
+   * footer is for the one control that ends the session.
+   *
+   * LOGOUT IS ALWAYS RENDERED. It used to appear only after clicking the identity
+   * card, which nothing indicated was a toggle — the most important control in the
+   * app was invisible until you guessed. That toggle was the card's only job, so
+   * the card is now a plain `<div>`: leaving a hover affordance on a dead element
+   * is worse than removing it.
+   */
   const renderFooter = (collapsed = false) => (
-    <div className="mt-auto flex flex-col gap-2 relative">
-      <NavLink
-        to="/educator/settings"
-        title="Settings"
-        className={({ isActive }) => `${navBase} ${collapsedNavClass(collapsed)} mb-1 ${isActive ? '' : inactiveClass}`}
-        style={({ isActive }) => (isActive ? activeStyle : {})}
-      >
-        <SettingsIcon className="w-5 h-5 shrink-0" />
-        {!collapsed && 'Settings'}
-      </NavLink>
-
-      {showLogout && (
-        <NavLink
-          to="/login"
-          title="Logout"
-          className={`flex items-center gap-4 px-4 py-3 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide ${collapsedNavClass(collapsed)}`}
-        >
-          <LogOut className="w-5 h-5 shrink-0" />
-          {!collapsed && 'Logout'}
-        </NavLink>
-      )}
-
+    <div className="mt-auto flex flex-col gap-2">
+      {/* A <button>, not a NavLink — it ends the session before it navigates. */}
       <button
-        onClick={() => setShowLogout(!showLogout)}
+        onClick={handleSignOut}
+        disabled={isSigningOut}
+        title="Logout"
+        className={`flex items-center gap-4 px-4 py-3 mb-1 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide disabled:opacity-60 disabled:pointer-events-none ${collapsedNavClass(collapsed)}`}
+      >
+        <LogOut className="w-5 h-5 shrink-0" />
+        {!collapsed && (isSigningOut ? 'Signing out…' : 'Logout')}
+      </button>
+
+      <div
         title={educatorName}
-        className={`flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-all duration-300 border border-white/5 w-full text-left group active:scale-98 focus:outline-none ${collapsed ? 'justify-center' : ''}`}
+        className={`flex items-center gap-3 p-3 rounded-xl border border-white/5 w-full text-left ${collapsed ? 'justify-center' : ''}`}
       >
         <div className="relative shrink-0">
           <div
@@ -133,10 +157,7 @@ function EducatorLayoutInner() {
         </div>
         {!collapsed && (
           <div className="flex-1 min-w-0">
-            <p
-              className="font-display text-sm font-bold text-white transition-colors truncate"
-              style={{ color: showLogout ? theme.accent : undefined }}
-            >
+            <p className="font-display text-sm font-bold text-white truncate">
               {educatorName}
             </p>
             <p className="font-sans text-[11px] text-slate-400 truncate">
@@ -144,7 +165,7 @@ function EducatorLayoutInner() {
             </p>
           </div>
         )}
-      </button>
+      </div>
     </div>
   );
 
@@ -180,7 +201,7 @@ function EducatorLayoutInner() {
         </div>
 
         <NavLink
-          to="/educator/settings"
+          to="/educator/profile"
           className="w-8 h-8 rounded-full overflow-hidden border border-white/10 flex items-center justify-center font-display text-[11px] font-bold"
           style={{ backgroundColor: theme.accentSoft, color: theme.accent }}
         >

@@ -5,8 +5,7 @@ import Login from './pages/auth/Login';
 // Student
 import StudentLayout from './components/layout/StudentLayout';
 import StudentDashboard from './pages/student/StudentDashboard';
-import StudentProfile from './pages/student/StudentProfile';
-import Settings from './pages/student/Settings';
+import Profile from './pages/student/Profile';
 import StudySpacesList from './pages/student/StudySpacesList';
 import StudySpace from './pages/student/StudySpace';
 import GamesLayout from './pages/student/games/GamesLayout';
@@ -20,7 +19,7 @@ import EducatorLayout from './components/layout/EducatorLayout';
 import EducatorDashboard from './pages/educator/EducatorDashboard';
 import MaterialsLibrary from './pages/educator/MaterialsLibrary';
 import MaterialDetail from './pages/educator/MaterialDetail';
-import EducatorSettings from './pages/educator/EducatorSettings';
+import EducatorProfile from './pages/educator/EducatorProfile';
 
 import OrientationGate from './components/common/OrientationGate';
 
@@ -36,8 +35,17 @@ export default function App() {
         {/* Student Routes */}
         <Route element={<StudentLayout />}>
           <Route path="/student/dashboard" element={<StudentDashboard />} />
-          <Route path="/student/profile/:studentId" element={<StudentProfile />} />
-          <Route path="/student/settings" element={<Settings />} />
+          <Route path="/student/profile" element={<Profile />} />
+          {/*
+            `/student/settings` and `/student/profile/:studentId` are gone. The
+            settings page rendered `MOCK_STUDENTS[0]` — an Unsplash avatar, "MIT",
+            a location, follower counts, and an "Edit Profile Card" form that
+            persisted nothing. The old profile page added achievements and a
+            "Public Study Spaces" tab, which is the CollabShare peer sharing
+            migration 0003 removed as contradicting the paper's data-isolation
+            guarantee. `/student/profile` above is the real account page, built on
+            `GET /api/auth/me`.
+          */}
           <Route path="/student/spaces" element={<StudySpacesList />} />
           <Route path="/student/space/:spaceId" element={<StudySpace />} />
           <Route path="/student/games" element={<GamesLayout />}>
@@ -64,7 +72,13 @@ export default function App() {
             Performance tab, which reads BKT mastery for the students in the
             grades that material is published to.
           */}
-          <Route path="/educator/settings" element={<EducatorSettings />} />
+          {/*
+            `/educator/settings` is gone. Its Profile tab moved to
+            `/educator/profile` below, publishing explainer and all; its
+            Appearance tab was the theme picker, deleted with the picker itself —
+            see the header of `context/ThemeContext.tsx`.
+          */}
+          <Route path="/educator/profile" element={<EducatorProfile />} />
         </Route>
 
       </Routes>

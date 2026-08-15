@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Home, Layers, Gamepad2, BrainCircuit, LogOut, Settings as SettingsIcon, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Home, Layers, Gamepad2, BrainCircuit, LogOut, UserCircle, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } from '../../context/AuthContext';
+import { signOut } from '../../lib/signOut';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-sidebar-collapsed';
 
@@ -38,7 +39,8 @@ function Monogram({
 
 function StudentLayoutInner() {
   const location = useLocation();
-  const [showLogout, setShowLogout] = useState(false);
+  const navigate = useNavigate();
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
@@ -46,6 +48,27 @@ function StudentLayoutInner() {
   const { user } = useAuth();
   const { theme } = useStudentTheme();
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * `replace: true` is load-bearing: without it the browser Back button returns
+   * to the portal shell, which is exactly the "still signed in" impression this
+   * change exists to remove.
+   *
+   * The redirect happens even if `signOut()` throws. Being stranded inside the
+   * account on a network blip is the worse failure of the two, and the local
+   * session is cleared before the network call in the Supabase client anyway.
+   */
+  const handleSignOut = async () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    try {
+      await signOut();
+    } catch (err) {
+      console.error('[auth] sign-out failed, redirecting anyway', err);
+    } finally {
+      navigate('/login', { replace: true });
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isCollapsed));
@@ -119,36 +142,46 @@ function StudentLayoutInner() {
         <Gamepad2 className="w-5 h-5 shrink-0" />
         {!collapsed && 'Games'}
       </NavLink>
+
+      <NavLink
+        to="/student/profile"
+        title="Profile"
+        className={({ isActive }) => `${navBase} ${collapsedNavClass(collapsed)} ${isActive ? '' : inactiveClass}`}
+        style={({ isActive }) => (isActive ? activeStyle : {})}
+      >
+        <UserCircle className="w-5 h-5 shrink-0" />
+        {!collapsed && 'Profile'}
+      </NavLink>
     </div>
   );
 
+  /*
+   * Logout, then the identity card — nothing else. Profile is a destination like
+   * Dashboard and Spaces, so it lives with them in the nav list above; the footer
+   * is for the one control that ends the session.
+   *
+   * LOGOUT IS ALWAYS RENDERED. It used to appear only after clicking the identity
+   * card, which nothing indicated was a toggle — the most important control in the
+   * app was invisible until you guessed. That toggle was the card's only job, so
+   * the card is now a plain `<div>`: leaving a hover affordance on a dead element
+   * is worse than removing it.
+   */
   const renderFooter = (collapsed = false) => (
-    <div className="mt-auto flex flex-col gap-2 relative">
-      <NavLink
-        to="/student/settings"
-        title="Settings"
-        className={({ isActive }) => `${navBase} ${collapsedNavClass(collapsed)} mb-1 ${isActive ? '' : inactiveClass}`}
-        style={({ isActive }) => (isActive ? activeStyle : {})}
-      >
-        <SettingsIcon className="w-5 h-5 shrink-0" />
-        {!collapsed && 'Settings'}
-      </NavLink>
-
-      {showLogout && (
-        <NavLink
-          to="/login"
-          title="Logout"
-          className={`flex items-center gap-4 px-4 py-3 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide ${collapsedNavClass(collapsed)}`}
-        >
-          <LogOut className="w-5 h-5 shrink-0" />
-          {!collapsed && 'Logout'}
-        </NavLink>
-      )}
-
+    <div className="mt-auto flex flex-col gap-2">
+      {/* A <button>, not a NavLink — it ends the session before it navigates. */}
       <button
-        onClick={() => setShowLogout(!showLogout)}
+        onClick={handleSignOut}
+        disabled={isSigningOut}
+        title="Logout"
+        className={`flex items-center gap-4 px-4 py-3 mb-1 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide disabled:opacity-60 disabled:pointer-events-none ${collapsedNavClass(collapsed)}`}
+      >
+        <LogOut className="w-5 h-5 shrink-0" />
+        {!collapsed && (isSigningOut ? 'Signing out…' : 'Logout')}
+      </button>
+
+      <div
         title={fullName(user)}
-        className={`flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-all duration-300 border border-white/5 w-full text-left group active:scale-98 focus:outline-none ${collapsed ? 'justify-center' : ''}`}
+        className={`flex items-center gap-3 p-3 rounded-xl border border-white/5 w-full text-left ${collapsed ? 'justify-center' : ''}`}
       >
         <div className="relative shrink-0">
           <Monogram user={user} size="lg" accent={theme.accent} />
@@ -159,16 +192,13 @@ function StudentLayoutInner() {
         </div>
         {!collapsed && (
           <div className="flex-1 min-w-0">
-            <p
-              className="font-display text-sm font-bold text-white transition-colors truncate"
-              style={{ color: showLogout ? theme.accent : undefined }}
-            >
+            <p className="font-display text-sm font-bold text-white truncate">
               {fullName(user) || displayName(user)}
             </p>
             <p className="font-sans text-[11px] text-slate-400 truncate">{subtitleFor(user)}</p>
           </div>
         )}
-      </button>
+      </div>
     </div>
   );
 
@@ -202,7 +232,7 @@ function StudentLayoutInner() {
           </span>
         </div>
 
-        <NavLink to="/student/settings" title={fullName(user)}>
+        <NavLink to="/student/profile" title={fullName(user)}>
           <Monogram user={user} size="sm" accent={theme.accent} />
         </NavLink>
       </header>

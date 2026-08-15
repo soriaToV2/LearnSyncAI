@@ -13,7 +13,10 @@
      MaterialsLibrary.tsx   -> GET /api/materials
      MaterialDetail.tsx     -> GET /api/materials/:id
      EducatorLayout.tsx     -> GET /api/auth/me (via AuthContext)
-     EducatorSettings.tsx   -> GET /api/auth/me (via AuthContext)
+     EducatorProfile.tsx    -> GET /api/auth/me (via AuthContext)
+
+   `formatDate` also has two STUDENT-side consumers now (the Profile
+   pages), which is the clearest argument yet for the rename below.
 
    Leaving invented students in the tree after that is exactly the hazard
    that produced the deleted roster pages and a Class Performance tab

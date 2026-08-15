@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { api } from '../lib/api';
 
 /**
@@ -15,9 +15,17 @@ import { api } from '../lib/api';
  * "things several screens happen to need" becomes a second, invisible data layer
  * with its own staleness rules.
  *
- * No cache, no refetch, no localStorage. It is one small request on mount, and
- * `api.ts` already re-reads the Supabase session for the JWT on every call, so
- * there is no token to keep in sync here.
+ * No cache, no background revalidation, no localStorage. It is one small request
+ * on mount, and `api.ts` already re-reads the Supabase session for the JWT on
+ * every call, so there is no token to keep in sync here.
+ *
+ * `refresh()` is not a retreat from that. It re-runs the same request on demand,
+ * and exists for exactly one caller: the Profile page, after a write it just
+ * performed. The sidebar renders `fullName(user)` from this context, so without
+ * it a renamed user keeps seeing their old name until a hard reload — the page
+ * would contradict the form that had just reported success. What the rule above
+ * rules out is staleness machinery that runs on its own; this only fires when the
+ * data provably changed.
  *
  * There are NO ROUTE GUARDS in this app today, and this file deliberately does
  * not add them — that is a separate change with its own redirect semantics. It
@@ -30,12 +38,24 @@ export type UserRole = 'student' | 'educator' | 'admin';
 export interface AuthUser {
   id: string;
   role: UserRole;
+  /**
+   * The LOGIN IDENTIFIER — `email` below is not. NULL means the account cannot
+   * sign in, which an administrator has to fix; see `profiles.username`.
+   */
+  username: string | null;
   first_name: string;
   last_name: string;
   /** NULL for educators and admins; NOT NULL for students by DB constraint. */
   grade_level: number | null;
   status: 'active' | 'disabled';
   created_at: string;
+  /**
+   * From `auth.users`, not `profiles` — the genuine sign-in address, which is why
+   * it may be shown despite `profiles` having no email column. It is CONTACT
+   * INFORMATION, not a credential: `username` is what you log in with.
+   */
+  email: string | null;
+  last_sign_in_at: string | null;
 }
 
 interface AuthValue {
@@ -43,14 +63,35 @@ interface AuthValue {
   isLoading: boolean;
   /** The thrown message, already display-ready — `api.ts` unwraps it. */
   error: string | null;
+  /** Re-read the profile. For a page that just wrote to it — see the note above. */
+  refresh: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthValue>({ user: null, isLoading: true, error: null });
+const AuthContext = createContext<AuthValue>({
+  user: null,
+  isLoading: true,
+  error: null,
+  refresh: async () => {},
+});
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * Stable identity so a consumer can list it in a dependency array without
+   * re-running on every render.
+   */
+  const refresh = useCallback(async () => {
+    try {
+      const res = await api.get<AuthUser>('/auth/me');
+      setUser(res.data);
+      setError(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not load your profile.');
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +113,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  return <AuthContext.Provider value={{ user, isLoading, error }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, isLoading, error, refresh }}>{children}</AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthValue {

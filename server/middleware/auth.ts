@@ -7,6 +7,16 @@ declare global {
   namespace Express {
     interface Request {
       user?: User;
+      /**
+       * The raw bearer token this request authenticated with.
+       *
+       * Needed because `supabaseAdmin.auth.admin.signOut(jwt, scope)` identifies
+       * the sessions to revoke by JWT, not by user id — passing an id there fails
+       * silently-ish, returning an error nobody is obliged to read. Only
+       * `POST /api/auth/change-password` uses it; everything else should key off
+       * `req.user!.id`.
+       */
+      accessToken?: string;
     }
   }
 }
@@ -44,5 +54,6 @@ export async function authenticate(
   }
 
   req.user = data.user;
+  req.accessToken = token;
   next();
 }

@@ -469,7 +469,47 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **`profiles` has no avatar, no email and no institution.** The sidebar renders an initials monogram tinted by the theme accent; the line under the name is `Grade {n}`, a real column. Do not invent any of the three — the layout used to render an Unsplash URL and "MIT" from mock data.
 
-**`src/data/mockStudents.ts` still exists** for `Settings.tsx` and `StudentProfile.tsx`. It is no longer read by the layout or the dashboard.
+**`src/data/mockStudents.ts` is GONE**, along with its last two readers. It survived the dashboard rebuild only because `Settings.tsx` and `StudentProfile.tsx` still rendered it; both were deleted in the sidebar rework below, and `mockPublicSpaces.ts` and `StudySpacePreviewModal.tsx` went with them. **`src/data/mockCourses.ts` is the only mock data left in the tree** — `games/gameUi.tsx` still reads it.
+
+## Sidebar & Profile — both portals
+
+**🔐 `supabase.auth.signOut()` HAD NO CALLER, AND BOTH PORTALS SHIPPED A LOGOUT THAT DID NOT LOG OUT.** Each sidebar rendered `<NavLink to="/login">`, which changes the URL and nothing else: the session stayed in localStorage, `api.ts` kept attaching a valid JWT, and typing `/student/dashboard` in the address bar put you straight back into the account — on a shared school computer, as the previous student. **`src/lib/signOut.ts` is the single implementation and both layouts must call it**; a sign-out copied into two layout files fails silently in whichever copy drifts.
+
+**The redirect is `navigate('/login', { replace: true })`, and it happens even if `signOut()` throws.** Without `replace` the Back button returns to the portal shell, which is exactly the "still signed in" impression the fix exists to remove. Being stranded inside the account on a network blip is the worse of the two failures, so the redirect is in a `finally`.
+
+**Profile is a nav item, not a footer item.** It sits with Dashboard / Spaces / Games (student) and Dashboard / Materials (educator), because it is a destination like they are. **The footer holds Logout and the identity card and nothing else** — one control that ends the session, above the account it ends.
+
+**Logout is ALWAYS rendered.** It used to appear only after clicking the identity card, which nothing indicated was a toggle. That toggle was the card's only job, so **the card is now a plain `<div>`** — a hover affordance on a dead element is worse than none. `showLogout` is gone from both layouts.
+
+**`components/common/ProfileCard.tsx` is the shared read-only identity card**, taking the portal's accent and its facts as props. `components/common/AccountForms.tsx` is the editable half — see the Accounts section below.
+
+**⚠️ `profiles` still has no avatar and no institution column, and neither may be invented.** Profile photos were considered and deliberately dropped: no Storage bucket, no `avatar_url`, monogram everywhere. Email is the one exception and it is a narrow one — `auth.users.email` is genuine, so it may be shown; the "no email anywhere" rule was against the **fabricated** `liza.mendoza@pca.edu.ph` that `mockEducator.EDUCATOR` printed to every educator.
+
+**⚠️ THERE IS NO THEME PICKER, AND `ThemeContext` IS PINNED TO `THEMES[0]`.** It lived only inside the two deleted Settings pages. Removing the UI alone would not have been enough — the provider also *read* `localStorage`, so anyone who had previously chosen a theme would have been locked into it permanently with no way back. The read, the write, both storage keys, `setTheme` and `getAuthTheme()` are all gone; `ACTIVE_THEME` is exported for the two auth pages. **Six of the seven `THEMES` entries are now unreachable and are a deliberate keep** — the palettes are the design system `applyThemeToElement()` writes into the CSS custom properties every screen reads, so a future picker is a revert rather than a rewrite. Do not "clean up" the array.
+
+## Accounts — username login, and what a user may change about themselves
+
+**⚠️ THE LOGIN IDENTIFIER IS `profiles.username`. `auth.users.email` IS NOT.** Before migration 0021 they were the same thing: sign-in ran straight on `auth.users.email`, which on this project held `student`, `educ1` and `admin` — usernames squatting in the email column, which is why the old "Email or Username" label looked truthful. The migration split them and **backfilled each account's login string into `username`, so no credential changed**. `email` is now contact information the user owns and can change; it is never a credential.
+
+**`POST /api/auth/login` resolves username → email SERVER-SIDE, and that placement is the whole reason the route exists.** The alternative — a public endpoint the browser calls to turn a username into an email — needs no password, so anyone could work through plausible usernames and harvest the real addresses of 12-to-16-year-olds at one named school. **Do not add a username-lookup endpoint.** Be precise about the guarantee, though: a *successful* response necessarily carries the caller's own address, since a Supabase session embeds `user.email` and the access token is a JWT with an `email` claim — stripping it would be theatre. What must never leak is anything to a caller who has not proven the password, and every failure returns one identical `LOGIN_FAILED` message with no `data` at all.
+
+**⚠️ `PATCH /api/auth/me` ACCEPTS THREE FIELDS AND `UpdateProfileSchema` IS THE ONLY THING ENFORCING THAT.** `enforce_profile_immutables()` in `schema.sql` looks like it guards `role`/`status`/`grade_level`, but its first branch is `IF auth.uid() IS NULL … RETURN NEW` and **`auth.uid()` is NULL for the service role, which is what Express holds** — the trigger is inert for every request that reaches the API. `grade_level` is the load-bearing one: `materialAccess.ts` gates every student read on it, so a student who could PATCH their own grade would read another year's materials. The schema is `.strict()`, so an unknown key is a 400 rather than a silent drop — a client sending `grade_level` must be told it was refused. **Verify refusals by re-reading the row, never by the response code.**
+
+**Both credential changes re-verify the current password, because Supabase does not.** `updateUser({ password })` accepts any live session, so on a shared school computer a walked-away session is a permanent account takeover. `server/lib/authClient.ts` owns that check.
+
+**⚠️ NEVER SIGN IN ON `supabaseAdmin` OR THE EXPORTED `supabaseAnon`.** Both are process-wide singletons and a successful `signInWithPassword` stores the session on the instance — on `supabaseAdmin` that means later `.from()` calls could run as that user instead of the service role, intermittently reinstating RLS on queries written to bypass it. `authClient.ts` builds a throwaway client per call. **This is the documented exception to "never use the anon client on the server"**: that rule is about DB access under RLS, and this module issues no queries. Do not add a `.from()` to it.
+
+**`admin.signOut(jwt, scope)` takes the caller's JWT, not a user id** — hence `req.accessToken`, attached by `authenticate` for this one consumer. Passing the id returns an error nobody is obliged to read; the acceptance harness caught it and a human would not have. **Revoke `'others'` BEFORE changing the password**, or the change invalidates the token the revocation needs and it fails exactly when it is most wanted.
+
+**`POST /api/auth/change-email` applies immediately and does NOT prove the new address belongs to the user.** Supabase's own flow mails a confirmation link, which cannot work here: `register` passes `email_confirm: true` — what a project does with no working SMTP — and the addresses in `auth.users` are undeliverable, so the link would never arrive and the change would silently never complete. The current-password check is what authorises it. **Do not enable password-reset-by-email without adding a confirmation step first.**
+
+**`AuthContext` gained `refresh()` and that is not a retreat from its "no refetch" rule.** That rule rules out background revalidation; this fires only after a write the page just performed, because the sidebar renders `fullName(user)` and would otherwise contradict a form that had just reported success.
+
+**Three forms, not one, on the Profile page.** They hit three endpoints with three authorisations. Merged into a single Save, a rejected password would roll back a valid name change, and the user would be asked for their password to fix a typo in their surname.
+
+**⚠️ Supabase rate-limits auth by source IP, and every login now shares the server's IP.** The default token-endpoint limit (~30 per 5 min) is one whole-class login rush. Raise it in Supabase → Auth → Rate Limits before the 50-student study — a dashboard setting, not code.
+
+**`handle_new_user()` takes a username from `user_metadata` and degrades every failure to NULL.** Malformed or already-taken both become NULL rather than raising, because an exception in that trigger aborts the `auth.users` INSERT and surfaces as an opaque Supabase Auth failure. **An account with a NULL username cannot sign in** — a loud, admin-fixable failure rather than a silent duplicate. `POST /api/auth/register` still sets no username, so an account created through it cannot log in; nothing calls it (`CreateAccount.tsx` is a stub) and self-registration stays out of scope, since an open sign-up choosing its own `grade_level` would hand out another year's materials.
 
 ## Educator Class Performance — the only cross-student read
 

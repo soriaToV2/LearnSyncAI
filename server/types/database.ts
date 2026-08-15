@@ -37,6 +37,13 @@ export type BktSource = 'flashcard' | 'adaptive_test';
 export interface Profile {
   id: string;              // References auth.users(id)
   role: UserRole;
+  /**
+   * The LOGIN IDENTIFIER — `auth.users.email` is not. `POST /api/auth/login`
+   * resolves this to the email server-side and signs in, so the browser never
+   * learns anyone's address. Unique case-insensitively via
+   * `ux_profiles_username_lower`. NULL means the account cannot sign in.
+   */
+  username: string | null;
   first_name: string;
   last_name: string;
   grade_level: number | null;  // 7–10 for students; null for educators/admins

@@ -40,6 +40,76 @@ export const RegisterSchema = z.object({
 });
 export type RegisterInput = z.infer<typeof RegisterSchema>;
 
+/**
+ * Mirrors `profiles_username_format` in schema.sql — 3–30 chars, lowercase
+ * alphanumerics plus dot and underscore, never opening or closing on
+ * punctuation. Lowercased before validation so `Juan` is accepted and stored as
+ * `juan`; `ux_profiles_username_lower` makes the two the same account either way.
+ *
+ * No `@`, deliberately: a username that looks like an email invites the very
+ * confusion migration 0021 removed.
+ */
+export const UsernameField = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(
+    /^[a-z0-9][a-z0-9._]{1,28}[a-z0-9]$/,
+    '3–30 characters: letters, numbers, dots and underscores, starting and ending with a letter or number'
+  );
+
+/** Sign-in. The username is resolved to an email server-side — never client-side. */
+export const LoginSchema = z.object({
+  username: UsernameField,
+  password: z.string().min(1),
+});
+export type LoginInput = z.infer<typeof LoginSchema>;
+
+/**
+ * The ONLY writer for a user's own profile, and it accepts exactly three fields.
+ *
+ * ⚠️ `role`, `status` and `grade_level` are OMITTED ON PURPOSE, and this schema
+ * is the only thing enforcing that. `enforce_profile_immutables()` looks like it
+ * covers them, but its first branch is `IF auth.uid() IS NULL … RETURN NEW` and
+ * `auth.uid()` is NULL for the service role — which is what Express holds, so the
+ * trigger is inert for every request that reaches the API.
+ *
+ * `grade_level` is the load-bearing one: `materialAccess.ts` gates every student
+ * read on `grade_levels @> [caller.gradeLevel]`, so a student who could PATCH
+ * their own grade would read another year's materials. Same rule as
+ * `UpdateMaterialSchema` — one writer, nothing else accepted.
+ *
+ * `.strict()` so an unknown key is a 400 rather than being silently dropped:
+ * a client sending `grade_level` should be told it was refused, not left to
+ * believe a 200 meant it applied.
+ */
+export const UpdateProfileSchema = z
+  .object({
+    first_name: z.string().trim().min(1).max(60).optional(),
+    last_name: z.string().trim().min(1).max(60).optional(),
+    username: UsernameField.optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
+export type UpdateProfileInput = z.infer<typeof UpdateProfileSchema>;
+
+/**
+ * Both credential changes re-verify the current password first.
+ * `supabase.auth.updateUser()` does not check it, so without this a session left
+ * open on a shared school computer is a permanent account takeover.
+ */
+export const ChangePasswordSchema = z.object({
+  current_password: z.string().min(1),
+  new_password: z.string().min(8, 'Use at least 8 characters'),
+});
+export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>;
+
+export const ChangeEmailSchema = z.object({
+  current_password: z.string().min(1),
+  new_email: z.string().trim().toLowerCase().email(),
+});
+export type ChangeEmailInput = z.infer<typeof ChangeEmailSchema>;
+
 // ── Materials ─────────────────────────────────────────────
 
 /**

@@ -1,5 +1,21 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext } from 'react';
 
+/**
+ * ⚠️ THERE IS NO THEME PICKER, AND THE PROVIDERS ARE PINNED TO `THEMES[0]`.
+ *
+ * The picker lived only inside the two Settings pages, which were deleted along
+ * with the invented student data they rendered. Removing the UI alone would not
+ * have been enough: the provider also READ `localStorage`, so anyone who had
+ * previously chosen a theme would have been locked into it permanently with no
+ * way back. The read and the write both go, and every portal now renders Cyber
+ * Cyan deterministically.
+ *
+ * SIX OF THE SEVEN `THEMES` ENTRIES ARE NOW UNREACHABLE, AND THAT IS DELIBERATE.
+ * The palettes are the design system — `applyThemeToElement()` writes them into
+ * the CSS custom properties every screen reads through `theme.accent` — so
+ * keeping them makes a future picker a revert rather than a rewrite. Do not
+ * "clean up" the array on the grounds that only the first element is used.
+ */
 export interface ThemeDefinition {
   id: string;
   label: string;
@@ -84,9 +100,15 @@ export const THEMES: ThemeDefinition[] = [
   },
 ];
 
-// Storage Keys — one per portal, so an educator's choice never overwrites a student's
-const STUDENT_STORAGE_KEY = 'learnsyncai_student_theme';
-const EDUCATOR_STORAGE_KEY = 'learnsyncai_educator_theme';
+/**
+ * The one theme every portal renders.
+ *
+ * There used to be a `learnsyncai_student_theme` / `learnsyncai_educator_theme`
+ * pair in localStorage backing a per-portal choice. Both keys are gone with the
+ * picker; any value still sitting in a browser is ignored rather than honoured,
+ * which is the point — a stale preference nobody can change is worse than none.
+ */
+export const ACTIVE_THEME = THEMES[0];
 
 // Apply theme to element
 export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
@@ -102,60 +124,30 @@ export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
   el.style.setProperty('--color-primary-container', t.accent);
 }
 
-// Theme Context
+/*
+ * `setTheme` is GONE from this value, not merely unused. Leaving a setter that
+ * every caller has stopped calling is how a "preference" quietly comes back with
+ * nowhere to set it; the shape a consumer sees should say what it can do.
+ */
 interface ThemeContextValue {
   theme: ThemeDefinition;
-  setTheme: (id: string) => void;
 }
 
-const StudentThemeContext = createContext<ThemeContextValue>({
-  theme: THEMES[0],
-  setTheme: () => { },
-});
+const StudentThemeContext = createContext<ThemeContextValue>({ theme: ACTIVE_THEME });
+const EducatorThemeContext = createContext<ThemeContextValue>({ theme: ACTIVE_THEME });
 
-const EducatorThemeContext = createContext<ThemeContextValue>({
-  theme: THEMES[0],
-  setTheme: () => { },
-});
-
-/**
- * Shared provider body. Each portal passes its own storage key so the two
- * preferences are stored independently.
+/*
+ * Both providers exist only so `useStudentTheme()` / `useEducatorTheme()` keep
+ * working unchanged at ~15 call sites across both portals. They are kept separate
+ * rather than merged into one because the split is the seam a future per-portal
+ * preference would reopen, and merging them would be the irreversible half of
+ * this change.
  */
-function PortalThemeProvider({
-  storageKey,
-  Context,
-  children,
-}: {
-  storageKey: string;
-  Context: React.Context<ThemeContextValue>;
-  children: React.ReactNode;
-}) {
-  const [theme, setThemeState] = useState<ThemeDefinition>(() => {
-    const saved = localStorage.getItem(storageKey);
-    return THEMES.find(t => t.id === saved) ?? THEMES[0];
-  });
-
-  const setTheme = (id: string) => {
-    const found = THEMES.find(t => t.id === id);
-    if (found) {
-      setThemeState(found);
-      localStorage.setItem(storageKey, id);
-    }
-  };
-
-  return (
-    <Context.Provider value={{ theme, setTheme }}>
-      {children}
-    </Context.Provider>
-  );
-}
-
 export function StudentThemeProvider({ children }: { children: React.ReactNode }) {
   return (
-    <PortalThemeProvider storageKey={STUDENT_STORAGE_KEY} Context={StudentThemeContext}>
+    <StudentThemeContext.Provider value={{ theme: ACTIVE_THEME }}>
       {children}
-    </PortalThemeProvider>
+    </StudentThemeContext.Provider>
   );
 }
 
@@ -165,9 +157,9 @@ export function useStudentTheme() {
 
 export function EducatorThemeProvider({ children }: { children: React.ReactNode }) {
   return (
-    <PortalThemeProvider storageKey={EDUCATOR_STORAGE_KEY} Context={EducatorThemeContext}>
+    <EducatorThemeContext.Provider value={{ theme: ACTIVE_THEME }}>
       {children}
-    </PortalThemeProvider>
+    </EducatorThemeContext.Provider>
   );
 }
 
@@ -175,17 +167,10 @@ export function useEducatorTheme() {
   return useContext(EducatorThemeContext);
 }
 
-// Auth-page helper: returns the theme for whichever role was last active
-export function getAuthTheme(): ThemeDefinition {
-  const saved = localStorage.getItem(STUDENT_STORAGE_KEY);
-  return THEMES.find(t => t.id === saved) ?? THEMES[0];
-}
-
-// Legacy alias so any component using useTheme() still compiles
-export function useTheme() {
-  return useContext(StudentThemeContext);
-}
-
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  return <StudentThemeProvider>{children}</StudentThemeProvider>;
-}
+/*
+ * `useTheme()` / `ThemeProvider` — two legacy aliases kept "so any component
+ * using them still compiles" — are gone. Grep found zero consumers of either, and
+ * `getAuthTheme()` went with the localStorage read it wrapped: the auth pages now
+ * apply `ACTIVE_THEME` directly, since there is no longer a per-role choice for
+ * them to recover.
+ */

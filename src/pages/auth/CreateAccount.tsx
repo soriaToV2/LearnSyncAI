@@ -1,16 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { BrainCircuit, Mail, Lock, User, Sparkles, Building, ArrowRight, Github } from 'lucide-react';
-import { getAuthTheme, applyThemeToElement } from '../../context/ThemeContext';
+import { ACTIVE_THEME, applyThemeToElement } from '../../context/ThemeContext';
 
 export default function CreateAccount() {
   const [isLoading, setIsLoading] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const authTheme = getAuthTheme();
     if (wrapperRef.current) {
-      applyThemeToElement(authTheme, wrapperRef.current);
+      applyThemeToElement(ACTIVE_THEME, wrapperRef.current);
     }
   }, []);
 

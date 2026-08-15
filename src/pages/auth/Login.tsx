@@ -1,12 +1,30 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { BrainCircuit, Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
-import { getAuthTheme, applyThemeToElement } from '../../context/ThemeContext';
+import { BrainCircuit, AtSign, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
+import type { Session } from '@supabase/supabase-js';
+import { ACTIVE_THEME, applyThemeToElement } from '../../context/ThemeContext';
 import { supabase } from '../../lib/supabase';
 import { api } from '../../lib/api';
 
+/**
+ * ⚠️ SIGN-IN IS BY USERNAME, AND THE TRANSLATION HAPPENS ON THE SERVER.
+ *
+ * This page used to call `supabase.auth.signInWithPassword({ email })` with
+ * whatever was typed into a field labelled "Email or Username" — which worked
+ * only because `auth.users.email` happened to hold username-like strings
+ * (`student`, `educ1`, `admin`). Migration 0021 gave the username its own column
+ * and `POST /api/auth/login` resolves it to the email server-side.
+ *
+ * The resolution is NOT done here on purpose. A public "what email is this
+ * username?" call needs no password, so anyone could work through plausible
+ * usernames and harvest the real addresses of 12-to-16-year-olds. The username
+ * and password now travel together and the email never reaches the browser.
+ *
+ * It also removes a round trip: the route returns `role` alongside the session,
+ * so there is no second `profiles` select to decide which portal to open.
+ */
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -15,9 +33,8 @@ export default function Login() {
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const authTheme = getAuthTheme();
     if (wrapperRef.current) {
-      applyThemeToElement(authTheme, wrapperRef.current);
+      applyThemeToElement(ACTIVE_THEME, wrapperRef.current);
     }
   }, []);
 
@@ -27,34 +44,29 @@ export default function Login() {
     setError('');
 
     try {
-      // 1. Authenticate with Supabase
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
+      const { data } = await api.post<{ session: Session; role: string }>('/auth/login', {
+        username: username.trim().toLowerCase(),
         password,
       });
 
-      if (authError || !authData.user) {
-        throw new Error(authError?.message || 'Authentication failed');
-      }
+      /*
+       * The server verified the credentials; installing the session is what makes
+       * the browser signed in, since `api.ts` reads the JWT from the Supabase
+       * client on every subsequent call.
+       */
+      const { error: sessionError } = await supabase.auth.setSession(data.session);
+      if (sessionError) throw new Error('Signed in, but the session could not be saved.');
 
-      // 3. Fetch the user's role from profiles and navigate to the correct portal
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', authData.user.id)
-        .single();
-
-      if (profileError || !profile) {
-        throw new Error('Could not load your account profile. Please contact support.');
-      }
-
-      if (profile.role === 'educator' || profile.role === 'admin') {
-        navigate('/educator/dashboard');
-      } else {
-        navigate('/student/dashboard');
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to login. Please check your credentials.');
+      navigate(
+        data.role === 'educator' || data.role === 'admin'
+          ? '/educator/dashboard'
+          : '/student/dashboard',
+        { replace: true }
+      );
+    } catch (err: unknown) {
+      // Already display-ready and deliberately generic — the route returns one
+      // message for every failure so it cannot be used to test which usernames exist.
+      setError(err instanceof Error ? err.message : 'Incorrect username or password');
       setIsLoading(false);
     }
   };
@@ -132,26 +144,28 @@ export default function Login() {
                   <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
                   <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
                     <div className="pl-4 pr-3 py-3 flex items-center justify-center text-slate-500 group-focus-within:text-primary-fixed-dim transition-colors">
-                      <Mail className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
+                      <AtSign className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
                     </div>
                     <div className="relative flex-1 flex flex-col justify-center">
                       <input
                         type="text"
-                        id="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
+                        id="username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
                         required
                         placeholder=" "
-                        autoComplete="off"
+                        autoComplete="username"
+                        spellCheck={false}
+                        autoCapitalize="none"
                         className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10"
                       />
                       <label
-                        htmlFor="email"
-                        className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
+                        htmlFor="username"
+                        className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300
                         peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
                         peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
                       >
-                        Email or Username
+                        Username
                       </label>
                       <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
                     </div>
