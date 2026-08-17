@@ -2,6 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Resolve __dirname in ESM context — same idiom as server/lib/supabase.ts.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Note: dotenv is loaded inside server/lib/supabase.ts which is imported below.
 // No need to call dotenv.config() here.
@@ -27,7 +33,40 @@ const PORT = process.env.PORT || 5000;
 // ─────────────────────────────────────────────
 // Global Middleware
 // ─────────────────────────────────────────────
-app.use(helmet());                         // Sets secure HTTP headers
+/*
+ * ⚠️ A BARE `helmet()` BLOCKS SUPABASE, WHICH BREAKS LOGIN AND EVERY LESSON PDF.
+ *
+ * Helmet's default Content-Security-Policy sets `default-src 'self'`, and
+ * `connect-src` is NOT one of the directives it names explicitly — so it inherits
+ * `'self'` and the browser refuses every request to an origin that is not ours.
+ * Two things in this app talk straight to Supabase from the browser, and both fail
+ * silently, with nothing in the server log:
+ *
+ *   - `supabase.auth.signInWithPassword()` in `src/lib/supabase.ts` — nobody can
+ *     sign in, and the login form reports no error because the request never left.
+ *   - `PdfViewer`, which is handed a Supabase Storage signed URL by
+ *     `GET /api/materials/:id/view` and fetches it with pdf.js — no lesson opens.
+ *
+ * ⚠️ NEITHER IS REPRODUCIBLE IN DEVELOPMENT. Vite serves index.html on :3000 and
+ * this header never reaches the document, so the policy is only ever applied once
+ * Express serves the app itself — i.e. only in production. Do not "simplify" this
+ * back to `helmet()` after testing locally and finding no difference.
+ *
+ * `worker-src` is listed because `PdfViewer` sets `GlobalWorkerOptions.workerSrc`
+ * to a bundled same-origin worker; `blob:` covers pdf.js's fallback path.
+ */
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        'connect-src': ["'self'", 'https://*.supabase.co', 'wss://*.supabase.co'],
+        'img-src': ["'self'", 'data:', 'blob:'],
+        'worker-src': ["'self'", 'blob:'],
+      },
+    },
+  })
+);
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000' }));
 app.use(morgan('dev'));                    // Request logging
 app.use(express.json());                   // Parse JSON request bodies
@@ -99,6 +138,51 @@ app.use('/api/admin', adminRoutes);
  * membership through `rosterStudent()` instead of trusting the id. Read-only —
  * mastery still has exactly two writers, both on the student side.
  */
+
+// ─────────────────────────────────────────────
+// Static Frontend — one origin in production
+// ─────────────────────────────────────────────
+/*
+ * In development two processes run side by side: Vite serves the app on :3000 and
+ * proxies `/api` here. In production there is only this one, so Express serves the
+ * built app itself.
+ *
+ * That is a deliberate deployment choice, not a convenience. `apiFetch()` in
+ * `src/lib/api.ts` calls `fetch('/api' + endpoint)` — a RELATIVE path with no
+ * configurable base URL — and `ResourcesTab`'s SSE call does the same. Serving both
+ * halves from one origin is what makes those work untouched, and it removes the
+ * CORS preflight a split origin would add to every request.
+ *
+ * ⚠️ THE SPA FALLBACK IS NOT OPTIONAL. React Router owns paths like
+ * `/admin/accounts` and `/student/space/:id`, which exist only in the browser. A
+ * refresh on any route but `/` would otherwise fall through to the 404 handler
+ * below and return `{"error":"Route not found"}` instead of the app.
+ *
+ * Guarded on `dist/index.html` existing so a machine that has never run
+ * `npm run build` behaves exactly as it does today rather than throwing on
+ * `sendFile`. The `/api/` test keeps unknown API routes answering JSON — without
+ * it, a typo'd endpoint would return the HTML shell and surface as a JSON parse
+ * error in the client.
+ */
+const clientDist = path.resolve(__dirname, '../dist');
+const clientIndex = path.join(clientDist, 'index.html');
+
+if (fs.existsSync(clientIndex)) {
+  app.use(express.static(clientDist));
+
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      next();
+      return;
+    }
+    res.sendFile(clientIndex);
+  });
+} else {
+  console.warn(
+    '[Static] dist/index.html not found — serving the API only.\n' +
+      '         Run `npm run build` if you meant to serve the app from this process.'
+  );
+}
 
 // ─────────────────────────────────────────────
 // 404 Handler (must come after all routes)
