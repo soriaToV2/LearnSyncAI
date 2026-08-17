@@ -7,6 +7,7 @@ import {
 import { useEducatorTheme, EducatorThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, fullName, initials, subtitleFor } from '../../context/AuthContext';
 import { signOut } from '../../lib/signOut';
+import RequireRole from '../common/RequireRole';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-educator-sidebar-collapsed';
 
@@ -331,7 +332,11 @@ export default function EducatorLayout() {
   return (
     <AuthProvider>
       <EducatorThemeProvider>
-        <EducatorLayoutInner />
+        {/* See the matching note in `StudentLayout` — the first-login gate is why
+            this guard is no longer optional. */}
+        <RequireRole allow={['educator']}>
+          <EducatorLayoutInner />
+        </RequireRole>
       </EducatorThemeProvider>
     </AuthProvider>
   );

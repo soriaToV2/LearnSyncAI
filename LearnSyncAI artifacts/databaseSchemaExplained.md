@@ -86,7 +86,7 @@ two possible values.
 
 | Role | What they do | What they cannot do |
 | :--- | :--- | :--- |
-| **admin** | Create, edit, and disable accounts. Assign teachers their subjects and grades. | Touch learning content or analytics. |
+| **admin** | Create, edit, and disable accounts. Set a student's grade level, reset a forgotten password, repair an account that cannot sign in. | Touch learning content or analytics. Delete an account. Create another admin. |
 | **educator** | Upload PDFs for their subjects, choosing which grades may access each one. Watch those students' progress. | See a student's private study spaces, flashcards, essays, or chat history. |
 | **student** | Study, take tests, play games. | See anyone else's data at all. |
 

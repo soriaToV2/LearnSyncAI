@@ -248,8 +248,14 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
  * GET /api/spaces/:id
  * Returns a single study space. Owner only — study spaces are private, and
  * migration 0003 removed peer sharing entirely.
+ *
+ * ⚠️ This was the ONE space route without `requireRole('student')`, running on
+ * bare `authenticate` and scoping by `student_id` alone. Ownership made it safe
+ * against other students, but it read no account state — so a disabled account,
+ * and later an un-activated one, could still open a space. `requireRole` is the
+ * only middleware that reads `profiles`, so both gates live or die with it.
  */
-router.get('/:id', async (req: Request, res: Response): Promise<void> => {
+router.get('/:id', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('study_spaces')
     .select('*')

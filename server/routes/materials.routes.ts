@@ -544,10 +544,18 @@ router.delete(
  * One row per term is guaranteed by extraction (see the ONE ROW PER TERM
  * invariant in `lib/conceptExtraction.ts`), so callers can render these directly
  * without collapsing duplicates.
+ *
+ * ⚠️ Ran on bare `authenticate` until the first-login gate landed. Its ONLY
+ * caller is the student Feynman tab (`FeynmanTab.tsx`), so `requireRole('student')`
+ * is the correct set — verified before narrowing it, since a wider guard here
+ * would have broken an educator path had one existed. `rejectInaccessibleMaterials()`
+ * below already rejected disabled accounts, but that is material access, not
+ * account state: `requireRole` is the only middleware that reads `profiles`, and
+ * therefore the only place the activation gate can apply.
  */
 import { FetchConceptsBatchSchema } from '../types/api';
 
-router.post('/concepts/batch', async (req: Request, res: Response): Promise<void> => {
+router.post('/concepts/batch', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = FetchConceptsBatchSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });

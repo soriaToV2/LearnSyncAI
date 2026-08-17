@@ -1,13 +1,29 @@
 import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
+import { requireRole } from '../middleware/requireRole';
 import { generateEmbedding } from '../lib/gemini';
 import { streamChatCompletion } from '../lib/groq';
 import { ChatRequestSchema } from '../types/api';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 
 const router = Router();
-router.use(authenticate);
+
+/*
+ * ⚠️ `requireRole('student')` WAS MISSING FROM THIS FILE ENTIRELY.
+ *
+ * Both routes ran on `authenticate` alone, which proves only that the caller
+ * holds a valid token — so an educator or admin could drive the student chatbot,
+ * and neither route checked `profiles.status`. `POST /` was partially covered by
+ * `rejectInaccessibleMaterials()` (which loads the caller and rejects a disabled
+ * account), but `GET /history/:spaceId` scoped by `student_id` alone and read no
+ * account state at all.
+ *
+ * It became load-bearing when the first-login gate landed: `requireRole` is the
+ * only middleware that reads `profiles`, so a route without it is a hole in that
+ * gate as well — an un-activated account could have used the chatbot.
+ */
+router.use(authenticate, requireRole('student'));
 
 /**
  * Minimum cosine similarity a retrieved concept must clear for a RAG query to be

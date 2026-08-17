@@ -83,6 +83,10 @@ CREATE TABLE profiles (
     last_name   TEXT           NOT NULL,
     grade_level SMALLINT,
     status      account_status NOT NULL DEFAULT 'active',
+    -- True while the account still holds a password an ADMINISTRATOR chose. See
+    -- the note below the table: this is a separate fact from `status`, not a
+    -- third value of it.
+    must_change_password BOOLEAN NOT NULL DEFAULT false,
     created_at  TIMESTAMPTZ    DEFAULT now(),
     updated_at  TIMESTAMPTZ    NOT NULL DEFAULT now(),
 
@@ -103,6 +107,25 @@ COMMENT ON COLUMN profiles.status IS
     'Set to disabled by an admin to revoke access without deleting the account.';
 COMMENT ON COLUMN profiles.username IS
     'Login identifier. POST /api/auth/login resolves it to auth.users.email server-side, so the email is never disclosed to an unauthenticated caller. Unique case-insensitively. NULL means the account cannot sign in.';
+COMMENT ON COLUMN profiles.must_change_password IS
+    'True while the account still holds a password an administrator set. requireRole refuses every route except GET /api/auth/me and POST /api/auth/change-password until the user replaces it. Cleared by that endpoint; re-armed by admin account creation and admin password reset.';
+
+-- ACCOUNT STATUS AND FIRST-LOGIN ACTIVATION ARE TWO FACTS, NOT ONE COLUMN.
+-- The admin portal shows an account as "Not activated" until its holder replaces
+-- the administrator-set password, but that label is DERIVED from
+-- (status = 'active' AND must_change_password) — account_status stays a
+-- two-value enum. Two reasons:
+--
+--   1. They are independent. A student can be created, never sign in, then leave
+--      the school and be disabled. A single column would overwrite the "never
+--      activated" fact and could not restore it when the account is re-enabled.
+--   2. `status` is the access gate, read in roughly nineteen places —
+--      requireRole, POST /api/auth/login, materialAccess.loadCaller,
+--      spaceAccess.loadOwnedSpace, educatorScope, and private.auth_role() /
+--      auth_grade_level() / auth_assigned_grades(), which every RLS policy below
+--      inherits. A third enum value means re-auditing all of them, where the two
+--      failure modes are a legitimate user locked out and an un-activated user
+--      let through.
 
 -- THE USERNAME IS THE LOGIN IDENTIFIER, AND auth.users.email IS NOT.
 -- Sign-in used to run straight on auth.users.email, which on the development
@@ -813,9 +836,10 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    v_role     user_role;
-    v_grade    SMALLINT;
-    v_username TEXT;
+    v_role        user_role;
+    v_grade       SMALLINT;
+    v_username    TEXT;
+    v_must_change BOOLEAN;
 BEGIN
     v_role := COALESCE(NULLIF(NEW.raw_user_meta_data ->> 'role', ''), 'student')::user_role;
 
@@ -839,14 +863,30 @@ BEGIN
         v_username := NULL;
     END IF;
 
-    INSERT INTO public.profiles (id, first_name, last_name, role, grade_level, username)
+    -- Set HERE rather than by a follow-up UPDATE from the API, so the row is born
+    -- with the flag and there is no window in which the account exists without it.
+    -- Anything unparseable degrades to false: a usable account that was not forced
+    -- to re-key is a lesser failure than one nobody can activate.
+    BEGIN
+        v_must_change := COALESCE(
+            (NULLIF(NEW.raw_user_meta_data ->> 'must_change_password', ''))::BOOLEAN,
+            false
+        );
+    EXCEPTION WHEN others THEN
+        v_must_change := false;
+    END;
+
+    INSERT INTO public.profiles (
+        id, first_name, last_name, role, grade_level, username, must_change_password
+    )
     VALUES (
         NEW.id,
         COALESCE(NEW.raw_user_meta_data ->> 'first_name', ''),
         COALESCE(NEW.raw_user_meta_data ->> 'last_name', ''),
         v_role,
         CASE WHEN v_role = 'student' THEN v_grade END,
-        v_username
+        v_username,
+        v_must_change
     )
     ON CONFLICT (id) DO NOTHING;
 

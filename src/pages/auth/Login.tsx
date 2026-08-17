@@ -44,7 +44,11 @@ export default function Login() {
     setError('');
 
     try {
-      const { data } = await api.post<{ session: Session; role: string }>('/auth/login', {
+      const { data } = await api.post<{
+        session: Session;
+        role: string;
+        must_change_password: boolean;
+      }>('/auth/login', {
         username: username.trim().toLowerCase(),
         password,
       });
@@ -57,10 +61,33 @@ export default function Login() {
       const { error: sessionError } = await supabase.auth.setSession(data.session);
       if (sessionError) throw new Error('Signed in, but the session could not be saved.');
 
+      /*
+       * An account still holding the password an administrator set goes straight
+       * to `/set-password`, whatever its role. Sending it to a portal first would
+       * render a dashboard whose every request `requireRole` refuses with a 403,
+       * and nothing on screen would say why.
+       *
+       * This is a shortcut, not the enforcement: `RequireRole` catches the same
+       * condition on any other entry point, and the server refuses regardless.
+       */
+      if (data.must_change_password) {
+        navigate('/set-password', { replace: true });
+        return;
+      }
+
+      /*
+       * ⚠️ ADMINS GO TO THE ADMIN PORTAL. They used to be sent to
+       * `/educator/dashboard` alongside educators, where `requireRole('educator')`
+       * 403s every single data call — so the one admin account could sign in and
+       * then do nothing at all. The portal exists now; this is the branch that
+       * reaches it.
+       */
       navigate(
-        data.role === 'educator' || data.role === 'admin'
-          ? '/educator/dashboard'
-          : '/student/dashboard',
+        data.role === 'admin'
+          ? '/admin/dashboard'
+          : data.role === 'educator'
+            ? '/educator/dashboard'
+            : '/student/dashboard',
         { replace: true }
       );
     } catch (err: unknown) {

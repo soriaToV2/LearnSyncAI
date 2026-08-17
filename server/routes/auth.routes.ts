@@ -3,6 +3,8 @@ import type { PostgrestError } from '@supabase/supabase-js';
 import { supabaseAdmin } from '../lib/supabase';
 import { signInWithPassword, verifyPassword } from '../lib/authClient';
 import { authenticate } from '../middleware/auth';
+import { requireRole } from '../middleware/requireRole';
+import { isPlaceholderEmail } from '../lib/placeholderEmail';
 import {
   RegisterSchema,
   LoginSchema,
@@ -19,7 +21,27 @@ const router = Router();
  * Listed explicitly rather than `*` because the client types against this shape;
  * a column added to `profiles` should not silently widen the payload.
  */
-const PROFILE_COLUMNS = 'id, role, username, first_name, last_name, grade_level, status, created_at';
+const PROFILE_COLUMNS =
+  'id, role, username, first_name, last_name, grade_level, status, must_change_password, created_at';
+
+/**
+ * ⚠️ TWO OF THIS FILE'S ROUTES MUST NEVER BE PUT BEHIND `requireRole`, AND THIS
+ * IS WHY.
+ *
+ * `requireRole` refuses every request from an account that still holds an
+ * administrator-set password (403 `PASSWORD_CHANGE_REQUIRED`). The only way out
+ * of that state is to change the password — so if the route that changes it, or
+ * the route that tells the client who it is, were gated, a newly created account
+ * would be permanently unusable with no recovery short of the database.
+ *
+ *   GET  /me              OPEN — the set-password page needs the caller's identity
+ *   POST /change-password OPEN — this is the exit
+ *   PATCH /me             gated — no renaming yourself before activating
+ *   POST /change-email    gated — likewise
+ *
+ * `authenticate` alone still proves a valid session, and both open routes act on
+ * `req.user!.id` only, so neither can be pointed at another account.
+ */
 
 /**
  * Postgres unique-violation. Raised by `ux_profiles_username_lower` when a
@@ -139,7 +161,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
   const { data: profile } = await supabaseAdmin
     .from('profiles')
-    .select('id, role, status')
+    .select('id, role, status, must_change_password')
     .eq('username', username)
     .maybeSingle();
 
@@ -164,7 +186,24 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  res.json({ data: { session, role: profile.role } });
+  /*
+   * `must_change_password` rides along so the client can go straight to
+   * `/set-password` instead of opening a dashboard that `requireRole` will refuse
+   * on its first data call. It is a HINT, not the enforcement — the gate is
+   * server-side in `requireRole`, and a client that ignores this field simply
+   * gets 403s.
+   *
+   * It is safe to disclose here and only here: the caller has just proved the
+   * password. Every failure path above returns `LOGIN_FAILED` with no `data` at
+   * all, so this never tells an unauthenticated guesser anything.
+   */
+  res.json({
+    data: {
+      session,
+      role: profile.role,
+      must_change_password: profile.must_change_password,
+    },
+  });
 });
 
 /**
@@ -200,6 +239,14 @@ router.get('/me', authenticate, async (req: Request, res: Response): Promise<voi
     data: {
       ...profile,
       email: req.user!.email ?? null,
+      /*
+       * ⚠️ The profile page MUST NOT print a placeholder address. A bulk-created
+       * student has `<username>@pca.invalid` on `auth.users`, and showing it under
+       * "Current email" presents a fabricated address as genuine — the exact rule
+       * the invented `liza.mendoza@pca.edu.ph` broke. The flag travels with the
+       * value so the client cannot forget to check.
+       */
+      email_is_placeholder: isPlaceholderEmail(req.user!.email),
       last_sign_in_at: req.user!.last_sign_in_at ?? null,
     },
   });
@@ -220,9 +267,14 @@ router.get('/me', authenticate, async (req: Request, res: Response): Promise<voi
  * own grade would read another year's materials. Same doctrine as
  * `PATCH /api/materials/:id`.
  *
+ * Gated by `requireRole` for all three roles: renaming yourself is not part of
+ * activating, so an account still holding an administrator-set password has no
+ * business here. (`GET /me` above and `POST /change-password` below stay open —
+ * see the note at the top of this file.)
+ *
  * Body: { first_name?, last_name?, username? }
  */
-router.patch('/me', authenticate, async (req: Request, res: Response): Promise<void> => {
+router.patch('/me', authenticate, requireRole('student', 'educator', 'admin'), async (req: Request, res: Response): Promise<void> => {
   const parsed = UpdateProfileSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
@@ -249,6 +301,14 @@ router.patch('/me', authenticate, async (req: Request, res: Response): Promise<v
     data: {
       ...profile,
       email: req.user!.email ?? null,
+      /*
+       * ⚠️ The profile page MUST NOT print a placeholder address. A bulk-created
+       * student has `<username>@pca.invalid` on `auth.users`, and showing it under
+       * "Current email" presents a fabricated address as genuine — the exact rule
+       * the invented `liza.mendoza@pca.edu.ph` broke. The flag travels with the
+       * value so the client cannot forget to check.
+       */
+      email_is_placeholder: isPlaceholderEmail(req.user!.email),
       last_sign_in_at: req.user!.last_sign_in_at ?? null,
     },
     message: 'Profile updated',
@@ -324,6 +384,30 @@ router.post('/change-password', authenticate, async (req: Request, res: Response
     return;
   }
 
+  /*
+   * ⚠️ THIS IS THE ONLY PLACE AN ACCOUNT BECOMES ACTIVATED, and until this change
+   * the route did not touch `profiles` at all.
+   *
+   * `must_change_password` gates every route behind `requireRole`, so failing to
+   * clear it here would leave the user permanently at `/set-password`, changing
+   * their password over and over with nothing else reachable.
+   *
+   * AFTER the password change, never before: clearing it first and then failing
+   * the change would open the account up while it still holds the password the
+   * administrator chose. It is unconditional rather than `.eq('must_change_password', true)`
+   * because a routine change by an already-activated user must be a harmless no-op.
+   */
+  const { error: flagError } = await supabaseAdmin
+    .from('profiles')
+    .update({ must_change_password: false, updated_at: new Date().toISOString() })
+    .eq('id', req.user!.id);
+
+  if (flagError) {
+    // The password DID change, so this must not read as a failure — but the user
+    // is now stuck behind the gate, which an admin has to clear. Loud in the log.
+    console.error('[auth] password changed but the activation flag survived', flagError.message);
+  }
+
   res.json({
     data: { other_sessions_revoked: !signOutError },
     message: 'Password updated',
@@ -350,7 +434,7 @@ router.post('/change-password', authenticate, async (req: Request, res: Response
  *
  * Body: { current_password, new_email }
  */
-router.post('/change-email', authenticate, async (req: Request, res: Response): Promise<void> => {
+router.post('/change-email', authenticate, requireRole('student', 'educator', 'admin'), async (req: Request, res: Response): Promise<void> => {
   const parsed = ChangeEmailSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });

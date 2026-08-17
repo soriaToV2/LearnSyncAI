@@ -94,13 +94,46 @@ export const UpdateProfileSchema = z
 export type UpdateProfileInput = z.infer<typeof UpdateProfileSchema>;
 
 /**
+ * ⚠️ THE ONE PASSWORD RULE — 8 CHARACTERS AND AT LEAST ONE NON-ALPHANUMERIC.
+ *
+ * Every place a password is SET goes through this: first-login activation, the
+ * self-service change, an admin reset, an admin-typed password on creation, and
+ * the optional `password` column in a CSV import. `src/lib/account.ts` holds the
+ * client-side mirror (`passwordProblem()`), which exists to answer before a round
+ * trip — this is authoritative.
+ *
+ * "Not a letter or a digit" rather than a fixed list of symbols: it is the
+ * simplest rule to state to a child ("one character that isn't a letter or a
+ * number"), and it accepts `-`, `_`, `!`, `?` and everything else without the UI
+ * having to enumerate an allowed set. It also means the generated initial
+ * password (`brave-otter-93`) satisfies the same rule its holder will be held to.
+ *
+ * ⚠️ Applied to passwords ENTERED, never to existing ones — the three live
+ * accounts predate it and keep working until they next change their password.
+ *
+ * A NOTE ON WHAT THIS DOES AND DOES NOT BUY, so nobody over-trusts it: NIST
+ * SP 800-63B advises against composition rules, because they mostly produce
+ * `Password1!` — a capital in front and a symbol at the end, which is exactly
+ * what an attacker's wordlist expects. The rule was requested deliberately and is
+ * implemented faithfully, but what would actually move the needle here is
+ * blocking common passwords and raising the length floor. Do not stack more
+ * composition rules on top; they compound the predictability, not the strength.
+ */
+const HAS_SPECIAL = /[^A-Za-z0-9]/;
+
+const PasswordField = z
+  .string()
+  .min(8, 'Use at least 8 characters')
+  .regex(HAS_SPECIAL, 'Include at least one special character, for example ! ? # - or _');
+
+/**
  * Both credential changes re-verify the current password first.
  * `supabase.auth.updateUser()` does not check it, so without this a session left
  * open on a shared school computer is a permanent account takeover.
  */
 export const ChangePasswordSchema = z.object({
   current_password: z.string().min(1),
-  new_password: z.string().min(8, 'Use at least 8 characters'),
+  new_password: PasswordField,
 });
 export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>;
 
@@ -109,6 +142,318 @@ export const ChangeEmailSchema = z.object({
   new_email: z.string().trim().toLowerCase().email(),
 });
 export type ChangeEmailInput = z.infer<typeof ChangeEmailSchema>;
+
+// ── Admin — account administration ────────────────────────
+
+/**
+ * ⚠️ THE ROLES AN ADMIN MAY ASSIGN ARE `student` AND `educator`. NEVER `admin`.
+ *
+ * README.md's admin module names exactly those two ("Assign appropriate roles
+ * (educator or student)"), and it is also the privilege-escalation surface: this
+ * is the one place in the app where one account writes another account's `role`.
+ * Further admins are made from the Supabase dashboard, which is where the current
+ * one came from.
+ */
+export const AssignableRole = z.enum(['student', 'educator']);
+
+/** 7–10, mirroring `profiles_grade_level_range`. Students only. */
+const GradeLevelField = z.coerce.number().int().min(7).max(10);
+
+/**
+ * ⚠️ `grade_level` IS REQUIRED FOR A STUDENT, AND THIS REFINE IS WHAT ENFORCES IT.
+ *
+ * `handle_new_user()` defaults a student with no grade to **Grade 7** silently
+ * (`IF v_role = 'student' AND v_grade IS NULL THEN v_grade := 7`). That default
+ * decides which year's materials the account can read for the rest of its life,
+ * and it would be invisible — the account is created successfully either way. So
+ * the grade must be a deliberate choice made here, never inherited from a trigger.
+ *
+ * The mirror rule — an educator must NOT carry a grade — keeps
+ * `profiles_student_needs_grade` and `subtitleFor()` honest; a stale grade on an
+ * educator renders as "Grade 9" in the sidebar.
+ */
+export const CreateAccountSchema = z
+  .object({
+    role: AssignableRole,
+    first_name: z.string().trim().min(1).max(60),
+    last_name: z.string().trim().min(1).max(60),
+    /**
+     * Required here, OPTIONAL for a bulk-import row — see `ImportAccountRowSchema`
+     * below, where a blank column is filled from the name by `suggestUsername()`.
+     * A single-account form has a Generate button and no excuse for omitting it.
+     */
+    username: UsernameField,
+    grade_level: GradeLevelField.nullable().optional(),
+    /**
+     * ⚠️ REQUIRED HERE, OPTIONAL FOR A BULK-IMPORT ROW.
+     *
+     * Contact information, never a credential — they sign in with the username.
+     * An administrator creating one account at a time has the address in front of
+     * them, so there is no reason to accept a `<username>@pca.invalid` placeholder
+     * on this path. A CSV of fifty students may legitimately be prepared before
+     * anyone has collected fifty addresses, which is why the import row keeps the
+     * fallback; see `ImportAccountRowSchema` and `lib/placeholderEmail.ts`.
+     *
+     * Supabase enforces a UNIQUE index on `auth.users.email`, so two accounts can
+     * never share one — siblings cannot both use a parent's address.
+     */
+    email: z.string().trim().toLowerCase().email('Enter a valid email address'),
+    /** Generated by the route when absent, and shown to the admin exactly once. */
+    password: PasswordField.optional(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.role === 'student' && (v.grade_level === null || v.grade_level === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['grade_level'],
+        message: 'A student needs a grade level — it decides which materials they can open',
+      });
+    }
+    if (v.role === 'educator' && v.grade_level !== null && v.grade_level !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['grade_level'],
+        message: 'An educator has no grade level — they choose grades per material at upload',
+      });
+    }
+  });
+export type CreateAccountInput = z.infer<typeof CreateAccountSchema>;
+
+/**
+ * The admin's profile writer — the counterpart of `UpdateProfileSchema`, and the
+ * deliberate inverse of it: this one DOES accept `role` and `grade_level`,
+ * because assigning them is the whole point of the role.
+ *
+ * ⚠️ THAT MAKES THIS SCHEMA LOAD-BEARING SECURITY, NOT VALIDATION.
+ * `enforce_profile_immutables()` does not back it up — its first branch is
+ * `IF auth.uid() IS NULL … RETURN NEW`, and `auth.uid()` is NULL for the service
+ * role Express holds, so the trigger is inert for every request that reaches us.
+ *
+ * `status` is NOT here: it has its own route, so that the self-lockout guard has
+ * one home rather than being a branch inside a general row editor. `id` is not
+ * here either — the target comes from the path.
+ *
+ * The role/grade coupling that Zod can see is enforced below; the rest cannot be,
+ * because a partial update does not know the resulting role without reading the
+ * row. The route resolves `role ?? current.role` and re-checks. See
+ * `profiles_student_needs_grade`.
+ */
+export const UpdateAccountSchema = z
+  .object({
+    first_name: z.string().trim().min(1).max(60).optional(),
+    last_name: z.string().trim().min(1).max(60).optional(),
+    username: UsernameField.optional(),
+    role: AssignableRole.optional(),
+    /** Explicitly nullable: student → educator must clear it in the same request. */
+    grade_level: GradeLevelField.nullable().optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' })
+  .superRefine((v, ctx) => {
+    if (v.role === 'student' && v.grade_level === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['grade_level'],
+        message: 'A student needs a grade level',
+      });
+    }
+    if (v.role === 'educator' && typeof v.grade_level === 'number') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['grade_level'],
+        message: 'An educator has no grade level',
+      });
+    }
+  });
+export type UpdateAccountInput = z.infer<typeof UpdateAccountSchema>;
+
+/**
+ * Its own route, because disabling is the only thing in this portal that takes
+ * access away — and because an admin disabling themselves would lock every
+ * administrator out of the system permanently. That guard needs one home.
+ */
+export const SetAccountStatusSchema = z
+  .object({ status: z.enum(['active', 'disabled']) })
+  .strict();
+export type SetAccountStatusInput = z.infer<typeof SetAccountStatusSchema>;
+
+/**
+ * An admin reset takes NO current password — the admin is not the account holder
+ * and could not know it. `requireRole('admin')` is the authorisation.
+ *
+ * ⚠️ This is the only password-recovery path that exists in the product. There is
+ * no working SMTP, so the "Forgot password?" link cannot be made to work; see
+ * `POST /api/auth/change-email` for the same constraint.
+ */
+export const ResetAccountPasswordSchema = z
+  .object({ new_password: PasswordField })
+  .strict();
+export type ResetAccountPasswordInput = z.infer<typeof ResetAccountPasswordSchema>;
+
+/**
+ * One row of a bulk import.
+ *
+ * Identical to `CreateAccountSchema` except that **`username` is optional**: a
+ * blank column is filled from the name by `suggestUsername()` in the route, so a
+ * class of fifty does not need fifty hand-written usernames. Every other rule is
+ * the same — in particular a student still cannot be created without a deliberate
+ * grade level, because `handle_new_user()` would silently make them Grade 7.
+ *
+ * The `.superRefine` is duplicated rather than shared because `CreateAccountSchema`
+ * is a `ZodEffects` once refined and can no longer be `.extend()`ed. Keep the two
+ * in step: they encode one rule about roles and grade levels.
+ */
+export const ImportAccountRowSchema = z
+  .object({
+    role: AssignableRole,
+    first_name: z.string().trim().min(1).max(60),
+    last_name: z.string().trim().min(1).max(60),
+    username: UsernameField.optional(),
+    grade_level: GradeLevelField.nullable().optional(),
+    email: z.string().trim().toLowerCase().email().optional(),
+    password: PasswordField.optional(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.role === 'student' && (v.grade_level === null || v.grade_level === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['grade_level'],
+        message: 'A student needs a grade level — it decides which materials they can open',
+      });
+    }
+    if (v.role === 'educator' && v.grade_level !== null && v.grade_level !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['grade_level'],
+        message: 'An educator has no grade level — they choose grades per material at upload',
+      });
+    }
+  });
+
+/**
+ * Bulk creation for the paper's 50-student study.
+ *
+ * The cap is a rate-limit guard, not a schema preference: Supabase throttles the
+ * auth admin API and the route creates accounts one at a time.
+ */
+export const ImportAccountsSchema = z
+  .object({
+    rows: z.array(ImportAccountRowSchema).min(1).max(100),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    /*
+     * Within-file duplicates would otherwise surface as a mid-import 409 with some
+     * rows already created. Case-insensitive, matching ux_profiles_username_lower.
+     *
+     * Rows with NO username are skipped here — theirs is generated in the route,
+     * which passes the names claimed so far so that two students with the same
+     * name cannot both be handed `maria.santos`.
+     */
+    const seen = new Map<string, number>();
+    v.rows.forEach((row, i) => {
+      if (!row.username) return;
+      const key = row.username.toLowerCase();
+      const first = seen.get(key);
+      if (first !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rows', i, 'username'],
+          message: `Duplicate of row ${first + 1} in this file`,
+        });
+      } else {
+        seen.set(key, i);
+      }
+    });
+
+    /*
+     * The same rule for addresses, and it is a hard constraint rather than a
+     * courtesy: Supabase enforces a unique index on `auth.users.email`
+     * (`users_email_partial_key`), so two accounts can never share one. Siblings
+     * handed the same parent's address is how a real class file hits this, and
+     * without the check the second of them fails mid-import with the first
+     * already created.
+     *
+     * A blank email is skipped — it is optional here (unlike the create form) and
+     * the route generates a `<username>@pca.invalid` placeholder, which is unique
+     * by construction.
+     */
+    const seenEmails = new Map<string, number>();
+    v.rows.forEach((row, i) => {
+      if (!row.email) return;
+      const key = row.email.toLowerCase();
+      const first = seenEmails.get(key);
+      if (first !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rows', i, 'email'],
+          message: `The same address is on row ${first + 1} of this file`,
+        });
+      } else {
+        seenEmails.set(key, i);
+      }
+    });
+  });
+export type ImportAccountsInput = z.infer<typeof ImportAccountsSchema>;
+
+/**
+ * Names in, a free username out. Admin-only — see the route's JSDoc for why that
+ * restriction is the whole reason this endpoint may exist at all.
+ */
+export const SuggestUsernameSchema = z
+  .object({
+    first_name: z.string().trim().max(60),
+    last_name: z.string().trim().max(60),
+  })
+  .strict()
+  .refine((v) => v.first_name.length > 0 || v.last_name.length > 0, {
+    message: 'Enter a first or last name first',
+  });
+export type SuggestUsernameInput = z.infer<typeof SuggestUsernameSchema>;
+
+/**
+ * Which of these usernames and addresses already belong to an account?
+ * Admin-only, for the bulk-import review screen.
+ *
+ * Both in one call because they are needed at the same instant for the same
+ * decision — whether this file is safe to import — and two round trips would let
+ * one half succeed and the other fail.
+ *
+ * ⚠️ THIS IS THE SAME ENUMERATION ORACLE AS `SuggestUsernameSchema`, AND IT IS
+ * SAFE FOR THE SAME REASON AND ONLY THAT REASON: `requireRole('admin')`. A
+ * caller who can ask "does `juan.delacruz` exist?" can work through plausible
+ * names and learn which children attend one named school — which is precisely
+ * why `POST /auth/login` returns one identical message for every failure. The
+ * email half is strictly worse if leaked, since it confirms a real address for a
+ * named child. An admin already sees the whole account list.
+ * **Never expose it to sign-up, and never move it out from behind the role.**
+ *
+ * Both caps match `ImportAccountsSchema.rows` — this exists to check one import
+ * file, not to sweep the table. Both default to empty so a file with no typed
+ * usernames, or none with addresses, needs no special-casing at the call site.
+ */
+export const ImportPrecheckSchema = z
+  .object({
+    usernames: z.array(UsernameField).max(100).default([]),
+    emails: z.array(z.string().trim().toLowerCase().email()).max(100).default([]),
+  })
+  .strict();
+export type ImportPrecheckInput = z.infer<typeof ImportPrecheckSchema>;
+
+/** Query filters for the account list. Every field optional; absent means "any". */
+export const ListAccountsQuerySchema = z
+  .object({
+    role: z.enum(['student', 'educator', 'admin']).optional(),
+    grade: GradeLevelField.optional(),
+    status: z.enum(['active', 'disabled']).optional(),
+    /** Matched against first name, last name and username. */
+    q: z.string().trim().max(60).optional(),
+    page: z.coerce.number().int().min(1).default(1),
+  })
+  .strict();
+export type ListAccountsQuery = z.infer<typeof ListAccountsQuerySchema>;
 
 // ── Materials ─────────────────────────────────────────────
 

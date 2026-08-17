@@ -18,6 +18,7 @@ import gamesRoutes from './routes/games.routes';
 import chatRoutes from './routes/chat.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import educatorRoutes from './routes/educator.routes';
+import adminRoutes from './routes/admin.routes';
 import { loadBktParameters } from './lib/bkt';
 
 const app = express();
@@ -53,6 +54,18 @@ app.use('/api/games', gamesRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/educator', educatorRoutes);
+/*
+ * `/api/admin` is the third endpoint shape, and the narrowest in what it reads.
+ * Per-space (`requireOwnedSpace`) is the student default; `/api/educator` is
+ * scoped by a material the caller uploaded; this one is scoped by nothing but the
+ * role, because administering every account is what the role is.
+ *
+ * It touches `profiles` and `auth.users` and NO LEARNING TABLE AT ALL — no
+ * materials, no concepts, no mastery. That is the line all four scope statements
+ * draw (ARCHITECTURE.md:14, README.md:191, CLAUDE.md:14, schema.sql:13), and the
+ * line `educator_assignments` was removed for crossing.
+ */
+app.use('/api/admin', adminRoutes);
 
 /*
  * `/api/bkt` is gone, and should not come back.

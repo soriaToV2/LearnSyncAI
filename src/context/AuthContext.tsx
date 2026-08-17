@@ -48,6 +48,18 @@ export interface AuthUser {
   /** NULL for educators and admins; NOT NULL for students by DB constraint. */
   grade_level: number | null;
   status: 'active' | 'disabled';
+  /**
+   * ⚠️ TRUE MEANS THE ACCOUNT IS UN-ACTIVATED AND ALMOST EVERY ROUTE WILL 403.
+   *
+   * It still holds a password an administrator set — so the administrator knows
+   * it, and after a bulk import so does everyone who saw the credentials table.
+   * `requireRole` refuses everything except `GET /api/auth/me` and
+   * `POST /api/auth/change-password` until the holder replaces it.
+   *
+   * `RequireRole` on the client redirects to `/set-password` on this, which is a
+   * convenience — the server gate is what actually enforces it.
+   */
+  must_change_password: boolean;
   created_at: string;
   /**
    * From `auth.users`, not `profiles` — the genuine sign-in address, which is why
@@ -55,6 +67,13 @@ export interface AuthUser {
    * INFORMATION, not a credential: `username` is what you log in with.
    */
   email: string | null;
+  /**
+   * ⚠️ TRUE MEANS `email` IS A `<username>@pca.invalid` PLACEHOLDER AND MUST NOT
+   * BE DISPLAYED. Bulk import generates one when a CSV row leaves the column
+   * blank, because Supabase requires an identity on every account. Showing it
+   * would present a fabricated address as the user's own.
+   */
+  email_is_placeholder: boolean;
   last_sign_in_at: string | null;
 }
 

@@ -119,8 +119,9 @@ LearnSyncAI/
 │   │   │                          # (no bkt.routes.ts — BKT is not client-triggered)
 │   │   ├── chat.routes.ts         # /api/chat (RAG-based study assistant)
 │   │   ├── dashboard.routes.ts    # /api/dashboard (the one global student read)
-│   │   └── educator.routes.ts     # /api/educator (class-level mastery analytics)
-│   │                              # educators UPLOAD via materials.routes.ts, not here
+│   │   ├── educator.routes.ts     # /api/educator (class-level mastery analytics)
+│   │   │                          # educators UPLOAD via materials.routes.ts, not here
+│   │   └── admin.routes.ts        # /api/admin (accounts; touches NO learning table)
 │   └── types/
 │       ├── api.ts                 # All Zod validation schemas + inferred types
 │       └── database.ts            # TypeScript types mirroring DB table shapes
@@ -131,7 +132,14 @@ LearnSyncAI/
 │   ├── components/                # Shared reusable UI components
 │   ├── pages/
 │   │   ├── auth/                  # Login, Register pages
-│   │   ├── admin/                 # Admin account management pages
+│   │   ├── admin/                 # Admin Portal — accounts only
+│   │   │   ├── AdminDashboard.tsx      # account counts + the attention list
+│   │   │   ├── AccountsList.tsx        # search/filter; filters live in the URL
+│   │   │   ├── AccountDetail.tsx       # details · password reset · disable/enable
+│   │   │   ├── AdminProfile.tsx        # ProfileCard + AccountForms, unchanged
+│   │   │   └── components/
+│   │   │       ├── CreateAccountModal.tsx   # one account
+│   │   │       └── ImportAccountsModal.tsx  # CSV → preview → commit → credentials
 │   │   ├── educator/              # Educator Portal pages
 │   │   │   ├── EducatorDashboard.tsx   # across every material — the one global educator read
 │   │   │   ├── MaterialsLibrary.tsx    # Upload + list
@@ -509,7 +517,165 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **⚠️ Supabase rate-limits auth by source IP, and every login now shares the server's IP.** The default token-endpoint limit (~30 per 5 min) is one whole-class login rush. Raise it in Supabase → Auth → Rate Limits before the 50-student study — a dashboard setting, not code.
 
-**`handle_new_user()` takes a username from `user_metadata` and degrades every failure to NULL.** Malformed or already-taken both become NULL rather than raising, because an exception in that trigger aborts the `auth.users` INSERT and surfaces as an opaque Supabase Auth failure. **An account with a NULL username cannot sign in** — a loud, admin-fixable failure rather than a silent duplicate. `POST /api/auth/register` still sets no username, so an account created through it cannot log in; nothing calls it (`CreateAccount.tsx` is a stub) and self-registration stays out of scope, since an open sign-up choosing its own `grade_level` would hand out another year's materials.
+**`handle_new_user()` takes a username from `user_metadata` and degrades every failure to NULL.** Malformed or already-taken both become NULL rather than raising, because an exception in that trigger aborts the `auth.users` INSERT and surfaces as an opaque Supabase Auth failure. **An account with a NULL username cannot sign in** — a loud, admin-fixable failure rather than a silent duplicate. **The Admin Portal is now that fix** (Accounts → the account → set a username). `POST /api/auth/register` still sets no username, so an account created through it cannot log in; nothing calls it (`CreateAccount.tsx` is a stub) and self-registration stays out of scope, since an open sign-up choosing its own `grade_level` would hand out another year's materials.
+
+## Admin Portal — accounts, and deliberately nothing else
+
+**The scope is narrow because four independent sources say so** — `ARCHITECTURE.md:14`, `README.md:182-191`, `CLAUDE.md:14`, `schema.sql:13` all give the same three verbs (create, edit, disable), the same object (accounts for educators and students), and the same exclusion: *"does not interact with learning content, study activities, or analytics"*. **Nothing under `/api/admin` reads `materials`, `concepts`, `bkt_mastery` or any other learning table** — only `profiles` and, through the Supabase admin API, `auth.users`. There is precedent for holding this line: `educator_assignments` (admin assigns teachers subjects/grades) was built and then **removed** as going *"beyond the specification"* (`databaseSchemaExplained.md:309`).
+
+**Before this existed the admin could not use the application at all.** `Login.tsx` sent `role === 'admin'` to `/educator/dashboard`, where `requireRole('educator')` 403s every data call. Three promises elsewhere in the app also had no implementation: "Only an administrator can change this" on the student Profile page (`grade_level`), "an admin fixes" a NULL username, and password recovery — there is **no SMTP**, so `POST /accounts/:userId/password` is the *only* password-recovery path in the product and the "Forgot password?" link stays inert.
+
+**⚠️ THERE IS NO DELETE ROUTE AND NO DELETE CONTROL. Do not add one casually.** Thirteen tables CASCADE from `profiles` — `study_spaces`, `bkt_mastery`, `bkt_update_logs`, `practice_tests`, `practice_telemetry`, `cognitive_logs`, `chatbot_logs`, `spaced_repetition_logs`, `gamification_profiles`, `game_content`, `game_sessions`, `user_badges`, `activity_logs` — so deleting one student destroys their entire measured history, which for a 50-student study is the research data. `schema.sql` states the intended idiom on the column: *"Set to disabled by an admin to revoke access without deleting."* Disable is already honoured by `requireRole`, `POST /api/auth/login`, `private.auth_role()` and `rosterForGrades()`, and is fully reversible. Deletion is also the one operation the schema fights — `materials.educator_id` is `ON DELETE RESTRICT`, the only non-CASCADE FK, so deleting a publishing educator fails as an opaque Supabase Auth error.
+
+**⚠️ `handle_new_user()` REPORTS SUCCESS FOR AN ACCOUNT THAT CANNOT SIGN IN**, which is why `createAccount()` in `admin.routes.ts` is a function rather than three lines. A malformed or taken username degrades to NULL, so the naive implementation says "Account created" and nobody can log in. The sequence is: pre-check `lower(username)` → **409**, nothing written → `auth.admin.createUser` with `user_metadata` (the trigger writes `profiles` *and* `gamification_profiles`) → **re-read the row and confirm the username stuck** → on NULL, one targeted UPDATE whose `23505` is authoritative → on collision, delete the auth user and 409. **Build the response from the re-read row, never the request body** — the body is what was asked for, the row is what happened. Verified: a case-differing duplicate 409s and leaves no orphan.
+
+**⚠️ A STUDENT CREATED WITHOUT A GRADE SILENTLY BECOMES GRADE 7.** `handle_new_user()` does `IF v_role = 'student' AND v_grade IS NULL THEN v_grade := 7`, and that value decides which year's materials the account can open for life. `CreateAccountSchema.superRefine` requires it, the create modal ships **no pre-selected grade**, and the CSV importer rejects a blank one. Never let the trigger choose it.
+
+**Role and grade move together, and Zod cannot see the whole rule.** `profiles_student_needs_grade` is `CHECK (role <> 'student' OR grade_level IS NOT NULL)`. A partial PATCH does not know the resulting role without reading the row, so the schema validates what it can and the route re-checks `role ?? current.role` against `grade_level ?? current.grade_level`; student→educator clears the grade. **A role change is fully reversible** — nothing cascades, so flipping back restores every study space and mastery row, the same property archiving relies on. The UI says so, because an admin otherwise reasonably assumes it is destructive.
+
+**⚠️ `UpdateAccountSchema` IS LOAD-BEARING SECURITY, NOT VALIDATION.** It is the deliberate inverse of `UpdateProfileSchema`: it *does* accept `role` and `grade_level`, because assigning them is the role's entire job. `enforce_profile_immutables()` does not back it up — `auth.uid()` is NULL for the service role, so the trigger returns early for every request that reaches Express. **Assignable roles are `student` and `educator` only, never `admin`** (README:188); further admins come from the Supabase dashboard, as the current one did.
+
+**Two self-lockout guards, both 400, both on `req.user!.id`: you cannot change your own role, and you cannot change your own status.** There is exactly one admin account — either one would lock every administrator out permanently, including out of the request that would undo it. `status` has its own route rather than being a field in PATCH so that guard has one home. The UI omits both controls rather than letting them fail.
+
+**✅ An admin password reset DOES revoke the target's open sessions — measured, not assumed.** After `updateUserById({ password })` an access token issued moments earlier answers 401 and its refresh token is rejected outright. **That depends on `authenticate` calling `supabaseAdmin.auth.getUser(token)`**, a round trip to the auth server rather than a local signature check — verifying the JWT locally is the obvious way to save a hop and would silently turn every open session into one that survives a reset. `admin.signOut(jwt, scope)` is unusable here regardless: it identifies sessions by JWT and we hold the admin's, not the target's.
+
+**`profiles` has no email column, so the LIST deliberately fetches none** — an N+1 `getUserById` across 50+ accounts to render a list whose identifier is the username anyway. The detail route fetches exactly one. `GET /overview` is the sole exception: "never signed in" needs `last_sign_in_at`, so it pages `listUsers()` (50/page, bounded loop) and reports **null rather than 0** when that read fails.
+
+**⚠️ EMAIL IS REQUIRED BY THE CREATE FORM AND OPTIONAL FOR A CSV ROW — the asymmetry is deliberate.** An admin entering one account has the address in front of them; a class of fifty may be imported before anyone has collected fifty addresses, and blocking that would kill the feature exactly when it is needed. So `CreateAccountSchema.email` is required while `ImportAccountRowSchema.email` is not, and **`lib/placeholderEmail.ts` is now reachable only from import.**
+
+**Placeholder addresses use `<username>@pca.invalid`** — RFC 2606's reserved TLD, because Supabase requires an identity on every account. **Every screen that prints an email must call `isPlaceholderEmail()`**: the rule the invented `liza.mendoza@pca.edu.ph` broke was about displaying a fabricated address as genuine, and printing a placeholder is the same mistake with better intentions. The admin page always checked; **`AccountForms.tsx` did not, and showed students `juan.delacruz@pca.invalid` as their own contact address** — which is why `GET /api/auth/me` now returns `email_is_placeholder` beside `email`. **Not `email = username`** — that is exactly the squatting migration 0021 untangled.
+
+**Supabase enforces a UNIQUE index on `auth.users.email` (`users_email_partial_key`)**, so two accounts can never share an address — siblings cannot both use a parent's Gmail. That constraint is why requiring a real email on every path was not viable for the 50-student import.
+
+**`GET /api/admin/overview` accepts NOTHING** — no body, no query, no path parameter — so it has zero IDOR surface and no Zod schema, the same bar as `GET /api/dashboard` and `GET /api/educator/overview`. Every figure on it is a **count of accounts**; a dashboard is the easiest place in an app to cross the scope line by accident.
+
+**A user id in `/admin/accounts/:userId` is correct and is NOT the pattern the two global reads avoid.** Those derive everything from `req.user!.id` because a *student's* id in a URL is an IDOR surface on a student-facing route. Administering every account is what this role is, and `requireRole('admin')` is the authorisation.
+
+**`RequireRole` is the app's FIRST route guard, and only `AdminLayout` uses it.** Everywhere else a wrong-portal URL renders a shell whose calls 403 — untidy, not dangerous. A portal that lists every account in the school should not render its frame for a student. It sits **inside** `AuthProvider` and **outside** the shell, and its `isLoading` branch is load-bearing: `user` is null on first render, so redirecting on a falsy `user` alone would bounce a legitimate admin to `/login` on every cold load. Wiring the other two layouts is a one-line change each and belongs to its own review.
+
+**Bulk import validates the whole file before writing anything**, including within-file duplicate usernames (case-insensitive, matching `ux_profiles_username_lower`) — the failure most likely to leave half a class created. Creation is **sequential, never `Promise.all`**: Supabase rate-limits the auth admin API by source IP and every call shares the server's. Rows are still reported individually, because a genuine race for a username can survive validation. **The results table is the only time the generated passwords exist in readable form** and the copy says so.
+
+**Import is a modal on Accounts, and that move cost it two protections a page got for free.** It was `/admin/import` — a fourth nav item and a page of its own, justified as "a multi-step flow that needs the page to itself". Both halves of that argument had to be answered rather than dropped:
+
+- **⚠️ `Modal` HAS NO MAX-HEIGHT AND ITS PANEL IS `overflow-hidden`, inside a wrapper that centres with `items-center`.** A fifty-row table therefore overflows **both** edges — the top rows unreachable, the Create button below the fold with nothing to scroll. This is the flashcard-face bug in a different component. `ImportAccountsModal` caps its own content at `calc(85vh - 11rem)` and scrolls it, with the **action row as a sibling of the scroll box** so the buttons stay pinned. Sized against the chrome rather than as a flat `vh` fraction: the chrome is a constant pixel height, so a fraction that fits 1080px overflows a 600px laptop. **Do not "fix" this by giving `Modal.tsx` a max-height** — twelve other call sites depend on its current sizing.
+- **⚠️ A PAGE CANNOT VANISH BY ACCIDENT; A MODAL CLOSES ON ESCAPE, ON THE BACKDROP AND ON THE X — all three wired to one `onClose`.** Losing the results screen means resetting every account individually, so `requestClose()` is the only thing passed to `Modal`. It refuses **outright** while `busy` (creation is sequential over up to fifty accounts — unmounting mid-flight loses every password while the server carries on), and asks for confirmation on the results screen until the credentials have been copied **or** saved to a file. **"Import more" goes through the same guard** (`requestRestart()`): it clears `results` just as thoroughly as closing does, and an admin reaching for the next class has not necessarily saved the last one.
+
+**The confirmation renders IN PLACE, replacing the action row — never as a nested `Modal`.** Two portals both binding Escape and both writing `document.body.style.overflow` fight over the teardown.
+
+**⚠️ UPLOAD IS THE ONLY WAY IN. THE PASTE BOX WAS REMOVED BECAUSE IT COULD NOT WORK THE WAY ANYONE WOULD TRY TO USE IT.** Copying cells out of Excel or Google Sheets puts them on the clipboard **tab-separated**, and `splitLine()` in `csvAccounts.ts` splits on commas only — so a spreadsheet paste arrived as one giant column and failed with *"The header row is missing: role, first_name, …"*, which reads as a problem with the admin's data rather than with the input method. The only clipboard content it ever accepted was raw CSV text: a file already saved, opened in Notepad and copied, which is a stranger route than uploading it. **Do not reintroduce paste without teaching the parser about tabs first.** A drag-and-drop zone replaced it, and a file now parses on arrival and advances to the preview itself — which is why the input phase has no action row and no "Review rows" button.
+
+**The drop zone's contents are `pointer-events-none`.** Without it `dragleave` fires whenever the cursor crosses onto a child element, so the highlight flickers off while the file is still over the target.
+
+**A non-`.csv`/`.txt` file is rejected by NAME, before the parser sees it.** Excel saves `.xlsx` by default, so dropping a workbook is the most likely mistake here; a binary file reaches `parseAccountsCsv()` as mojibake and comes back as "the header row is missing", sending the admin to look at their columns instead of at File → Save As.
+
+**`downloadCredentials()` and `copyAll()` both filter to `r.ok` rows.** A failed row carries no password, and a blank cell in a credentials file reads as an account whose password is empty rather than one that was never created.
+
+**⚠️ THE TEMPLATE HAS NO `username` AND NO `password` COLUMN.** `CSV_COLUMNS` is `role, first_name, last_name, grade_level, email` — only what the school actually knows about a person. Both credentials are generated server-side and handed back in the download at the end, so asking the admin to supply them is asking for work whose output is discarded, and hand-writing fifty usernames is the exact chore `suggestUsername()` exists to remove. **`REQUIRED_COLUMNS` is now just `role, first_name, last_name`** — `username` left that list with the template, and a file of educators legitimately has no `grade_level` column at all.
+
+**⚠️ THE PARSER STILL ACCEPTS BOTH COLUMNS WHEN PRESENT, AND THAT IS NOT A LEFTOVER.** Not offering something and refusing it are different things: a file built from the older template must keep working, and an educator occasionally warrants a chosen username (`a.santos`). Every rule that guarded a supplied value still fires — format, within-file duplicates, the existing-account precheck. Verified end to end. **The preview renders a blank username as an italic "generated", never `—`**: blank is now the healthy case on every row, and a dash would read as missing data across an entire good file.
+
+**⚠️ THE CREDENTIALS FILE CARRIES THE NAME, AND THAT IS NOT DECORATION — `first_name,last_name,username,password`.** It is handed out to up to fifty children, so a file of usernames and passwords alone cannot be distributed at all: nothing on it says whose line is whose. Generated usernames only *look* self-explanatory until two students share a name and become `maria.santos` and `maria.santos2`. **The names come from the server's result rows** — `POST /accounts/import` now returns them, taken from the re-read profile on success (the same "row, not request body" rule `createAccount()` follows) and from the input on failure. **Never re-derive them by matching index against the rows that were sent**: a row can drop out of the results (a name yielding no username is reported and `continue`s), which would shift every later name by one and hand children each other's passwords.
+
+**⚠️ `csvCell()` IS A CORRECTNESS GUARD, NOT TIDINESS, AND IT ARRIVED WITH THE NAME COLUMNS.** A surname entered as `Dela Cruz, Jr.` splits into two cells unquoted and pushes the password one column across; measured, the control case parses the username as `tan lj`. A password typed into the import file can contain a comma for the same reason — the rule on it is only "eight characters, one of them not a letter or digit". `csvCell()` must stay the exact inverse of `splitLine()`, which is why both live in `csvAccounts.ts`: that module now owns reading *and* writing the format. The clipboard form (`toTsv`) is deliberately unquoted — tabs are what a spreadsheet expects on paste, and no cell can contain one, having come from a comma-split file.
+
+**`/admin/import` redirects rather than being deleted.** There is **no catch-all route**: an unmatched path inside `AdminLayout` renders the shell with an empty `<Outlet />` — a blank page, not a 404 — which is what a bookmark of the old address would land on.
+
+**⚠️ `csvAccounts.ts` CATCHES DUPLICATES WITHIN THE FILE, NOT AGAINST THE DATABASE — `POST /api/admin/import/precheck` is the half that was missing.** Without it the review screen could say "50 accounts ready to create" and then fail on row 34 because that username already existed, leaving 33 accounts created and a class half imported. The most likely way to hit it is the ordinary one: import a class, notice two students were missed, re-upload the corrected *full* file. The modal now annotates the offending rows before Create is ever enabled.
+
+**It checks BOTH usernames and emails, in one call.** They are needed at the same instant for the same decision, and two round trips would let one half succeed while the other failed. The email half has its own realistic route in — siblings handed the same parent's address, which `users_email_partial_key` refuses — and it was the surviving partial-import hole after the username half landed. Within-file duplicate emails are caught too, in `csvAccounts.ts` *and* `ImportAccountsSchema.superRefine`, mirroring how usernames are handled on both sides.
+
+**It is a COURTESY, NOT THE GUARANTEE, and must never be treated as one.** Two admins importing overlapping files can both pass it, and an account can appear in the seconds between the check and the import. `usernameTaken()` inside `createAccount()`, `ux_profiles_username_lower` and `users_email_partial_key` remain the arbiters, and the per-row 409 stays reachable. **The client failure is deliberately non-fatal** — an unavailable check costs the early warning and nothing else, and blocking a whole import over it would be the worse trade.
+
+**It is the same enumeration oracle as `/username-suggestion` and is safe for the same reason and only that reason: `requireRole('admin')`.** A username-availability check a stranger could reach lets them work through plausible names and learn which children attend one named school; the email half is worse still, since it confirms a real address for a named child. **Do not expose it to sign-up and do not move it out from behind the admin role.** Only *supplied, well-formed* values are sent — a blank username is the server's to generate (it checks the database while doing so), and a malformed entry would 400 the whole array under `ImportPrecheckSchema` while already carrying its own format error. `EMAIL_SHAPE` is exported from `csvAccounts.ts` so the modal filters by exactly the test that produced those errors.
+
+**⚠️ THE EMAIL HALF IS THE ONE PLACE THAT STILL SWEEPS `auth.users`, AND IT HAS TO.** Addresses are not on `profiles`, PostgREST does not expose the `auth` schema, and the admin SDK has no `getUserByEmail` — paging `listUsers()` and intersecting in memory is the only route to the fact. This does **not** contradict `GET /overview` dropping its sweep: that one ran on every dashboard load to answer a question a plain column read answered better, whereas this runs once, on an explicit file upload, to get something otherwise unobtainable. At `perPage: 1000` a school is one request; `AUTH_MAX_PAGES` is a runaway guard, not an expected limit.
+
+**`src/components/common/formKit.tsx` holds `Field`/`Section`/`SaveButton`/`StatusLine`/`messageOf`/`useSubmitLatch`**, lifted out of `AccountForms.tsx` when the admin editors needed them. `useSubmitLatch` is a correctness guard, not styling — a second copy would drift, and the admin forms change passwords and account status.
+
+**Deliberately absent:** an admin action log (defensible, but a new table and a new writer, in no scope statement); `subjects` and `bkt_parameters` screens (RLS grants both, no prose assigns them — and `bkt.ts` caches parameters for the process lifetime, so a live edit would desync a running session's audit trail from the ICR evidence); and anything from a learning table.
+
+## First-login activation — the account gate
+
+**An account created by an admin is born un-activated** (`profiles.must_change_password`), and
+`requireRole` refuses every route until its holder replaces the password. The reason is concrete: the
+admin chose or read that password, and after a bulk import fifty of them sit in a table that gets
+copied into a spreadsheet and printed — so until the student re-keys it, their teacher can sign in as
+them.
+
+**⚠️ `account_status` STAYS A TWO-VALUE ENUM. The "Not activated" state is DERIVED, not stored.**
+`accountState()` in `src/lib/adminAccounts.ts` combines the two columns (disabled wins). Two reasons,
+both load-bearing: they are **independent facts** — an account can be disabled *and* never activated,
+which one column cannot express and could not restore on re-enable — and `status` is the access gate
+read in ~19 places (`requireRole`, `POST /auth/login`, `materialAccess.loadCaller`,
+`spaceAccess.loadOwnedSpace`, `educatorScope`, plus `private.auth_role()` / `auth_grade_level()` /
+`auth_assigned_grades()`, which every RLS policy inherits). A third enum value means re-auditing all
+of them, where the failure modes are "legitimate user locked out" and "un-activated user let through".
+
+**⚠️ THE GATE LIVES IN `requireRole` BECAUSE IT IS THE ONLY MIDDLEWARE THAT READS `profiles` — so a
+route mounting `authenticate` alone was a hole, and four were.** Closing them was a necessary part of
+this change, not scope creep:
+
+| Route | Was | Now |
+|---|---|---|
+| both of `chat.routes.ts` | `authenticate` only — `requireRole` was never imported, so an educator could drive the student chatbot | `requireRole('student')` |
+| `GET /api/spaces/:id` | the one space route without a role check | `requireRole('student')` |
+| `POST /api/materials/concepts/batch` | bare | `requireRole('student')` — its only caller is `FeynmanTab.tsx` |
+| `PATCH /auth/me`, `POST /auth/change-email` | bare, by design | gated for all three roles |
+
+**⚠️ `GET /api/auth/me` AND `POST /api/auth/change-password` MUST STAY UNGATED.** They are the way
+out. Gating either makes a newly created account permanently unusable with no recovery short of the
+database.
+
+**`POST /auth/change-password` is the ONLY place an account becomes activated, and it did not touch
+`profiles` at all before this.** It clears the flag *after* the password change succeeds — clearing
+first and then failing would open the account up while it still holds the administrator's password.
+Unconditional rather than `.eq('must_change_password', true)`, so a routine change by an activated
+user is a harmless no-op. **`POST /api/admin/accounts/:userId/password` re-arms it** — the admin just
+chose that password too, so the same rule applies; that is the second of exactly two call sites (the
+other being creation, via `user_metadata` so the row is born with it).
+
+**`/set-password` is mounted OUTSIDE every layout, beside `/login`.** Inside a guarded layout,
+`RequireRole`'s redirect would fire again on arrival and loop forever. It carries its own
+`AuthProvider`. `RequireRole` checks activation **before** the role check, because a student, educator
+and admin created this way are all equally un-activated.
+
+**`RequireRole` is now wired into all three layouts.** It was admin-only and deferred as "its own
+review"; the gate made it necessary, since an un-activated account would otherwise render a full
+portal shell and 403 on every request with nothing on screen explaining why.
+
+**⚠️ `ACCOUNT_COLUMNS` in `admin.routes.ts` MUST CARRY EVERY COLUMN A SCREEN RENDERS.** `must_change_password` was missing from it, so the list, the detail view and the create response all returned the field as `undefined`; `accountState()` read that as false and **every account displayed "Active" no matter how freshly created**, while the dashboard — which selects the column in its own query — counted them correctly. Two screens quietly disagreeing is the signature. A harness that checks the database row and the login payload does **not** catch this; assert the admin read as well.
+
+**One password rule, `PasswordField` in `server/types/api.ts`: 8 characters and at least one non-alphanumeric.** It governs every path that SETS a password — first-login activation, self-service change, admin reset, an admin-typed password on create, and the CSV `password` column. `passwordProblem()`/`isPasswordValid()` in `src/lib/account.ts` are the client mirror, used by all three forms so they cannot disagree about a rejection. "Not a letter or a digit" rather than a symbol list: it is the simplest rule to state to a child, and it means `brave-otter-93` satisfies the rule its holder will be held to. **It applies to passwords entered, never to stored ones** — the live accounts predate it. NIST SP 800-63B advises *against* composition rules (they mostly yield `Password1!`); this one was requested deliberately, so implement it faithfully but **do not stack more on top** — a common-password blocklist and a longer floor are what would actually help.
+
+**Initial passwords are memorable, not random — `brave-otter-93`.** The 10-character random string it
+replaced (`xK7mPq2Rtv`) cannot be read aloud to a Grade 7 class, which is what made "just use the
+username as the password" tempting — and that would mean anyone who knows a student's *name* can sign
+in as them, since usernames are generated from names. **The entropy trade is deliberate and
+conditional: ~1.5 million combinations against ~2.5 × 10¹⁷, acceptable ONLY because the password is
+single-use (this gate forces replacement) and Supabase rate-limits sign-in by IP. If the forced change
+is ever removed, revert the generator with it.**
+
+**`POST /api/admin/username-suggestion` is the enumeration oracle this codebase deliberately does not
+have — and is safe only behind `requireRole('admin')`.** A public username-availability check lets a
+stranger work through plausible names and learn which children attend one named school; that is why
+`POST /auth/login` returns one identical message for every failure. An admin already sees the whole
+account list. **Do not move it out from behind the admin role, and do not reuse it for sign-up.**
+`server/lib/usernameSuggest.ts` folds `ñ` via `normalize('NFD')` (Filipino names carry it routinely,
+and dropping the letter gives a username the student will not recognise), strips hyphens and
+apostrophes, fits 30 characters leaving room for a suffix, and appends `2`, `3`… against the database.
+It **returns null rather than inventing `user1234`** — a username carrying no trace of the person is
+one nobody can match to a class list.
+
+**A blank `username` column in a CSV is filled from the name**, deduplicated within the file *and*
+against the database — `ImportAccountRowSchema` exists solely to make `username` optional there, and
+the route passes a `claimed` set so two students called Maria Santos cannot both be handed
+`maria.santos`. The client must **omit the key entirely** rather than sending `''`, which
+`UsernameField.optional()` rejects.
+
+**`GET /api/admin/overview` no longer touches `auth.users` at all.** `not_activated` replaced
+`never_signed_in`, which needed a paged `listUsers()` sweep to answer a weaker question — opening the
+app is not the same as taking ownership of the account, and the new figure is a plain column read.
+`last_sign_in_at` survives on the account detail page, where it is one `getUserById` for one account.
 
 ## Educator Class Performance — the only cross-student read
 

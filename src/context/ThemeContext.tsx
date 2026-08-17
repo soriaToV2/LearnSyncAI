@@ -167,6 +167,25 @@ export function useEducatorTheme() {
   return useContext(EducatorThemeContext);
 }
 
+const AdminThemeContext = createContext<ThemeContextValue>({ theme: ACTIVE_THEME });
+
+/**
+ * The admin portal's provider. A third near-identical copy is deliberate for the
+ * same reason the first two were not merged: the per-portal split is the seam a
+ * future preference would reopen, and collapsing it is the irreversible half.
+ */
+export function AdminThemeProvider({ children }: { children: React.ReactNode }) {
+  return (
+    <AdminThemeContext.Provider value={{ theme: ACTIVE_THEME }}>
+      {children}
+    </AdminThemeContext.Provider>
+  );
+}
+
+export function useAdminTheme() {
+  return useContext(AdminThemeContext);
+}
+
 /*
  * `useTheme()` / `ThemeProvider` — two legacy aliases kept "so any component
  * using them still compiles" — are gone. Grep found zero consumers of either, and

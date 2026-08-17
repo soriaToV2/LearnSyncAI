@@ -4,6 +4,7 @@ import { Home, Layers, Gamepad2, BrainCircuit, LogOut, UserCircle, Menu, X, Chev
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } from '../../context/AuthContext';
 import { signOut } from '../../lib/signOut';
+import RequireRole from '../common/RequireRole';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-sidebar-collapsed';
 
@@ -361,7 +362,18 @@ export default function StudentLayout() {
   return (
     <AuthProvider>
       <StudentThemeProvider>
-        <StudentLayoutInner />
+        {/*
+          `RequireRole` was added for the admin portal and deferred here, because
+          it changes redirect behaviour on routes that had already shipped. The
+          first-login gate made it necessary: an un-activated account would
+          otherwise render this whole shell and then 403 on every request, with
+          nothing on screen explaining why. It also sends a signed-in educator or
+          admin to their own portal instead of a student page whose calls refuse
+          them.
+        */}
+        <RequireRole allow={['student']}>
+          <StudentLayoutInner />
+        </RequireRole>
       </StudentThemeProvider>
     </AuthProvider>
   );

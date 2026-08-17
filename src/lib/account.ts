@@ -61,6 +61,39 @@ export const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._]{1,28}[a-z0-9]$/;
 export const USERNAME_HINT =
   '3–30 characters: lowercase letters, numbers, dots and underscores, starting and ending with a letter or number.';
 
+/**
+ * ⚠️ THE PASSWORD RULE, MIRRORED. `PasswordField` in `server/types/api.ts` is
+ * authoritative and re-validates every one of these; this exists only so a form
+ * can answer before a round trip.
+ *
+ * Used by all three places a password is chosen — first-login activation, the
+ * self-service change, and an admin reset. One implementation, because three
+ * forms disagreeing about what a valid password is would be three different
+ * error messages for the same rejection.
+ */
+export const MIN_PASSWORD_LENGTH = 8;
+
+/** Anything that is not a letter or a digit. Accepts `-`, `_`, `!`, `?`, … */
+const HAS_SPECIAL = /[^A-Za-z0-9]/;
+
+export const PASSWORD_HINT =
+  'At least 8 characters, including one special character such as ! ? # - or _';
+
+/** `null` when valid, otherwise the reason. */
+export function passwordProblem(value: string): string | null {
+  if (value.length === 0) return null; // untouched field: say nothing yet
+  if (value.length < MIN_PASSWORD_LENGTH) return `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+  if (!HAS_SPECIAL.test(value)) {
+    return 'Add one special character — for example ! ? # - or _';
+  }
+  return null;
+}
+
+/** Whether this value would be accepted. Empty is invalid; `passwordProblem` stays quiet on it. */
+export function isPasswordValid(value: string): boolean {
+  return value.length >= MIN_PASSWORD_LENGTH && HAS_SPECIAL.test(value);
+}
+
 /** `null` when valid, otherwise the reason. */
 export function usernameProblem(value: string): string | null {
   const v = value.trim().toLowerCase();

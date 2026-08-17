@@ -1,7 +1,23 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AtSign, Check, KeyRound, Loader2, TriangleAlert, UserPen } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { AtSign, KeyRound, UserPen } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { accountApi, USERNAME_HINT, usernameProblem } from '../../lib/account';
+import {
+  accountApi,
+  isPasswordValid,
+  passwordProblem,
+  PASSWORD_HINT,
+  USERNAME_HINT,
+  usernameProblem,
+} from '../../lib/account';
+import {
+  Field,
+  Section,
+  SaveButton,
+  StatusLine,
+  messageOf,
+  useSubmitLatch,
+  type Status,
+} from './formKit';
 
 /**
  * The three account forms, shared verbatim by both portals' Profile pages.
@@ -19,132 +35,12 @@ import { accountApi, USERNAME_HINT, usernameProblem } from '../../lib/account';
  * their absence here does not read as an oversight.
  */
 
-// ── primitives ──────────────────────────────────────────────────────────────
-
-const INPUT_CLASS =
-  'w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-2.5 text-on-surface font-sans text-sm outline-none transition-colors focus:border-white/25 disabled:opacity-50 disabled:cursor-not-allowed';
-
-function Field({
-  label,
-  hint,
-  ...input
-}: { label: string; hint?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
-  const id = `f-${label.toLowerCase().replace(/\s+/g, '-')}`;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label
-        htmlFor={id}
-        className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold"
-      >
-        {label}
-      </label>
-      <input id={id} className={INPUT_CLASS} {...input} />
-      {hint && <p className="font-sans text-[11px] text-slate-500 leading-relaxed">{hint}</p>}
-    </div>
-  );
-}
-
-type Status = { kind: 'ok' | 'error'; text: string } | null;
-
-function StatusLine({ status }: { status: Status }) {
-  if (!status) return null;
-  const ok = status.kind === 'ok';
-  return (
-    <p
-      role="status"
-      className={`flex items-start gap-2 font-sans text-xs ${ok ? 'text-emerald-400' : 'text-rose-400'}`}
-    >
-      {ok ? (
-        <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-      ) : (
-        <TriangleAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-      )}
-      {status.text}
-    </p>
-  );
-}
-
-function Section({
-  icon: Icon,
-  title,
-  description,
-  children,
-}: {
-  icon: typeof UserPen;
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-      <div className="flex items-center gap-2 mb-1">
-        <Icon className="w-4 h-4 text-slate-400" />
-        <h2 className="font-display text-lg font-bold text-white">{title}</h2>
-      </div>
-      <p className="font-sans text-xs text-slate-400 mb-5 leading-relaxed">{description}</p>
-      {children}
-    </section>
-  );
-}
-
-function SaveButton({
-  accent,
-  disabled,
-  busy,
-  label,
-}: {
-  accent: string;
-  disabled: boolean;
-  busy: boolean;
-  label: string;
-}) {
-  return (
-    <button
-      type="submit"
-      disabled={disabled}
-      style={disabled ? undefined : { backgroundColor: accent, color: '#04121a' }}
-      className={`px-5 py-2.5 rounded-xl font-display text-xs font-bold flex items-center gap-2 transition-all active:scale-95 ${
-        disabled
-          ? 'bg-white/5 text-slate-500 cursor-not-allowed'
-          : 'hover:brightness-110 cursor-pointer'
-      }`}
-    >
-      {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-      {label}
-    </button>
-  );
-}
-
-/**
- * Message from a thrown `api.ts` error, with a readable fallback.
- * `apiFetch` already unwraps the envelope, so `err.message` is display-ready.
+/*
+ * `Field`, `Section`, `SaveButton`, `StatusLine`, `messageOf` and
+ * `useSubmitLatch` moved to `./formKit` when the admin portal needed the same
+ * pieces. Behaviour is unchanged — see that file for why the latch in particular
+ * must not exist in two copies.
  */
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
-
-/**
- * A synchronous submit latch.
- *
- * NOT redundant with the button's `disabled`. That reads React state, which does
- * not re-render until the handler yields, so a double-click enters the handler
- * twice with `busy` still false and fires two requests. The same bug once graded
- * one Feynman answer 0.95 and 0.90 from identical input; here it would be two
- * password changes racing. Set before the first `await`, cleared in `finally`.
- */
-function useSubmitLatch() {
-  const latch = useRef(false);
-  return {
-    take: () => {
-      if (latch.current) return false;
-      latch.current = true;
-      return true;
-    },
-    release: () => {
-      latch.current = false;
-    },
-  };
-}
 
 // ── 1. name + username ──────────────────────────────────────────────────────
 
@@ -291,8 +187,16 @@ function EmailForm({ accent }: { accent: string }) {
         <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">
           Current
         </p>
+        {/*
+          ⚠️ NEVER PRINT A PLACEHOLDER ADDRESS. A bulk-created account carries
+          `<username>@pca.invalid` on `auth.users`, and showing it here would
+          present a fabricated address to the student as though it were theirs —
+          the same mistake as the invented `liza.mendoza@pca.edu.ph`, with better
+          intentions. The admin account page has always checked this; this page
+          did not, and showed it.
+        */}
         <p className="font-sans text-sm text-slate-200 break-all">
-          {user?.email || 'None set'}
+          {user && user.email && !user.email_is_placeholder ? user.email : 'None set'}
         </p>
       </div>
 
@@ -327,7 +231,7 @@ function EmailForm({ accent }: { accent: string }) {
 
 // ── 3. password ─────────────────────────────────────────────────────────────
 
-const MIN_PASSWORD = 8;
+/* The rule lives in `src/lib/account.ts`, mirroring the server's `PasswordField`. */
 
 function PasswordForm({ accent }: { accent: string }) {
   const { user } = useAuth();
@@ -338,14 +242,9 @@ function PasswordForm({ accent }: { accent: string }) {
   const [status, setStatus] = useState<Status>(null);
   const latch = useSubmitLatch();
 
-  const tooShort = next.length > 0 && next.length < MIN_PASSWORD;
+  const passwordError = passwordProblem(next);
   const mismatch = confirm.length > 0 && next !== confirm;
-  const canSave =
-    !!user &&
-    current.length > 0 &&
-    next.length >= MIN_PASSWORD &&
-    next === confirm &&
-    !busy;
+  const canSave = !!user && current.length > 0 && isPasswordValid(next) && next === confirm && !busy;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -394,7 +293,7 @@ function PasswordForm({ accent }: { accent: string }) {
             onChange={(e) => setNext(e.target.value)}
             autoComplete="new-password"
             disabled={!user}
-            hint={tooShort ? `Use at least ${MIN_PASSWORD} characters.` : `At least ${MIN_PASSWORD} characters.`}
+            hint={passwordError ?? PASSWORD_HINT}
           />
           <Field
             label="Confirm new password"
