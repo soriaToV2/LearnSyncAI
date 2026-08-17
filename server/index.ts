@@ -68,7 +68,25 @@ app.use(
   })
 );
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000' }));
-app.use(morgan('dev'));                    // Request logging
+/*
+ * Request logging — but NOT the health check, which is polled every 5 seconds.
+ *
+ * Render calls `/api/health` continuously to decide whether the service is alive.
+ * Logged unconditionally that is ~17,000 lines a day of `GET /api/health 200`,
+ * which buries every real error above it and makes the deploy log useless for the
+ * one job it has. The production log is the only window into a running server, so
+ * noise here has a direct cost.
+ *
+ * ⚠️ SKIP ONLY WHEN IT SUCCEEDED. A health check that starts answering 500 is
+ * exactly the event worth seeing — that is Render about to cycle the instance — so
+ * the status test keeps failures loud while silencing the steady hum. Do not
+ * simplify this to a bare path comparison.
+ */
+app.use(
+  morgan('dev', {
+    skip: (req, res) => req.path === '/api/health' && res.statusCode < 400,
+  })
+);
 app.use(express.json());                   // Parse JSON request bodies
 app.use(express.urlencoded({ extended: true }));
 
