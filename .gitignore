@@ -9,3 +9,4 @@ coverage/
 
 # Server build output
 server/dist/
+.mcp.json
