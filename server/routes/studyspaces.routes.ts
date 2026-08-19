@@ -12,7 +12,8 @@ import {
 } from '../types/api';
 import { publishedMaterialIds, rejectInaccessibleMaterials } from '../lib/materialAccess';
 import { loadOwnedSpace, type SpaceOwner } from '../lib/spaceAccess';
-import { generateQuestionsForConcepts } from '../lib/groq';
+import { generateQuestionsForConcepts } from '../lib/questionGeneration';
+import { GeminiUnavailableError } from '../lib/gemini';
 import type { SpaceMaterial } from '../types/database';
 
 const router = Router();
@@ -700,9 +701,9 @@ router.post(
 
     // ── Fronts.
     //
-    // 'question' asks Groq for one question per concept. A concept the model
+    // 'question' asks Gemini for one question per concept. A concept the model
     // omits or mis-numbers falls back to its term, so a card is never lost and
-    // never left without a concept_id. A Groq call that throws aborts the whole
+    // never left without a concept_id. A call that throws aborts the whole
     // request before anything is written — a deck half in one style and half in
     // another is worse than a clean retry.
     let questions = new Map<string, string>();
@@ -711,7 +712,25 @@ router.post(
         questions = await generateQuestionsForConcepts(
           concepts.map((c) => ({ id: c.id as string, term: c.term, definition: c.definition }))
         );
-      } catch (err: any) {
+      } catch (err) {
+        // Logged, because this catch used to discard the cause entirely — which
+        // left a failed deck with no server-side trace of WHY.
+        console.error('[Decks] question generation failed:', err);
+
+        // A typed Gemini failure carries its own status and its own true
+        // sentence: 429 when the key's daily allowance is spent, 503 for an
+        // outage. Answering a flat 502 to both tells a student "please try
+        // again" on a day when retrying cannot possibly work — the same split
+        // failGeneration() makes for adaptive tests. Nothing has been written in
+        // either case, which is the guarantee that actually matters here.
+        if (err instanceof GeminiUnavailableError) {
+          res.status(err.status).json({
+            error: 'Question generation failed',
+            message: `${err.message} Nothing was added to this deck — you can add these cards as terms and definitions instead.`,
+          });
+          return;
+        }
+
         res.status(502).json({
           error: 'Question generation failed',
           message:
