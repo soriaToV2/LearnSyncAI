@@ -2,7 +2,7 @@
  * Deterministic crossword layout builder.
  *
  * The LLM supplies candidate answer/clue pairs (see generateCrosswordWords in
- * lib/groq.ts) but never assigns coordinates — placing interlocking words on a
+ * lib/gameContent.ts) but never assigns coordinates — placing interlocking words on a
  * grid is a constraint-satisfaction problem that code solves reliably and models
  * do not. This module runs a backtracking-style greedy placement: the first word
  * anchors the grid, and each subsequent word is placed on the first valid
