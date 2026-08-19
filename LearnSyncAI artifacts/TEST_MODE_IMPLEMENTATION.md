@@ -2,7 +2,7 @@
 
 **Feature:** AI-generated practice tests built from one material's concepts, graded server-side, producing the telemetry BKT consumes.
 **Status:** Frontend and backend implemented and verified against live data. **BKT is now implemented too** — the engine landed on 7 August 2026; see `BKT_IMPLEMENTATION.md` for it, and §15 here for what changed on the Test Mode side.
-**Date:** 7 August 2026
+**Date:** 7 August 2026. **Revised 18 August 2026** — generation moved from Groq back to Gemini (§7); nothing else about the feature changed.
 **Migrations applied:** **none.** Every column this feature writes already existed unused — `difficulty_tier`, `mastery_snapshot` and `question_types` were added by migration `20260723090004_bkt_engine.sql` §7 for exactly this purpose and had never been populated.
 **Commits:** Phase 1 (frontend) is `7a258aa "Test mode frontend revision"`. Phase 2 (backend) is the commit this document ships with.
 
@@ -65,7 +65,8 @@ could corrupt a mastery estimate is code.
 - `server/lib/testGrading.ts` — **new.** The deterministic answer-matching ladder.
 - `server/routes/practice.routes.ts` — **rewritten.** Six endpoints, gates, telemetry.
 - `server/types/api.ts` — reshaped `CreatePracticeTestSchema` and `SubmitAnswerSchema`; added the stored-payload interfaces.
-- `server/lib/groq.ts` — added `GroqUnavailableError`, `GroqRateLimitError`, `withGroq()` retry, and a startup key fingerprint.
+- `server/lib/gemini.ts` — **18 Aug 2026.** Added `GEMINI_CONTENT_MODEL`; extended the model-choice rule at the top of the file with the third branch this feature needs (§7).
+- ~~`server/lib/groq.ts`~~ — *no longer part of this feature.* It gained `GroqUnavailableError`, `GroqRateLimitError`, `withGroq()` and a startup key fingerprint for the 6 Aug Groq build; generation left it on 18 Aug and `practice.routes.ts` no longer imports it. Still serves games, flashcards and chat until Prompts 2–4 of the migration move them.
 
 **Frontend**
 - `src/lib/testMode.ts` — the contract, the client mirror of the allocation rule, and the `api`-backed `testApi`.
@@ -253,41 +254,80 @@ on the line the model is answering. The fix was to make the tier rule **replace*
 
 ## 7. Which AI model, and why
 
-**Groq `llama-3.3-70b-versatile`.**
+**Gemini `GEMINI_CONTENT_MODEL` (`gemini-3.6-flash`) at `ThinkingLevel.MINIMAL`**, since
+18 August 2026.
 
-**The paper does not require Gemini.** p. 81 says only *"the generation prompt instructions sent to
-**the large language model**"*. The Gemini claim was in our own `ARCHITECTURE.md` §7, which has been
-corrected.
+**The paper does not require either provider.** p. 81 says only *"the generation prompt instructions
+sent to **the large language model**"*, so nothing in the write-up depends on this choice. That is
+what made the round trip below possible without touching the study's claims.
 
-Three reasons, in order of weight:
+### The round trip, because the reasoning matters more than the destination
 
-1. **Gemini's free quota is 20 requests/day *per model*, and concept extraction, Free Recall and
-   Feynman already spend it.** Test generation on `GEMINI_UTILITY_MODEL` would contend with features
-   that currently work.
-2. **The task shape is already proven here.** `generateQuestionsForConcepts()` in `groq.ts` does the
-   same job for flashcards with the same batch-and-echo pattern.
-3. Groq is markedly faster.
-
-**What is given up:** Gemini's `responseSchema` structurally pins output shape; Groq's `json_object`
-does not. Covered by one call **per format** (uniform shape per response instead of a five-way union)
-plus per-format validation with deterministic fallbacks.
-
-### ⚠️ Groq free-tier capacity is a real blocker for the study
-
-| Limit | Free tier | One 29-question test |
+| Date | Model | Why it moved |
 |---|---|---|
-| Tokens per minute (TPM) | 12,000 | ~9,000 |
-| **Tokens per day (TPD)** | **100,000** | ~9,000 |
+| before 6 Aug | `gemini-2.5-flash` | `generateJson()`'s default; already returning HTTP 404 |
+| 6 Aug | Groq `llama-3.3-70b-versatile` | Gemini's 20 requests/day *per model* was already spent by extraction, Free Recall and Feynman; Groq was markedly faster and the batch-and-echo shape was proven by `generateQuestionsForConcepts()` |
+| **18 Aug** | **`gemini-3.6-flash`** | **Groq decommissioned the model on 17 June 2026** and closed its paid tier to new signups |
 
-**That is roughly 11 tests per day for the entire account** — not per student. A 50-student study
-does not fit. `withGroq()` handles the refusals correctly but cannot create capacity. The options are
-Groq's paid tier or Gemini with billing enabled (~$3–5 for the whole study, which makes its 20/day
-free limit irrelevant). **Decide before deployment.**
+The 6 Aug reasoning was sound and is not disowned here — it was overtaken. Verified against our own
+key on 17 Aug 2026, `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` both return *"The model does
+not exist or you do not have access to it."* With the paid tier closed, there was no version of Groq
+that reaches a 50-student study, so the quota argument that sent generation away from Gemini stopped
+being a choice between two working options.
 
-`withGroq()` distinguishes the two windows, which matters: **TPM clears in seconds and is retried;
-TPD does not clear until the daily reset and fails immediately** with an honest message. Retrying a
-daily exhaustion spends four attempts to fail anyway and tells the student "try again in a moment"
-when the truth is "not today". Mirrors `classifyFailure()` in `gemini.ts`.
+### Why the CONTENT model and not the utility model
+
+`gemini.ts` used to decide this with one question — *does the model's own judgement become a number
+the student is shown?* Test grading is deterministic (`testGrading.ts`), so the answer here is **no**,
+and that rule alone would put every generated question on the cheap utility model.
+
+That is the wrong answer, and the Games work measured why: pushing authoring down produced **invented
+facts** (*"What does Cross-Site Scripting prevent?"* — XSS causes it), ungrammatical fragments, and
+subjectless stems naming no concept. A bad score is invisible; a bad question is visible but nothing
+is checking it, so both ship. `gemini.ts` now asks a **second** question — *does the output become
+content a student reads as fact?* — and this feature is the reason it exists.
+
+### MINIMAL thinking is not a tuning preference
+
+Gemini 3 thinks by default and **thinking tokens bill at the OUTPUT rate** while drawing on the same
+`maxOutputTokens` budget. Measured on a small prompt: `gemini-3.6-flash` ~2 s at MINIMAL against
+5–20 s at LOW and 8 s+ at MEDIUM.
+
+Nothing in generation reasons. The server owns the true/false verdict, the correct option's position,
+which concepts form a matching block, and the entire grade. The model writes prose. Turning thinking
+up buys nothing here and costs on both axes.
+
+### ⛔ Not `gemini-3.7-flash`
+
+It launched 13 Aug 2026 with a headline "50% introductory price cut" and a future session will be
+tempted. Verified 18 Aug 2026 against our own key:
+
+1. **It rejects `MINIMAL` outright** — `HTTP 400: "Thinking level MINIMAL is not supported for this
+   model."` Its floor is `LOW`, so its cheapest possible call is dearer than 3.6-flash at MINIMAL.
+2. **Four of five requests failed** with *"This model is currently experiencing high demand."*
+3. Both models are $0.75 / $3.75 per 1M under introductory pricing today. The advertised cut is
+   measured against 3.7's own future standard price, not against what 3.6 costs now.
+
+### ⚠️ Free-tier capacity is STILL a real blocker for the study — the units just changed
+
+| Limit | Free tier | One test |
+|---|---|---|
+| **Requests per day, per model** | **20** | **5** (one per format, in parallel) |
+
+**That is roughly four tests a day for the entire account** — not per student — and the same 20 is
+shared with concept extraction and Feynman grading, which also run on `gemini-3.6-flash`. Confirmed
+live on 18 Aug 2026: after verification runs, a real student's test attempt was refused with
+*"The Gemini API quota for this key is exhausted (generate_content_free_tier_requests, limit 20)."*
+
+The 50-student study needs **~1,500 requests over the fortnight** for tests alone. **Enable billing.**
+No code change creates capacity, and the cost is small — see the estimate in
+`MIGRATION_PROMPTS_GEMINI.md`.
+
+`classifyFailure()` in `gemini.ts` splits the two windows the way `withGroq()` used to split TPM from
+TPD, and it matters for the same reason: **a per-minute burst limit clears by itself and is retried;
+a per-day allowance does not and fails immediately** with an honest message. Retrying a daily
+exhaustion spends four attempts to fail anyway and tells the student "try again in a moment" when the
+truth is "not today".
 
 ---
 
@@ -295,6 +335,38 @@ when the truth is "not today". Mirrors `classifyFailure()` in `gemini.ts`.
 
 `server/lib/testGeneration.ts`. One exported entry point, `generateTestQuestions()`; five private
 writers, run in parallel; batches within a format stay sequential at `BATCH = 20`.
+
+**`askBatch()` is the only function that talks to the model.** The five writers call it and know
+nothing about the provider, which is what made the 18 Aug migration a change to one function rather
+than to five. It sets, per call: `GEMINI_CONTENT_MODEL`, `thinkingLevel: MINIMAL`, a `responseSchema`,
+and an explicit `maxOutputTokens`.
+
+**A typed Gemini failure is re-thrown untouched.** `askBatch()` wraps other errors with the format
+label for diagnosis, but `GeminiUnavailableError` passes straight through, because
+`failGeneration()` in `practice.routes.ts` branches on it to answer 429-with-`Retry-After` versus 503.
+Wrapping it collapses both into a generic 502 and tells a student to retry at once when the quota is
+spent for the day.
+
+**`responseSchema` pins STRUCTURE ONLY, and every validator stayed.** It cannot express "n is inside
+this batch", "the distractors differ from the correct answer" or "the clue does not contain its own
+answer" — so the range check and the per-format validation below are exactly what they were with no
+schema at all. **Pinning the shape removed a failure mode; it removed no validation.**
+
+**⚠️ Token budgets were DOUBLED, not ported** — 8192 for multiple choice, 6144 for true/false,
+identification and fill-in-the-blank, 4096 for matching glosses, against Groq's 4096 / 3072 / 2048.
+MINIMAL thinking is not *no* thinking, and Gemini 3 thinking tokens draw on `maxOutputTokens`: a
+budget sized for the visible output alone returns `finishReason=MAX_TOKENS` with no text, which
+surfaces as a 502 that costs the whole test. A ceiling is not a reservation, so unused headroom is
+free.
+
+**⚠️ No `temperature`, and the old 0.2 must not be reintroduced.** Gemini 3 dropped the sampling
+parameters; `generateJson()` strips one loudly if passed. The 0.2 was justified by the paper's
+Content Consistency check (p. 98), so be precise about what delivers that now the knob is gone:
+**shape** by `responseSchema`; **factual content** by the prompt's *"use only what each definition
+states"* rule, enforced afterwards by `mentionsTerm()`, `looksClean()` and the distinctness checks;
+**difficulty** by `TIER_GUIDANCE`, chosen server-side from BKT rather than by the model. What was
+never guaranteed — and is slightly less true now — is that two generations phrase a question
+identically. p. 98 does not ask for that.
 
 | Format | Model returns | Server owns | Validation → fallback |
 |---|---|---|---|
@@ -520,27 +592,48 @@ FROM practice_tests t LEFT JOIN practice_telemetry pt ON pt.practice_test_id = t
 GROUP BY t.id, t.status, t.questions_payload;
 ```
 
-### "My new Groq key doesn't work"
+### "My new Gemini key doesn't work"
 
-`server/lib/groq.ts` reads `GROQ_API_KEY` **once, at module load**. Editing `.env` used to be a silent
-no-op because `.env` is not imported by anything, so `tsx watch` never restarted. Two mitigations are
-in place: `dev:server` now runs `tsx watch --include .env`, and the server logs a key fingerprint at
-startup:
+`server/lib/gemini.ts` reads `GEMINI_API_KEY` **once, at module load**. Editing `.env` used to be a
+silent no-op because `.env` is not imported by anything, so `tsx watch` never restarted; `dev:server`
+now runs `tsx watch --include .env`.
+
+⚠️ **Unlike `groq.ts`, `gemini.ts` logs no key fingerprint**, so there is no startup line to check the
+swap against. The observable confirmation is the quota message itself changing — a paid key stops
+producing `generate_content_free_tier_requests`.
+
+**Gemini quotas are per Google Cloud project, not per key.** A second key issued from the same project
+shares the same exhausted allowance, exactly as Groq's were per organisation. Enabling billing is a
+change to the *project* behind the key.
+
+⚠️ **The live site reads its own copy.** Swapping `.env` locally does nothing to Render — that is a
+separate `GEMINI_API_KEY` in the service's Environment settings.
+
+### "Generation is slow"
+
+Expected, and measured on 18 Aug 2026: **47 s and 102 s** for a 42-concept material, against the ~2 s
+a single small call takes. The five calls run in parallel, so the total is whatever the slowest one
+takes — in practice the multiple-choice batch, which writes the most text. Output speed is the
+bottleneck, not thinking, and not the token ceiling.
+
+`generateTestQuestions()` logs one line per test so this stays measurable:
 
 ```
-[Groq] key loaded — fingerprint 363d6a09676f
+[TestGen] 42 questions from 42 concepts in 47.3s (1 fallbacks, tier foundational)
 ```
 
-If you swap keys and the fingerprint does not change, the swap did not take. **Groq limits are per
-organisation** — a second key inside the same account shares the same exhausted allowance.
+An `HTTP 503 "This model is currently experiencing high demand"` in the log is a **capacity** signal,
+not a quota one; `withRetry()` handles it and the request usually succeeds on the retry. It is
+distinct from the 429 quota refusal above.
 
 ### Symptom → cause
 
 | Symptom | Look at |
 |---|---|
 | Every test is `foundational` | Correct until Phase 3. Confirm with `set-test-mastery.ts`. |
-| "daily limit has been reached" | TPD (100,000). Not retryable. §7. |
-| "Too many tests are being written at once" | TPM (12,000). Clears in seconds. |
+| "quota for this key is exhausted … limit 20" | Requests-per-day, per model. Not retryable — §7. One test is 5 requests. |
+| "currently experiencing high demand" (503) | Capacity, not quota. Retried automatically; §13. |
+| Generation takes 45–100 s | Expected. §13, "Generation is slow". |
 | Test has fewer questions than concepts | Matching-only rounds down (§4), or the material gained concepts after the preview |
 | A question looks like a template | `fallback_count` in `questions_payload` — the model skipped it or failed validation |
 | Answer marked wrong that looks right | §9. Add a *mechanical* alias; never containment. |
@@ -567,11 +660,15 @@ organisation** — a second key inside the same account shares the same exhauste
    130 characters (`XSS`) cannot support an edge-case question; one at 643 (`SSDLC`) separates cleanly.
    **This is worth stating in the write-up rather than claiming a separation the output does not show.**
    True/false has the narrowest gap of the five formats.
-4. **Groq free-tier capacity (~11 tests/day) does not support a 50-student study.** §7. Needs a paid
-   tier or Gemini billing; no code change helps.
-5. **`GEMINI_LEGACY_TEXT_MODEL` still exists** as `generateJson()`'s default with no callers. It is a
-   trap for the next call site and should be removed — but that is a `gemini.ts` change, not this
-   feature's.
+4. **Free-tier capacity does not support a 50-student study — unchanged by the provider move, only
+   restated in different units.** Gemini's free tier is 20 requests/day *per model* and one test is
+   5 requests, so ~4 tests/day for the whole account, shared with concept extraction and Feynman.
+   (Groq's equivalent was ~11 tests/day on tokens.) §7. **Needs billing enabled; no code change
+   helps.** Hit for real on 18 Aug 2026.
+5. **`GEMINI_LEGACY_TEXT_MODEL` still exists** as `generateJson()`'s default with no callers on any
+   live path. It is a trap for the next call site and should be removed — but that is a `gemini.ts`
+   change, not this feature's. **Prompt 5 of `MIGRATION_PROMPTS_GEMINI.md` owns it.** This feature
+   stopped being its caller on 6 Aug and does not name it now.
 6. **Some extracted concepts make poor identification answers** — outcome phrases like
    *"Protects Data and Privacy"* are hard to type exactly. That is a concept-extraction quality issue.
 
@@ -651,9 +748,9 @@ either generate or resume; `is_correct` in a request body ignored; score divides
 question wrong; 28 telemetry rows with every `question_type` set; idempotent completion; another
 student 404s on all five `/:id` routes; unknown material 403; no token 401.
 
-**Full-test generation:** 29 concepts, all five sections — **1.6 s**, 29 questions, 0 fallbacks, 29/29
-distinct concepts, every matching block 4×6, MCQ answer always among its options. *(Earlier readings of
-17–21 s were Groq rate-limit backoff, not generation.)*
+**Full-test generation (Groq, 7 Aug):** 29 concepts, all five sections — **1.6 s**, 29 questions,
+0 fallbacks, 29/29 distinct concepts, every matching block 4×6, MCQ answer always among its options.
+*(Earlier readings of 17–21 s were Groq rate-limit backoff, not generation.)*
 
 **Four real tests audited end to end** (`practice_tests` + `practice_telemetry`, 115 rows):
 
@@ -668,6 +765,34 @@ Every answer **re-graded from the stored key and compared to the stored `is_corr
 disagreements across all 115 rows**; each stored score matches what its telemetry implies; no
 duplicate `question_index`; no repeated concept; no duplicate options; no orphan `n` leaks; every
 block 4×6.
+
+### Re-verified on Gemini — 18 August 2026
+
+The provider change was verified end to end rather than by type-check, because the risks it carries
+are content risks that `tsc` cannot see.
+
+**`npx tsx scripts/bkt-verify.ts --live --live-test` → 235 / 235, ICR 100.0%** (165 offline + 70
+live). Its §7 drove `POST /api/practice` → `PUT /:id/answer` → `PUT /:id/complete` against a throwaway
+student on a 42-concept material and confirmed:
+
+- 42 questions for 42 concepts; `mastery_snapshot` **0.1252**, equal to EQ(4) over the material to
+  four decimals, and correctly tiered `foundational`
+- **42 `bkt_update_logs` rows = 42 `practice_telemetry` rows** — the reconciliation invariant holds
+- every applied P(G) correct per format: MCQ 0.25, T/F 0.50, ID 0.05, FIB 0.05, **matching 0.17**
+- re-completing wrote no further rows (the compare-and-swap still holds)
+
+**A full generated test was then read by hand**, which is the only check that catches the documented
+failure mode. On a 42-concept material at `intermediate`: **1 fallback in 42 (2.4%)**, and
+
+- multiple-choice distractors drawn from the lesson's own neighbouring concepts, **no invented facts**
+- true/false verdicts alternating as the server dictated, every FALSE built by substituting another
+  concept's definition rather than by inserting "not"
+- **no identification clue contained its own answer**; no matching gloss named its term
+- two matching blocks, each 4 terms against 6 distinct options, correct answer present
+- one grammatical slip (*"a advanced"*)
+
+**No `temperature` warning was logged**, confirming the parameter is gone rather than being stripped
+at the call site.
 
 **Tier separation, same concept across tiers:**
 
@@ -700,7 +825,9 @@ FILL IN THE BLANK — RA 10173 – Data Privacy Act of 2012
 | **Orphan index** | The model's `n` field leaked into the question prose. Rejected. |
 | **`stripKey()`** | The only function permitted to serialise a question toward a browser. |
 | **Telemetry** | `practice_telemetry` — one row per question, written at completion. Not yet a BKT observation. |
-| **TPM / TPD** | Groq's tokens-per-minute (12,000) and tokens-per-day (100,000) limits. |
+| **RPD** | Gemini's requests-per-day quota — **20, counted per model**, shared across every feature using that model. One test spends 5. |
+| **Thinking level** | Gemini 3's reasoning-depth control. `MINIMAL` here; its tokens bill at the OUTPUT rate and draw on `maxOutputTokens`. |
+| ~~**TPM / TPD**~~ | *Historical.* Groq's tokens-per-minute (12,000) and tokens-per-day (100,000) limits, which governed this feature 6–18 Aug 2026. |
 
 ---
 
@@ -711,6 +838,7 @@ FILL IN THE BLANK — RA 10173 – Data Privacy Act of 2012
 - `ARCHITECTURE.md` §7 (Test Mode) and §8 (the BKT equations — the algorithm of record)
 - `LearnSyncAI artifacts/FLASHCARDS_IMPLEMENTATION.md` §15 — the other BKT writer
 - `LearnSyncAI artifacts/databaseSchemaExplained.md` Parts 11–12 — `practice_tests`, `practice_telemetry`, the BKT tables and the worked example
+- **`LearnSyncAI artifacts/MIGRATION_PROMPTS_GEMINI.md` — the Groq → Gemini migration this feature was step 1 of. Prompts 2–5 move flashcards, games and chat, then delete `groq.ts`.**
 - `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md` — why `gemini-2.5-flash` is dead
 - `CLAUDE.md` — the rules that apply across the whole codebase
 - The paper: **p. 75** (P(G) per format), **p. 80–81** (adaptive test algorithm), **p. 98** (the four AI verification criteria)

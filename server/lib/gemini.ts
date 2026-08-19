@@ -17,19 +17,29 @@ const genai = new GoogleGenAI({ apiKey: apiKey ?? '' });
 /*
  * ── Choosing a model for a new call site ──────────────────────────────────
  *
- * One question decides it:
+ * Two questions, in this order:
  *
- *     Does the MODEL'S OWN JUDGEMENT become a number the student is shown?
+ *  1. Does the MODEL'S OWN JUDGEMENT become a number the student is shown?
  *
- *   yes → GEMINI_GRADING_MODEL. A plausible-but-wrong score is invisible; nobody
- *         can eyeball it the way they can spot a bad trivia question.
- *   no  → GEMINI_UTILITY_MODEL. Extraction, classification and prose, where the
- *         model enumerates and CODE does any scoring.
+ *     yes → GEMINI_GRADING_MODEL. A plausible-but-wrong score is invisible;
+ *           nobody can eyeball it the way they can spot a bad trivia question.
  *
- * Free Recall is the instructive case: it *looks* like grading, but the model
- * only lists what the student mentioned. The score is coveredCount/totalConcepts,
- * computed here from cosine similarity against a fixed threshold — so it belongs
- * on the utility model. Feynman genuinely grades, so it does not.
+ *     Free Recall is the instructive case: it *looks* like grading, but the model
+ *     only lists what the student mentioned. The score is coveredCount/totalConcepts,
+ *     computed here from cosine similarity against a fixed threshold — so it is a
+ *     "no". Feynman genuinely grades, so it is a "yes".
+ *
+ *  2. If no — does the output become CONTENT A STUDENT READS AS FACT?
+ *
+ *     yes → GEMINI_CONTENT_MODEL. Test questions, game content, flashcard fronts.
+ *           Nothing scores them, so a wrong one ships.
+ *     no  → GEMINI_UTILITY_MODEL. Extraction, classification and coaching prose,
+ *           where the model enumerates and CODE does any scoring.
+ *
+ * The second question exists because question 1 alone sends every authoring call
+ * to the utility model — test grading is deterministic (`testGrading.ts`), so no
+ * model judgement there ever becomes a score. That would be the wrong call: see
+ * GEMINI_CONTENT_MODEL for the measured reason.
  *
  * Gemini 3 semantics differ from 2.5 across all of these — see `isGemini3` below.
  */
@@ -60,16 +70,59 @@ export const GEMINI_GRADING_MODEL = 'gemini-3.6-flash';
 export const GEMINI_UTILITY_MODEL = 'gemini-3.5-flash-lite';
 
 /**
- * Adaptive test generation (`practice.routes.ts`) — the last caller.
+ * Calls that AUTHOR CONTENT A STUDENT READS AS FACT: adaptive test questions
+ * (`testGeneration.ts`), game content, flashcard fronts.
+ *
+ * ⚠️ Nothing to do with `generateContent()` below — that is transport, and it is
+ * still pinned to the dead legacy model. This constant names a model; that
+ * function names a call shape.
+ *
+ * By the "does a model judgement become a score?" rule alone these would all sit
+ * on the utility model, because test grading is deterministic (`testGrading.ts`)
+ * and the server owns every decision that affects a mark. That would be wrong,
+ * and it has been measured: CLAUDE.md's Games section records three separate
+ * attempts to push authoring down, which produced invented facts ("What does
+ * Cross-Site Scripting *prevent*?" — XSS causes it), ungrammatical fragments and
+ * subjectless stems naming no concept at all. A bad score is invisible; a bad
+ * question is visible but nothing is checking, so it ships either way.
+ *
+ * ⛔ NOT `gemini-3.7-flash`, however attractive its "50% introductory cut" looks.
+ * Verified 2026-08-18 against our own key: it rejects `MINIMAL` thinking outright
+ * (HTTP 400, floor is LOW), and four of five requests failed with "This model is
+ * currently experiencing high demand". Since thinking tokens bill at the OUTPUT
+ * rate, a forced LOW floor makes its cheapest call dearer than 3.6-flash at
+ * MINIMAL — and the discount is measured against 3.7's own future price, not
+ * against what 3.6 costs today. Re-evaluate after the study, not before.
+ */
+export const GEMINI_CONTENT_MODEL = 'gemini-3.6-flash';
+
+/**
+ * The RAG study assistant (`chat.routes.ts`). Conversational rather than
+ * authoritative: a student can push back on an answer mid-conversation, which is
+ * exactly what they cannot do with a test question, so the faster and cheaper
+ * model is the right trade here even though this is also student-facing prose.
+ *
+ * Flash-Lite at MINIMAL was the most consistent thing measured across the whole
+ * migration — 1.8 / 2.1 / 1.8 / 1.9 / 1.9s over five samples, where 3.6-flash
+ * ranged 2s to 20s on identical requests. Time-to-first-token is what a chat UI
+ * is judged on.
+ */
+export const GEMINI_CHAT_MODEL = 'gemini-3.5-flash-lite';
+
+/**
+ * NO CALLERS. Survives only as `generateJson()`'s default — which is a trap for
+ * the next call site, and Prompt 5 of the Groq migration removes it.
  *
  * ⚠️ ALREADY DEAD. Verified 2026-08-01 against our own key: every call returns
  * HTTP 404 "no longer available to new users". It is still listed by ListModels,
  * which is why it looks alive. The published 2026-10-16 shutdown date is moot —
- * the call site naming this constant is broken NOW, not in October.
+ * anything reaching this constant is broken NOW, not in October.
  *
- * Migrating it is easy (it passes no `temperature`), but its prompt asks the model
- * to echo `concept_id` UUIDs and a wrong one silently corrupts BKT, so the echoed
- * ids must be validated. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
+ * Its last real caller was adaptive test generation, which left for Groq on
+ * 2026-08-06 and returned to `GEMINI_CONTENT_MODEL` on 2026-08-18. Two functions
+ * below still name it — `generateContent()` (unreferenced) and
+ * `generateJsonFromDocument()` (a scratch script only), so nothing on a live path
+ * touches it. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
  */
 const GEMINI_LEGACY_TEXT_MODEL = 'gemini-2.5-flash';
 

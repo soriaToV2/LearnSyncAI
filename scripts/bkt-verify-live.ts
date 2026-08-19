@@ -365,7 +365,7 @@ async function testLeg(o: LiveOptions, fx: Fixture): Promise<void> {
       `EQ(4) mean = ${expectedSnapshot.toFixed(4)}`
   );
 
-  console.log('  Generating a test (burns one of ~11 daily Groq generations)…');
+  console.log('  Generating a test (five gemini-3.6-flash calls, one per format)…');
   const created = await call<{ id: string }>(fx.token, 'POST', '/practice', {
     space_id: fx.spaceId,
     material_id: fx.materialId,

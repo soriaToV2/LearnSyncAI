@@ -1,4 +1,5 @@
-import { groq, withGroq } from './groq';
+import { Type, ThinkingLevel, type Schema } from '@google/genai';
+import { generateJson, GeminiUnavailableError, GEMINI_CONTENT_MODEL } from './gemini';
 import { acronymOf } from './conceptExtraction';
 import { TIER_GUIDANCE, FORMAT_TIER_GUIDANCE, TF_TIER_RULES } from './testDifficulty';
 import {
@@ -12,12 +13,16 @@ import {
 /**
  * Writing a practice test from a material's concepts.
  *
- * ONE CALL PER FORMAT, not one call for the whole test. Groq's JSON mode gives
- * no structural guarantee (unlike Gemini's `responseSchema`), so asking for a
- * five-way union of question shapes in one response invites exactly the class of
- * malformed output that has no safe recovery. Per format, every item in a
- * response has the same shape, the prompt can be written tightly for that one
- * job, and a bad item degrades to a template instead of costing a question.
+ * ONE CALL PER FORMAT, not one call for the whole test. The original reason was
+ * that Groq's JSON mode gave no structural guarantee; `responseSchema` now does,
+ * so THAT argument is gone — but do not read this as an invitation to merge the
+ * five calls, because the decision rests on two reasons a schema does not touch.
+ *
+ * First, a prompt can be written tightly for ONE question shape in a way it never
+ * can for a five-way union: "the clue must NEVER contain the term" is the single
+ * most load-bearing line in `writeIdentification`, and it is meaningless to the
+ * other four formats. Second, failure stays contained — a fumbled item costs that
+ * item a template, not its section.
  *
  * THE MODEL NEVER SEES OR RETURNS A CONCEPT ID. It echoes the item's number
  * within its batch, and that number is range-checked before it is trusted —
@@ -52,7 +57,7 @@ export interface StoredQuestion {
   explanation: string;
 }
 
-/** Concepts per Groq call, matching the flashcard generator's proven batch size. */
+/** Concepts per model call, matching the flashcard generator's proven batch size. */
 const BATCH = 20;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +117,7 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Groq plumbing
+// Model plumbing
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface EchoItem {
@@ -121,45 +126,117 @@ interface EchoItem {
 }
 
 /**
- * One Groq call, returning items keyed by their position in `batch`.
+ * Wraps one item shape in the `{ "items": [...] }` envelope every prompt asks for.
+ *
+ * STRUCTURE ONLY, and the distinction is load-bearing. A schema cannot express
+ * "n is inside this batch", "the distractors differ from the correct answer" or
+ * "the clue does not contain its own answer" — those stay in the range check
+ * below and in each writer's validation loop, exactly as when this ran on Groq
+ * with no schema at all. Pinning the shape removes a failure mode; it removes no
+ * validation.
+ */
+function itemsSchema(properties: Record<string, Schema>): Schema {
+  const keys = Object.keys(properties);
+  return {
+    type: Type.OBJECT,
+    properties: {
+      items: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: { n: { type: Type.INTEGER }, ...properties },
+          required: ['n', ...keys],
+          propertyOrdering: ['n', ...keys],
+        },
+      },
+    },
+    required: ['items'],
+  };
+}
+
+const CHOICE_SCHEMA = itemsSchema({
+  question: { type: Type.STRING },
+  correct: { type: Type.STRING },
+  distractors: { type: Type.ARRAY, items: { type: Type.STRING } },
+});
+const TRUE_FALSE_SCHEMA = itemsSchema({ statement: { type: Type.STRING } });
+const IDENTIFICATION_SCHEMA = itemsSchema({ clue: { type: Type.STRING } });
+const FILL_BLANK_SCHEMA = itemsSchema({ sentence: { type: Type.STRING } });
+const GLOSS_SCHEMA = itemsSchema({ gloss: { type: Type.STRING } });
+
+/**
+ * Nothing here reasons. The model writes prose; the server owns every decision
+ * that affects a mark — the true/false verdict, where the correct option sits,
+ * which concepts form a matching block — and grading is deterministic in
+ * `testGrading.ts`. Measured, `gemini-3.6-flash` runs ~2s at MINIMAL against
+ * 5–20s at LOW, and thinking tokens bill at the OUTPUT rate.
+ */
+const THINKING = ThinkingLevel.MINIMAL;
+
+/**
+ * Output ceiling per batch of up to `BATCH` items.
+ *
+ * DOUBLED from the Groq budgets (4096 / 3072 / 2048) rather than ported across.
+ * MINIMAL thinking is not *no* thinking, and Gemini 3 thinking tokens draw on
+ * `maxOutputTokens` — a budget sized for the visible output alone comes back with
+ * `finishReason=MAX_TOKENS` and no text, which `generateJson()` throws on and
+ * `failGeneration()` turns into a 502, costing the whole test. A ceiling is not a
+ * reservation, so headroom that goes unused is free.
+ */
+const MAX_OUTPUT_TOKENS: Record<QuestionFormat, number> = {
+  multiple_choice: 8192,
+  true_or_false: 6144,
+  identification: 6144,
+  fill_in_the_blank: 6144,
+  matching_type: 4096,
+};
+
+/**
+ * One model call, returning items keyed by their position in `batch`.
  *
  * The range check on `n` is the whole point: an out-of-range or non-integer echo
  * is dropped rather than being allowed to attach this text to a different
  * concept. A dropped item is not an error — the caller falls back.
+ *
+ * NO `temperature`. Gemini 3 dropped the sampling parameters, and `generateJson()`
+ * strips one loudly if it is passed. The 0.2 that used to sit here was justified
+ * by the paper's Content Consistency check (p. 98), which expects "core factual
+ * content, terminology, and difficulty level" to be stable across generations —
+ * so be precise about what still delivers that, now the knob is gone. SHAPE is
+ * pinned by `responseSchema`; FACTUAL CONTENT by the prompt's "use only what each
+ * definition states" rule, enforced afterwards by `mentionsTerm()`, `looksClean()`
+ * and the distinctness checks; DIFFICULTY by `TIER_GUIDANCE`, chosen server-side
+ * from BKT rather than by the model. What was never guaranteed — and is slightly
+ * less true now — is that two generations phrase a question the same way. The
+ * paper's criterion does not ask for that.
  */
 async function askBatch<T>(
   prompt: string,
   batchSize: number,
   label: string,
-  maxTokens: number
+  maxTokens: number,
+  schema: Schema
 ): Promise<Map<number, T>> {
-  const completion = await withGroq(
-    () =>
-      groq.chat.completions.create({
-        messages: [{ role: 'user', content: prompt }],
-        model: 'llama-3.3-70b-versatile',
-        response_format: { type: 'json_object' },
-        // Low, not zero. The paper's Content Consistency check (p. 98) expects
-        // "core factual content, terminology, and difficulty level" to be stable
-        // across generations while allowing minor phrasing variation.
-        temperature: 0.2,
-        max_tokens: maxTokens,
-      }),
-    label
-  );
-
-  const raw = completion.choices[0]?.message?.content;
-  if (!raw) throw new Error(`Groq returned an empty response for ${label}.`);
-
   let parsed: { items?: EchoItem[] };
   try {
-    parsed = JSON.parse(raw) as { items?: EchoItem[] };
-  } catch {
-    throw new Error(`Failed to parse Groq JSON for ${label}: ${raw.slice(0, 200)}`);
+    parsed = await generateJson<{ items?: EchoItem[] }>(prompt, {
+      model: GEMINI_CONTENT_MODEL,
+      thinkingLevel: THINKING,
+      responseSchema: schema,
+      maxOutputTokens: maxTokens,
+    });
+  } catch (err) {
+    // A typed Gemini failure passes through UNTOUCHED. `failGeneration()` branches
+    // on `instanceof GeminiUnavailableError` to answer 429-with-Retry-After versus
+    // 503; wrapping it in a plain Error collapses both into a generic 502 and tells
+    // a student to retry immediately when the quota is spent for the day.
+    if (err instanceof GeminiUnavailableError) throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`Test generation failed on ${label}: ${reason}`);
   }
 
   const byIndex = new Map<number, T>();
-  for (const item of parsed.items ?? []) {
+  for (const item of parsed?.items ?? []) {
     const n = Number(item?.n);
     if (!Number.isInteger(n) || n < 1 || n > batchSize) continue;
     byIndex.set(n - 1, item as T);
@@ -191,10 +268,11 @@ function looksClean(text: string): boolean {
 /**
  * Definitions are trimmed on the way INTO a prompt.
  *
- * Not for readability — for tokens. Groq's free tier caps at 12,000 tokens per
- * minute and one full test is most of that, so the 643-character outliers in
- * this corpus are worth clipping. The median definition is 162 characters, so
- * this leaves almost everything untouched.
+ * Not for readability — for tokens. Five calls go out per test, each carrying its
+ * whole concept slice, and input is billed by the token against a per-minute quota
+ * shared with concept extraction and Feynman grading on the same model. The
+ * 643-character outliers in this corpus are worth clipping; the median definition
+ * is 162 characters, so this leaves almost everything untouched.
  */
 const PROMPT_DEFINITION_CAP = 400;
 
@@ -275,7 +353,8 @@ ${list}`;
       prompt,
       size,
       `multiple_choice[${start}]`,
-      4096
+      MAX_OUTPUT_TOKENS.multiple_choice,
+      CHOICE_SCHEMA
     );
 
     const out = new Map<number, ChoiceDraft>();
@@ -334,7 +413,13 @@ Respond ONLY with valid JSON (no markdown):
 Items:
 ${list}`;
 
-    const raw = await askBatch<{ statement: unknown }>(prompt, size, `true_or_false[${start}]`, 3072);
+    const raw = await askBatch<{ statement: unknown }>(
+      prompt,
+      size,
+      `true_or_false[${start}]`,
+      MAX_OUTPUT_TOKENS.true_or_false,
+      TRUE_FALSE_SCHEMA
+    );
 
     const out = new Map<number, string>();
     for (const [i, item] of raw) {
@@ -372,7 +457,13 @@ Respond ONLY with valid JSON (no markdown):
 Items:
 ${list}`;
 
-    const raw = await askBatch<{ clue: unknown }>(prompt, size, `identification[${start}]`, 3072);
+    const raw = await askBatch<{ clue: unknown }>(
+      prompt,
+      size,
+      `identification[${start}]`,
+      MAX_OUTPUT_TOKENS.identification,
+      IDENTIFICATION_SCHEMA
+    );
 
     const out = new Map<number, string>();
     for (const [i, item] of raw) {
@@ -410,7 +501,13 @@ Respond ONLY with valid JSON (no markdown):
 Items:
 ${list}`;
 
-    const raw = await askBatch<{ sentence: unknown }>(prompt, size, `fill_in_the_blank[${start}]`, 3072);
+    const raw = await askBatch<{ sentence: unknown }>(
+      prompt,
+      size,
+      `fill_in_the_blank[${start}]`,
+      MAX_OUTPUT_TOKENS.fill_in_the_blank,
+      FILL_BLANK_SCHEMA
+    );
 
     const out = new Map<number, string>();
     for (const [i, item] of raw) {
@@ -451,7 +548,13 @@ Respond ONLY with valid JSON (no markdown):
 Items:
 ${list}`;
 
-    const raw = await askBatch<{ gloss: unknown }>(prompt, size, `matching_type[${start}]`, 2048);
+    const raw = await askBatch<{ gloss: unknown }>(
+      prompt,
+      size,
+      `matching_type[${start}]`,
+      MAX_OUTPUT_TOKENS.matching_type,
+      GLOSS_SCHEMA
+    );
 
     const out = new Map<number, string>();
     for (const [i, item] of raw) {
@@ -515,6 +618,7 @@ export async function generateTestQuestions(params: {
   materialTitle: string;
 }): Promise<{ questions: StoredQuestion[]; fallbackCount: number }> {
   const { concepts, allocation, tier, materialTitle } = params;
+  const startedAt = Date.now();
 
   // 1. Deal concepts to sections. One pass, cursor never rewinds.
   const slices = new Map<QuestionFormat, ConceptForTest[]>();
@@ -562,7 +666,10 @@ export async function generateTestQuestions(params: {
     }
   }
 
-  // 2. Write. Five calls at most, in parallel.
+  // 2. Write. Five calls at most (one per format, more if a format exceeds
+  //    BATCH concepts), in parallel. Concurrency is what keeps generation near
+  //    single-call latency; a per-minute quota refusal is classified transient
+  //    by gemini.ts and retried, so the failure mode is a pause, not an error.
   const [choiceDrafts, tfDrafts, identDrafts, fibDrafts, glossDrafts] = await Promise.all([
     choice.length ? writeChoice(choice, materialTitle, tier) : new Map<number, ChoiceDraft>(),
     tf.length ? writeTrueFalse(tf, verdicts, materialTitle, tier) : new Map<number, string>(),
@@ -652,6 +759,16 @@ export async function generateTestQuestions(params: {
       }
     }
   }
+
+  // One line per test, not per call. Generation is the slowest thing a student
+  // waits on in the whole app and the only place its cost is visible, so the log
+  // has to state it; measured 47s and 102s on a 42-concept material, against the
+  // ~2s a single small Gemini call takes. The spread is the model's output speed
+  // on the multiple-choice batch, which every other format finishes inside.
+  console.log(
+    `[TestGen] ${questions.length} questions from ${concepts.length} concepts in ` +
+      `${((Date.now() - startedAt) / 1000).toFixed(1)}s (${fallbackCount} fallbacks, tier ${tier})`
+  );
 
   return { questions, fallbackCount };
 }

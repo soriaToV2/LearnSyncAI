@@ -4,7 +4,7 @@ import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 import { requireOwnedSpace, spaceMaterialIds, type SpaceOwner } from '../lib/spaceAccess';
-import { GroqUnavailableError } from '../lib/groq';
+import { GeminiUnavailableError } from '../lib/gemini';
 import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
 import { applyTestCompletion, bktProblems } from '../lib/bkt';
 import {
@@ -227,10 +227,16 @@ function buildResult(row: TestRow) {
 }
 
 function failGeneration(res: Response, err: unknown): void {
-  if (err instanceof GroqUnavailableError) {
-    // 429 for a rate limit, 503 for an outage. A rate limit reported as a
-    // generic failure tells the student to retry at once, which cannot work.
-    if (err.retryAfterSeconds) res.setHeader('Retry-After', String(Math.ceil(err.retryAfterSeconds)));
+  if (err instanceof GeminiUnavailableError) {
+    // 429 for spent quota, 503 for an outage. A rate limit reported as a generic
+    // failure tells the student to retry at once, which cannot work.
+    //
+    // GeminiQuotaError extends GeminiUnavailableError, so one instanceof still
+    // catches both, exactly as with the Groq pair this replaces. What moved is the
+    // retry hint: Groq exposed `retryAfterSeconds` on the error itself, Gemini
+    // parses Google's RetryInfo into `upstream.retryAfterMs`. Hence the /1000.
+    const retryAfterMs = err.upstream?.retryAfterMs;
+    if (retryAfterMs) res.setHeader('Retry-After', String(Math.ceil(retryAfterMs / 1000)));
     res.status(err.status).json({ error: 'Question writer unavailable', message: err.message });
     return;
   }
