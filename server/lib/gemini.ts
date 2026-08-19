@@ -1,6 +1,7 @@
 import {
   FinishReason,
   GoogleGenAI,
+  type Content,
   type GenerateContentResponse,
   type SchemaUnion,
   type ThinkingLevel,
@@ -504,6 +505,108 @@ export async function generateJson<T = unknown>(
   } catch {
     throw new Error(`Failed to parse Gemini JSON response: ${text}`);
   }
+}
+
+export interface StreamContentOptions {
+  /** Which model to call. No default: a chat turn has no "legacy caller" to preserve. */
+  model: string;
+  /**
+   * The grounding prompt. Goes in `config.systemInstruction` — Gemini has NO
+   * system role inside `contents`, so a caller that ports an OpenAI-shaped
+   * `[{ role: 'system' }, …]` array through the message list loses it silently.
+   */
+  systemInstruction: string;
+  /** Prior turns, oldest first. Empty on the first message of a conversation. */
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /** The message being answered now. Kept separate so the caller cannot forget it. */
+  message: string;
+  /** Gemini 3.x. Thinking is ON by default and its tokens draw on `maxOutputTokens`. */
+  thinkingLevel?: ThinkingLevel;
+  /** Output ceiling. Worth setting explicitly whenever thinking is on. */
+  maxOutputTokens?: number;
+}
+
+/**
+ * Streams a chat reply, yielding text as it arrives.
+ *
+ * The only streaming call in the codebase. `generateJson()` and
+ * `generateContent()` both wait for a whole response, which is right for
+ * authoring work and wrong for a chat UI, where time-to-first-token is what the
+ * student actually experiences.
+ *
+ * ⚠️ IT AWAITS THE STREAM'S INITIATION AND RETURNS AN ITERABLE — it is
+ * deliberately NOT an `async function*`. `generateContentStream()` issues the
+ * HTTP request itself and its promise REJECTS on the initial failure (429, 400,
+ * 5xx) before any chunk exists. Written as a generator, that rejection would be
+ * deferred to the caller's first `for await` — which in `chat.routes.ts` happens
+ * after `res.flushHeaders()`, so a spent daily quota would reach the student as
+ * an SSE error blob rendered "something went wrong" instead of a real HTTP 429
+ * carrying `quotaMessage()`. Awaiting initiation is what keeps the typed error
+ * reachable.
+ *
+ * ⚠️ `withRetry()` WRAPS THE INITIATION ONLY, and that is a correctness rule
+ * rather than an oversight. Retrying is safe here precisely because nothing has
+ * been yielded yet. A failure *during* iteration must never be retried: the
+ * client already holds half an answer and there is no way to replay it, so a
+ * retry would splice a second attempt into the middle of a sentence. Those
+ * errors propagate untouched to the caller, which is what the route's
+ * `res.headersSent` branch exists to handle.
+ *
+ * NO `temperature`, and no reproducibility guarantee to lose. Gemini 3 dropped
+ * the sampling parameters; nothing here is scored, so unlike Free Recall and
+ * Feynman there is no memoisation to compensate.
+ */
+export async function streamContent(options: StreamContentOptions): Promise<AsyncIterable<string>> {
+  const { model, systemInstruction, history = [], message, thinkingLevel, maxOutputTokens } = options;
+
+  // 'assistant' is the OpenAI name; Gemini calls the same turn 'model'.
+  const turns: Content[] = history.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+
+  // A conversation must open on a user turn. Callers trim history to a fixed
+  // window (the chat route keeps the last 4 messages), and such a window can
+  // legitimately begin mid-exchange on a model reply.
+  while (turns.length > 0 && turns[0].role === 'model') turns.shift();
+
+  turns.push({ role: 'user', parts: [{ text: message }] });
+
+  const stream = await withRetry(
+    () =>
+      genai.models.generateContentStream({
+        model,
+        contents: turns,
+        config: {
+          systemInstruction,
+          ...(maxOutputTokens !== undefined && { maxOutputTokens }),
+          ...(thinkingLevel !== undefined && { thinkingConfig: { thinkingLevel } }),
+        },
+      }),
+    'streamContent'
+  );
+
+  return (async function* () {
+    let finishReason: FinishReason | undefined;
+
+    for await (const chunk of stream) {
+      finishReason = chunk.candidates?.[0]?.finishReason ?? finishReason;
+      // `.text` already skips parts flagged `thought` and returns undefined for a
+      // chunk carrying none, so thinking output can never leak into the answer.
+      const text = chunk.text;
+      if (text) yield text;
+    }
+
+    // `describeEmptyResponse()` cannot see this one: a truncated STREAM throws
+    // nothing and returns no empty response — the reply simply stops mid-sentence
+    // and the only symptom is a student saying the assistant cut off.
+    if (finishReason === FinishReason.MAX_TOKENS) {
+      console.warn(
+        `[Gemini] streamContent hit its output limit (finishReason=MAX_TOKENS) — the reply was ` +
+          `truncated. Raise maxOutputTokens (currently ${maxOutputTokens ?? 'unset'}) or lower thinkingLevel.`
+      );
+    }
+  })();
 }
 
 /**

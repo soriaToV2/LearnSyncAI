@@ -2,8 +2,13 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateEmbedding } from '../lib/gemini';
-import { streamChatCompletion } from '../lib/groq';
+import { ThinkingLevel } from '@google/genai';
+import {
+  generateEmbedding,
+  streamContent,
+  GeminiUnavailableError,
+  GEMINI_CHAT_MODEL,
+} from '../lib/gemini';
 import { ChatRequestSchema } from '../types/api';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 
@@ -33,9 +38,16 @@ router.use(authenticate, requireRole('student'));
  * (e.g. a K-drama plot, a cookie recipe) top out around ~0.48 similarity, while
  * genuinely on-topic questions land at ~0.70+. A 0.60 gate cleanly separates the
  * two with comfortable margin on both sides. If the best match falls below this,
- * the query is treated as out-of-scope and we refuse instead of calling the LLM
- * (which — being llama-3.1-8b-instant — otherwise happily answers from its own
- * world knowledge, ignoring the "use ONLY this context" instruction).
+ * the query is treated as out-of-scope and we refuse instead of calling the model
+ * (which otherwise happily answers from its own world knowledge, ignoring the
+ * "use ONLY this context" instruction — measured on llama-3.1-8b-instant, and not
+ * a habit any model here is trusted to be free of).
+ *
+ * ⚠️ BOTH THRESHOLDS SURVIVED THE MOVE TO GEMINI UNCHANGED, and that is not an
+ * oversight. They gate cosine similarity between EMBEDDINGS, and the embedding
+ * model is fixed at `gemini-embedding-001` — changing which model writes the reply
+ * cannot move them. Re-calibrate only if the embedding model ever changes, which
+ * CLAUDE.md forbids for unrelated reasons.
  */
 const RAG_MATCH_THRESHOLD = 0.60;
 
@@ -53,6 +65,66 @@ const RAG_MATCH_THRESHOLD = 0.60;
  * are still caught by the strict grounding rules in the system prompt.
  */
 const DOC_LEVEL_MATCH_THRESHOLD = 0.51;
+
+/**
+ * Ceiling on the knowledge base injected into one reply, in characters.
+ *
+ * ⚠️ THIS REPLACES A LIMIT THAT WAS NEVER IN THE CODE. Groq refused a request
+ * past roughly 6,000 tokens with an HTTP 413, and the codebase recorded that
+ * number in prose — CLAUDE.md, and `conceptExtraction.ts`'s reason for capping a
+ * merged definition — while nothing here enforced it. What actually kept full
+ * mode inside the ceiling was the client sending exactly one material.
+ *
+ * Gemini's window makes the old figure meaningless (`gemini-3.5-flash-lite` takes
+ * ~1M input tokens), but "no limit" is not the lesson: an unbounded context is an
+ * unbounded bill and an unbounded latency. 32,000 characters is ~8,000 tokens —
+ * about five times what Groq would accept, and comfortably above the worst case
+ * real data can produce, since a material tops out near 42 concepts and
+ * `MAX_MERGED_DEFINITION_CHARS` caps each definition at 800 (≈33,600 characters,
+ * and only if every single definition were at its cap).
+ *
+ * So this is a runaway guard, not a working constraint: on today's data nothing
+ * reaches it. If it ever starts firing, that is the signal that full mode is
+ * being pointed at more than one material.
+ */
+const MAX_CONTEXT_CHARS = 32_000;
+
+/**
+ * Output ceiling for one reply.
+ *
+ * DOUBLED from Groq's 2048, for the reason every migrated call was: MINIMAL
+ * thinking is not *no* thinking and Gemini 3 thinking tokens draw on the same
+ * budget. Truncation is worse here than anywhere else in the app — it throws
+ * nothing and parses nothing, it simply stops the answer mid-sentence in front of
+ * the student. `streamContent()` logs a MAX_TOKENS finish for that reason.
+ */
+const MAX_REPLY_TOKENS = 4096;
+
+/**
+ * Trims the knowledge base to `MAX_CONTEXT_CHARS`.
+ *
+ * Drops WHOLE concepts from the end — never mid-definition, and never reordering
+ * — so what survives is the front of the document, matching how
+ * `conceptExtraction.ts` truncates a merged definition. It trims the concept list
+ * itself rather than the rendered string, so `source_concept_ids` records what
+ * genuinely grounded the answer instead of what was fetched.
+ */
+function fitContext<T extends { term: string; definition: string }>(
+  concepts: T[]
+): { kept: T[]; dropped: number } {
+  const kept: T[] = [];
+  let used = 0;
+
+  for (const c of concepts) {
+    const entry = `Term: ${c.term}\nDefinition: ${c.definition}`;
+    const cost = entry.length + (kept.length > 0 ? 2 : 0); // the '\n\n' separator
+    if (used + cost > MAX_CONTEXT_CHARS) break;
+    used += cost;
+    kept.push(c);
+  }
+
+  return { kept, dropped: concepts.length - kept.length };
+}
 
 /**
  * Detects "document-level" requests — ones that ask about the material as a whole
@@ -232,7 +304,16 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // ── 3. Build prompt messages ───────────────────────────────────────────────
+  // ── 3. Build the prompt ────────────────────────────────────────────────────
+  const fitted = fitContext(contextConcepts);
+  if (fitted.dropped > 0) {
+    console.warn(
+      `[Chat] Knowledge base over ${MAX_CONTEXT_CHARS} chars — dropped the last ` +
+        `${fitted.dropped} of ${contextConcepts.length} concepts.`
+    );
+    contextConcepts = fitted.kept;
+  }
+
   const contextText = contextConcepts.length > 0
     ? contextConcepts.map(c => `Term: ${c.term}\nDefinition: ${c.definition}`).join('\n\n')
     : 'No concepts were found for the selected materials.';
@@ -257,32 +338,51 @@ Guidelines:
 - Do NOT repeat the term/definition format verbatim unless asked. Synthesize the information naturally.
 - Format your answers with markdown (bold, lists, etc.) for readability.`;
 
-  // Keep last 4 messages of history (2 exchanges) to save tokens
-  const trimmedHistory = history.slice(-4);
-
-  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-    { role: 'system', content: systemPrompt },
-    ...trimmedHistory.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    { role: 'user', content: message },
-  ];
+  // Keep last 4 messages of history (2 exchanges) to save tokens.
+  // The system prompt is NOT one of them: Gemini has no system role inside
+  // `contents`, so it travels separately as the model's system instruction.
+  //
+  // The identity-looking `.map()` is load-bearing: `tsconfig.json` sets no
+  // `strictNullChecks`, under which Zod 3 infers every field of a parsed object as
+  // OPTIONAL. An object literal's properties are required, so rebuilding each turn
+  // is what makes the array match `StreamContentOptions` without loosening that
+  // contract for every future caller.
+  const trimmedHistory = history.slice(-4).map(m => ({ role: m.role, content: m.content }));
 
   // ── 4. Stream the response via SSE ────────────────────────────────────────
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
   let fullResponse = '';
 
   try {
-    const stream = await streamChatCompletion(messages);
+    // ⚠️ THE STREAM IS OPENED BEFORE THE HEADERS ARE FLUSHED, DELIBERATELY.
+    // `streamContent()` awaits the upstream request, so a refusal — a spent daily
+    // quota above all — arrives here while a real HTTP status is still sendable.
+    // This route used to flush first, which made the `!res.headersSent` branch
+    // below unreachable and turned every refusal, whatever its cause, into the
+    // client's generic "something went wrong".
+    const stream = await streamContent({
+      model: GEMINI_CHAT_MODEL,
+      systemInstruction: systemPrompt,
+      history: trimmedHistory,
+      message,
+      thinkingLevel: ThinkingLevel.MINIMAL,
+      maxOutputTokens: MAX_REPLY_TOKENS,
+    });
 
-    for await (const chunk of stream) {
-      const token = chunk.choices[0]?.delta?.content ?? '';
-      if (token) {
-        fullResponse += token;
-        res.write(`data: ${JSON.stringify({ token })}\n\n`);
-      }
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // The wire format is the contract with `ResourcesTab.tsx`, which parses it by
+    // hand — the one documented exception to the "never use raw fetch" rule. One
+    // `data: {"token":"…"}` per chunk, then `data: {"done":true}`, then end.
+    //
+    // Gemini writes in larger pieces than llama did — often a sentence at a time
+    // rather than a word — so a short reply can arrive in two or three chunks. That
+    // is the transport being different, not the streaming having stopped working.
+    for await (const token of stream) {
+      fullResponse += token;
+      res.write(`data: ${JSON.stringify({ token })}\n\n`);
     }
 
     // Signal stream end
@@ -309,8 +409,16 @@ Guidelines:
   } catch (err: any) {
     console.error('[Chat] Streaming error:', err.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Streaming failed', message: err.message });
+      // Nothing has reached the browser yet, so the true reason still can. A typed
+      // Gemini failure carries its own status and its own honest sentence: 429 when
+      // the key's daily allowance is spent, 503 for an outage. The client reads
+      // `message` off a non-OK response and shows it.
+      const status = err instanceof GeminiUnavailableError ? err.status : 500;
+      res.status(status).json({ error: 'Streaming failed', message: err.message });
     } else {
+      // Mid-stream: the student is already reading a partial answer, so there is no
+      // status left to send and no safe way to retry — a second attempt would
+      // splice itself into the middle of a sentence.
       res.write(`data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`);
       res.end();
     }

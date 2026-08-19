@@ -83,10 +83,15 @@ const MIN_DEFINITION_CHARS = 12;
 const CROSS_TERM_DUP = 0.93;   // different terms this similar ⇒ reworded duplicate
 
 // Ceiling on a folded definition. A term the document explains on eight pages
-// would otherwise produce an eight-sentence flashcard back, and POST /api/chat in
-// `full` mode injects every concept of a material and 413s past ~6000 tokens.
-// Parts are added in page order until the next would breach this, so the earliest
-// (usually most foundational) definitions are the ones kept.
+// would otherwise produce an eight-sentence flashcard back. Parts are added in
+// page order until the next would breach this, so the earliest (usually most
+// foundational) definitions are the ones kept.
+//
+// The flashcard back is now the whole reason for this cap. It used to be shared
+// with POST /api/chat, which injects every concept of a material in `full` mode
+// and 413'd on Groq past ~6000 tokens; since 2026-08-19 that route runs on
+// Gemini behind its own `MAX_CONTEXT_CHARS`, and the window is ~1M tokens. Lower
+// this only if flashcard backs read poorly.
 const MAX_MERGED_DEFINITION_CHARS = 800;
 
 // Thinking is on by default on Gemini 3 and its tokens draw on maxOutputTokens.

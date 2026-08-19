@@ -201,23 +201,17 @@ export async function withGroq<T>(fn: () => Promise<T>, label: string): Promise<
   );
 }
 
-/**
- * Streams a chat completion from Groq using llama-3.1-8b-instant.
- * Returns an async iterable of token chunks for SSE streaming to the client.
+/*
+ * ⚠️ NOTHING IMPORTS THIS FILE ANY MORE.
  *
- * @param messages   Full conversation (system + history + user message)
- * @returns          Async iterable stream of Groq chunks
+ * `streamChatCompletion()` lived here until 2026-08-19, on the decommissioned
+ * `llama-3.1-8b-instant`; it was the last Groq caller in the codebase and moved
+ * to `streamContent()` in `gemini.ts`. `withGroq()` and the two error classes
+ * below it never had a caller among the migrated functions at all.
+ *
+ * The module is therefore dead: it is never loaded, so `[Groq] key loaded` no
+ * longer appears in the boot log. It survives only until Prompt 5 of the
+ * migration, which deletes it along with `groq-sdk` and `GROQ_API_KEY`.
  */
-export async function streamChatCompletion(
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-) {
-  return groq.chat.completions.create({
-    model: 'llama-3.1-8b-instant',
-    messages,
-    stream: true,
-    temperature: 0.6,
-    max_tokens: 2048,
-  });
-}
 
 export { groq };
