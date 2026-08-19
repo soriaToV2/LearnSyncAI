@@ -42,8 +42,8 @@ import {
  *
  * Lived in `groq.ts` until 2026-08-19, on `llama-3.1-8b-instant` and
  * `llama-3.3-70b-versatile` — both decommissioned 17 June 2026. These moved out
- * rather than merely off Groq because `groq.ts` is deleted at the end of this
- * migration.
+ * rather than merely off Groq because `groq.ts` was itself deleted on the same
+ * day, once nothing imported it.
  */
 
 /** A single concept pulled from the concepts table. Deliberately no `id` — see above. */

@@ -31,8 +31,11 @@
  * "missing row means 0.10, not 0" rule — so the expected posterior is the same
  * hand-computed literal the offline sections use.
  *
- * ⚠️ `--live-test` burns one of the ~11 daily Groq test generations the whole
- * account has.
+ * ⚠️ `--live-test` spends FIVE `gemini-3.6-flash` requests — one per question
+ * format, issued in parallel. On the free tier that is the entire per-minute
+ * allowance in one go, and a quarter of the 20-per-day bucket that concept
+ * extraction, Feynman grading, flashcard fronts and games all share. Roughly
+ * four such runs a day; the 50-student study needs the paid key.
  */
 
 import { supabaseAdmin, supabaseAnon } from '../server/lib/supabase';

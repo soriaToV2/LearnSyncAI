@@ -23,7 +23,7 @@ import { generateJson, GeminiUnavailableError, GEMINI_CONTENT_MODEL } from './ge
  *
  * Lived in `groq.ts` until 2026-08-19, on the decommissioned
  * `llama-3.3-70b-versatile`. It moved out rather than merely off Groq because
- * `groq.ts` is deleted at the end of this migration.
+ * `groq.ts` was itself deleted on the same day, once nothing imported it.
  */
 
 /** A concept to write a question for. `id` is the concepts row id. */

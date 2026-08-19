@@ -42,7 +42,7 @@ There are **three user roles**:
 
 > **IMPORTANT:** The embedding model **must always be `gemini-embedding-001`**. All concept vectors stored in the `concepts` table use 3072 dimensions from this model. Never switch embedding models — doing so would make all stored vectors incompatible. (Google lists it as supported until 2028-05-14, so there is no deadline pressure here.)
 
-**Two Gemini text model strings are in play across five constants, and they do not share semantics.** Every constant lives in `server/lib/gemini.ts`; nowhere else may name a model string.
+**Two Gemini text model strings are in play across five constants, and they do not share semantics.** Every constant lives in `server/lib/gemini.ts`; nowhere else may name a model string. **There is no default model anywhere** — `generateJson()` and `generateJsonFromDocument()` both require one, so a call site that forgets is a compile error rather than a 404 on a live student request.
 
 | Constant | Model | Used by | Status |
 |---|---|---|---|
@@ -51,13 +51,23 @@ There are **three user roles**:
 | `GEMINI_UTILITY_MODEL` | `gemini-3.5-flash-lite` | Free Recall extraction + coaching prose (`cognitive.routes.ts`) | ✅ working |
 | `GEMINI_CONTENT_MODEL` | `gemini-3.6-flash` | Adaptive tests (`testGeneration.ts`), flashcard fronts (`questionGeneration.ts`), all three games (`gameContent.ts`) | ✅ working |
 | `GEMINI_CHAT_MODEL` | `gemini-3.5-flash-lite` | RAG chatbot (`chat.routes.ts`) | ✅ working |
-| `GEMINI_LEGACY_TEXT_MODEL` | `gemini-2.5-flash` | nothing — dead default of `generateJson()` | ⚠️ **remove the default** |
 
-**Adaptive test generation came BACK to Gemini on 2026-08-18** — `GEMINI_CONTENT_MODEL` (`gemini-3.6-flash`) at `ThinkingLevel.MINIMAL`, in `server/lib/testGeneration.ts`. It had moved to Groq `llama-3.3-70b-versatile` on 2026-08-06 to dodge the per-model daily quota; Groq then **decommissioned that model on 17 June 2026** (verified against our own key: *"The model does not exist or you do not have access to it"*) and closed its paid tier to new signups, so the escape route no longer exists. The paper (p. 81) says only "the large language model", so nothing in the write-up depends on the provider. **Flashcard question generation followed on 2026-08-19** — same constant, same thinking level, in the new `server/lib/questionGeneration.ts` — and **all three game generators the same day**, in the new `server/lib/gameContent.ts`. **The RAG chatbot followed on 2026-08-19 too** — `GEMINI_CHAT_MODEL` at `ThinkingLevel.MINIMAL`, through the new `streamContent()` in `gemini.ts`, which is the only streaming call in the codebase. **Nothing imports `groq.ts` any more**, so the module is never loaded and `[Groq] key loaded` no longer appears in the boot log; Prompt 5 deletes the file, `groq-sdk` and `GROQ_API_KEY`.
+**Adaptive test generation came BACK to Gemini on 2026-08-18** — `GEMINI_CONTENT_MODEL` (`gemini-3.6-flash`) at `ThinkingLevel.MINIMAL`, in `server/lib/testGeneration.ts`. It had moved to Groq `llama-3.3-70b-versatile` on 2026-08-06 to dodge the per-model daily quota; Groq then **decommissioned that model on 17 June 2026** (verified against our own key: *"The model does not exist or you do not have access to it"*) and closed its paid tier to new signups, so the escape route no longer exists. The paper (p. 81) says only "the large language model", so nothing in the write-up depends on the provider. **Flashcard question generation followed on 2026-08-19** — same constant, same thinking level, in the new `server/lib/questionGeneration.ts` — and **all three game generators the same day**, in the new `server/lib/gameContent.ts`. **The RAG chatbot followed on 2026-08-19 too** — `GEMINI_CHAT_MODEL` at `ThinkingLevel.MINIMAL`, through the new `streamContent()` in `gemini.ts`, which is the only streaming call in the codebase. **Groq was removed entirely on 2026-08-19** — `server/lib/groq.ts`, the `groq-sdk` dependency and `GROQ_API_KEY` are all gone, and no code path names a non-Gemini provider. Every remaining mention of Groq in this codebase is a comment recording why something is shaped the way it is; none of it is live.
 
 **Choosing a constant for a new call site — two questions, in order:** *(1) does the model’s own judgement become a number the student is shown?* Yes → `GEMINI_GRADING_MODEL`. *(2) if not, does the output become content a student reads as fact?* Yes → `GEMINI_CONTENT_MODEL`; no → `GEMINI_UTILITY_MODEL`. Free Recall is the instructive case for the first question: it looks like grading, but the model only enumerates what the student mentioned and the score is `coveredCount / totalConcepts` computed in code, so it belongs on the utility model. Feynman’s `accuracy_score` comes straight from the model, so it does not. **The second question exists because the first one alone is wrong for authoring** — test grading is deterministic (`testGrading.ts`), so no model judgement there ever becomes a score, which would send every question the model writes to the utility model. The Games section below records three measured failures from exactly that.
 
-- **`gemini-2.5-flash` is already gone, not going.** Verified 2026-08-01 against our own API key: every call returns `HTTP 404 — "no longer available to new users"`. It is still returned by `ListModels`, which is why it looks alive from the outside. Its last caller (adaptive test generation) left for Groq on 2026-08-06 and returned to `GEMINI_CONTENT_MODEL` on 2026-08-18, so nothing reaches it now. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
+- **`gemini-2.5-flash` is already gone, not going.** Verified 2026-08-01 against our own API key: every call returns `HTTP 404 — "no longer available to new users"`. It is still returned by `ListModels`, which is why it looks alive from the outside. **`GEMINI_LEGACY_TEXT_MODEL` no longer exists** — it was deleted on 2026-08-19 along with `generateContent()`, its last namer, and `generateJson()`'s default that pointed at it. Nothing can reach the model by accident now. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
+- **⛔ DO NOT "UPGRADE" TO `gemini-3.7-flash`.** It looks like the obvious next step — launched 13 Aug 2026 with a headline *"50% introductory price cut"* — and it is a trap on three measured counts (verified 2026-08-18 against our own key). **It rejects `MINIMAL` thinking outright**: `HTTP 400 — "Thinking level MINIMAL is not supported for this model"`, floor is `LOW`. Since thinking tokens bill at the OUTPUT rate, that floor makes its cheapest possible call *dearer* than `gemini-3.6-flash` at MINIMAL. **It is not reliably available**: five consecutive requests at `LOW` gave four failures with *"This model is currently experiencing high demand"*, which is an unacceptable rate for a 50-student study. And **it is not cheaper today** — both are $0.75 / $3.75 per 1M through 31 Dec 2026; the advertised cut is measured against 3.7's own future price, not against 3.6's current one. Re-evaluate after the study if availability improves and MINIMAL lands. Not before.
+- **Thinking level is the single largest cost and latency lever — measured, 17–18 Aug 2026, real keys, 120-word prompt.** Read the caveat before quoting any of it: Gemini latency varied wildly across repeated runs of an *identical* request, so treat one measurement as an anecdote.
+
+  | Model | Thinking | Typical total | Notes |
+  |---|---|---|---|
+  | `gemini-3.5-flash-lite` | MINIMAL | **~1.9s** | 1.8 / 2.1 / 1.8 / 1.9 / 1.9s over five samples — the most consistent thing tested |
+  | `gemini-3.6-flash` | MINIMAL | ~2.3s | but the same request an hour later ran 4.2–20.9s |
+  | `gemini-3.6-flash` | LOW | ~5–7s | spiked to 32s |
+  | `gemini-3.6-flash` | MEDIUM | ~8s+ | |
+
+  The direction is certain even though the multiples are noisy, and **thinking tokens bill at the OUTPUT rate**, so this is a cost table as much as a latency one: across the 50-student study, leaving thinking at its default roughly doubles the bill (~$16 against ~$7) and multiplies latency by 10–27×. Which is why every call site sets `thinkingLevel` explicitly and the two that deliberately run at MEDIUM — Free Recall's feedback pass and Feynman grading — record their measured reason for it.
 - **Never send `temperature` to a `gemini-3*` model.** Gemini 3 dropped the sampling parameters: `temperature`, `top_p` and `top_k` are ignored today and a future model generation returns HTTP 400 for them. `generateJson()` strips `temperature` on Gemini 3 and logs a warning; treat that warning as a bug to fix at the call site, not noise.
 - **Gemini 3 thinks by default** (`medium` on 3.6-flash, `minimal` on Flash-Lite) and thinking tokens draw on `maxOutputTokens`. Set `thinkingLevel` and `maxOutputTokens` explicitly on any Gemini 3 call, or a tight budget truncates the response and surfaces as unparseable JSON.
 - **Free-tier request quota is per model, and it bites in TWO windows — 5 per MINUTE and 20 per day.** Both are `…PerProjectPerModel`, so using a distinct model for utility calls buys a separate bucket of each; embeddings are metered separately again. **⚠️ One adaptive test is FIVE calls** — `testGeneration.ts` runs one per question format *in parallel*, which is the whole per-minute allowance in one request — all on `gemini-3.6-flash`, sharing both buckets with concept extraction, Feynman grading, flashcard fronts and games (one call each). That is roughly **four tests a day on a free key**, and it is the concrete reason the 50-student study needs the paid one.
@@ -105,7 +115,6 @@ LearnSyncAI/
 │   ├── index.ts                   # App entry point, route mounting
 │   ├── lib/
 │   │   ├── gemini.ts              # Gemini AI helpers (embedding, generation, JSON)
-│   │   ├── groq.ts                # DEAD — zero importers, deleted in Prompt 5
 │   │   ├── gameContent.ts         # Trivia / crossword / term matching (Gemini)
 │   │   ├── questionGeneration.ts  # Flashcard question fronts (Gemini)
 │   │   ├── materialAccess.ts      # Who may read which material (grade/ownership gate)
@@ -288,7 +297,6 @@ SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_ANON_KEY=
 GEMINI_API_KEY=
-GROQ_API_KEY=
 PORT=5000
 APP_URL=http://localhost:3000
 ```

@@ -5,7 +5,7 @@
  *   npx tsx scripts/bkt-verify.ts --live       # + drive the real flashcard endpoint
  *   npx tsx scripts/bkt-verify.ts --live --live-test
  *                                              # + generate and sit a real test
- *                                              #   (burns ~1 of ~11 daily Groq generations)
+ *                                              #   (5 gemini-3.6-flash requests — see below)
  *   npx tsx scripts/bkt-verify.ts --live --keep
  *                                              # leave the throwaway student behind
  *

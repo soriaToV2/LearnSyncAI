@@ -120,7 +120,11 @@ Logic Flow:
   - The AI writes short, encouraging feedback that points out what the student got right, names any factual errors directly, and tells them specifically how to improve.
   - Two independent axes are scored: accuracy_score (against the stored definition) and simplicity_score (against the audience rubric). A fluent but false explanation must not score well, and neither must a textbook-perfect one a child could not follow.
   - The verdict is derived in the backend from accuracy_score (≥80 Correct, ≥30 Needs Improvement, else Incorrect), never taken from the model — asked for it directly, the model leaks the simplicity axis into it.
-  - Grading runs at temperature 0, so an identical resubmission cannot drift across a verdict band boundary.
+  - An identical resubmission cannot drift across a verdict band boundary — but temperature 0 is
+    no longer what guarantees it. Gemini 3 dropped the sampling parameters entirely, so there is
+    no model-side knob left; findMemoisedAttempt() answers a byte-identical resubmission from the
+    row it produced last time. That is exact, costs no API call, and holds whichever model is
+    configured.
   - The audience is fixed at a 10-year-old child. FEYNMAN_AUDIENCES is a single-value enum so adding an audience later is one rubric plus one entry, not a data migration.
   - The ai_feedback is stored in cognitive_logs as a JSON string and surfaced to the student.
   - The Feynman Technique provides personalized feedback but does not directly update BKT mastery estimates, and like Free Recall it does not read them either — its grading is against the stored concept definition and the audience rubric, neither of which depends on mastery.
@@ -130,17 +134,28 @@ Logic Flow:
 7. Test Mode (Adaptive BKT Testing)
 
 Core Tables: practice_tests, practice_telemetry, bkt_mastery
-AI Integration: Groq llama-3.3-70b-versatile (question writing)
-  - Chosen over Gemini for one reason that outweighs the rest: Gemini's free quota is 20 requests
-    per day PER MODEL, and concept extraction, Free Recall and Feynman already spend it. Putting
-    test generation on the same key would trade working features for a new one during the study.
-    Groq carries a separate, far larger budget and already runs chat, flashcard question writing
-    and all three games.
+AI Integration: Gemini gemini-3.6-flash at ThinkingLevel.MINIMAL (question writing)
   - The paper (p. 81) specifies only "the large language model", so nothing in the write-up
-    depends on which provider this is.
-  - Generation is one call PER FORMAT, not one for the whole test: Groq's JSON mode gives no
-    structural guarantee, and a five-way union of question shapes in one response has no safe
-    recovery. Per format the shape is uniform and a malformed item falls back to a template.
+    depends on which provider this is. That mattered: this call site has moved twice.
+  - HISTORY. It ran on Gemini, moved to Groq llama-3.3-70b-versatile on 2026-08-06 to escape
+    Gemini's per-model daily quota, and came back to Gemini on 2026-08-18. Groq had
+    DECOMMISSIONED that model on 17 June 2026 — verified against our own key, "The model does
+    not exist or you do not have access to it" — and closed its paid tier to new signups, so the
+    escape route stopped existing and could never have scaled to the 50-student study anyway.
+    Groq was removed from the project entirely on 2026-08-19.
+  - The quota problem the Groq detour was fleeing is therefore still real, and is now a reason to
+    buy the paid key rather than to switch provider. Gemini's free tier refuses on TWO windows,
+    both per model: 5 requests per MINUTE and 20 per day. One test is five calls, so a single
+    test consumes the whole per-minute allowance, and the daily bucket is shared with concept
+    extraction, Feynman grading, flashcard fronts and all three games — roughly four tests a day.
+  - MINIMAL thinking is not a tuning preference. Measured: gemini-3.6-flash runs ~2s at MINIMAL
+    against 5-20s at LOW and 8s+ at MEDIUM, and thinking tokens bill at the OUTPUT rate. Nothing
+    in generation reasons — the server owns the true/false verdict, the correct option's position
+    and the matching blocks, and grading is deterministic in server/lib/testGrading.ts.
+  - Generation is one call PER FORMAT, not one for the whole test. responseSchema now does pin
+    the structure per call, which Groq's JSON mode never did — but a five-way union of question
+    shapes in one response still has no safe recovery. Per format the shape is uniform and a
+    malformed item falls back to a template.
   - Grading involves NO model call. Multiple choice, true/false and matching compare exactly;
     identification and fill-in-the-blank use a mechanical alias ladder (server/lib/testGrading.ts)
     so a score the student is shown is reproducible.
@@ -353,15 +368,15 @@ The Free Recall evaluation pipeline works as follows:
   4. Grade: A reference concept is "Covered" if its best match score ≥ 0.70; otherwise "Missed".
   5. Score: similarity_score = coveredCount / totalConcepts (coverage ratio, NOT average of raw scores).
 
-Verdict bands: Strong ≥ 0.30, Partial ≥ 0.15, otherwise Needs Review.
+Verdict bands: overall_verdict is still computed and stored, and is deliberately NOT DISPLAYED. The old absolute bands (Strong >= 0.30, Partial >= 0.15) were tuned against a 78-concept lesson; applied to a 29-concept one they put an 86% answer and a 36% answer containing two factual errors in the same "Strong" band. Do not reintroduce a fixed threshold on this ratio — any constant is wrong for the next material uploaded. What the student sees instead is progressLine(), which compares covered_count against their own earlier attempt on the SAME material, past a noise floor of max(2, ceil(total * 0.1)).
 The denominator is every concept extracted from the selected materials, and extraction is granular — a single lesson produced 78 concepts, including supporting details ("radio waves", "light pulses") no student writes out from memory. Recalling a document well therefore lands near 20–30%, not 75%. The ratio is left honest and the bands are calibrated to it, rather than rescaling the score itself.
 
-Reproducibility: the concept-extraction call runs at temperature 0. It is the only sampling step in the scoring pipeline, so without it an identical resubmission would extract a different concept list and score differently.
+Reproducibility: concept extraction is the only sampling step in the scoring pipeline, so an identical resubmission would otherwise extract a different concept list and score differently — measured, 14 / 16 / 17 covered across three runs of one submission. Temperature 0 used to pin it; Gemini 3 dropped the sampling parameters, so findMemoisedAttempt() now answers a byte-identical resubmission from the row it produced last time instead. It is keyed on a content fingerprint of the concept set (concepts has no updated_at column), so an educator editing a definition correctly forces a fresh evaluation.
 
 Written Feedback:
-  - After scoring, a second Gemini call writes three short pieces of coaching — strengths, gaps, next_steps — stored as written_feedback inside the ai_feedback JSON. No separate column.
+  - After scoring, a second Gemini call writes ONE short prose passage plus corrections, stored as written_feedback inside the ai_feedback JSON. No separate column. It was three fields — strengths, gaps, next_steps — and the split was measured and removed: across every logged attempt next_steps was a paraphrase of gaps ("you left out injection" -> "review injection"), which is what forced structure does when the model must fill a slot and has nothing new to put in it. Rows written before the merge are not migrated, so treat every key inside ai_feedback as optional.
   - The prompt receives the student's raw text, the points extracted from it, the reference concepts they covered, and the ones they missed. Two students who score the same but wrote different things therefore receive different feedback.
   - It is told NOT to recite the missed list. That list is generated against the whole document and is full of supporting detail nobody recalls from memory; the model picks the 2-3 ideas that actually matter and names those in plain language.
-  - Reproducibility is guaranteed by REUSE, not by temperature. Temperature 0 pins the score because extraction returns a structured list and the 0.70 threshold quantises the remainder — but free prose has no such quantisation, and in testing the same input reliably scored the same while producing reworded paragraphs. So before generating, findPreviousFeedback() looks for an earlier attempt by the same student with the same text, the same materials AND the same resulting score, and reuses its prose. Requiring the score to match means feedback is never reused after an educator changes the material underneath it.
+  - Reproducibility is guaranteed by REUSE, not by temperature — and since Gemini 3 dropped the sampling parameters, reuse is the only mechanism left. findMemoisedAttempt() looks for an earlier attempt by the same student with the same text, the same materials AND the same concepts_fingerprint, and answers from it. Matching the fingerprint rather than the score means feedback is never reused after an educator changes the material underneath it, and it also means a resubmission costs zero API calls.
   - Failure is isolated. generateRecallFeedback() catches its own errors and returns null; the call sits outside the scoring try block and before the insert, so the row is still written with its score, verdict and missed list. The response carries feedback_unavailable: true and the tab shows a note instead of an error. Losing the feedback cannot cost the score.
   - When extraction finds nothing recognisable in the submission, a fixed in-code message is used rather than an AI call — there is nothing personal to say, and a canned message cannot fail.

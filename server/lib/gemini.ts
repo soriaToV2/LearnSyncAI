@@ -74,10 +74,6 @@ export const GEMINI_UTILITY_MODEL = 'gemini-3.5-flash-lite';
  * Calls that AUTHOR CONTENT A STUDENT READS AS FACT: adaptive test questions
  * (`testGeneration.ts`), game content, flashcard fronts.
  *
- * ⚠️ Nothing to do with `generateContent()` below — that is transport, and it is
- * still pinned to the dead legacy model. This constant names a model; that
- * function names a call shape.
- *
  * By the "does a model judgement become a score?" rule alone these would all sit
  * on the utility model, because test grading is deterministic (`testGrading.ts`)
  * and the server owns every decision that affects a mark. That would be wrong,
@@ -109,23 +105,6 @@ export const GEMINI_CONTENT_MODEL = 'gemini-3.6-flash';
  * is judged on.
  */
 export const GEMINI_CHAT_MODEL = 'gemini-3.5-flash-lite';
-
-/**
- * NO CALLERS. Survives only as `generateJson()`'s default — which is a trap for
- * the next call site, and Prompt 5 of the Groq migration removes it.
- *
- * ⚠️ ALREADY DEAD. Verified 2026-08-01 against our own key: every call returns
- * HTTP 404 "no longer available to new users". It is still listed by ListModels,
- * which is why it looks alive. The published 2026-10-16 shutdown date is moot —
- * anything reaching this constant is broken NOW, not in October.
- *
- * Its last real caller was adaptive test generation, which left for Groq on
- * 2026-08-06 and returned to `GEMINI_CONTENT_MODEL` on 2026-08-18. Two functions
- * below still name it — `generateContent()` (unreferenced) and
- * `generateJsonFromDocument()` (a scratch script only), so nothing on a live path
- * touches it. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
- */
-const GEMINI_LEGACY_TEXT_MODEL = 'gemini-2.5-flash';
 
 /**
  * Gemini 3.x deprecated the sampling parameters. `temperature`, `top_p` and
@@ -391,38 +370,19 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   return values;
 }
 
-/**
- * Generates plain text content.
- *
- * NOTE: currently unreferenced. Kept on the legacy model — migrate or delete it
- * before the 2026-10-16 shutdown rather than leaving a dead 2.5 call behind.
- *
- * @param prompt - The prompt to send to the model
- * @returns The generated text string
- */
-export async function generateContent(prompt: string): Promise<string> {
-  const response = await withRetry(
-    () =>
-      genai.models.generateContent({
-        model: GEMINI_LEGACY_TEXT_MODEL,
-        contents: prompt,
-      }),
-    'generateContent'
-  );
-
-  const text = response.text;
-  if (!text) {
-    throw new Error('Failed to generate content: empty response from Gemini API');
-  }
-  return text;
-}
-
 export interface GenerateJsonOptions {
   /**
-   * Which model to call. Defaults to `gemini-2.5-flash` so callers that predate
-   * the Gemini 3 migration are unaffected. Pass `GEMINI_EXTRACTION_MODEL` to opt in.
+   * Which model to call. REQUIRED — there is deliberately no default.
+   *
+   * It defaulted to `gemini-2.5-flash` until 2026-08-19, so that callers
+   * predating the Gemini 3 migration kept working. That model had already been
+   * returning HTTP 404 for months by then (verified 2026-08-01, "no longer
+   * available to new users"), so the default had stopped sparing anyone and
+   * become a trap: a call site that forgot `model` failed at runtime, on a live
+   * student request, instead of at compile time. Every caller already passed one
+   * explicitly, so requiring it cost nothing and closed the hole.
    */
-  model?: string;
+  model: string;
   /**
    * Sampling temperature. Omit to use Gemini's default (some variation between
    * identical calls). Pass 0 for reproducible output — required when the result
@@ -449,21 +409,14 @@ export interface GenerateJsonOptions {
 }
 
 /**
- * Generates structured JSON content.
+ * The request config shared by `generateJson()` and `generateJsonFromDocument()`.
  *
- * Defaults to `gemini-2.5-flash`; pass `model` to target another. Gemini 3
- * parameter semantics are applied automatically — see `isGemini3`.
- *
- * @param prompt - The prompt (should instruct the model to return JSON)
- * @param options - Model, sampling and output controls. Defaults preserve prior behaviour.
- * @returns Parsed JavaScript object/array
+ * ONE copy on purpose. The `temperature` rule below backs student-facing scores,
+ * and a second copy of it is exactly the kind of thing that drifts — the version
+ * that quietly kept sending `temperature` would leave its caller believing in a
+ * reproducibility guarantee Gemini 3 no longer offers.
  */
-export async function generateJson<T = unknown>(
-  prompt: string,
-  options: GenerateJsonOptions = {}
-): Promise<T> {
-  const model = options.model ?? GEMINI_LEGACY_TEXT_MODEL;
-
+function jsonRequestConfig(model: string, options: GenerateJsonOptions) {
   // Drop `temperature` loudly on Gemini 3, never silently: a caller that still
   // believes `temperature: 0` pins its output would be relying on a guarantee it
   // no longer has, and on this codebase that guarantee backs student-facing scores.
@@ -475,22 +428,39 @@ export async function generateJson<T = unknown>(
   }
   const sendTemperature = options.temperature !== undefined && !isGemini3(model);
 
+  return {
+    responseMimeType: 'application/json',
+    // Each of these is sent only when the caller asked for it, so a caller that
+    // omits one keeps Gemini's own default rather than one of ours.
+    ...(sendTemperature && { temperature: options.temperature }),
+    ...(options.responseSchema !== undefined && { responseSchema: options.responseSchema }),
+    ...(options.maxOutputTokens !== undefined && { maxOutputTokens: options.maxOutputTokens }),
+    ...(options.thinkingLevel !== undefined && {
+      thinkingConfig: { thinkingLevel: options.thinkingLevel },
+    }),
+  };
+}
+
+/**
+ * Generates structured JSON content.
+ *
+ * `options.model` is required — see the note on it. Gemini 3 parameter semantics
+ * are applied automatically; see `isGemini3`.
+ *
+ * @param prompt - The prompt (should instruct the model to return JSON)
+ * @param options - Model (required), sampling and output controls
+ * @returns Parsed JavaScript object/array
+ */
+export async function generateJson<T = unknown>(
+  prompt: string,
+  options: GenerateJsonOptions
+): Promise<T> {
   const response = await withRetry(
     () =>
       genai.models.generateContent({
-        model,
+        model: options.model,
         contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          // Each of these is sent only when the caller asked for it, so existing
-          // callers keep Gemini's defaults untouched.
-          ...(sendTemperature && { temperature: options.temperature }),
-          ...(options.responseSchema !== undefined && { responseSchema: options.responseSchema }),
-          ...(options.maxOutputTokens !== undefined && { maxOutputTokens: options.maxOutputTokens }),
-          ...(options.thinkingLevel !== undefined && {
-            thinkingConfig: { thinkingLevel: options.thinkingLevel },
-          }),
-        },
+        config: jsonRequestConfig(options.model, options),
       }),
     'generateJson'
   );
@@ -529,10 +499,9 @@ export interface StreamContentOptions {
 /**
  * Streams a chat reply, yielding text as it arrives.
  *
- * The only streaming call in the codebase. `generateJson()` and
- * `generateContent()` both wait for a whole response, which is right for
- * authoring work and wrong for a chat UI, where time-to-first-token is what the
- * student actually experiences.
+ * The only streaming call in the codebase. `generateJson()` waits for a whole
+ * response, which is right for authoring work and wrong for a chat UI, where
+ * time-to-first-token is what the student actually experiences.
  *
  * ⚠️ IT AWAITS THE STREAM'S INITIATION AND RETURNS AN ITERABLE — it is
  * deliberately NOT an `async function*`. `generateContentStream()` issues the
@@ -610,27 +579,37 @@ export async function streamContent(options: StreamContentOptions): Promise<Asyn
 }
 
 /**
- * Generates structured JSON content from a document passed as inlineData.
+ * Generates structured JSON content from a document passed as inlineData —
+ * the file itself goes to the model, with no text-extraction step in front.
  *
- * NOTE: referenced only by `server/test-gemini.ts`, a scratch script. Kept on the
- * legacy model — migrate or delete it before the 2026-10-16 shutdown.
+ * NO PRODUCTION CALLER TODAY; `server/test-gemini.ts` is the only one. It is
+ * kept because it is the natural route for SCANNED materials, which the ingest
+ * pipeline already detects and records (`materials.is_scanned`) without yet
+ * doing anything about — a scanned PDF yields no extractable text, so
+ * `conceptExtraction.ts` has nothing to work from and this is the way in.
+ *
+ * `options.model` is required for the same reason `generateJson()`'s is: this
+ * function used to hardcode `gemini-2.5-flash`, which has returned HTTP 404
+ * since before it was last touched. Anything reaching it was broken.
  *
  * @param prompt - The instructions for extraction.
  * @param mimeType - The mime type of the file (e.g. 'application/pdf').
  * @param base64Data - The raw file data encoded as a base64 string.
+ * @param options - Model (required), sampling and output controls.
  * @returns Parsed JavaScript object/array
  */
 export async function generateJsonFromDocument<T = unknown>(
   prompt: string,
   mimeType: string,
-  base64Data: string
+  base64Data: string,
+  options: GenerateJsonOptions
 ): Promise<T> {
   // @google/genai v1.x requires a single content object with a `parts` array
   // for multimodal requests (text instruction + inlineData file).
   const response = await withRetry(
     () =>
       genai.models.generateContent({
-        model: GEMINI_LEGACY_TEXT_MODEL,
+        model: options.model,
         contents: [
           {
             role: 'user',
@@ -640,9 +619,7 @@ export async function generateJsonFromDocument<T = unknown>(
             ],
           },
         ],
-        config: {
-          responseMimeType: 'application/json',
-        },
+        config: jsonRequestConfig(options.model, options),
       }),
     'generateJsonFromDocument'
   );
