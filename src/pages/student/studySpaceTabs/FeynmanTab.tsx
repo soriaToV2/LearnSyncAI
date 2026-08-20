@@ -13,6 +13,7 @@ import {
   scoreTone, toneText,
   type AttemptSummary, type ViewMode,
 } from './cognitiveShared';
+import { useBadges } from '../../../context/BadgeContext';
 
 interface FeynmanTabProps {
   availableResources: { id: string; title: string }[];
@@ -135,6 +136,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
   // list. Sharing one variable would make the two views fight over it.
   const [historyLogs, setHistoryLogs] = useState<CognitiveLog[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const { celebrate } = useBadges();
   const [resultLogId, setResultLogId] = useState<string | null>(null);
   const [historyLogId, setHistoryLogId] = useState<string | null>(null);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -285,6 +287,9 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
       setShowAnswer(false);
       setExplanations({});
       setSelectedConceptIds([]);
+      // Both the fresh and the memo-hit server paths log activity, so a
+      // resubmission can award a streak badge just as a first attempt can.
+      celebrate();
     } catch (err) {
       console.error('[Feynman] Evaluation failed:', err);
       const raw = err instanceof Error ? err.message : '';

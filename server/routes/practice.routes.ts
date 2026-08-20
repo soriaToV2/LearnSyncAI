@@ -7,6 +7,7 @@ import { requireOwnedSpace, spaceMaterialIds, type SpaceOwner } from '../lib/spa
 import { GeminiUnavailableError } from '../lib/gemini';
 import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
 import { applyTestCompletion, bktProblems } from '../lib/bkt';
+import { logActivity } from '../lib/activity';
 import {
   documentMastery,
   latestUpdate,
@@ -906,6 +907,28 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
       err instanceof Error ? err.message : err
     );
   }
+
+  /*
+   * Activity + badges. Past the compare-and-swap, so a double-submitted test
+   * logs one row and awards `perfect_test` once.
+   *
+   * `elapsed_ms` rather than `completed_at — created_at`: it is the sum of the
+   * per-question latencies already stored on each answer, so it measures time on
+   * task instead of wall clock. A test opened before dinner and finished after
+   * it would otherwise contribute three hours of "study". It feeds only
+   * `total_study_hours`, which no screen displays.
+   *
+   * `score` is the server's own `correct / total` from `buildResult()` — never a
+   * client-supplied figure, the same rule that keeps `is_correct` server-side.
+   */
+  await logActivity({
+    studentId: req.user!.id,
+    type: 'adaptive_test',
+    spaceId: row.space_id,
+    materialId: row.source_material_ids?.[0] ?? null,
+    durationMs: result.elapsed_ms,
+    outcome: { score: result.score },
+  });
 
   res.json({ data: buildResult({ ...row, status: 'completed' }), message: 'Practice test submitted' });
 });

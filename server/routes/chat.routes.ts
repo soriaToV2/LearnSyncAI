@@ -11,6 +11,7 @@ import {
 } from '../lib/gemini';
 import { ChatRequestSchema } from '../types/api';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
+import { logActivity } from '../lib/activity';
 
 const router = Router();
 
@@ -405,6 +406,20 @@ Guidelines:
       if (logError) {
         console.warn('[Chat] Failed to save chat log:', logError.message);
       }
+
+      /*
+       * Streak + badges. A chat turn counts as study activity because the
+       * `activity_type` enum committed to it, and a student whose only session
+       * that day was the chatbot should not lose their run for it.
+       *
+       * It is also by far the cheapest activity to farm, which is why `chat` has
+       * no first-time badge of its own and awards nothing but streak progress.
+       * Recorded rather than designed around.
+       *
+       * Only THIS path logs. The off-topic refusal above writes a chatbot_logs
+       * row too, but the assistant declined to answer and nothing was studied.
+       */
+      await logActivity({ studentId: userId, type: 'chat', spaceId: space_id });
     }
   } catch (err: any) {
     console.error('[Chat] Streaming error:', err.message);

@@ -114,6 +114,8 @@ LearnSyncAI/
 ├── server/                        # Express backend
 │   ├── index.ts                   # App entry point, route mounting
 │   ├── lib/
+│   │   ├── activity.ts            # THE only writer for activity_logs (streaks)
+│   │   ├── badges.ts              # Badge catalogue + evaluator (no `badges` table)
 │   │   ├── gemini.ts              # Gemini AI helpers (embedding, generation, JSON)
 │   │   ├── gameContent.ts         # Trivia / crossword / term matching (Gemini)
 │   │   ├── questionGeneration.ts  # Flashcard question fronts (Gemini)
@@ -129,7 +131,7 @@ LearnSyncAI/
 │   │   ├── flashcards.routes.ts   # /api/flashcards (decks, cards, spaced rep)
 │   │   ├── cognitive.routes.ts    # /api/cognitive (free recall, Feynman)
 │   │   ├── practice.routes.ts     # /api/practice (adaptive tests)
-│   │   ├── gamification.routes.ts # /api/gamification (games, XP, badges)
+│   │   ├── gamification.routes.ts # /api/gamification (game sessions, streak, badges)
 │   │   │                          # (no bkt.routes.ts — BKT is not client-triggered)
 │   │   ├── chat.routes.ts         # /api/chat (RAG-based study assistant)
 │   │   ├── dashboard.routes.ts    # /api/dashboard (the one global student read)
@@ -480,11 +482,11 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 ### What is deliberately absent
 
-**Streaks, badges and study hours are OUT, and must not be added back without a writer.** Nothing writes `activity_logs` (30 rows exist, all from one migration backfill, newest 2026-07-17), nothing awards `user_badges`, and one student carries a **non-zero `day_streak` frozen since July** — a stale number that looks real, which is worse than none. The paper names all three on p. 65; the missing piece is a writer, not a widget.
+**Streaks and badges now have a writer and ARE displayed — see the Gamification section below. STUDY HOURS STILL DOES NOT AND STAYS OUT.** `total_study_hours` is written, but only a game reports a real duration and only a test can derive one; flashcards, both cognitive modes and chat measure nothing, so the figure is a partial sum that would read as a total. That is the same failure as the frozen `day_streak` that kept all three off this page until 2026-08-19. `GET /api/dashboard` deliberately does not serialise it. The missing piece is real timing, not a widget.
 
 **Free Recall's coverage ratio never appears here.** Its denominator is however finely that document happened to be split, so it means nothing stripped of context — and a dashboard is exactly the context that strips context. Printing "31%" beside a test's "80%" invites the cross-metric comparison the Cognitive Tabs section forbids. Recall and Feynman rows in the activity feed carry a sentence and a timestamp, no number.
 
-**No activity heatmap.** Buildable from real timestamps and rejected: with 6 tests and 17 cognitive attempts *ever*, an honest heatmap renders as an accusation.
+**No activity heatmap and no weekly activity chart.** Both are buildable from `activity_logs` now that something writes it, and both stay rejected: with 6 tests and 17 cognitive attempts *ever*, and a two-week study, an honest heatmap renders as an accusation.
 
 **No refresh button.** Fresh on mount like every other screen; a button would advertise a staleness the mount already handles.
 
@@ -497,6 +499,118 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 **`profiles` has no avatar, no email and no institution.** The sidebar renders an initials monogram tinted by the theme accent; the line under the name is `Grade {n}`, a real column. Do not invent any of the three — the layout used to render an Unsplash URL and "MIT" from mock data.
 
 **`src/data/mockStudents.ts` is GONE**, along with its last two readers. It survived the dashboard rebuild only because `Settings.tsx` and `StudentProfile.tsx` still rendered it; both were deleted in the sidebar rework below, and `mockPublicSpaces.ts` and `StudySpacePreviewModal.tsx` went with them. **`src/data/mockCourses.ts` is the only mock data left in the tree** — `games/gameUi.tsx` still reads it.
+
+## Gamification — streaks & badges
+
+> **Full reference: `LearnSyncAI artifacts/STREAKS_BADGES_IMPLEMENTATION.md`.** Read it before
+> changing anything here — it carries the data model, the nine call sites with their three
+> exclusions, the badge catalogue with the reasoning behind each threshold, the debugging
+> playbook with verified SQL, and the acceptance evidence. What follows is only what must not
+> be broken by accident.
+>
+> Writer built 2026-08-19, celebration modal 2026-08-20. Every table involved had existed since
+> migration 0005 and none had ever moved, because nothing inserted into `activity_logs`. The DB
+> half needed no changes; what landed is the writer, a badge catalogue and evaluator, two
+> dashboard cards and a modal.
+>
+> ⚠️ **Migration `20260819120023` is written but NOT YET APPLIED** — verified against the live
+> database 2026-08-20. It drops the `activity_logs` student INSERT policy (see below). The
+> feature works without it; the migration closes a security hole.
+
+**`server/lib/activity.ts` is the ONLY writer for `activity_logs`, and `logActivity()` NEVER THROWS.** That is deliberately unlike `applyFlashcardRating()` / `bktProblems()`, which throw and are caught at each of their two call sites: a BKT failure is diagnostically important and its return value is consumed, whereas this has **nine call sites** and no consumer that can act on a failure. Nine chances to forget a `try/catch` is the larger risk. A missing streak day must never cost anyone a score.
+
+**One insert is the whole streak mechanism.** `trigger_update_streak` is `AFTER INSERT ON activity_logs` and maintains `day_streak`, `longest_streak` and `total_study_hours` itself. It has **already run by the time the insert resolves** (same transaction), so reading `longest_streak` immediately afterwards is correct — it looks racy and is not. **A day is an Asia/Manila calendar day**, never a 48-hour clock; `ARCHITECTURE.md` claimed the latter for months and was wrong.
+
+**The nine call sites, and the three exclusions that matter more:**
+
+| Logs | Where |
+|---|---|
+| `flashcard` ×2 | `flashcards.routes.ts` — the counted path **and** the not-due practice branch |
+| `adaptive_test` | `practice.routes.ts` `PUT /:id/complete`, after `applyTestCompletion` |
+| `free_recall` ×2 | `cognitive.routes.ts` — fresh **and** memo-hit |
+| `feynman` ×2 | `cognitive.routes.ts` — fresh **and** memo-hit |
+| `game` | `gamification.routes.ts`, after the `game_sessions` insert |
+| `chat` | `chat.routes.ts`, after the normal-turn `chatbot_logs` insert |
+
+- **The not-due flashcard branch MUST log.** With 7-day Easy intervals a student who cleared their deck yesterday has nothing due today; logging only the counted path would break their streak for using spaced repetition correctly.
+- **Both cognitive memo paths MUST log.** A resubmission is a real attempt and writes a real `cognitive_logs` row; only the model calls are skipped.
+- **The compare-and-swap loser must NOT log** (`flashcards.routes.ts`) — a duplicate request, not a second study event. Nor must the **off-topic chat refusal** (`chat.routes.ts`), which writes a `chatbot_logs` row for a question the assistant declined. Nor a `PUT /complete` that does not flip the status.
+
+**`durationMs` is 0 wherever time is not measured, and 0 is the honest value.** Only a game reports one (`time_spent_ms`) and only a test derives one — from `result.elapsed_ms`, the sum of per-question latencies, **not** `completed_at − created_at`, which would bill a test left open over dinner as three hours of study.
+
+**⚠️ `user_badges.badge_name` IS THE IDENTITY. NEVER RENAME A BADGE.** The string is in the database; renaming `streak_3` re-awards it under a second name to everyone who held the first, and orphans rows the client can no longer label. `label` and `description` are free to change.
+
+**There is deliberately NO `badges` table.** The catalogue is `BADGES` in `server/lib/badges.ts`; a table nobody can edit is a constant with extra steps, and building an editor for it would repeat the `educator_assignments` mistake. `UNIQUE (student_id, badge_name)` is what makes awarding idempotent — the insert is `ON CONFLICT DO NOTHING` and needs no read-then-write lock, which is what makes a concurrent double-submit safe.
+
+**Badges are awarded off `longest_streak`, not `day_streak`.** Thresholds stack and are permanent: reaching 7 days leaves all three held, and breaking a streak never removes one. Using `day_streak` would be equivalent today (rows are never deleted) but would let a student see "Week Warrior" beside a current streak of 1 with no way to tell which was lying.
+
+**Thresholds are 3 / 5 / 7, sized to the ~2-week study.** 14 was considered and dropped — an unreachable badge renders as a permanently grey tile that reads as broken. `STREAK_THRESHOLDS` is the one edit if the study lengthens.
+
+**⚠️ EVALUATION ORDER IS WHAT KEEPS THIS CHEAP, AND IT RUNS AFTER EVERY SINGLE FLASHCARD RATING.** One indexed read of the badges already held → narrow the catalogue to (not held) ∧ (triggered by this activity type) → **if nothing survives, return with zero further queries.** That is the steady state, so a saturated activity costs exactly one lookup forever after, and every COUNT-based rule stops running the moment its badge is earned. Measured: ~260ms per saturated activity. **Do not add a rule that queries before the held-set filter.**
+
+**`cards_100` counts `activity_logs`, not `spaced_repetition_logs`** — the latter gets no row for a practice rating on an un-due card, so the two tables disagree about what "reviewed" means. One uniform source for every "N times" rule.
+
+**Mastery badges trigger only on `flashcard` and `adaptive_test`** — the two modes permitted to move mastery (p. 58). A game or chat turn cannot change the count, so checking after one would be a query guaranteed to find nothing.
+
+**`chat` counts toward a streak but has no first-time badge.** The `activity_type` enum committed to it, and a student whose only session that day was the chatbot should not lose their run. It is also the cheapest activity to farm — recorded, not designed around.
+
+**`GET /api/dashboard` reads `gamification_profiles` and `user_badges` with two plain SELECTs, hoisted into the step-1 batch — never `GET /api/gamification/profile`.** That route used to INSERT on a GET; it no longer does, because a GET that writes is a trap for the next caller and the dashboard is read-only permanently. The fetch is in step 1 rather than beside the other history reads so it **survives both early returns**: a student whose educator archived every material still holds their streak, and zeroing it on an otherwise-empty dashboard would look like the app forgetting their work.
+
+**⚠️ Migration 0023 DROPPED the student INSERT policy on `activity_logs`.** It contradicted the rule stated eleven lines above it in `schema.sql` — mastery and gamification are read-only for students precisely so an anon key cannot inflate a score — and `update_study_streak()` is `SECURITY DEFINER`, so an anon-key insert moved all three columns directly. Harmless while nothing read them; a live fabrication route the moment a dashboard printed them. Express writes with the service role, which bypasses RLS, so dropping it cost nothing. **Do not add it back.**
+
+**`src/lib/badges.ts` owns presentation and nothing else.** The server decides which badges exist and who holds one. `badgeStyle()` **falls back rather than indexing blind**, so the server can award a new badge before the client knows its name — never replace it with `BADGE_STYLES[name]`. Only EARNED badges are ever rendered: a greyed-out rail of unearned ones needs criteria text beside each, and on a two-week study a wall of locked tiles reads as a list of things you failed to do.
+
+**`src/pages/student/games/gamesData.ts` no longer exports `BADGES`** — four hardcoded tiles, three of them `earned: true` for every student, with zero consumers.
+
+### The badge-earned modal
+
+**`src/context/BadgeContext.tsx` DIFFS, it is not told.** `celebrate()` re-reads
+`GET /api/gamification/badges` and compares against what this session has already seen. The obvious
+alternative — each write endpoint returning the badges its action awarded — is ruled out by two
+things: **`FlashcardStudyView` does not await the rating** (it posts and advances the card, so a badge
+on that response would open a modal over a card the student had moved on to), and **`chat.routes.ts`
+calls `logActivity()` after `res.end()`**, so the SSE stream has nowhere to put the answer. Diffing
+also means the nine write paths verified by the acceptance harness are untouched.
+
+**⚠️ THE BASELINE IS SEEDED ON MOUNT AND CELEBRATES NOTHING.** Without that, every student holding
+badges already is ambushed on their next login. It is **in-memory on purpose**: a reload re-seeds, so
+nothing is ever celebrated twice. Persisting to `localStorage` would close the one gap (a badge earned
+by the last action before the tab closes) and open a worse one — clearing site data would replay every
+badge the student has ever earned.
+
+**`celebrate()` waits BEFORE it fetches, and the delay does two jobs.** It lets a results screen finish
+its own entrance, *and* it gives the un-awaited flashcard rating time to land — fetching immediately
+would read the badge list from before the badge was written. Not made into a guarantee: a poll loop
+would cost every student requests on every session to catch a case whose failure mode is "the badge
+appears on the dashboard instead".
+
+**Six checkpoints, all at "you just finished something" moments** — the flashcard results screen (on
+`isFinished`, so Restart re-arms it), `onFinish` in `AdaptiveTestTab` (**not** the results screen
+itself, which `openSummary` also reaches when browsing a PAST test), both cognitive submits, after the
+game session POST resolves, and after a chat turn streams successfully. Never per flashcard: that
+would be thirty requests to answer a question that only changes at the end.
+
+**ONE modal listing every badge that action earned, never a queue.** Finishing a game on a three-day
+streak awards three at once; three dialogs in a row turn a reward into a chore, and a student clicking
+fast would never read the third.
+
+**It is SILENT, deliberately.** `play('victory')` and a mute toggle already exist in `gameAudio.ts`
+and are not used here: this modal can appear anywhere in the portal, and an unexpected fanfare in a
+classroom is startling. The games are opt-in and self-contained, which is why they may have sound and
+this may not.
+
+**`ConfettiBurst` moved to `src/components/ui/`** and `gameUi.tsx` re-exports it. It could not stay
+there: `gameUi.tsx` imports `MOCK_COURSES`, so a globally mounted consumer would drag the last mock
+data in the tree into the student portal bundle. Same lift `surfaces.ts` and `reviewSchedule.ts` got.
+**A re-export does not bind the name locally** — `gameUi.tsx` must import it too, for its own usage.
+
+**`.animate-badge-pop` and `.animate-badge-glow` are in the `prefers-reduced-motion` block.** A
+celebration is exactly the motion that block exists for; the modal still opens and still names the
+badge. The halo is `display: none` there rather than un-animated, because a static halo is a smudge.
+
+**`gameUi.tsx` already had a `celebrate` — a boolean prop gating the game's own confetti** — so the
+hook is aliased to `celebrateBadges` there. The scopes do not overlap and it compiles either way; two
+unrelated meanings under one name in one module is the hazard.
 
 ## Sidebar & Profile — both portals
 

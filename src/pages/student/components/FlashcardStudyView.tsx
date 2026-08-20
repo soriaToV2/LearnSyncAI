@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { RotateCcw, Trophy, ArrowLeft, Zap, Clock, AlertTriangle, Brain, Calendar, CheckCircle2 } from 'lucide-react';
 import { api } from '../../../lib/api';
+import { useBadges } from '../../../context/BadgeContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -186,6 +187,7 @@ export default function FlashcardStudyView({
   onExit,
   isPractice = false,
 }: FlashcardStudyViewProps) {
+  const { celebrate } = useBadges();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [sessionResults, setSessionResults] = useState<CardSession[]>([]);
@@ -196,6 +198,21 @@ export default function FlashcardStudyView({
   const [isSaving, setIsSaving] = useState(false);
   // Track which rating was chosen on current card for animation feedback
   const [selectedRating, setSelectedRating] = useState<EaseRating | null>(null);
+
+  /*
+   * Badge check, at the END of the session rather than per rating.
+   *
+   * Two reasons. The rating POST is deliberately un-awaited, so a per-card check
+   * would open a modal over whatever card the student had already moved on to.
+   * And a thirty-card session would fire thirty requests to answer a question
+   * that only changes at the end.
+   *
+   * On `isFinished` rather than at the `setIsFinished(true)` call site, so
+   * "Restart Entire Set" correctly re-arms it for the next run.
+   */
+  useEffect(() => {
+    if (isFinished) celebrate();
+  }, [isFinished, celebrate]);
   // A rating the server refused. Shown to the student rather than swallowed —
   // silently dropping it would leave them believing the card was scheduled.
   const [saveError, setSaveError] = useState<string | null>(null);

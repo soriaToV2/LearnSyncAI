@@ -13,6 +13,7 @@ import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
 import { CARD, SECTION, scoreTone, toneText, type Tone } from '../../../components/ui/surfaces';
 import TestSessionView from '../components/TestSessionView';
 import TestResultsView from '../components/TestResultsView';
+import { useBadges } from '../../../context/BadgeContext';
 import {
   ALL_FORMATS,
   FORMAT_META,
@@ -71,6 +72,7 @@ interface AdaptiveTestTabProps {
 }
 
 export default function AdaptiveTestTab({ spaceId, availableResources }: AdaptiveTestTabProps) {
+  const { celebrate } = useBadges();
   const [screen, setScreen] = useState<Screen>('overview');
   const [summaries, setSummaries] = useState<TestSummary[]>([]);
   const [mastery, setMastery] = useState<SpaceMastery | null>(null);
@@ -229,6 +231,12 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
           setJustFinished(true);
           setScreen('results');
           void refreshList();
+          // Here and not on the results screen itself: `openSummary` also lands
+          // there when a student opens a PAST test, and re-celebrating a badge
+          // every time they review an old score would be nonsense. `onFinish`
+          // runs only after PUT /complete resolved, which is also the point the
+          // badge has certainly been written.
+          celebrate();
         }}
       />
     );

@@ -25,6 +25,7 @@ import {
   type FreeRecallFeedback,
   type FreeRecallWrittenFeedback,
 } from '../types/api';
+import { logActivity } from '../lib/activity';
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
@@ -523,6 +524,19 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
         return;
       }
 
+      /*
+       * A memoised attempt still counts. It writes a real `cognitive_logs` row
+       * and appears in the student's history exactly as a fresh one does, so it
+       * must count toward the streak too — only the model calls are skipped,
+       * not the fact that the student sat down and did the work.
+       */
+      await logActivity({
+        studentId,
+        type: 'free_recall',
+        spaceId: space_id,
+        materialId: material_ids?.[0] ?? null,
+      });
+
       res.status(201).json({
         data: {
           log_id: log.id,
@@ -856,6 +870,14 @@ Example output:
       res.status(500).json({ error: 'Failed to save cognitive log', message: logError.message });
       return;
     }
+
+      // Streak + badges. Never throws, so no try/catch of its own.
+    await logActivity({
+      studentId,
+      type: 'free_recall',
+      spaceId: space_id,
+      materialId: material_ids?.[0] ?? null,
+    });
 
     // ── 9. Return results to the frontend ────────────────────────────────
     res.status(201).json({
@@ -1239,6 +1261,15 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
+      // Counts toward the streak for the same reason it writes a log row: the
+      // student did the work, and only the model call was skipped.
+      await logActivity({
+        studentId,
+        type: 'feynman',
+        spaceId: space_id,
+        materialId: material_ids?.[0] ?? null,
+      });
+
       res.status(201).json({
         data: { log_id: log.id, created_at: log.created_at, ...memoised },
         message: 'Feynman explanation evaluated successfully',
@@ -1428,6 +1459,14 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
       res.status(500).json({ error: 'Failed to save cognitive log', message: logError.message });
       return;
     }
+
+    // Streak + badges. Never throws, so no try/catch of its own.
+    await logActivity({
+      studentId,
+      type: 'feynman',
+      spaceId: space_id,
+      materialId: material_ids?.[0] ?? null,
+    });
 
     res.status(201).json({
       data: {

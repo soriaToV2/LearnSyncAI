@@ -7,6 +7,8 @@ import { useMuted, setMuted } from './gameAudio';
 import { MOCK_COURSES } from '../../../data/mockCourses';
 import { TIER_LABEL, TIER_TONE, type DifficultyTier } from '../../../lib/mastery';
 import { toneText } from '../../../components/ui/surfaces';
+import ConfettiBurst from '../../../components/ui/ConfettiBurst';
+import { useBadges } from '../../../context/BadgeContext';
 import {
   COURSE_DATABASE,
   CourseGameData,
@@ -116,45 +118,16 @@ export function ScreenFlash({ flash }: { flash: FlashState | null }) {
    Confetti
    --------------------------------------------------------------- */
 
-const CONFETTI_COLORS = ['#22d3ee', '#fbbf24', '#34d399', '#a78bfa', '#fb7185'];
-
-export function ConfettiBurst({ pieces = 20 }: { pieces?: number }) {
-  const items = useMemo(
-    () =>
-      Array.from({ length: pieces }, (_, i) => ({
-        id: i,
-        left: Math.random() * 100,
-        delay: Math.random() * 0.45,
-        duration: 1.6 + Math.random() * 0.9,
-        size: 5 + Math.random() * 5,
-        rotate: Math.random() * 360,
-        color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-      })),
-    [pieces]
-  );
-
-  return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      {items.map((p) => (
-        <span
-          key={p.id}
-          className="game-confetti"
-          style={
-            {
-              left: `${p.left}%`,
-              width: p.size,
-              height: p.size,
-              background: p.color,
-              animationDelay: `${p.delay}s`,
-              animationDuration: `${p.duration}s`,
-              ['--confetti-rotate' as string]: `${p.rotate}deg`,
-            } as React.CSSProperties
-          }
-        />
-      ))}
-    </div>
-  );
-}
+/**
+ * Moved to `components/ui/ConfettiBurst.tsx` when the badge-earned modal needed
+ * the same effect. Re-exported rather than relocated-and-rewired, so the three
+ * usages inside the games are unchanged.
+ *
+ * It could not stay here: this module imports `MOCK_COURSES`, so a globally
+ * mounted consumer would drag the last mock data in the tree into the student
+ * portal bundle.
+ */
+export { ConfettiBurst };
 
 /* ---------------------------------------------------------------
    HUD
@@ -601,6 +574,9 @@ interface GameContentState {
  * which just replays the current content locally).
  */
 export function useGameContent(): GameContentState {
+  // Aliased: this module already has a `celebrate` — a boolean prop on the
+  // result screen that gates the confetti. Same name, unrelated meaning.
+  const { celebrate: celebrateBadges } = useBadges();
   const [searchParams, setSearchParams] = useSearchParams();
   const contentId = searchParams.get('contentId');
   const courseId = searchParams.get('course') || 'bio-301';
@@ -731,11 +707,17 @@ export function useGameContent(): GameContentState {
           time_spent_ms: result.timeMs,
           detail: result.detail,
         })
+        .then(() => {
+          // After the POST resolves, not beside it: the session insert is what
+          // logs the activity, so checking earlier would read the badge list
+          // from before First Game or Flawless was awarded.
+          celebrateBadges();
+        })
         .catch((err: unknown) => {
           console.warn('[games] session log failed:', err);
         });
     },
-    []
+    [celebrateBadges]
   );
 
   return {

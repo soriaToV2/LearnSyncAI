@@ -74,6 +74,31 @@ interface SpaceMasteryRow {
   due_count: number;
 }
 
+/**
+ * Streaks and badges.
+ *
+ * `total_study_hours` is deliberately ABSENT. It is written (see
+ * `server/lib/activity.ts`) but only games and adaptive tests carry a real
+ * duration; flashcards, both cognitive modes and chat measure nothing, so the
+ * figure is a partial sum that would read as a total. That is the same failure
+ * as the frozen `day_streak` this whole feature exists to fix. If a screen ever
+ * wants it, the missing piece is real timing, not a field here.
+ */
+interface GamificationBlock {
+  day_streak: number;
+  longest_streak: number;
+  /** Asia/Manila calendar date, not a timestamp. Null until the first activity. */
+  last_active_on: string | null;
+  badges: { name: string; awarded_at: string }[];
+}
+
+const EMPTY_GAMIFICATION: GamificationBlock = {
+  day_streak: 0,
+  longest_streak: 0,
+  last_active_on: null,
+  badges: [],
+};
+
 interface CurvePoint {
   /** Learning-opportunity index, not a timestamp. See buildCurve(). */
   t: number;
@@ -228,15 +253,52 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
   const studentId = req.user!.id;
 
   try {
-    // ── 1. Identity + spaces ────────────────────────────────────────────────
-    const [{ data: profile }, { data: spaceRows }] = await Promise.all([
+    // ── 1. Identity + spaces + gamification ─────────────────────────────────
+    /*
+     * Streaks and badges are fetched HERE, not later, because they must survive
+     * the early returns below. A student whose educator archived every material
+     * still holds the streak and badges they earned — zeroing those out on an
+     * otherwise-empty dashboard would look like the app forgetting their work.
+     *
+     * Two plain SELECTs, deliberately NOT `GET /api/gamification/profile` — that
+     * route INSERTs a row on a GET and this endpoint is read-only permanently
+     * (see the header). A missing profile row yields zeros rather than being
+     * created; `handle_new_user()` writes one for every student, so the branch is
+     * nearly dead, and "no activity yet" is the only answer a read may give.
+     */
+    const [
+      { data: profile },
+      { data: spaceRows },
+      { data: gamificationRow },
+      { data: badgeRows },
+    ] = await Promise.all([
       supabaseAdmin.from('profiles').select('grade_level').eq('id', studentId).maybeSingle(),
       supabaseAdmin
         .from('study_spaces')
         .select('id, title, subject')
         .eq('student_id', studentId)
         .order('created_at', { ascending: false }),
+      supabaseAdmin
+        .from('gamification_profiles')
+        .select('day_streak, longest_streak, last_active_on')
+        .eq('student_id', studentId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('user_badges')
+        .select('badge_name, awarded_at')
+        .eq('student_id', studentId)
+        .order('awarded_at', { ascending: false }),
     ]);
+
+    const gamification: GamificationBlock = {
+      day_streak: Number(gamificationRow?.day_streak ?? 0),
+      longest_streak: Number(gamificationRow?.longest_streak ?? 0),
+      last_active_on: (gamificationRow?.last_active_on as string | null) ?? null,
+      badges: (badgeRows ?? []).map((b) => ({
+        name: b.badge_name as string,
+        awarded_at: b.awarded_at as string,
+      })),
+    };
 
     const spaces = (spaceRows ?? []) as { id: string; title: string; subject: string }[];
     const gradeLevel = profile?.grade_level ?? null;
@@ -244,7 +306,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     // No spaces means no materials, no decks and no activity — `practice_tests`,
     // `cognitive_logs` and `game_content` all require a space to exist.
     if (spaces.length === 0 || gradeLevel === null) {
-      res.json({ data: emptyDashboard() });
+      res.json({ data: emptyDashboard(0, gamification) });
       return;
     }
 
@@ -296,7 +358,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     const visibleMaterialIds = [...new Set([...materialsBySpace.values()].flat())];
 
     if (visibleMaterialIds.length === 0) {
-      res.json({ data: emptyDashboard(spaces.length) });
+      res.json({ data: emptyDashboard(spaces.length, gamification) });
       return;
     }
 
@@ -421,6 +483,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
         .order('completed_at', { ascending: false, nullsFirst: false })
         .limit(RECENT_LIMIT),
     ]);
+
 
     const titleOfSpace = new Map(spaces.map((s) => [s.id, s.title]));
 
@@ -562,6 +625,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
         flashcards_due: dueTotal,
         resume_test,
         recent,
+        gamification,
         counts: { spaces: spaces.length, materials: visibleMaterialIds.length },
       },
     });
@@ -572,7 +636,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 });
 
 /** The zero-shaped payload, so the client renders empty states rather than branching on null. */
-function emptyDashboard(spaceCount = 0) {
+function emptyDashboard(spaceCount = 0, gamification: GamificationBlock = EMPTY_GAMIFICATION) {
   return {
     mastery: {
       overall: null,
@@ -589,6 +653,9 @@ function emptyDashboard(spaceCount = 0) {
     flashcards_due: 0,
     resume_test: null,
     recent: [],
+    // Passed in, never zeroed: an empty dashboard is about materials and
+    // mastery, and says nothing about whether the student has a streak.
+    gamification,
     counts: { spaces: spaceCount, materials: 0 },
   };
 }

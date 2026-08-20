@@ -100,6 +100,30 @@ export type ActivityItem =
       accuracy: number | null;
     };
 
+export interface EarnedBadge {
+  /** Catalogue key from `server/lib/badges.ts`. Resolve it via `badgeStyle()`. */
+  name: string;
+  awarded_at: string;
+}
+
+/**
+ * Streaks and badges. Mirrors `GamificationBlock` in `dashboard.routes.ts`.
+ *
+ * `total_study_hours` is deliberately absent from BOTH sides. It is written, but
+ * only games and adaptive tests carry a real duration — flashcards, the two
+ * cognitive modes and chat measure nothing — so the figure is a partial sum that
+ * would read as a total. Do not add it here without real timing behind it.
+ */
+export interface GamificationBlock {
+  day_streak: number;
+  /** Best run ever. Badges are awarded off this, so it never decreases. */
+  longest_streak: number;
+  /** Asia/Manila calendar date, not a timestamp. Null until the first activity. */
+  last_active_on: string | null;
+  /** Earned only. The catalogue is never shipped — see `src/lib/badges.ts`. */
+  badges: EarnedBadge[];
+}
+
 export interface DashboardData {
   mastery: {
     /** EQ(4) across every concept in every space. `null` when nothing is assessed. */
@@ -127,6 +151,7 @@ export interface DashboardData {
   flashcards_due: number;
   resume_test: ResumeTest | null;
   recent: ActivityItem[];
+  gamification: GamificationBlock;
   counts: { spaces: number; materials: number };
 }
 

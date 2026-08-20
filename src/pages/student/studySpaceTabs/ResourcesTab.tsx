@@ -9,6 +9,7 @@ import Markdown from '../../../components/ui/Markdown';
 import PdfViewer from '../../../components/ui/PdfViewer';
 import SubjectBadge from '../../../components/educator/SubjectBadge';
 import { subjectName } from '../../../data/mockEducator';
+import { useBadges } from '../../../context/BadgeContext';
 
 /**
  * The student's read-only view of the materials their educators published.
@@ -120,6 +121,7 @@ export default function ResourcesTab({
   // ─── Chat state ────────────────────────────────────────────
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  const { celebrate } = useBadges();
   const [isStreaming, setIsStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -355,6 +357,18 @@ export default function ResourcesTab({
         m.id === aiMsgId ? { ...m, isStreaming: false } : m
       ));
 
+      /*
+       * On the SUCCESS path only, never in `finally`. A failed turn writes no
+       * chatbot_logs row and logs no activity, so checking there would be a
+       * request guaranteed to find nothing.
+       *
+       * Chat awards no first-time badge of its own — it can only carry a streak
+       * over a threshold — but that is exactly the case no other checkpoint can
+       * cover: the server logs this activity AFTER res.end(), so the stream the
+       * student just read could not have carried the answer.
+       */
+      celebrate();
+
     } catch (err: any) {
       console.error('[Chat] Error:', err);
       setMessages(prev => prev.map(m =>
@@ -366,7 +380,7 @@ export default function ResourcesTab({
     } finally {
       setIsStreaming(false);
     }
-  }, [input, isStreaming, chatMaterial, messages, spaceId]);
+  }, [input, isStreaming, chatMaterial, messages, spaceId, celebrate]);
 
   // ─── Textarea auto-resize ──────────────────────────────────
   const handleAutoResize = (e: React.ChangeEvent<HTMLTextAreaElement>) => {

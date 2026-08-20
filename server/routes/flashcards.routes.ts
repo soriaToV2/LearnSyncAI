@@ -5,6 +5,7 @@ import { requireRole } from '../middleware/requireRole';
 import { RateFlashcardSchema } from '../types/api';
 import { REVIEW_INTERVALS, nextReviewAt, isDue } from '../lib/reviewSchedule';
 import { applyFlashcardRating, bktProblems } from '../lib/bkt';
+import { logActivity } from '../lib/activity';
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
@@ -57,7 +58,7 @@ router.post('/rate', async (req: Request, res: Response): Promise<void> => {
   // stranger's cards by id — and, once BKT lands, write mastery against them.
   const { data: card } = await supabaseAdmin
     .from('flashcards')
-    .select('id, deck_id, concept_id, next_review_at')
+    .select('id, deck_id, concept_id, source_material_id, next_review_at')
     .eq('id', flashcard_id)
     .maybeSingle();
 
@@ -93,6 +94,22 @@ router.post('/rate', async (req: Request, res: Response): Promise<void> => {
   // and it does not move the schedule.
   const now = new Date();
   if (!isDue(card.next_review_at, now)) {
+    /*
+     * Nothing is scheduled and no BKT observation is recorded — but this IS
+     * study activity, so it counts toward the streak.
+     *
+     * That distinction is load-bearing. With 7-day Easy intervals a student who
+     * cleared their deck yesterday has nothing due today; logging only the
+     * counted branch would break their streak for using spaced repetition
+     * correctly, which is the opposite of what a streak is for.
+     */
+    await logActivity({
+      studentId,
+      type: 'flashcard',
+      spaceId: space.id,
+      materialId: card.source_material_id,
+    });
+
     res.status(200).json({
       data: {
         flashcard_id,
@@ -191,6 +208,21 @@ router.post('/rate', async (req: Request, res: Response): Promise<void> => {
       err instanceof Error ? err.message : err
     );
   }
+
+  /*
+   * 6. Activity + badges. Reached only past the compare-and-swap, so a
+   * double-tap logs one row rather than two — the loser of that race returned
+   * above with `counted: false` and no activity, because it is a duplicate
+   * request rather than a second study event.
+   *
+   * `logActivity` never throws, so it needs no try/catch of its own.
+   */
+  await logActivity({
+    studentId,
+    type: 'flashcard',
+    spaceId: space.id,
+    materialId: card.source_material_id,
+  });
 
   res.status(200).json({
     data: {

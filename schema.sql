@@ -750,6 +750,12 @@ CREATE TABLE user_badges (
     UNIQUE (student_id, badge_name)
 );
 
+COMMENT ON COLUMN user_badges.badge_name IS
+    'Stable identifier from the catalogue in server/lib/badges.ts (e.g. streak_3, mastery_10). Never renamed once live -- the string IS the identity. There is deliberately no `badges` table: a catalogue nobody can edit is a constant with extra steps.';
+
+-- UNIQUE (student_id, badge_name) is load-bearing, not tidiness: awarding is
+-- INSERT ... ON CONFLICT DO NOTHING, which is what makes re-evaluating a badge
+-- on every single activity idempotent and free of a read-then-write race.
 CREATE INDEX idx_user_badges_student ON user_badges (student_id);
 
 -- ============================================================================
@@ -1224,8 +1230,11 @@ CREATE POLICY "Students manage their own game content"
 CREATE POLICY "Students read their own activity log"
     ON activity_logs FOR SELECT USING (student_id = auth.uid());
 
-CREATE POLICY "Students append to their own activity log"
-    ON activity_logs FOR INSERT WITH CHECK (student_id = auth.uid());
+-- No student INSERT policy, deliberately (migration 0023 dropped the one that
+-- existed). activity_logs is written ONLY by the API through the service role.
+-- update_study_streak() is SECURITY DEFINER and fires on any insert, so a
+-- student holding an anon key could otherwise move day_streak, longest_streak
+-- and total_study_hours directly -- the exact inflation the note above forbids.
 
 CREATE POLICY "Students read their own game sessions"
     ON game_sessions FOR SELECT USING (student_id = auth.uid());

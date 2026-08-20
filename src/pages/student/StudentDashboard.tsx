@@ -4,12 +4,14 @@ import {
   ArrowRight,
   ChartColumn,
   ClipboardList,
+  Flame,
   Gamepad2,
   Layers,
   PenLine,
   RefreshCw,
   Sparkles,
   Target,
+  Trophy,
 } from 'lucide-react';
 import { CARD, SECTION, toneText } from '../../components/ui/surfaces';
 import MeterBar from '../../components/ui/MeterBar';
@@ -25,11 +27,13 @@ import {
   TIER_TONE,
 } from '../../lib/mastery';
 import { scorePercent } from '../../lib/testMode';
+import { badgeStyle } from '../../lib/badges';
 import {
   dashboardApi,
   type ActivityItem,
   type DashboardData,
   type FocusConcept,
+  type GamificationBlock,
   type SpaceMasteryRow,
 } from '../../lib/dashboard';
 
@@ -44,12 +48,19 @@ import {
  *
  * ══ WHAT IS NOT HERE, AND WHY ══
  * The paper (p. 65) lists four things for this screen: mastery curves, study
- * hours, daily streaks and earned badges. Only the first has data behind it.
- * Nothing writes `activity_logs`, so `duration_ms` (study hours) and any weekly
- * chart have no source; nothing awards `user_badges`; and `day_streak` is frozen
- * for the one student who has a non-zero value — a stale number that looks real,
- * which is worse than none. All three are omitted rather than faked. If they are
- * ever wanted, the missing piece is a writer, not a widget.
+ * hours, daily streaks and earned badges. Three of the four are now here.
+ *
+ * STUDY HOURS IS STILL ABSENT, AND MUST STAY ABSENT UNTIL SOMETHING MEASURES IT.
+ * `server/lib/activity.ts` writes `duration_ms`, but only a game reports a real
+ * one and only a test can derive one; flashcard ratings, both cognitive modes
+ * and chat measure nothing at all. `total_study_hours` is therefore a partial
+ * sum, and printing it as a total is the same failure as the frozen `day_streak`
+ * that kept streaks off this page for months — a stale number that looks real,
+ * which is worse than none. The missing piece is real timing, not a widget.
+ *
+ * There is also no weekly activity chart and no heatmap. Both are buildable from
+ * `activity_logs` now, and both were rejected: with a two-week study an honest
+ * heatmap renders as an accusation.
  *
  * ══ ONE REQUEST ══
  * `GET /api/dashboard`. Everything below comes from that payload, including the
@@ -162,8 +173,10 @@ export default function StudentDashboard() {
 
               {/* ── Side column ────────────────────────────────────────────── */}
               <div className="col-span-12 lg:col-span-4 space-y-6">
+                <StreakCard g={data.gamification} />
                 <DueCard total={data.flashcards_due} spaces={m!.by_space} />
                 {data.resume_test && <ResumeCard test={data.resume_test} />}
+                <BadgesCard badges={data.gamification.badges} />
                 <RecentCard items={data.recent} />
               </div>
             </div>
@@ -447,6 +460,91 @@ function SpaceRow({ space }: { space: SpaceMasteryRow }) {
         {space.material_count} lesson{space.material_count === 1 ? '' : 's'}
       </p>
     </Link>
+  );
+}
+
+/**
+ * The day streak.
+ *
+ * ══ IT RENDERS AT ZERO, UNLIKE `DueCard` ══
+ * A student with no streak is exactly who the card is for: it is the only thing
+ * on the page that says "come back tomorrow", and hiding it until they already
+ * have one means it only ever appears to students who did not need telling.
+ *
+ * ══ BOTH NUMBERS, BECAUSE THE PAIR IS THE MESSAGE ══
+ * `day_streak` is the current run and `longest_streak` is the best ever. Showing
+ * only the current one makes a broken streak look like lost work; the best-ever
+ * line is what says the record survived. Badges are awarded off `longest_streak`
+ * for the same reason.
+ *
+ * A day is an Asia/Manila calendar day, decided by `trigger_update_streak` in
+ * the database — never a 48-hour clock, whatever ARCHITECTURE.md used to say.
+ */
+function StreakCard({ g }: { g: GamificationBlock }) {
+  const days = g.day_streak;
+
+  return (
+    <div className={`${CARD} p-5`}>
+      <div className="flex items-center gap-2">
+        <Flame className={`w-4 h-4 ${days > 0 ? 'text-orange-400' : 'text-slate-500'}`} />
+        <h2 className={SECTION}>Study streak</h2>
+      </div>
+
+      <p className="font-display text-3xl font-bold text-white tabular-nums mt-3">
+        {days}
+        <span className="font-sans text-sm font-medium text-slate-400 ml-1.5">
+          day{days === 1 ? '' : 's'}
+        </span>
+      </p>
+
+      <p className="font-sans text-xs text-slate-500 mt-1">
+        {days === 0
+          ? 'Study anything today to start a streak.'
+          : g.longest_streak > days
+            ? `Best so far: ${g.longest_streak} days`
+            : 'This is your best run yet.'}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Earned badges. Nothing is rendered until the student holds one.
+ *
+ * Earned only — there is deliberately no greyed-out rail of unearned badges.
+ * It would need the criteria text beside each, and on a two-week study a wall of
+ * locked tiles reads as a list of things you failed to do. `badgeStyle()` never
+ * throws on an unknown name, so the server can award a new badge before this
+ * client knows how to label it.
+ */
+function BadgesCard({ badges }: { badges: GamificationBlock['badges'] }) {
+  if (badges.length === 0) return null;
+
+  return (
+    <div className={`${CARD} p-5`}>
+      <div className="flex items-center gap-2">
+        <Trophy className="w-4 h-4 text-amber-400" />
+        <h2 className={SECTION}>Badges</h2>
+        <span className="font-sans text-xs text-slate-500 tabular-nums ml-auto">{badges.length}</span>
+      </div>
+
+      <ul className="flex flex-wrap gap-2 mt-4">
+        {badges.map((badge) => {
+          const style = badgeStyle(badge.name);
+          const Icon = style.icon;
+          return (
+            <li
+              key={badge.name}
+              title={`${style.label} — earned ${relativeTime(badge.awarded_at)}`}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${style.bg} ${style.ring}`}
+            >
+              <Icon className={`w-3.5 h-3.5 shrink-0 ${style.color}`} />
+              <span className="font-sans text-xs font-semibold text-slate-200">{style.label}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

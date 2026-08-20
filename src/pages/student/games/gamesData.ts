@@ -1,4 +1,4 @@
-import { Brain, FlaskConical, Zap, Code, Trophy, Flame, BrainCircuit } from 'lucide-react';
+import { Brain, FlaskConical, Zap, Code } from 'lucide-react';
 
 /**
  * A trivia question.
@@ -270,9 +270,8 @@ export const getCourseResources = (courseId: string): string[] => {
   ];
 };
 
-export const BADGES = [
-  { id: 'first-win', icon: Trophy, label: 'First Win', color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-400/20', earned: true },
-  { id: 'hot-streak', icon: Flame, label: '5-Day Streak', color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-400/20', earned: true },
-  { id: 'master-mind', icon: BrainCircuit, label: 'Mastermind', color: 'text-violet-400', bg: 'bg-violet-400/10', border: 'border-violet-400/20', earned: false },
-  { id: 'trivia-ace', icon: Zap, label: 'Trivia Ace', color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-400/20', earned: true },
-];
+// The mock BADGES array lived here: four hardcoded tiles, three of them with
+// `earned: true` for every student who ever loaded the page. It had zero
+// consumers and was deleted when real badges landed. The catalogue now lives in
+// `server/lib/badges.ts`, its presentation in `src/lib/badges.ts`, and what a
+// student actually holds arrives with `GET /api/dashboard`.

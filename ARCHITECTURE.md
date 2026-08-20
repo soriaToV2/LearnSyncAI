@@ -231,7 +231,9 @@ Student Dashboard (learning analytics display): [IMPLEMENTED]
   - It returns: M_doc across every concept in every space (the p. 81 progress bar) with a per-space breakdown; a mastery curve; the weakest assessed concepts across all spaces; the global flashcards-due count; any unfinished test; and a merged recent-activity feed.
   - The mastery curve is reconstructed BACKWARD from bkt_mastery using the p_l_prior column of bkt_update_logs, so its final point equals the displayed mastery number by construction. bkt_mastery remains authoritative for the current value; the audit log only draws the history, which is why a failed log write stays non-fatal.
   - The curve's x axis is the learning-opportunity index t, not wall-clock time: updates within a session share a timestamp, and BKT has no forgetting term, so a time axis would misrepresent both.
-  - Study streaks, digital badges and total study hours are NOT displayed. Nothing writes activity_logs and nothing awards user_badges, so those figures have no source; they are omitted rather than shown as zeros or stale values.
+  - Study streaks and earned badges ARE displayed, as of 2026-08-19, fed by the gamification block on GET /api/dashboard — two plain SELECTs, never the GET /api/gamification/profile route, which used to INSERT a row on a GET. They are fetched alongside identity and spaces rather than with the other history reads, so a student whose educator archived every material still sees the streak they earned instead of a zero.
+  - TOTAL STUDY HOURS IS STILL NOT DISPLAYED, and stays that way until something measures it. Only games and adaptive tests carry a real duration; flashcards, both cognitive modes and chat measure nothing, so the stored figure is a partial sum that would read as a total.
+  - There is still no weekly activity chart and no heatmap. Both became buildable when activity_logs gained a writer, and both stay rejected: over a two-week study with a handful of attempts, an honest heatmap renders as an accusation.
   - Identity comes from GET /api/auth/me via src/context/AuthContext.tsx.
 
 Accounts and sign-in: [IMPLEMENTED]
@@ -315,21 +317,35 @@ BKT-Adaptive Difficulty (Gamification Calibration): [IMPLEMENTED]
 Session Logging:
   - When a game session concludes, the frontend posts { content_id, accuracy, time_spent_ms, detail } to game_sessions. Everything identifying what was played — space_id, material_id, game_type and mastery_snapshot — is copied server-side from the owner-checked game_content row, so the recorded mastery snapshot is the one the prompt was actually built from.
 
-Database Autopilot (Triggers):
-  - An AFTER INSERT PostgreSQL trigger intercepts the new game session.
-  - It updates gamification_profiles (day streak, total hours studied).
-  - Streak Logic: If the student's last active timestamp was less than 48 hours ago, day_streak += 1 (day streak increments). If more than 48 hours have elapsed, day_streak resets to 1.
-  - The trigger also accumulates total hours studied across all activity types (flashcards, games, recall sessions, etc.).
+Database Autopilot (Triggers): [IMPLEMENTED]
+  - trigger_update_streak is an AFTER INSERT trigger on activity_logs — NOT on game_sessions. It moved there in migration 0005, because the earlier version incremented day_streak on every game insert, so five games in one afternoon produced a five-day streak.
+  - It maintains day_streak, longest_streak, last_active_on and total_study_hours on gamification_profiles, and needs no help from application code: one insert into activity_logs is the whole streak mechanism.
+  - STREAK LOGIC IS CALENDAR-DAY SUCCESSION IN ASIA/MANILA, NOT A 48-HOUR CLOCK. This document claimed the 48-hour rule until 2026-08-19 and was wrong; schema.sql has said so on the column comment since 0005. A new day extends the run only when it is exactly last_active_on + 1, and otherwise restarts at 1; repeat activity on a day already counted changes nothing. Manila rather than UTC because an early-morning session in the Philippines would otherwise be attributed to the previous day, and a bare occurred_at::date depends on the session TimeZone and cannot be indexed.
 
-Streaks:
-  - The application tracks two streak dimensions:
-      * Day Streaks: Consecutive days a student has engaged with any study activity. Example: using flashcards or crossword games for 5 consecutive days results in a 5-day streak.
-      * Total Hours: Cumulative time spent studying, tracked across all modules.
+Activity writer: [IMPLEMENTED 2026-08-19]
+  - Until this date NOTHING inserted into activity_logs, so the trigger had never once fired and day_streak was 0 for every student. Every gamification table had existed since migration 0005; the missing piece was a writer, not a schema.
+  - server/lib/activity.ts is the single writer. logActivity() NEVER THROWS — it has nine call sites and no consumer that can act on a failure, so it logs to console.error and returns [] rather than making each caller remember a try/catch. A missing streak day must never cost a student their score.
+  - Nine call sites: both flashcard branches (counted AND not-due practice), adaptive test completion, both Free Recall paths (fresh AND memo-hit), both Feynman paths, the game session insert, and the normal chat turn.
+  - Three deliberate exclusions: the flashcard compare-and-swap loser (a duplicate request, not a second study event), the off-topic chat refusal (nothing was studied), and any PUT /complete that does not flip the status.
+  - duration_ms is 0 wherever time is not measured. Only a game reports a real one (time_spent_ms) and only a test derives one — from the summed per-question latencies, not completed_at minus created_at, which would bill a test left open over dinner as three hours of study.
 
-Badges:
-  - Badges are awarded based on milestone achievements, evaluated by backend cron jobs or trigger-based endpoint checks.
-  - Example: A student achieving a 5-day streak on flashcards earns a Flashcard Streak badge.
-  - Badge records are inserted into user_badges upon milestone completion.
+Streaks: [IMPLEMENTED]
+  - Day Streaks: consecutive Asia/Manila calendar days on which the student engaged with any study activity — flashcards, adaptive tests, Free Recall, Feynman, games or the chatbot.
+  - TOTAL HOURS IS WRITTEN BUT DELIBERATELY NOT DISPLAYED ANYWHERE. Only games and adaptive tests contribute a real duration, so the figure is a partial sum that would read as a total — the same failure as the frozen day_streak that kept streaks off the dashboard for months. GET /api/dashboard does not serialise it. The missing piece is real timing, not a widget.
+
+Badges: [IMPLEMENTED]
+  - Evaluated synchronously by server/lib/badges.ts immediately after each activity is logged, not by a cron job. The student sees a badge the moment they earn it, and UNIQUE (student_id, badge_name) makes the award idempotent, so an INSERT ... ON CONFLICT DO NOTHING needs no read-then-write lock.
+  - Fourteen badges in four families: streaks (3 / 5 / 7 consecutive days), first-time activities (first flashcard, test, recall, explanation, game), mastery milestones (1 / 10 / 25 concepts at or above 0.85), and performance (a 100% test, a flawless game, 100 cards reviewed).
+  - Streak badges are awarded off longest_streak, so they stack and are permanent: reaching 7 days leaves all three held, and breaking a streak never removes one.
+  - Streak thresholds are sized to the roughly 2-week study. A 14-day badge was considered and dropped: an unreachable badge renders as a permanently grey tile that reads as a broken feature.
+  - The catalogue lives in code, not in a badges table. badge_name is bare TEXT and the string IS the identity, so a badge is never renamed once live. A table nobody can edit would be a constant with extra steps, and building an editor for it would repeat the educator_assignments mistake.
+  - Evaluation cost is bounded by ordering: one indexed read of the badges already held, then the catalogue is narrowed to (not held) AND (triggered by this activity type), and if nothing survives it returns without another query. That is the steady state, so an established student pays one lookup per activity — which matters because this runs after every individual flashcard rating.
+  — Earning a badge opens a celebration modal, added 2026-08-20. Before it, a badge was awarded silently and the student only found out on their next dashboard visit.
+  — The client is not TOLD about the award; it DIFFS. A provider mounted on the student layout re-reads GET /api/gamification/badges at six "you just finished something" moments and compares against what the session has already seen. Threading the award onto each write response was rejected for two concrete reasons: the flashcard rating POST is deliberately not awaited, so a badge on that response would open a modal over a card the student had already moved past; and the chat route logs its activity after res.end(), so its stream cannot carry one.
+  — The baseline is seeded on mount and celebrates nothing, so a student who already holds badges is not ambushed on their next login. It is in-memory, so a reload re-seeds and nothing is celebrated twice.
+  — One modal lists every badge that action earned, rather than a queue of dialogs. It is silent by choice — the modal can appear anywhere in the portal, unlike the games, which are opt-in and may have sound. Dismissal is manual, via button, Escape or the backdrop.
+  — The confetti and the badge animations are all CSS keyframes in index.css and are all disabled under prefers-reduced-motion; the modal still opens and still names the badge.
+  — Migration 0023 dropped the student INSERT policy on activity_logs. update_study_streak() is SECURITY DEFINER, so an anon-key insert moved day_streak, longest_streak and total_study_hours directly — harmless while nothing read them, a live fabrication route the moment a dashboard printed them. Express writes with the service role, which bypasses RLS, so nothing legitimate depended on it.
 
 ---
 

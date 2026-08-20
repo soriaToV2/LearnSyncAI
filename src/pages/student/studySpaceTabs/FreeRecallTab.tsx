@@ -8,6 +8,7 @@ import {
   AttemptMaterial, materialLabel,
   type AttemptSummary, type Tone, type ViewMode,
 } from './cognitiveShared';
+import { useBadges } from '../../../context/BadgeContext';
 
 interface FreeRecallTabProps {
   availableResources: { id: string; title: string }[];
@@ -175,6 +176,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
   // list. Sharing one variable would make the two views fight over it.
   const [historyLogs, setHistoryLogs] = useState<CognitiveLog[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const { celebrate } = useBadges();
   const [resultLogId, setResultLogId] = useState<string | null>(null);
   const [historyLogId, setHistoryLogId] = useState<string | null>(null);
   const [showMissed, setShowMissed] = useState(false);
@@ -273,6 +275,9 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
       setShowMissed(false);
       setShowAnswer(false);
       setRecallText('');
+      // Both the fresh and the memo-hit server paths log activity, so a
+      // resubmission can award a streak badge just as a first attempt can.
+      celebrate();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Something went wrong.';
       setEvalError(message);

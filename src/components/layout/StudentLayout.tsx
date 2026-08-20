@@ -4,6 +4,7 @@ import { Home, Layers, Gamepad2, BrainCircuit, LogOut, UserCircle, Menu, X, Chev
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } from '../../context/AuthContext';
 import { signOut } from '../../lib/signOut';
+import { BadgeProvider } from '../../context/BadgeContext';
 import RequireRole from '../common/RequireRole';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-sidebar-collapsed';
@@ -372,7 +373,15 @@ export default function StudentLayout() {
           them.
         */}
         <RequireRole allow={['student']}>
-          <StudentLayoutInner />
+          {/*
+            INSIDE `RequireRole`, deliberately. The provider fetches the badges
+            the student already holds on mount, to seed the baseline it diffs
+            against — so it must never run for a signed-out, un-activated or
+            wrong-role visitor, who would get a 401/403 for nothing.
+          */}
+          <BadgeProvider>
+            <StudentLayoutInner />
+          </BadgeProvider>
         </RequireRole>
       </StudentThemeProvider>
     </AuthProvider>
