@@ -89,7 +89,11 @@ function termForms(term: string): string[] {
  * shorter than three characters are skipped: too short to test without matching
  * inside unrelated words.
  */
-function mentionsTerm(text: string, term: string): boolean {
+/* eslint-disable-next-line -- PRE/POST GATE: the `export` keyword below is the
+   only change this file carries for the temporary pre/post-test feature.
+   `assessmentGeneration.ts` reuses this rule rather than copying it. Removing
+   the feature means deleting the keyword. */
+export function mentionsTerm(text: string, term: string): boolean {
   return termForms(term).some((form) => new RegExp(`\\b${escapeRe(form)}`, 'i').test(text));
 }
 

@@ -10,6 +10,8 @@ import {
 import { extractPdfPages, type PdfPage } from '../lib/pdfText';
 import { extractConcepts } from '../lib/conceptExtraction';
 import { requireMaterialAccess, rejectInaccessibleMaterials } from '../lib/materialAccess';
+// PRE/POST GATE — temporary (migration 0024). Delete with the feature.
+import { requireUnlockedMaterial, rejectLockedMaterials } from '../lib/assessmentGate';
 import { loadOwnedMaterial } from '../lib/educatorScope';
 import multer from 'multer';
 
@@ -354,7 +356,9 @@ router.delete('/:id', requireRole('educator'), async (req: Request, res: Respons
  * non-archived material published to their own grade level. The educator who owns
  * it, and admins, still pass.
  */
-router.get('/:id/view', requireMaterialAccess(), async (req: Request, res: Response): Promise<void> => {
+// PRE/POST GATE: second, never first. A material the caller may not read at all
+// must still answer 404 rather than reveal that a test exists for it.
+router.get('/:id/view', requireMaterialAccess(), requireUnlockedMaterial(), async (req: Request, res: Response): Promise<void> => {
   const { data: material, error: fetchError } = await supabaseAdmin
     .from('materials')
     .select('storage_path')
@@ -383,7 +387,8 @@ router.get('/:id/view', requireMaterialAccess(), async (req: Request, res: Respo
  * Returns all extracted concepts for a material. Guarded — concepts are the
  * material's content in text form, so reading them is reading the material.
  */
-router.get('/:id/concepts', requireMaterialAccess(), async (req: Request, res: Response): Promise<void> => {
+// PRE/POST GATE: reading the concepts IS reading the material, per the note above.
+router.get('/:id/concepts', requireMaterialAccess(), requireUnlockedMaterial(), async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('concepts')
     .select('id, term, definition, parent_concept_id, source_pages, created_at')
@@ -567,6 +572,9 @@ router.post('/concepts/batch', requireRole('student'), async (req: Request, res:
   // Every id must be one the caller may read — otherwise a single valid id could
   // be used to smuggle another grade's material into the same batch.
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
+  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
+  // before: that ordering is what lets archiving and re-grading answer first.
+  if (!(await rejectLockedMaterials(req, res, material_ids))) return;
 
   const { data, error } = await supabaseAdmin
     .from('concepts')

@@ -69,9 +69,19 @@ type Screen = 'overview' | 'setup' | 'generating' | 'session' | 'results';
 interface AdaptiveTestTabProps {
   spaceId: string;
   availableResources: { id: string; title: string; concept_count: number }[];
+  /**
+   * PRE/POST GATE — temporary (migration 0024). Materials this student still owes
+   * a pre-test or post-test on.
+   *
+   * ⚠️ ONLY THE PICKER IS FILTERED. `availableResources` stays whole, because it
+   * is also how a HISTORICAL attempt gets its lesson title — filtering the list
+   * itself would blank the label on past attempts for a briefly-locked material.
+   * The server is the enforcement point either way.
+   */
+  lockedIds?: Set<string>;
 }
 
-export default function AdaptiveTestTab({ spaceId, availableResources }: AdaptiveTestTabProps) {
+export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds }: AdaptiveTestTabProps) {
   const { celebrate } = useBadges();
   const [screen, setScreen] = useState<Screen>('overview');
   const [summaries, setSummaries] = useState<TestSummary[]>([]);
@@ -295,7 +305,9 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
             <SingleSelectDropdown
               selectedValue={materialId}
               onChange={setMaterialId}
-              options={availableResources.map((r) => ({ value: r.id, label: r.title }))}
+              options={availableResources
+                .filter((r) => !lockedIds?.has(r.id))   /* PRE/POST GATE */
+                .map((r) => ({ value: r.id, label: r.title }))}
               placeholder="Select a lesson..."
             />
             {material && (

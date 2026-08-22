@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   FileText, Send, Sparkles, Loader2, AlertCircle, BookOpen,
-  MessageSquare, Lightbulb, HelpCircle, X, Inbox, Download, ScanLine
+  MessageSquare, Lightbulb, HelpCircle, X, Inbox, Download, ScanLine, Lock
 } from 'lucide-react';
 import { api } from '../../../lib/api';
 import { supabase } from '../../../lib/supabase';
@@ -33,6 +33,22 @@ interface ResourcesTabProps {
   setIsGenerating: (isGenerating: boolean) => void;
   setSelectedSetContent: (id: number | null) => void;
   setFlashcardSets: React.Dispatch<React.SetStateAction<any[]>>;
+  /**
+   * PRE/POST GATE — temporary (migration 0024).
+   *
+   * ⚠️ THIS TAB IS THE ONE PLACE A LOCKED MATERIAL STAYS VISIBLE. Everywhere else
+   * it drops out of the picker; here the student must still see that the lesson
+   * exists and be told why they cannot open it — a lesson that simply vanished
+   * from the library reads as the app losing their teacher's work.
+   *
+   * The PDF and the chatbot are both blocked, because a pre-test is a BASELINE:
+   * a student who reads the lesson first has an inflated baseline and a shrunken
+   * measured gain, which is precisely what paper RQ4 (p. 55) measures.
+   */
+  lockedIds?: Set<string>;
+  /** Sync can pull in a material that is already locked, which the parent's map
+   *  does not know about yet. Same idiom as FlashcardsTab's `onRefresh`. */
+  onLocksChanged?: () => void;
 }
 
 /** One material as GET /api/spaces/:id/materials returns it. */
@@ -106,7 +122,9 @@ export default function ResourcesTab({
   setActiveTab,
   setIsGenerating,
   setSelectedSetContent,
-  setFlashcardSets
+  setFlashcardSets,
+  lockedIds,
+  onLocksChanged,
 }: ResourcesTabProps) {
   // ─── Materials state ───────────────────────────────────────
   const [materials, setMaterials] = useState<SpaceMaterial[]>([]);
@@ -138,7 +156,11 @@ export default function ResourcesTab({
   const activeMaterial = materials.find(m => m.id === selectedId) ?? null;
   // Only a fully processed material has concepts, and concepts are the only thing
   // the assistant is allowed to answer from.
-  const chatMaterial = activeMaterial?.parsed_status === 'completed' ? activeMaterial : null;
+  // PRE/POST GATE: a locked material is not chattable, whatever its parse status.
+  const chatMaterial =
+    activeMaterial?.parsed_status === 'completed' && !lockedIds?.has(activeMaterial.id)
+      ? activeMaterial
+      : null;
   const canChat = !!chatMaterial && !isStreaming;
 
   // ─── Auto-scroll chat ──────────────────────────────────────
@@ -253,6 +275,9 @@ export default function ResourcesTab({
       applyPayload(res.data);
       const added = res.data.added_count;
       setSyncNotice(added === 1 ? '1 new material added.' : `${added} new materials added.`);
+      // PRE/POST GATE: a newly pulled-in material may already be locked, and the
+      // parent's map was fetched before it existed.
+      onLocksChanged?.();
       setTimeout(() => setSyncNotice(null), 4000);
     } catch (err: any) {
       console.error('Failed to add new materials:', err);
@@ -454,7 +479,8 @@ export default function ResourcesTab({
           ) : (
             materials.map(material => {
               const isSelected = material.id === selectedId;
-              const blocked = material.parsed_status !== 'completed';
+              const locked = lockedIds?.has(material.id) ?? false;   // PRE/POST GATE
+              const blocked = material.parsed_status !== 'completed' || locked;
 
               return (
                 <div
@@ -466,9 +492,11 @@ export default function ResourcesTab({
                     }`}
                 >
                   <div className="shrink-0 opacity-90 mt-0.5">
-                    {material.is_scanned
-                      ? <ScanLine className="w-5 h-5 text-amber-400" />
-                      : <FileText className="w-5 h-5 text-red-400" />}
+                    {locked
+                      ? <Lock className="w-5 h-5 text-amber-400" />
+                      : material.is_scanned
+                        ? <ScanLine className="w-5 h-5 text-amber-400" />
+                        : <FileText className="w-5 h-5 text-red-400" />}
                   </div>
 
                   <div className="flex-1 min-w-0">
@@ -492,7 +520,10 @@ export default function ResourcesTab({
                       {material.parsed_status === 'failed' && (
                         <span className="text-red-400/90">Not available</span>
                       )}
-                      {material.parsed_status === 'completed' && (
+                      {/* PRE/POST GATE: replaces "Ready", because a locked lesson
+                          is emphatically not ready to open. */}
+                      {locked && <span className="text-amber-400/90">Take the test first</span>}
+                      {!locked && material.parsed_status === 'completed' && (
                         <>
                           <span className="text-emerald-400/80">Ready</span>
                           <span className="text-slate-500">
@@ -504,7 +535,9 @@ export default function ResourcesTab({
 
                     {isSelected && blocked && (
                       <p className="mt-1.5 font-sans text-[10.5px] text-slate-400 leading-relaxed">
-                        {unavailableReason(material)}
+                        {locked
+                          ? 'Open the Pre-Test or Post-Test tab and finish the test for this lesson. It unlocks straight afterwards.'
+                          : unavailableReason(material)}
                       </p>
                     )}
                   </div>

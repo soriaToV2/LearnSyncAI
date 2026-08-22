@@ -2,13 +2,16 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText, Plus, Search, Trash2, Archive, ArchiveRestore,
-  AlertTriangle, Eye, Layers, Loader2,
+  AlertTriangle, Eye, Layers, Loader2, ClipboardList,
 } from 'lucide-react';
 import Modal from '../../components/ui/Modal';
 import Dropdown from '../../components/ui/Dropdown';
 import SubjectBadge from '../../components/educator/SubjectBadge';
 import GradeChips from '../../components/educator/GradeChips';
 import ParseStatusPill from '../../components/educator/ParseStatusPill';
+// PRE/POST GATE — temporary research instrument (migration 0024). Delete this
+// import, the `assessments` state, the fetch in load(), the pill and its component.
+import { assessmentOverview, assessmentState, type AssessmentOverviewRow, type AssessmentState } from '../../lib/assessments';
 import UploadMaterialModal from './components/UploadMaterialModal';
 import {
   SUBJECTS, ALL_GRADE_LEVELS,
@@ -41,6 +44,8 @@ export default function MaterialsLibrary() {
   const navigate = useNavigate();
 
   const [materials, setMaterials] = useState<MaterialRow[]>([]);
+  // PRE/POST GATE — temporary. Keyed by material id; empty when the read fails.
+  const [assessments, setAssessments] = useState<Map<string, AssessmentOverviewRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +63,10 @@ export default function MaterialsLibrary() {
     try {
       const { data } = await api.get<MaterialRow[]>('/materials');
       setMaterials(data);
+      // PRE/POST GATE — temporary (migration 0024). Its own read, so removing the
+      // feature is deleting these two lines rather than editing /api/materials
+      // back. A failure costs the pill and nothing else.
+      setAssessments(await assessmentOverview().catch(() => new Map()));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load materials.');
@@ -311,6 +320,8 @@ export default function MaterialsLibrary() {
                     <SubjectBadge code={m.subject} />
                     <GradeChips grades={m.grade_levels} />
                     <ParseStatusPill status={m.parsed_status} />
+                    {/* PRE/POST GATE — temporary. */}
+                    <AssessmentPill state={assessmentState(assessments.get(m.id))} />
                     {m.is_archived && (
                       <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-400 font-sans text-[10px] font-bold uppercase tracking-wider">
                         Archived
@@ -384,5 +395,37 @@ export default function MaterialsLibrary() {
         </div>
       </Modal>
     </main>
+  );
+}
+
+/**
+ * PRE/POST GATE — temporary (migration 0024).
+ *
+ * Answers "which lessons still need a test?" at a glance, which is the whole point
+ * of the rule that every uploaded material should have one. Copies
+ * `ParseStatusPill`'s shape rather than extending it: that component's label rule
+ * is "the label IS the enum value, title-cased", and these states are not an enum.
+ *
+ * `none` renders NOTHING. A grey "no test" chip on every material an educator has
+ * not got to yet reads as a wall of errors.
+ */
+function AssessmentPill({ state }: { state: AssessmentState }) {
+  if (state === 'none') return null;
+
+  const style = {
+    ready: { label: 'Test ready', color: '#94a3b8', hint: 'Questions written, not yet open to students' },
+    pre_open: { label: 'Pre-test open', color: '#22d3ee', hint: 'Students must take the pre-test before they can study this lesson' },
+    post_open: { label: 'Post-test open', color: '#a78bfa', hint: 'Students must take the post-test to keep using this lesson' },
+  }[state];
+
+  return (
+    <span
+      title={style.hint}
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border font-sans text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
+      style={{ color: style.color, backgroundColor: `${style.color}1a`, borderColor: `${style.color}33` }}
+    >
+      <ClipboardList className="w-3 h-3 shrink-0" />
+      {style.label}
+    </span>
   );
 }
