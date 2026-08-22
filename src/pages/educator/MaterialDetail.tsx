@@ -10,6 +10,9 @@ import SubjectBadge from '../../components/educator/SubjectBadge';
 import GradeChips from '../../components/educator/GradeChips';
 import ParseStatusPill from '../../components/educator/ParseStatusPill';
 import ClassPerformance from './components/ClassPerformance';
+// PRE/POST GATE — temporary research instrument (migration 0024). Delete this
+// import, the 'assessment' Tab value, its tab-bar entry and its render branch.
+import EducatorAssessmentTab from './components/AssessmentTab';
 import {
   ALL_GRADE_LEVELS,
   subjectName, formatFileSize, formatDate,
@@ -28,7 +31,7 @@ interface ConceptRow {
   created_at: string;
 }
 
-type Tab = 'concepts' | 'performance';
+type Tab = 'concepts' | 'performance' | 'assessment';
 type Draft = { term: string; definition: string; pages: string };
 const EMPTY_DRAFT: Draft = { term: '', definition: '', pages: '' };
 
@@ -83,7 +86,11 @@ export default function MaterialDetail() {
    * every toggle.
    */
   const [activeTab, setActiveTab] = useState<Tab>(
-    searchParams.get('tab') === 'performance' ? 'performance' : 'concepts'
+    searchParams.get('tab') === 'performance'
+      ? 'performance'
+      : searchParams.get('tab') === 'assessment'
+        ? 'assessment'
+        : 'concepts'
   );
 
   // Concept editing state
@@ -487,7 +494,14 @@ export default function MaterialDetail() {
 
         {/* Tabs */}
         <div className="flex items-center gap-6 border-b border-white/5 mb-6">
-          {([['concepts', 'Concepts'], ['performance', 'Class Performance']] as const).map(([id, label]) => (
+          {(
+            [
+              ['concepts', 'Concepts'],
+              ['performance', 'Class Performance'],
+              // PRE/POST GATE — temporary.
+              ['assessment', 'Pre / Post Test'],
+            ] as const
+          ).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
@@ -677,6 +691,17 @@ export default function MaterialDetail() {
         */}
         {activeTab === 'performance' && materialId && (
           <ClassPerformance materialId={materialId} />
+        )}
+
+        {/* PRE/POST GATE — temporary. Mount-to-fetch like the tab above, and
+            deliberately outside the 3s parse poll for the same reason. */}
+        {activeTab === 'assessment' && materialId && material && (
+          <EducatorAssessmentTab
+            materialId={materialId}
+            materialTitle={material.title}
+            conceptCount={concepts.length}
+            parsedStatus={material.parsed_status}
+          />
         )}
       </div>
 

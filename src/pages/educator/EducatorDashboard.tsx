@@ -55,8 +55,12 @@ import {
  * and the class average DROPS when a new student begins, reading as "the class got
  * worse" because someone joined. Both are wrong.
  *
- * No streaks, study hours or badges — nothing writes `activity_logs` or
- * `user_badges`, exactly as on the student dashboard. No per-student activity feed:
+ * No streaks, study hours or badges. The REASON changed on 2026-08-19 without the
+ * conclusion changing: `activity_logs` and `user_badges` now have a writer and the
+ * student dashboard shows both. They stay off THIS page because a streak is a
+ * motivational signal aimed at its owner, and surfacing "who has studied on the
+ * fewest days" to a teacher turns it into an attendance register. Study hours has
+ * no honest source on either page. No per-student activity feed:
  * `cognitive_logs` and `game_sessions` are student-private and there is no educator
  * route for either. No Free Recall or Feynman numbers — their denominator is however
  * finely a document happened to be split.

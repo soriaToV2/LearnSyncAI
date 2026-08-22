@@ -42,23 +42,36 @@ There are **three user roles**:
 
 > **IMPORTANT:** The embedding model **must always be `gemini-embedding-001`**. All concept vectors stored in the `concepts` table use 3072 dimensions from this model. Never switch embedding models — doing so would make all stored vectors incompatible. (Google lists it as supported until 2028-05-14, so there is no deadline pressure here.)
 
-**Two Gemini text models are in play, and they do not share semantics.** Both constants live in `server/lib/gemini.ts`; nowhere else may name a model string.
+**Two Gemini text model strings are in play across five constants, and they do not share semantics.** Every constant lives in `server/lib/gemini.ts`; nowhere else may name a model string. **There is no default model anywhere** — `generateJson()` and `generateJsonFromDocument()` both require one, so a call site that forgets is a compile error rather than a 404 on a live student request.
 
 | Constant | Model | Used by | Status |
 |---|---|---|---|
 | `GEMINI_EXTRACTION_MODEL` | `gemini-3.6-flash` | Educator concept extraction (`conceptExtraction.ts`) | ✅ working |
 | `GEMINI_GRADING_MODEL` | `gemini-3.6-flash` | Feynman grading (`cognitive.routes.ts`) | ✅ working |
 | `GEMINI_UTILITY_MODEL` | `gemini-3.5-flash-lite` | Free Recall extraction + coaching prose (`cognitive.routes.ts`) | ✅ working |
-| `GEMINI_LEGACY_TEXT_MODEL` | `gemini-2.5-flash` | nothing — dead default of `generateJson()` | ⚠️ **remove the default** |
+| `GEMINI_CONTENT_MODEL` | `gemini-3.6-flash` | Adaptive tests (`testGeneration.ts`), flashcard fronts (`questionGeneration.ts`), all three games (`gameContent.ts`) | ✅ working |
+| `GEMINI_CHAT_MODEL` | `gemini-3.5-flash-lite` | RAG chatbot (`chat.routes.ts`) | ✅ working |
 
-**Adaptive test generation is on Groq, not Gemini.** It was the last `GEMINI_LEGACY_TEXT_MODEL` caller and is now `llama-3.3-70b-versatile` in `server/lib/testGeneration.ts`. The reason is the quota line below: 20 requests/day *per model* is already spent by extraction, Free Recall and Feynman, and a 50-student study cannot add a fourth consumer to it. The paper (p. 81) says only "the large language model", so nothing in the write-up depends on the provider. `GEMINI_LEGACY_TEXT_MODEL` now has no callers and survives only as `generateJson()`'s default — that default is a trap for the next call site and should be removed.
+**Adaptive test generation came BACK to Gemini on 2026-08-18** — `GEMINI_CONTENT_MODEL` (`gemini-3.6-flash`) at `ThinkingLevel.MINIMAL`, in `server/lib/testGeneration.ts`. It had moved to Groq `llama-3.3-70b-versatile` on 2026-08-06 to dodge the per-model daily quota; Groq then **decommissioned that model on 17 June 2026** (verified against our own key: *"The model does not exist or you do not have access to it"*) and closed its paid tier to new signups, so the escape route no longer exists. The paper (p. 81) says only "the large language model", so nothing in the write-up depends on the provider. **Flashcard question generation followed on 2026-08-19** — same constant, same thinking level, in the new `server/lib/questionGeneration.ts` — and **all three game generators the same day**, in the new `server/lib/gameContent.ts`. **The RAG chatbot followed on 2026-08-19 too** — `GEMINI_CHAT_MODEL` at `ThinkingLevel.MINIMAL`, through the new `streamContent()` in `gemini.ts`, which is the only streaming call in the codebase. **Groq was removed entirely on 2026-08-19** — `server/lib/groq.ts`, the `groq-sdk` dependency and `GROQ_API_KEY` are all gone, and no code path names a non-Gemini provider. Every remaining mention of Groq in this codebase is a comment recording why something is shaped the way it is; none of it is live.
 
-**Choosing a constant for a new call site — one question:** *does the model's own judgement become a number the student is shown?* Yes → `GEMINI_GRADING_MODEL`; no → `GEMINI_UTILITY_MODEL`. Free Recall is the instructive case: it looks like grading, but the model only enumerates what the student mentioned and the score is `coveredCount / totalConcepts` computed in code, so it belongs on the utility model. Feynman's `accuracy_score` comes straight from the model, so it does not.
+**Choosing a constant for a new call site — two questions, in order:** *(1) does the model’s own judgement become a number the student is shown?* Yes → `GEMINI_GRADING_MODEL`. *(2) if not, does the output become content a student reads as fact?* Yes → `GEMINI_CONTENT_MODEL`; no → `GEMINI_UTILITY_MODEL`. Free Recall is the instructive case for the first question: it looks like grading, but the model only enumerates what the student mentioned and the score is `coveredCount / totalConcepts` computed in code, so it belongs on the utility model. Feynman’s `accuracy_score` comes straight from the model, so it does not. **The second question exists because the first one alone is wrong for authoring** — test grading is deterministic (`testGrading.ts`), so no model judgement there ever becomes a score, which would send every question the model writes to the utility model. The Games section below records three measured failures from exactly that.
 
-- **`gemini-2.5-flash` is already gone, not going.** Verified 2026-08-01 against our own API key: every call returns `HTTP 404 — "no longer available to new users"`. It is still returned by `ListModels`, which is why it looks alive from the outside. Its last caller (adaptive test generation) moved to Groq on 2026-08-06, so nothing reaches it now. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
+- **`gemini-2.5-flash` is already gone, not going.** Verified 2026-08-01 against our own API key: every call returns `HTTP 404 — "no longer available to new users"`. It is still returned by `ListModels`, which is why it looks alive from the outside. **`GEMINI_LEGACY_TEXT_MODEL` no longer exists** — it was deleted on 2026-08-19 along with `generateContent()`, its last namer, and `generateJson()`'s default that pointed at it. Nothing can reach the model by accident now. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
+- **⛔ DO NOT "UPGRADE" TO `gemini-3.7-flash`.** It looks like the obvious next step — launched 13 Aug 2026 with a headline *"50% introductory price cut"* — and it is a trap on three measured counts (verified 2026-08-18 against our own key). **It rejects `MINIMAL` thinking outright**: `HTTP 400 — "Thinking level MINIMAL is not supported for this model"`, floor is `LOW`. Since thinking tokens bill at the OUTPUT rate, that floor makes its cheapest possible call *dearer* than `gemini-3.6-flash` at MINIMAL. **It is not reliably available**: five consecutive requests at `LOW` gave four failures with *"This model is currently experiencing high demand"*, which is an unacceptable rate for a 50-student study. And **it is not cheaper today** — both are $0.75 / $3.75 per 1M through 31 Dec 2026; the advertised cut is measured against 3.7's own future price, not against 3.6's current one. Re-evaluate after the study if availability improves and MINIMAL lands. Not before.
+- **Thinking level is the single largest cost and latency lever — measured, 17–18 Aug 2026, real keys, 120-word prompt.** Read the caveat before quoting any of it: Gemini latency varied wildly across repeated runs of an *identical* request, so treat one measurement as an anecdote.
+
+  | Model | Thinking | Typical total | Notes |
+  |---|---|---|---|
+  | `gemini-3.5-flash-lite` | MINIMAL | **~1.9s** | 1.8 / 2.1 / 1.8 / 1.9 / 1.9s over five samples — the most consistent thing tested |
+  | `gemini-3.6-flash` | MINIMAL | ~2.3s | but the same request an hour later ran 4.2–20.9s |
+  | `gemini-3.6-flash` | LOW | ~5–7s | spiked to 32s |
+  | `gemini-3.6-flash` | MEDIUM | ~8s+ | |
+
+  The direction is certain even though the multiples are noisy, and **thinking tokens bill at the OUTPUT rate**, so this is a cost table as much as a latency one: across the 50-student study, leaving thinking at its default roughly doubles the bill (~$16 against ~$7) and multiplies latency by 10–27×. Which is why every call site sets `thinkingLevel` explicitly and the two that deliberately run at MEDIUM — Free Recall's feedback pass and Feynman grading — record their measured reason for it.
 - **Never send `temperature` to a `gemini-3*` model.** Gemini 3 dropped the sampling parameters: `temperature`, `top_p` and `top_k` are ignored today and a future model generation returns HTTP 400 for them. `generateJson()` strips `temperature` on Gemini 3 and logs a warning; treat that warning as a bug to fix at the call site, not noise.
 - **Gemini 3 thinks by default** (`medium` on 3.6-flash, `minimal` on Flash-Lite) and thinking tokens draw on `maxOutputTokens`. Set `thinkingLevel` and `maxOutputTokens` explicitly on any Gemini 3 call, or a tight budget truncates the response and surfaces as unparseable JSON.
-- **Free-tier request quota is per model** (`GenerateRequestsPerDayPerProjectPerModel`, observed limit **20/day**). Using a distinct model for utility calls is therefore not only cheaper, it buys a separate daily bucket. Embeddings are metered separately again.
+- **Free-tier request quota is per model, and it bites in TWO windows — 5 per MINUTE and 20 per day.** Both are `…PerProjectPerModel`, so using a distinct model for utility calls buys a separate bucket of each; embeddings are metered separately again. **⚠️ One adaptive test is FIVE calls** — `testGeneration.ts` runs one per question format *in parallel*, which is the whole per-minute allowance in one request — all on `gemini-3.6-flash`, sharing both buckets with concept extraction, Feynman grading, flashcard fronts and games (one call each). That is roughly **four tests a day on a free key**, and it is the concrete reason the 50-student study needs the paid one.
+- **⚠️ A PER-MINUTE REFUSAL IS CURRENTLY REPORTED TO THE STUDENT AS THE DAILY ALLOWANCE BEING SPENT.** Measured 2026-08-19: six game generations succeeded in ~36s, the seventh returned `HTTP 429 RESOURCE_EXHAUSTED … limit 5`, and a 90-second wait cleared it entirely. `classifyFailure()` in `gemini.ts` splits per-minute from per-day by testing `quotaMetric` — but that field is `…/generate_content_free_tier_requests` and names no window. The window is in `quotaId` (`GenerateRequestsPerMinutePerProjectPerModel-FreeTier`), which `parseUpstreamError()` reads **only as a fallback when `quotaMetric` is absent**, so it never gets consulted. A burst limit therefore takes one retry instead of the full transient backoff and surfaces as "try again after the daily reset". Open — the fix is in `gemini.ts` and affects every caller.
 - **Cost is not the lever people assume.** Across the paper's 50-student study the entire spread between "3.6-flash everywhere" and "Flash-Lite everywhere" is roughly $14 vs $3. Never trade grading quality for that.
 
 ### BKT Implementation
@@ -101,8 +114,11 @@ LearnSyncAI/
 ├── server/                        # Express backend
 │   ├── index.ts                   # App entry point, route mounting
 │   ├── lib/
+│   │   ├── activity.ts            # THE only writer for activity_logs (streaks)
+│   │   ├── badges.ts              # Badge catalogue + evaluator (no `badges` table)
 │   │   ├── gemini.ts              # Gemini AI helpers (embedding, generation, JSON)
-│   │   ├── groq.ts                # Groq AI helpers (chat streaming, flashcard gen)
+│   │   ├── gameContent.ts         # Trivia / crossword / term matching (Gemini)
+│   │   ├── questionGeneration.ts  # Flashcard question fronts (Gemini)
 │   │   ├── materialAccess.ts      # Who may read which material (grade/ownership gate)
 │   │   └── supabase.ts            # Supabase admin client
 │   ├── middleware/
@@ -115,7 +131,7 @@ LearnSyncAI/
 │   │   ├── flashcards.routes.ts   # /api/flashcards (decks, cards, spaced rep)
 │   │   ├── cognitive.routes.ts    # /api/cognitive (free recall, Feynman)
 │   │   ├── practice.routes.ts     # /api/practice (adaptive tests)
-│   │   ├── gamification.routes.ts # /api/gamification (games, XP, badges)
+│   │   ├── gamification.routes.ts # /api/gamification (game sessions, streak, badges)
 │   │   │                          # (no bkt.routes.ts — BKT is not client-triggered)
 │   │   ├── chat.routes.ts         # /api/chat (RAG-based study assistant)
 │   │   ├── dashboard.routes.ts    # /api/dashboard (the one global student read)
@@ -260,7 +276,13 @@ The Free Recall evaluation pipeline works as follows:
 ### Chat (RAG) vs. Full Context
 The AI chatbot in ResourcesTab supports two modes (set via the `mode` field):
 - `rag`: Performs semantic similarity search against stored concept embeddings, retrieves the top-N relevant concepts, and uses those as context for the LLM. Best for specific questions.
-- `full`: Fetches all concepts for the selected material(s) and injects them all as context. Best for summaries. **Only one material is allowed** in this mode to avoid token limits (> 6000 tokens triggers a 413 error from Groq).
+- `full`: Fetches all concepts for the selected material(s) and injects them all as context. Best for summaries. The client sends exactly one material (`ResourcesTab.tsx` passes `[chatMaterial.id]`), which is what kept this inside Groq's limits historically.
+
+**⚠️ THE OLD "> 6000 tokens triggers a 413 from Groq" RULE WAS PROSE, NOT CODE, AND IT IS NOW OBSOLETE ANYWAY.** Nothing enforced it — the limit was Groq refusing, and it was cited as a reason for `MAX_MERGED_DEFINITION_CHARS` in `conceptExtraction.ts`. Since 2026-08-19 the chatbot runs on `gemini-3.5-flash-lite`, whose input window is ~1M tokens, so the figure means nothing. **`MAX_CONTEXT_CHARS = 32,000` in `chat.routes.ts` is the real guard now** (~8,000 tokens, ~5× what Groq accepted). It is a runaway guard rather than a working constraint: measured on live data, the largest material renders to **6,136 characters for 28 concepts**, and the theoretical worst case is ~33,600 (42 concepts × the 800-char definition cap). `fitContext()` drops WHOLE concepts from the end — never mid-definition — and trims the concept list itself, so `source_concept_ids` records what actually grounded the answer. **If it ever starts firing, that is the signal that full mode is being pointed at more than one material.**
+
+**The reply streams through `streamContent()` in `gemini.ts` — the codebase's only streaming call — and the stream is opened BEFORE the SSE headers are flushed.** That ordering is load-bearing: the helper awaits the upstream request, so a refusal (a spent daily quota above all) arrives while a real HTTP status is still sendable. The route used to flush first, which made its own `!res.headersSent` branch unreachable and turned every failure, whatever the cause, into the client's generic "something went wrong". **`withRetry()` wraps the initiation only** — a mid-stream failure must never be retried, because the student is already reading half an answer and a second attempt would splice itself into the middle of a sentence.
+
+**Gemini writes in larger pieces than llama did** — often a sentence at a time. Measured on the real route: a short RAG answer arrives in **4 chunks**, a full-mode summary in **16**, a whole-document summary in **35**. A brief reply landing in two or three writes is the transport being different, not streaming having broken.
 
 ---
 
@@ -277,7 +299,6 @@ SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_ANON_KEY=
 GEMINI_API_KEY=
-GROQ_API_KEY=
 PORT=5000
 APP_URL=http://localhost:3000
 ```
@@ -309,8 +330,8 @@ APP_URL=http://localhost:3000
 - **The back of a flashcard is always the educator's definition, verbatim.** `POST /api/spaces/:id/decks/:deckId/generate` writes `definition` → back, plus `concept_id` and `source_material_id`, whatever the format. **A model never writes an answer** — the deleted helper did, which put unvetted text in front of students. Only the front varies, via `format`:
   - `'term'` (default) — front is the concept's `term`. No model in the path; instant.
   - `'question'` — `generateQuestionsForConcepts()` writes a question whose answer *is* that definition. ~13s for 68 concepts.
-- **Question generation batches and echoes indices — do not "simplify" either.** `QUESTION_BATCH_SIZE = 20`: the old helper asked for one card per concept under `max_tokens: 4096` and truncates on a real material. The model returns `{ n, question }` and every `n` is range-checked before it is trusted, because a card whose `concept_id` is wrong is worse than one with no question. A concept the model skips **falls back to its term**, so a card is never lost and never unlinked. A Groq call that throws aborts the request with a 502 before anything is written — a deck half questions and half terms is worse than a clean retry.
-- **`flashcards.is_ai_generated` means "the model wrote this front".** True only for cards whose question came back from Groq — false for term cards *and* for question-format cards that fell back. The 409 response derives `current_format` from it so a Refresh rebuilds a deck in the style it already has.
+- **Question generation batches and echoes indices — do not "simplify" either.** `QUESTION_BATCH_SIZE = 20`: the old helper asked for one card per concept under `max_tokens: 4096` and truncates on a real material. The model returns `{ n, question }` and every `n` is range-checked before it is trusted, because a card whose `concept_id` is wrong is worse than one with no question. A concept the model skips **falls back to its term**, so a card is never lost and never unlinked. A model call that throws aborts the request **before anything is written** — a deck half questions and half terms is worse than a clean retry. The status carries the reason: a `GeminiUnavailableError` answers with its own **429** (daily quota spent) or **503** (outage), everything else **502**. Only the write-nothing half is load-bearing; a flat 502 told a student "please try again" on a day when retrying could not work.
+- **`flashcards.is_ai_generated` means "the model wrote this front".** True only for cards whose question came back from the model — false for term cards *and* for question-format cards that fell back. The 409 response derives `current_format` from it so a Refresh rebuilds a deck in the style it already has.
 - **Re-generating a material into a deck reconciles, it does not wipe.** Matched by `concept_id`: existing cards are updated in place, new concepts inserted, cards whose concept is gone deleted. Never delete-then-reinsert — `spaced_repetition_logs.flashcard_id` is `ON DELETE CASCADE`, so wiping the cards destroys the student's rating history and resets every `next_review_at`. Without `replace: true` the endpoint answers **409** with the existing count and writes nothing.
 - **Generation gates in order:** `requireRole('student')` → `loadOwnedSpace()` (404) → deck is in that space (404) → `rejectInaccessibleMaterials()` (403) → material is both published to (subject, grade) *and* linked in `study_space_materials` (404). The last check is not redundant: passing the grade rule only proves the student may read the material, not that this space holds it.
 - **Every student-reachable route that takes a material ID must gate it** through `server/lib/materialAccess.ts`. RLS does not protect these routes — the service role bypasses it. Path IDs 404; body ID arrays 403.
@@ -396,7 +417,7 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **`server/lib/bkt.ts` is the only implementation.** Two-phase update per observation — evidence (EQ 1/2) then transition (EQ 3) — with the post-transition value persisted as `latent_mastery`. Parameters come from the `bkt_parameters` table via a process-lifetime cache, warmed at boot in `server/index.ts` so a bad row shows up in the boot log rather than mid-assessment.
 
-**`npx tsx scripts/bkt-verify.ts` is the paper's evidence, not a test script.** The study reports an *Implementation Correctness Rate* (EQ 6, p. 96): hand-compute a value, compare against the system, pass within ±0.01. The harness prints an appendix-ready table and exits non-zero below 100%. `--live` adds sections that drive the real HTTP endpoints; it builds a throwaway student and deletes it, so it is safe to re-run. `--live-test` also sits a full generated test and **burns one of ~11 daily Groq generations**.
+**`npx tsx scripts/bkt-verify.ts` is the paper's evidence, not a test script.** The study reports an *Implementation Correctness Rate* (EQ 6, p. 96): hand-compute a value, compare against the system, pass within ±0.01. The harness prints an appendix-ready table and exits non-zero below 100%. `--live` adds sections that drive the real HTTP endpoints; it builds a throwaway student and deletes it, so it is safe to re-run. `--live-test` also sits a full generated test and **spends five of the ~20 daily `gemini-3.6-flash` requests**.
 
 **Its non-circularity rules are the point of it, and are easy to destroy.** §2 imports `bktStep` and nothing else — every P(G) is a literal, because looking one up through `GUESS_KEY_BY_FORMAT` would let a wrong mapping pass on both sides. §3 checks the engine against an independent **odds-ratio derivation** of the same equations. §5 checks convergence against closed-form roots solved by hand. If you add cases, keep the rule.
 
@@ -461,11 +482,11 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 ### What is deliberately absent
 
-**Streaks, badges and study hours are OUT, and must not be added back without a writer.** Nothing writes `activity_logs` (30 rows exist, all from one migration backfill, newest 2026-07-17), nothing awards `user_badges`, and one student carries a **non-zero `day_streak` frozen since July** — a stale number that looks real, which is worse than none. The paper names all three on p. 65; the missing piece is a writer, not a widget.
+**Streaks and badges now have a writer and ARE displayed — see the Gamification section below. STUDY HOURS STILL DOES NOT AND STAYS OUT.** `total_study_hours` is written, but only a game reports a real duration and only a test can derive one; flashcards, both cognitive modes and chat measure nothing, so the figure is a partial sum that would read as a total. That is the same failure as the frozen `day_streak` that kept all three off this page until 2026-08-19. `GET /api/dashboard` deliberately does not serialise it. The missing piece is real timing, not a widget.
 
 **Free Recall's coverage ratio never appears here.** Its denominator is however finely that document happened to be split, so it means nothing stripped of context — and a dashboard is exactly the context that strips context. Printing "31%" beside a test's "80%" invites the cross-metric comparison the Cognitive Tabs section forbids. Recall and Feynman rows in the activity feed carry a sentence and a timestamp, no number.
 
-**No activity heatmap.** Buildable from real timestamps and rejected: with 6 tests and 17 cognitive attempts *ever*, an honest heatmap renders as an accusation.
+**No activity heatmap and no weekly activity chart.** Both are buildable from `activity_logs` now that something writes it, and both stay rejected: with 6 tests and 17 cognitive attempts *ever*, and a two-week study, an honest heatmap renders as an accusation.
 
 **No refresh button.** Fresh on mount like every other screen; a button would advertise a staleness the mount already handles.
 
@@ -478,6 +499,118 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 **`profiles` has no avatar, no email and no institution.** The sidebar renders an initials monogram tinted by the theme accent; the line under the name is `Grade {n}`, a real column. Do not invent any of the three — the layout used to render an Unsplash URL and "MIT" from mock data.
 
 **`src/data/mockStudents.ts` is GONE**, along with its last two readers. It survived the dashboard rebuild only because `Settings.tsx` and `StudentProfile.tsx` still rendered it; both were deleted in the sidebar rework below, and `mockPublicSpaces.ts` and `StudySpacePreviewModal.tsx` went with them. **`src/data/mockCourses.ts` is the only mock data left in the tree** — `games/gameUi.tsx` still reads it.
+
+## Gamification — streaks & badges
+
+> **Full reference: `LearnSyncAI artifacts/STREAKS_BADGES_IMPLEMENTATION.md`.** Read it before
+> changing anything here — it carries the data model, the nine call sites with their three
+> exclusions, the badge catalogue with the reasoning behind each threshold, the debugging
+> playbook with verified SQL, and the acceptance evidence. What follows is only what must not
+> be broken by accident.
+>
+> Writer built 2026-08-19, celebration modal 2026-08-20. Every table involved had existed since
+> migration 0005 and none had ever moved, because nothing inserted into `activity_logs`. The DB
+> half needed no changes; what landed is the writer, a badge catalogue and evaluator, two
+> dashboard cards and a modal.
+>
+> ⚠️ **Migration `20260819120023` is written but NOT YET APPLIED** — verified against the live
+> database 2026-08-20. It drops the `activity_logs` student INSERT policy (see below). The
+> feature works without it; the migration closes a security hole.
+
+**`server/lib/activity.ts` is the ONLY writer for `activity_logs`, and `logActivity()` NEVER THROWS.** That is deliberately unlike `applyFlashcardRating()` / `bktProblems()`, which throw and are caught at each of their two call sites: a BKT failure is diagnostically important and its return value is consumed, whereas this has **nine call sites** and no consumer that can act on a failure. Nine chances to forget a `try/catch` is the larger risk. A missing streak day must never cost anyone a score.
+
+**One insert is the whole streak mechanism.** `trigger_update_streak` is `AFTER INSERT ON activity_logs` and maintains `day_streak`, `longest_streak` and `total_study_hours` itself. It has **already run by the time the insert resolves** (same transaction), so reading `longest_streak` immediately afterwards is correct — it looks racy and is not. **A day is an Asia/Manila calendar day**, never a 48-hour clock; `ARCHITECTURE.md` claimed the latter for months and was wrong.
+
+**The nine call sites, and the three exclusions that matter more:**
+
+| Logs | Where |
+|---|---|
+| `flashcard` ×2 | `flashcards.routes.ts` — the counted path **and** the not-due practice branch |
+| `adaptive_test` | `practice.routes.ts` `PUT /:id/complete`, after `applyTestCompletion` |
+| `free_recall` ×2 | `cognitive.routes.ts` — fresh **and** memo-hit |
+| `feynman` ×2 | `cognitive.routes.ts` — fresh **and** memo-hit |
+| `game` | `gamification.routes.ts`, after the `game_sessions` insert |
+| `chat` | `chat.routes.ts`, after the normal-turn `chatbot_logs` insert |
+
+- **The not-due flashcard branch MUST log.** With 7-day Easy intervals a student who cleared their deck yesterday has nothing due today; logging only the counted path would break their streak for using spaced repetition correctly.
+- **Both cognitive memo paths MUST log.** A resubmission is a real attempt and writes a real `cognitive_logs` row; only the model calls are skipped.
+- **The compare-and-swap loser must NOT log** (`flashcards.routes.ts`) — a duplicate request, not a second study event. Nor must the **off-topic chat refusal** (`chat.routes.ts`), which writes a `chatbot_logs` row for a question the assistant declined. Nor a `PUT /complete` that does not flip the status.
+
+**`durationMs` is 0 wherever time is not measured, and 0 is the honest value.** Only a game reports one (`time_spent_ms`) and only a test derives one — from `result.elapsed_ms`, the sum of per-question latencies, **not** `completed_at − created_at`, which would bill a test left open over dinner as three hours of study.
+
+**⚠️ `user_badges.badge_name` IS THE IDENTITY. NEVER RENAME A BADGE.** The string is in the database; renaming `streak_3` re-awards it under a second name to everyone who held the first, and orphans rows the client can no longer label. `label` and `description` are free to change.
+
+**There is deliberately NO `badges` table.** The catalogue is `BADGES` in `server/lib/badges.ts`; a table nobody can edit is a constant with extra steps, and building an editor for it would repeat the `educator_assignments` mistake. `UNIQUE (student_id, badge_name)` is what makes awarding idempotent — the insert is `ON CONFLICT DO NOTHING` and needs no read-then-write lock, which is what makes a concurrent double-submit safe.
+
+**Badges are awarded off `longest_streak`, not `day_streak`.** Thresholds stack and are permanent: reaching 7 days leaves all three held, and breaking a streak never removes one. Using `day_streak` would be equivalent today (rows are never deleted) but would let a student see "Week Warrior" beside a current streak of 1 with no way to tell which was lying.
+
+**Thresholds are 3 / 5 / 7, sized to the ~2-week study.** 14 was considered and dropped — an unreachable badge renders as a permanently grey tile that reads as broken. `STREAK_THRESHOLDS` is the one edit if the study lengthens.
+
+**⚠️ EVALUATION ORDER IS WHAT KEEPS THIS CHEAP, AND IT RUNS AFTER EVERY SINGLE FLASHCARD RATING.** One indexed read of the badges already held → narrow the catalogue to (not held) ∧ (triggered by this activity type) → **if nothing survives, return with zero further queries.** That is the steady state, so a saturated activity costs exactly one lookup forever after, and every COUNT-based rule stops running the moment its badge is earned. Measured: ~260ms per saturated activity. **Do not add a rule that queries before the held-set filter.**
+
+**`cards_100` counts `activity_logs`, not `spaced_repetition_logs`** — the latter gets no row for a practice rating on an un-due card, so the two tables disagree about what "reviewed" means. One uniform source for every "N times" rule.
+
+**Mastery badges trigger only on `flashcard` and `adaptive_test`** — the two modes permitted to move mastery (p. 58). A game or chat turn cannot change the count, so checking after one would be a query guaranteed to find nothing.
+
+**`chat` counts toward a streak but has no first-time badge.** The `activity_type` enum committed to it, and a student whose only session that day was the chatbot should not lose their run. It is also the cheapest activity to farm — recorded, not designed around.
+
+**`GET /api/dashboard` reads `gamification_profiles` and `user_badges` with two plain SELECTs, hoisted into the step-1 batch — never `GET /api/gamification/profile`.** That route used to INSERT on a GET; it no longer does, because a GET that writes is a trap for the next caller and the dashboard is read-only permanently. The fetch is in step 1 rather than beside the other history reads so it **survives both early returns**: a student whose educator archived every material still holds their streak, and zeroing it on an otherwise-empty dashboard would look like the app forgetting their work.
+
+**⚠️ Migration 0023 DROPPED the student INSERT policy on `activity_logs`.** It contradicted the rule stated eleven lines above it in `schema.sql` — mastery and gamification are read-only for students precisely so an anon key cannot inflate a score — and `update_study_streak()` is `SECURITY DEFINER`, so an anon-key insert moved all three columns directly. Harmless while nothing read them; a live fabrication route the moment a dashboard printed them. Express writes with the service role, which bypasses RLS, so dropping it cost nothing. **Do not add it back.**
+
+**`src/lib/badges.ts` owns presentation and nothing else.** The server decides which badges exist and who holds one. `badgeStyle()` **falls back rather than indexing blind**, so the server can award a new badge before the client knows its name — never replace it with `BADGE_STYLES[name]`. Only EARNED badges are ever rendered: a greyed-out rail of unearned ones needs criteria text beside each, and on a two-week study a wall of locked tiles reads as a list of things you failed to do.
+
+**`src/pages/student/games/gamesData.ts` no longer exports `BADGES`** — four hardcoded tiles, three of them `earned: true` for every student, with zero consumers.
+
+### The badge-earned modal
+
+**`src/context/BadgeContext.tsx` DIFFS, it is not told.** `celebrate()` re-reads
+`GET /api/gamification/badges` and compares against what this session has already seen. The obvious
+alternative — each write endpoint returning the badges its action awarded — is ruled out by two
+things: **`FlashcardStudyView` does not await the rating** (it posts and advances the card, so a badge
+on that response would open a modal over a card the student had moved on to), and **`chat.routes.ts`
+calls `logActivity()` after `res.end()`**, so the SSE stream has nowhere to put the answer. Diffing
+also means the nine write paths verified by the acceptance harness are untouched.
+
+**⚠️ THE BASELINE IS SEEDED ON MOUNT AND CELEBRATES NOTHING.** Without that, every student holding
+badges already is ambushed on their next login. It is **in-memory on purpose**: a reload re-seeds, so
+nothing is ever celebrated twice. Persisting to `localStorage` would close the one gap (a badge earned
+by the last action before the tab closes) and open a worse one — clearing site data would replay every
+badge the student has ever earned.
+
+**`celebrate()` waits BEFORE it fetches, and the delay does two jobs.** It lets a results screen finish
+its own entrance, *and* it gives the un-awaited flashcard rating time to land — fetching immediately
+would read the badge list from before the badge was written. Not made into a guarantee: a poll loop
+would cost every student requests on every session to catch a case whose failure mode is "the badge
+appears on the dashboard instead".
+
+**Six checkpoints, all at "you just finished something" moments** — the flashcard results screen (on
+`isFinished`, so Restart re-arms it), `onFinish` in `AdaptiveTestTab` (**not** the results screen
+itself, which `openSummary` also reaches when browsing a PAST test), both cognitive submits, after the
+game session POST resolves, and after a chat turn streams successfully. Never per flashcard: that
+would be thirty requests to answer a question that only changes at the end.
+
+**ONE modal listing every badge that action earned, never a queue.** Finishing a game on a three-day
+streak awards three at once; three dialogs in a row turn a reward into a chore, and a student clicking
+fast would never read the third.
+
+**It is SILENT, deliberately.** `play('victory')` and a mute toggle already exist in `gameAudio.ts`
+and are not used here: this modal can appear anywhere in the portal, and an unexpected fanfare in a
+classroom is startling. The games are opt-in and self-contained, which is why they may have sound and
+this may not.
+
+**`ConfettiBurst` moved to `src/components/ui/`** and `gameUi.tsx` re-exports it. It could not stay
+there: `gameUi.tsx` imports `MOCK_COURSES`, so a globally mounted consumer would drag the last mock
+data in the tree into the student portal bundle. Same lift `surfaces.ts` and `reviewSchedule.ts` got.
+**A re-export does not bind the name locally** — `gameUi.tsx` must import it too, for its own usage.
+
+**`.animate-badge-pop` and `.animate-badge-glow` are in the `prefers-reduced-motion` block.** A
+celebration is exactly the motion that block exists for; the modal still opens and still names the
+badge. The halo is `display: none` there rather than un-animated, because a static halo is a smudge.
+
+**`gameUi.tsx` already had a `celebrate` — a boolean prop gating the game's own confetti** — so the
+hook is aliased to `celebrateBadges` there. The scopes do not overlap and it compiles either way; two
+unrelated meanings under one name in one module is the hazard.
 
 ## Sidebar & Profile — both portals
 
@@ -525,7 +658,7 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **Before this existed the admin could not use the application at all.** `Login.tsx` sent `role === 'admin'` to `/educator/dashboard`, where `requireRole('educator')` 403s every data call. Three promises elsewhere in the app also had no implementation: "Only an administrator can change this" on the student Profile page (`grade_level`), "an admin fixes" a NULL username, and password recovery — there is **no SMTP**, so `POST /accounts/:userId/password` is the *only* password-recovery path in the product and the "Forgot password?" link stays inert.
 
-**⚠️ THERE IS NO DELETE ROUTE AND NO DELETE CONTROL. Do not add one casually.** Thirteen tables CASCADE from `profiles` — `study_spaces`, `bkt_mastery`, `bkt_update_logs`, `practice_tests`, `practice_telemetry`, `cognitive_logs`, `chatbot_logs`, `spaced_repetition_logs`, `gamification_profiles`, `game_content`, `game_sessions`, `user_badges`, `activity_logs` — so deleting one student destroys their entire measured history, which for a 50-student study is the research data. `schema.sql` states the intended idiom on the column: *"Set to disabled by an admin to revoke access without deleting."* Disable is already honoured by `requireRole`, `POST /api/auth/login`, `private.auth_role()` and `rosterForGrades()`, and is fully reversible. Deletion is also the one operation the schema fights — `materials.educator_id` is `ON DELETE RESTRICT`, the only non-CASCADE FK, so deleting a publishing educator fails as an opaque Supabase Auth error.
+**⚠️ THERE IS NO DELETE ROUTE AND NO DELETE CONTROL. Do not add one casually.** Fourteen tables CASCADE from `profiles` — `study_spaces`, `bkt_mastery`, `bkt_update_logs`, `practice_tests`, `practice_telemetry`, `cognitive_logs`, `chatbot_logs`, `spaced_repetition_logs`, `gamification_profiles`, `game_content`, `game_sessions`, `user_badges`, `activity_logs`, and `assessment_attempts` (migration 0024, temporary) — so deleting one student destroys their entire measured history, which for a 50-student study is the research data. `schema.sql` states the intended idiom on the column: *"Set to disabled by an admin to revoke access without deleting."* Disable is already honoured by `requireRole`, `POST /api/auth/login`, `private.auth_role()` and `rosterForGrades()`, and is fully reversible. Deletion is also the one operation the schema fights — `materials.educator_id` is `ON DELETE RESTRICT`, the only non-CASCADE FK, so deleting a publishing educator fails as an opaque Supabase Auth error.
 
 **⚠️ `handle_new_user()` REPORTS SUCCESS FOR AN ACCOUNT THAT CANNOT SIGN IN**, which is why `createAccount()` in `admin.routes.ts` is a function rather than three lines. A malformed or taken username degrades to NULL, so the naive implementation says "Account created" and nobody can log in. The sequence is: pre-check `lower(username)` → **409**, nothing written → `auth.admin.createUser` with `user_metadata` (the trigger writes `profiles` *and* `gamification_profiles`) → **re-read the row and confirm the username stuck** → on NULL, one targeted UPDATE whose `23505` is authoritative → on collision, delete the auth user and 409. **Build the response from the re-read row, never the request body** — the body is what was asked for, the row is what happened. Verified: a case-differing duplicate 409s and leaves no orphan.
 
@@ -747,7 +880,7 @@ app is not the same as taking ownership of the account, and the new figure is a 
 
 **Rebuilt from scratch on 6–7 August 2026** (frontend, then backend). The version replaced made zero network calls and generated questions in the browser from hardcoded neuroscience mock data; its three endpoints had zero callers and six defects, including a `practice_telemetry` insert that omitted `question_type NOT NULL` and had therefore **never once succeeded**. No migration was needed — every column already existed unused.
 
-**Generation is Groq `llama-3.3-70b-versatile`, not Gemini.** The paper (p. 81) says only "the large language model"; the Gemini claim was ours, in `ARCHITECTURE.md`, and has been corrected. The reason is the per-model 20/day Gemini quota that extraction, Free Recall and Feynman already spend. **⚠️ Groq's free tier is 12,000 tokens/minute and 100,000 tokens/day — about 11 tests/day for the whole account, which does not support a 50-student study.** Unresolved; needs a paid tier or Gemini billing.
+**Generation is Gemini `GEMINI_CONTENT_MODEL` (`gemini-3.6-flash`) at `ThinkingLevel.MINIMAL`, as of 2026-08-18.** The paper (p. 81) says only "the large language model", so nothing in the write-up depends on the provider. It ran on Groq `llama-3.3-70b-versatile` from 2026-08-06 until Groq decommissioned the model. **MINIMAL is not a tuning preference — measured, `gemini-3.6-flash` runs ~2s at MINIMAL against 5–20s at LOW, and thinking tokens bill at the OUTPUT rate.** Nothing in generation reasons: the server owns the true/false verdict, the correct option’s position and the matching blocks, and grading is deterministic in `testGrading.ts`. **⚠️ One test is five model calls** (one per format, in parallel) against a 20/day free-tier bucket shared with extraction and Feynman — about four tests a day. The study needs the paid key.
 
 - **One question per concept, and the student cannot choose the length.** `allocateConcepts()` in `server/lib/testAllocation.ts` derives it. A length picker meant cycling concepts to fill it, so a 40-item test on a 29-concept lesson asked about some concepts three or four times in one sitting — which BKT would read as four independent observations. `src/lib/testMode.ts` holds a **mirror** for the setup preview; the server is authoritative. Change one, change the other.
 - **A matching block is exactly 4 terms against 6 definitions** (paper p. 75). The **six options** are the BKT rule — P(G_match) = 1/6 — and the **four terms** are a fidelity rule, since "applied per matched item" means the term count never enters the formula. If they ever conflict with something that affects scoring, bend the term count, never the option count. One block emits **four** telemetry rows.
@@ -795,7 +928,7 @@ app is not the same as taking ownership of the account, and the new figure is a 
 
 **Trivia cannot reuse `FORMAT_TIER_GUIDANCE.multiple_choice`, and the reason is arithmetic.** Its `advanced` cell says "Open with a one-sentence scenario"; advanced trivia runs on a 10-second clock, and ~52 words at ~4 words/sec is thirteen seconds of reading before one second of thinking.
 
-**Keep the crossword's `A–Z, 3–10 letters` and `NEVER abbreviate` bullets tier-independent and adjacent to the tier'd `"answer"` line.** Advanced answers name consequences and are the longest; `groq.ts` filters that range, `crossword.ts` needs ≥2 survivors, and the route throws on an empty layout, so this is where a 502 would come from.
+**Keep the crossword's `A–Z, 3–10 letters` and `NEVER abbreviate` bullets tier-independent and adjacent to the tier'd `"answer"` line.** Advanced answers name consequences and are the longest; `gameContent.ts` filters that range, `crossword.ts` needs ≥2 survivors, and the route throws on an empty layout, so this is where a 502 would come from.
 
 **`POST /api/gamification/session` takes only `content_id` plus the outcome.** `space_id`, `material_id`, `game_type` and `mastery_snapshot` are read from the owner-checked `game_content` row — the snapshot is the evidence p. 98 reads, so a client-supplied one would be a client-chosen finding. The insert **lists its fields explicitly**: it used to be `{ ...parsed.data }`, which binds the request shape to the table's columns, and `recordSession()` swallows every error, so a mismatch would stop session logging entirely with no visible symptom.
 
@@ -830,3 +963,196 @@ Everything a student reads after submitting — the verdict banner, the feedback
 **Every cognitive endpoint enforces ownership itself.** `requireOwnedSpace()` (404) then `rejectInaccessibleMaterials()` (403). `requireRole('student')` only proves the caller is *a* student — it says nothing about *whose* space or *which* grade's materials.
 
 **Both submit handlers hold a `useRef` latch, and it is not redundant with the button's `disabled`.** `disabled` and `canEvaluate` read React state, which does not re-render until the handler yields, so a double-click enters the handler twice with `isEvaluating` still `false` and fires two submissions. Observed: one Feynman answer graded **0.95 and then 0.90** three seconds apart from byte-identical input, because both requests ran their memo lookup before either had written its row — so both missed it, both spent model calls, and the same explanation earned two different marks. The latch is set synchronously before the first `await` and cleared in `finally`.
+
+## Pre-Test / Post-Test — ⚠️ TEMPORARY research instrument
+
+> **Full reference: `LearnSyncAI artifacts/PREPOST_TEST_IMPLEMENTATION.md`**, which carries the
+> removal checklist. Built 2026-08-21, migration `0024`.
+>
+> **⚠️ THIS FEATURE IS REMOVED AFTER THE SCHOOL STUDY.** It exists to serve paper **RQ4 (p. 55)** —
+> the significance of the difference between a student's *standard pre-test* score and their
+> post-test score — which p. 103 names the **primary** evaluation instrument. Every design choice
+> below prefers mechanical removal over integration, and **every call site outside the feature's own
+> files carries a `PRE/POST GATE` marker comment so removal is a grep.**
+
+**One divergence from the paper, decided with the user.** p. 103/106 call the post-test
+*"personalized"* / *"tailored to their specific knowledge gaps"*. Built literally, each student sits a
+different paper and the pre/post difference stops measuring learning — a student asked only about
+their weak concepts sits a **harder** test than their own pre-test, so a lower post score could mean
+either more learning or a harder paper. **Everyone therefore sits the same test**, reworded. p. 103's
+own phrase *"system-generated **parallel** pre-tests"* is the correct term, and the post-test wording
+in the paper should be brought into line with it.
+
+**The item is the INVERSE of `writeChoice()` in `testGeneration.ts`, and that is the decision
+everything else follows from.** An adaptive-test MCQ names the term and offers four generated
+definitions; this one describes the concept without naming it and offers four **term names** — the
+concept's own `term` plus three others from the same material. Three things fall out, all of which the
+study depends on:
+
+- **The model never writes an option and never writes an answer.** Every option is an
+  educator-vetted `concepts.term` the server chose, so there is no hallucination surface on the answer
+  key at all.
+- **"Same answer, same difficulty" is structural.** Pre and post are the *same row*: same concept,
+  same `answer`, same four options. Only the sentence and the option order differ. Two separate
+  generations could drift apart on the answer; this cannot.
+- **Grading is a normalised string compare**, safe *only* because a term appears at most once per
+  material. Do **not** import `testGrading.ts`'s alias ladder — that exists for text a student typed,
+  and here they pick from four literal strings the server wrote.
+
+**ONE model call writes both forms** — per concept the model returns `pre_stem` and `post_stem`
+together, so the two wordings are provably about the same concept. `GEMINI_CONTENT_MODEL` at
+`ThinkingLevel.MINIMAL`, `maxOutputTokens: 8192` (20 items × 2 stems exceeds any single-format ceiling
+in `testGeneration.ts`). **One request per material**, against the adaptive test's five.
+
+**THERE IS NO DIFFICULTY TIER, BY DESIGN.** A "standard pre-test" must not adapt: nothing reads
+`bkt_mastery`, there is no `difficulty_tier` column, and no tier machinery is imported.
+
+**Validation replaces fallback, and that inversion is load-bearing.** `generateTestQuestions()` can
+fall back to a deterministic template for any skipped item; **there is no template that can invent a
+second, differently-worded stem.** An item is kept only if both stems are clean, neither names its own
+term, and `norm(pre) !== norm(post)` — the likeliest MINIMAL failure on a one-line definition is the
+model returning the **same sentence twice**, which ships silently and turns the post-test into a
+recognition exercise. A rejected concept is dropped and refilled from a spare pool requested in the
+same call; under 5 usable items the whole generation fails and writes nothing.
+
+**⚠️ DISTRACTORS COME FROM THE ANSWER'S DOCUMENT NEIGHBOURHOOD (±6), not the whole material.**
+Measured: drawing from the whole material produced *"This web application of a larger markup
+standard…"* offering `HTML · wind_gust_mph · XSL · dewpoint_c`, where two options are field names from
+the lesson's own worked example. They are real concept rows, so nothing was *wrong* — but a student
+eliminates both without knowing anything, turning a 4-option item into a 2-option one, which inflates
+the **pre**-test baseline toward 50% and shrinks the gain RQ4 measures. Same finding the Games section
+records: what works is neighbouring concepts. A candidate is also rejected when its `foldKey` is a
+substring/superstring of another option (`Injection` inside `SQL Injection` would give the item two
+defensible answers) or when the stem names it.
+
+**This feature writes NOTHING that feeds the platform** — no `bkt_mastery`, `bkt_update_logs`,
+`practice_telemetry` or `activity_logs`. `bkt_source` stays a two-value enum and `activity_type` gains
+no value. **Consequence, stated rather than hidden: a pre-test does not extend a study streak.**
+
+### The lock
+
+**One line: a material is locked for a student when its assessment's LATEST RELEASED PHASE has no
+completed attempt by them.** `gatePhaseOf()` in `server/lib/assessmentGate.ts`.
+
+**⚠️ LATEST, NOT "ANY RELEASED PHASE WITH NO ATTEMPT".** The obvious reading locks a student out
+permanently: an educator releasing the post-test while some students still owe the pre-test would gate
+those students on `pre`, a phase the Post-Test tab no longer offers. The schema backs it from the
+other side (`material_assessments_release_order`), the release route refuses it with a sentence, and
+**un-releasing is the escape hatch** — it destroys no attempts, the same property archiving relies on.
+
+**Nine server call sites, each one line below the existing access check — AFTER, never before.** That
+ordering is what makes archiving and re-grading self-healing: `accessibleMaterialIds()` has already
+dropped the material and answered, so the gate never has to know about `is_archived` or `grade_level`.
+Seven body-array sites beside `rejectInaccessibleMaterials()`, plus `requireUnlockedMaterial()` as a
+**second middleware** after `requireMaterialAccess()` on `GET /materials/:id/view` and `/:id/concepts`.
+`/:id/status` stays open.
+
+**⚠️ THE GATE IS STUDENT-ONLY, checked inside `lockedMaterials()` rather than at each guard.** Two of
+the nine sites are reachable by the uploading educator and by an admin, neither of whom can ever hold
+an attempt row — a role-blind rule would lock an educator out of their own PDF the moment they
+released its pre-test. The role read runs *after* the assessment lookup, so the common case (nothing
+released) still costs one query.
+
+**It FAILS OPEN**, unlike `accessibleMaterialIds()` which denies everything on error. Deliberate: that
+function guards data isolation between students, where the safe failure is refusal; this guards a
+research measurement, where a broken lookup silently locking fifty students out of the whole platform
+is far worse than a few contaminated baselines. Verified — with migration 0024 unapplied the app runs
+exactly as before.
+
+**The lock is FORWARD-LOOKING and does not revoke past work.** An in-progress adaptive test can be
+finished, a generated game replays, history still quotes the material. Not a gap: before the pre-test
+the student has never been able to open the material, so no such work exists; by the post-test they
+have studied it for weeks.
+
+**Client: `availableResources` is passed UNFILTERED, plus a `lockedIds: Set`.** Each tab filters only
+its **picker** — four one-line edits. Filtering the list itself was rejected twice over: `AnalyticsTab`
+treats an empty list as *"No lessons in this study space yet"*, and `materialLabel()`/`deckSummary()`
+use the same list to **title historical attempts**, which would lose their labels.
+
+**⚠️ THE LOCK MAP IS THE ONE PIECE OF `StudySpace` STATE `<main key={activeTab}>` DOES NOT REFRESH.**
+So every path that can change a lock calls `refreshLocks` explicitly — finishing a test, and
+`ResourcesTab`'s materials sync (which can pull in an already-locked material the parent never saw).
+Same idiom as `onRefresh` on `FlashcardsTab`. `GamesLanding` builds its own material list and so does
+its own lock lookup; without it a locked lesson is offered, ticked, and answered with an unactionable
+403.
+
+**`ResourcesTab` is the ONE place a locked material stays visible**, with a lock badge and the PDF and
+chatbot both disabled. A lesson that simply vanished from the library reads as the app losing the
+teacher's work.
+
+### Answer-key handling
+
+**`stripAssessmentKey(item, phase)` is the only function that serialises an item to a browser.** It is
+a *second* serialiser in a codebase whose rule is "`stripKey()` is the only one" — the rule is not
+broken, because `stripKey()` remains the sole serialiser for `StoredTestQuestion`. Both carry a
+cross-reference. Do not merge them and do not add a third.
+
+**⚠️ THE `phase` PARAMETER IS LOAD-BEARING TWICE.** Both wordings sit on one row, so a phase-blind
+serialiser shows a student **every post-test question while they sit the pre-test**; and the option
+order differs per phase by design, so emitting the wrong array lets a memorised position carry across.
+
+**⚠️ A COMPLETED PRE-TEST RETURNS A SCORE AND NO ITEMS AT ALL.** The obvious mirror of
+`GET /api/practice/:id/result` returns the full review on completion, and here that is the worst leak
+available: pre and post share every answer, so a student reading their pre-test result out of DevTools
+holds the post-test key three weeks early and their "learning gain" becomes a measure of who read a
+JSON response. The post-test returns the full review.
+
+**RLS is deliberately unlike `practice_tests`**, whose `FOR ALL USING (student_id = auth.uid())`
+already lets a student read their own `questions_payload` with the anon key. `material_assessments`
+has **no student policy at all** — it carries no `student_id`, so any grade-scoped policy would hand
+the key to every student in the grade before either test. `assessment_attempts` is **SELECT-only** for
+students, following the `activity_logs` precedent: `answers` and `score` *are* the measurement.
+
+### The rest
+
+- **`UNIQUE (assessment_id, student_id, phase)` — one attempt per phase, no retakes.** Which is
+  exactly why `POST /:assessmentId/attempts` **must be idempotent**: on a 409 a student who closed the
+  tab would hold an `in_progress` row they can never complete and a lesson locked forever.
+- **⚠️ THE POST-TEST REQUIRES A COMPLETED PRE-TEST, AND THE LOCK DOES NOT ENFORCE THAT.** Ordering the
+  instruments is a separate job from gating the material: the gate points at the LATEST released
+  phase, so once the post-test is out a student who never sat the pre-test is gated on `post` and
+  nothing stopped them starting it. **Observed on a real account.** A post score with no baseline is
+  not a weaker data point but an unusable one — RQ4 measures a difference and there is nothing to
+  subtract from — and the student has now seen the item set, so a later "pre"-test measures recall of
+  the post-test. **It cannot strand anyone, and the reason is the CHECK constraint, not the guard:**
+  `material_assessments_release_order` forbids post being released while pre is not, so the pre-test
+  is always available to satisfy it. Do not relax that constraint without revisiting this. The check
+  runs BEFORE the existing-attempt lookup, so an orphaned `in_progress` post row cannot be resumed
+  either.
+- **Generation is SYNCHRONOUS, and it is SLOW — measured 36.1s** for 20 items on a 30-concept
+  material, not the ~2–3s a single MINIMAL call suggests. Forty sentences is a lot of output and
+  output is the bottleneck. It stays synchronous because the cost is **bounded** — at most
+  `ASSESSMENT_MAX_ITEMS + SPARE` = 26 items however large the material, so 36s is near the ceiling
+  rather than the start of a curve — and because it is a once-per-material educator action, never on
+  a student's path. Async would buy a status column, a poll, and the defect `processMaterialAsync`
+  actually has: a restart mid-job strands the row on `processing` forever with nothing to reap it.
+  **The educator UI must keep saying "about half a minute"** — "a few seconds" was the estimate, and
+  an educator who thinks it has hung reloads and pays for a second generation.
+- **Regeneration is refused once any attempt exists**, server-side (409), not by a disabled button.
+- **20 items max**, `min(20, conceptCount)`, sampled at an **even stride over document order** so the
+  test covers the whole lesson. Minimum 5 concepts — four options plus a spare.
+- **The runner is a new self-contained component, NOT `TestSessionView`**, which is 879 lines across
+  five formats and calls `testApi` directly. A 20-item MCQ runner deletes in one file and cannot
+  regress Test Mode on the way out. **It is SHAPED like `TestSessionView` though** — same in-flow
+  root, header, per-question progress bar, question card, footer and `lg:` navigator rail.
+- **⚠️ THE RUNNER RENDERS IN FLOW. IT MUST NEVER BE `fixed inset-0`.** The first version was, and the
+  study-space header won the z-order fight: the runner's own header vanished and the question was
+  clipped at the top of the scroll box with no way to reach it. `TestSessionView` sits inside
+  `<main>` for exactly this reason, and the tab bar staying visible is correct anyway.
+- **The pre-test score ring is a FIXED NEUTRAL tone, never `scoreTone()`.** Test Mode colours by score
+  because there a score is an achievement; a pre-test score is a baseline taken before the student has
+  studied, so 4/20 is the expected result and painting it red tells them something untrue about
+  themselves. The post-test colours normally. Same reasoning as Free Recall's fixed tone.
+- **The educator item preview renders INLINE, never in a `Modal`** — 20 items × 2 stems is ~60 rows,
+  and `Modal` has no max-height inside an `items-center` wrapper. Do not give `Modal.tsx` one.
+- **The educator tab states VISIBILITY before it gives advice.** Generating and releasing are two
+  steps, and the gap is where the screen was misread: after a 36-second spinner an educator
+  reasonably assumes the test is live. It is not — nothing reaches a student and no lesson locks
+  until a phase is released, so the tab says which of those is true right now, above the advice.
+- **The educator tab carries one line of operational copy** that closes the only real hole in the
+  lock: a material is visible the moment it is uploaded, so releasing the pre-test ten minutes later
+  leaves ten minutes of contaminated baseline. Release first, or Archive while setting up.
+- **`GET /api/assessments/overview` accepts NOTHING** — no body, no query, no path parameter, so zero
+  IDOR surface and no Zod schema, the same bar `GET /api/dashboard` and `GET /api/educator/overview`
+  meet. It feeds the materials-library pill and is a separate read on purpose, so removal is deleting
+  one fetch rather than editing `GET /api/materials` back.

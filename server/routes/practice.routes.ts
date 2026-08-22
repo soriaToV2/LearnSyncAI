@@ -3,10 +3,13 @@ import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
+// PRE/POST GATE — temporary (migration 0024). Delete with the feature.
+import { rejectLockedMaterials } from '../lib/assessmentGate';
 import { requireOwnedSpace, spaceMaterialIds, type SpaceOwner } from '../lib/spaceAccess';
-import { GroqUnavailableError } from '../lib/groq';
+import { GeminiUnavailableError } from '../lib/gemini';
 import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
 import { applyTestCompletion, bktProblems } from '../lib/bkt';
+import { logActivity } from '../lib/activity';
 import {
   documentMastery,
   latestUpdate,
@@ -227,10 +230,16 @@ function buildResult(row: TestRow) {
 }
 
 function failGeneration(res: Response, err: unknown): void {
-  if (err instanceof GroqUnavailableError) {
-    // 429 for a rate limit, 503 for an outage. A rate limit reported as a
-    // generic failure tells the student to retry at once, which cannot work.
-    if (err.retryAfterSeconds) res.setHeader('Retry-After', String(Math.ceil(err.retryAfterSeconds)));
+  if (err instanceof GeminiUnavailableError) {
+    // 429 for spent quota, 503 for an outage. A rate limit reported as a generic
+    // failure tells the student to retry at once, which cannot work.
+    //
+    // GeminiQuotaError extends GeminiUnavailableError, so one instanceof still
+    // catches both, exactly as with the Groq pair this replaces. What moved is the
+    // retry hint: Groq exposed `retryAfterSeconds` on the error itself, Gemini
+    // parses Google's RetryInfo into `upstream.retryAfterMs`. Hence the /1000.
+    const retryAfterMs = err.upstream?.retryAfterMs;
+    if (retryAfterMs) res.setHeader('Retry-After', String(Math.ceil(retryAfterMs / 1000)));
     res.status(err.status).json({ error: 'Question writer unavailable', message: err.message });
     return;
   }
@@ -571,6 +580,9 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   const space = await requireOwnedSpace(space_id, req, res);
   if (!space) return;
   if (!(await rejectInaccessibleMaterials(req, res, [material_id]))) return;
+  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
+  // before: that ordering is what lets archiving and re-grading answer first.
+  if (!(await rejectLockedMaterials(req, res, [material_id]))) return;
 
   if (!(await spaceMaterialIds(space)).includes(material_id)) {
     res.status(404).json({ error: 'Material not found in this study space' });
@@ -900,6 +912,28 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
       err instanceof Error ? err.message : err
     );
   }
+
+  /*
+   * Activity + badges. Past the compare-and-swap, so a double-submitted test
+   * logs one row and awards `perfect_test` once.
+   *
+   * `elapsed_ms` rather than `completed_at — created_at`: it is the sum of the
+   * per-question latencies already stored on each answer, so it measures time on
+   * task instead of wall clock. A test opened before dinner and finished after
+   * it would otherwise contribute three hours of "study". It feeds only
+   * `total_study_hours`, which no screen displays.
+   *
+   * `score` is the server's own `correct / total` from `buildResult()` — never a
+   * client-supplied figure, the same rule that keeps `is_correct` server-side.
+   */
+  await logActivity({
+    studentId: req.user!.id,
+    type: 'adaptive_test',
+    spaceId: row.space_id,
+    materialId: row.source_material_ids?.[0] ?? null,
+    durationMs: result.elapsed_ms,
+    outcome: { score: result.score },
+  });
 
   res.json({ data: buildResult({ ...row, status: 'completed' }), message: 'Practice test submitted' });
 });

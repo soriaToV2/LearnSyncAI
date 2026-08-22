@@ -750,6 +750,12 @@ CREATE TABLE user_badges (
     UNIQUE (student_id, badge_name)
 );
 
+COMMENT ON COLUMN user_badges.badge_name IS
+    'Stable identifier from the catalogue in server/lib/badges.ts (e.g. streak_3, mastery_10). Never renamed once live -- the string IS the identity. There is deliberately no `badges` table: a catalogue nobody can edit is a constant with extra steps.';
+
+-- UNIQUE (student_id, badge_name) is load-bearing, not tidiness: awarding is
+-- INSERT ... ON CONFLICT DO NOTHING, which is what makes re-evaluating a badge
+-- on every single activity idempotent and free of a read-then-write race.
 CREATE INDEX idx_user_badges_student ON user_badges (student_id);
 
 -- ============================================================================
@@ -1224,8 +1230,11 @@ CREATE POLICY "Students manage their own game content"
 CREATE POLICY "Students read their own activity log"
     ON activity_logs FOR SELECT USING (student_id = auth.uid());
 
-CREATE POLICY "Students append to their own activity log"
-    ON activity_logs FOR INSERT WITH CHECK (student_id = auth.uid());
+-- No student INSERT policy, deliberately (migration 0023 dropped the one that
+-- existed). activity_logs is written ONLY by the API through the service role.
+-- update_study_streak() is SECURITY DEFINER and fires on any insert, so a
+-- student holding an anon key could otherwise move day_streak, longest_streak
+-- and total_study_hours directly -- the exact inflation the note above forbids.
 
 CREATE POLICY "Students read their own game sessions"
     ON game_sessions FOR SELECT USING (student_id = auth.uid());
@@ -1332,3 +1341,147 @@ CREATE POLICY "Students read materials for their grade"
                AND private.auth_grade_level() = ANY (m.grade_levels)
         )
     );
+
+
+-- ============================================================================
+-- 17. PRE-TEST / POST-TEST  (TEMPORARY research instrument — migration 0024)
+-- ============================================================================
+-- The paper's RQ4 (p. 55) compares each student's standard pre-test score with
+-- their post-test score, and p. 103 names these the PRIMARY evaluation
+-- instrument. This section exists to serve that one question.
+--
+-- IT IS REMOVED AFTER THE SCHOOL STUDY. That is why it sits at the end as one
+-- self-contained block — enum, tables, indexes, trigger and RLS together —
+-- rather than being filed into sections 1, 10 and 15 like everything else.
+-- Removal is deleting this block and running the drop migration; no section is
+-- renumbered and no other policy is touched.
+--
+-- It writes NOTHING that feeds the platform: no bkt_mastery, no
+-- bkt_update_logs, no practice_telemetry, no activity_logs. bkt_source stays a
+-- two-value enum and activity_type gains no value (paper p. 58 limits mastery
+-- writers to Adaptive Flashcards and Adaptive Test Mode). A pre-test that moved
+-- mastery would corrupt the very baseline it exists to measure.
+
+CREATE TYPE assessment_phase AS ENUM ('pre', 'post');
+
+-- One pre/post set per material, holding BOTH forms on one row.
+--
+-- The pre-test and post-test ask about the same concepts, with the same answers
+-- and the same four options; only the sentence wording and the option order
+-- differ. Keeping both stems on one item is what makes that parallel-form
+-- guarantee structural rather than two generations hoped into alignment.
+--
+-- No `status` column: generation is synchronous (one Gemini call, ~2-3s), so a
+-- row exists only on success. A status column would strand rows on 'processing'
+-- when the server restarts mid-job, the known defect in materials.parsed_status.
+CREATE TABLE material_assessments (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    material_id      UUID NOT NULL UNIQUE REFERENCES materials(id) ON DELETE CASCADE,
+    created_by       UUID NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
+    items            JSONB    NOT NULL,   -- HOLDS THE ANSWER KEY, see below
+    item_count       SMALLINT NOT NULL,
+    pre_released_at  TIMESTAMPTZ,
+    post_released_at TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT material_assessments_item_count_valid
+        CHECK (item_count BETWEEN 5 AND 20),
+    -- The post-test cannot be released before the pre-test. Releasing it first
+    -- would gate every student who had not yet sat the pre-test onto a phase
+    -- they can reach, while the pre-test they still owe becomes unreachable.
+    CONSTRAINT material_assessments_release_order
+        CHECK (post_released_at IS NULL OR pre_released_at IS NOT NULL)
+);
+
+COMMENT ON TABLE material_assessments IS
+    'TEMPORARY (research instrument). One pre/post test set per material. Removed after the study.';
+COMMENT ON COLUMN material_assessments.items IS
+    'HOLDS THE ANSWER KEY. { version, items: [{ index, concept_id, concept_term, pre_stem, post_stem, options_pre[], options_post[], answer }] }. Never serialised to a student except through stripAssessmentKey() in assessments.routes.ts.';
+COMMENT ON COLUMN material_assessments.pre_released_at IS
+    'Set when the educator releases the pre-test; NULL un-releases it. Un-releasing destroys no attempts.';
+
+CREATE INDEX idx_material_assessments_material ON material_assessments (material_id);
+CREATE INDEX idx_material_assessments_creator  ON material_assessments (created_by);
+
+CREATE TRIGGER trg_material_assessments_updated_at
+    BEFORE UPDATE ON material_assessments
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- One student sitting of one phase.
+--
+-- No space_id: the assessment measures the MATERIAL, and a student may hold two
+-- study spaces of the same subject, so keying an attempt on a space would make
+-- "have they sat the pre-test?" depend on where they happened to sit it.
+CREATE TABLE assessment_attempts (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    assessment_id UUID NOT NULL REFERENCES material_assessments(id) ON DELETE CASCADE,
+    student_id    UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    phase         assessment_phase NOT NULL,
+    answers       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    score         NUMERIC,
+    correct_count SMALLINT,
+    status        practice_status NOT NULL DEFAULT 'in_progress',
+    started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at  TIMESTAMPTZ,
+
+    CONSTRAINT assessment_attempts_score_range
+        CHECK (score IS NULL OR (score >= 0 AND score <= 1)),
+    -- ONE ATTEMPT PER PHASE. No retakes: a second sitting of the same paper is
+    -- not a second measurement. This is also why POST /attempts must be
+    -- idempotent — a closed browser tab would otherwise be a permanent lock.
+    CONSTRAINT assessment_attempts_one_per_phase
+        UNIQUE (assessment_id, student_id, phase)
+);
+
+COMMENT ON TABLE assessment_attempts IS
+    'TEMPORARY (research instrument). One student sitting of one phase. Removed after the study.';
+COMMENT ON COLUMN assessment_attempts.answers IS
+    'Keyed by item index as a string: { "0": { answer, latency_ms } }. Mirrors practice_tests.student_answers.';
+COMMENT ON COLUMN assessment_attempts.status IS
+    'Reuses practice_status. A material stays locked until the gating phase has a COMPLETED attempt.';
+
+CREATE INDEX idx_assessment_attempts_student    ON assessment_attempts (student_id);
+CREATE INDEX idx_assessment_attempts_assessment ON assessment_attempts (assessment_id, phase);
+
+-- ── RLS ─────────────────────────────────────────────────────────────────────
+--
+-- DELIBERATELY UNLIKE practice_tests, whose FOR ALL USING (student_id =
+-- auth.uid()) policy already lets a student read their own questions_payload —
+-- answer key included — with the anon key.
+--
+-- material_assessments has NO student policy at all. It carries no student_id,
+-- so any "students read assessments for their grade" policy would hand the whole
+-- answer key to every student in the grade, permanently, BEFORE either test.
+-- Express reads it with the service role, so students lose nothing.
+
+ALTER TABLE material_assessments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE assessment_attempts  ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Educators manage assessments for their own materials"
+    ON material_assessments FOR ALL
+    USING (EXISTS (
+        SELECT 1 FROM materials m
+         WHERE m.id = material_assessments.material_id
+           AND m.educator_id = auth.uid()
+    ))
+    WITH CHECK (EXISTS (
+        SELECT 1 FROM materials m
+         WHERE m.id = material_assessments.material_id
+           AND m.educator_id = auth.uid()
+    ));
+
+-- Read-only for students, following the activity_logs / gamification_profiles
+-- precedent: `answers` and `score` ARE the study's measurement, so they must not
+-- be student-writable. The API writes them with the service role.
+CREATE POLICY "Students read their own assessment attempts"
+    ON assessment_attempts FOR SELECT USING (student_id = auth.uid());
+
+CREATE POLICY "Educators read attempts for their assigned grades"
+    ON assessment_attempts FOR SELECT
+    USING (EXISTS (
+        SELECT 1 FROM profiles p
+         WHERE p.id = assessment_attempts.student_id
+           AND p.role = 'student'
+           AND p.grade_level = ANY (private.auth_assigned_grades())
+    ));

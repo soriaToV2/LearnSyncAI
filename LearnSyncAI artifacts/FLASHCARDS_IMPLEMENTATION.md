@@ -2,7 +2,8 @@
 
 **Feature:** Student flashcards — deck management, generation from vetted concepts, spaced repetition
 **Status:** Implemented and verified (`tsc --noEmit` clean, `vite build` clean, verified against live data). **BKT is wired in as of 7 August 2026** — see §15, and `BKT_IMPLEMENTATION.md` for the engine.
-**Date:** 31 July 2026 · BKT wiring 7 August 2026
+**Date:** 31 July 2026 · BKT wiring 7 August 2026 · **question generation moved to Gemini 19 August 2026**
+**Revised 19 August 2026** — `generateQuestionsForConcepts()` left the decommissioned Groq model for Gemini and moved into its own module (§7, §11, §13). Nothing else about the feature changed: decks, the due-check, reconciliation, the security model and BKT are all exactly as they were.
 **Migrations applied:** **none** — every column and constraint this feature needs already existed unused
 
 > **Read this first if you are an AI agent debugging or extending this feature.**
@@ -61,7 +62,9 @@ BKT lands) no mastery movement.
 - `server/routes/flashcards.routes.ts` — rewritten. Now contains only `POST /rate`.
 - `server/routes/studyspaces.routes.ts` — deck CRUD restored with guards; card CRUD deleted; generation endpoint added.
 - `server/routes/materials.routes.ts` — old generation route deleted.
-- `server/lib/groq.ts` — old flashcard helper deleted; `generateQuestionsForConcepts()` added.
+- ~~`server/lib/groq.ts`~~ — held `generateQuestionsForConcepts()` until 19 August 2026. **No longer part of this feature**; it survives only for games and chat and is deleted at the end of the Gemini migration.
+- `server/lib/questionGeneration.ts` — **new, 19 August 2026.** The question writer, on Gemini. Moved out rather than merely off Groq, because `groq.ts` is going.
+- `server/lib/gemini.ts` — not modified by this feature. Supplies `generateJson()`, `GEMINI_CONTENT_MODEL` and `GeminiUnavailableError`.
 - `server/types/api.ts` — `CreateDeckSchema`, `UpdateDeckSchema`, `GenerateDeckCardsSchema`.
 - `server/types/database.ts` — `Flashcard` and `SpacedRepetitionLog` brought in line with `schema.sql`.
 
@@ -272,24 +275,89 @@ tab cannot lose the work or leave a half-made deck.
 | `format` | Front | Back | Cost |
 |---|---|---|---|
 | `'term'` (default) | The concept's `term` | The definition, verbatim | Instant, no model |
-| `'question'` | An AI-written question | The definition, **verbatim** | ~13 s for 68 concepts |
+| `'question'` | An AI-written question | The definition, **verbatim** | **10–30 s for 28 concepts** — see §13 |
 
 **The model never writes the answer.** That is what keeps the educator's vetting meaningful all the
 way to the student's screen.
 
 ### How question generation stays safe
 
-`generateQuestionsForConcepts()` in `server/lib/groq.ts`:
+`generateQuestionsForConcepts()` in **`server/lib/questionGeneration.ts`**:
 
-- **Batches at 20 concepts per call.** The deleted helper asked for one card per concept under
-  `max_tokens: 4096`; a real material (68 concepts, avg definition 191 chars) truncates.
+- **Batches at 20 concepts per call.** The deleted helper asked for one card per concept under a
+  4096-token ceiling; a real material (68 concepts, avg definition 191 chars) truncates. Live
+  materials run 28–42 concepts, so this is **2–3 calls**, not one.
 - **The model echoes each concept's number** (`{ n, question }`) and **every `n` is range-checked**
-  before it is trusted. A card attached to the wrong concept is worse than a card with no question.
+  before it is trusted. A card attached to the wrong concept is worse than a card with no question —
+  and it is undetectable downstream, because the card still carries a valid `concept_id`.
 - **A skipped concept falls back to its term.** A card is never lost and never unlinked.
-- **A Groq call that throws aborts the whole request with 502 before anything is written.** A deck
-  half questions and half terms is worse than a clean retry.
-- `temperature: 0.3` — flashcards are not graded so exact reproducibility is not required, but a
-  Refresh should not reword every card gratuitously.
+- **A model call that throws aborts the whole request before anything is written.** A deck half
+  questions and half terms is worse than a clean retry.
+- **Definitions reach the prompt UNCAPPED**, deliberately unlike `testGeneration.ts`'s
+  `PROMPT_DEFINITION_CAP` of 400 characters. There the model writes *about* a concept; here it must
+  write a question whose answer is this exact text, which the student then reads verbatim on the back
+  of the card. A truncated definition yields a question that only part of the answer answers.
+
+### Migrated from Groq to Gemini — 19 August 2026
+
+Groq decommissioned `llama-3.3-70b-versatile` on **17 June 2026** and closed its paid tier to new
+signups, so question-format decks were broken in production: the call threw, the route answered 502
+and nothing was written. Term-format decks were unaffected — they make no model call at all.
+
+The function moved to `server/lib/questionGeneration.ts` rather than staying in `groq.ts`, which is
+deleted at the end of the migration. **Transport changed; every guarantee above did not.**
+
+| | Before (Groq) | After (Gemini) |
+|---|---|---|
+| Call | `groq.chat.completions.create` | `generateJson()` from `server/lib/gemini.ts` |
+| Model | `llama-3.3-70b-versatile` (dead) | `GEMINI_CONTENT_MODEL` — `gemini-3.6-flash` |
+| Shape | `response_format: json_object` — valid JSON, no guaranteed keys | `responseSchema` pinning `[{ n: INTEGER, question: STRING }]` |
+| Sampling | `temperature: 0.3` | **none** — Gemini 3 dropped the sampling parameters |
+| Thinking | n/a | `ThinkingLevel.MINIMAL`, set explicitly |
+| Output ceiling | `max_tokens: 2048` | `maxOutputTokens: 4096` |
+| Retry | **none** | inherited from `generateJson()`'s `withRetry()` |
+
+**`responseSchema` pins STRUCTURE ONLY, and the distinction is load-bearing.** It cannot express
+"`n` is inside this batch", so the range check stays exactly as it was written for a transport with
+no schema at all. Pinning the shape removed a failure mode; it removed no validation. The same
+division is stated in `testGeneration.ts`.
+
+**The budget was DOUBLED, not ported.** MINIMAL thinking is not *no* thinking, and Gemini 3 thinking
+tokens draw on `maxOutputTokens` — a budget sized for the visible output alone returns
+`finishReason=MAX_TOKENS` with no text, which `generateJson()` throws on and the route turns into a
+failed deck. A ceiling is not a reservation, so unused headroom is free.
+
+**`temperature: 0.3` was deleted, and its promise went with it.** It was justified as keeping a
+Refresh from "rewording every card gratuitously". Gemini 3 ignores sampling parameters and
+`generateJson()` strips one loudly, so **two generations over the same concept will phrase its
+question differently and there is no knob left to prevent it.** That costs the student nothing,
+because a Refresh reconciles by `concept_id` and updates in place: the front's wording changes while
+`next_review_at`, the rating history and the card's link to its concept all survive. Do not
+reintroduce `temperature` here — it would only log a warning.
+
+**A free retry arrived with the move.** `generateQuestionsForConcepts()` never went through
+`withGroq()`, so it had no retry and no typed error from the day it was written. `generateJson()`
+brings both, so a transient upstream 503 mid-deck now retries instead of failing the request.
+
+**The failure status now carries the reason.** The abort-before-writing rule is unchanged — nothing
+is ever written on a failure — but a flat 502 for every cause told a student *"please try again"* on
+a day when the key's daily allowance was spent and retrying could not possibly work:
+
+| Cause | Status | Comes from |
+|---|---|---|
+| Daily quota exhausted | **429** | `GeminiQuotaError`, with Google's own message |
+| Upstream outage | **503** | `GeminiUnavailableError` |
+| Anything else | **502** | the original generic message, unchanged |
+
+`GeminiQuotaError extends GeminiUnavailableError`, so one `instanceof` covers both. This is the same
+split `failGeneration()` in `practice.routes.ts` makes for adaptive tests; leaving flashcards on a
+flat 502 would have made one refusal read two different ways in two tabs. The catch also
+`console.error`s the cause, which it previously discarded entirely.
+
+> **⚠️ Free-tier capacity.** `gemini-3.6-flash` allows **20 requests per day per project**
+> (`GenerateRequestsPerDayPerProjectPerModel`), shared with concept extraction, Feynman grading and
+> adaptive test generation — where **one test is five calls**. A 28-concept deck is 2 of those 20 and
+> a 42-concept deck is 3. Fine for development; the 50-student study needs the paid key.
 
 ### Re-generating into the same deck
 
@@ -471,8 +539,12 @@ about than none.
 | **`interval_days` violates check constraint** | Something wrote a value other than 1/3/7. `REVIEW_INTERVALS` in `server/lib/reviewSchedule.ts` is the only legitimate source. |
 | **Log rows with null `concept_id`** | Either pre-rework legacy rows (see section 13) or cards generated before `concept_id` was written. New rows should always carry it. |
 | **"Already generated" when the deck looks empty** | Cards exist for that `source_material_id` but the material is no longer visible to the student (archived / regraded), so the tab does not render them. Check `materials.is_archived` and `grade_levels`. |
-| **Question generation returns terms instead of questions** | Groq omitted or mis-numbered those indices; the fallback fired. Check the `fallback` count in the response. Not an error. |
-| **502 from generate** | Groq unreachable. Nothing was written by design — retry, or use term format. |
+| **Question generation returns terms instead of questions** | The model omitted or mis-numbered those indices; the fallback fired. Check the `fallback` count in the response. Not an error. |
+| **502 from generate** | The question writer failed for a reason that is not quota or a known outage. Nothing was written by design — retry, or use term format. The cause is in the server log under `[Decks] question generation failed`. |
+| **429 from generate** | The Gemini key's daily allowance is spent (20 requests/day on `gemini-3.6-flash`, shared with extraction, Feynman and adaptive tests). **Retrying cannot help until the reset** — that is why this is not a 502. Term format still works; it makes no model call. |
+| **503 from generate** | Gemini is overloaded. `generateJson()` has already retried with backoff, so this means it kept failing. Worth retrying in a minute. |
+| **Generation feels slow / inconsistent** | Expected. Measured 29.5 s and 9.6 s for the same 28-concept material minutes apart — `gemini-3.6-flash` latency is highly variable on identical requests. The batches also run **sequentially**, so time scales with concept count. Check `[Questions] N written for M concepts in Xs (K batches)` in the server log. |
+| **`[Gemini] temperature is ignored by …` in the log** | A call site is passing `temperature` to a Gemini 3 model. Treat it as a bug at the call site, not noise. `questionGeneration.ts` sends none. |
 | **Deck shows "0 cards" but cards exist** | `StudySpace.fetchSpaceData` failed on the per-deck cards request. Check the browser console; that loop is N+1 and each request is independent. |
 | **`EADDRINUSE :::5000` on `npm run dev`** | An orphaned backend is still running (usually a terminal closed with ✕ instead of `Ctrl+C`). `Get-NetTCPConnection -LocalPort 5000 -State Listen \| ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`. Kill the `tsx watch` **parent**, or it respawns the child. |
 
@@ -530,8 +602,7 @@ and `/due/:spaceId` are genuinely unregistered; `/api/flashcards` exposes only `
 **Schedule maths — 12/12 pass**, including the UTC-date trap (00:30 Monday Manila = Sunday UTC),
 month/year rollover, and `isDue` for null / overdue / exactly-now / future.
 
-**Question generation against live Groq:** 68/68 concepts returned a question, 0 fell back, 13.1 s
-across four batches.
+**Question generation against live Groq (31 July, historical):** 68/68 concepts returned a question, 0 fell back, 13.1 s across four batches.
 
 **Live data after a real study session:**
 
@@ -547,6 +618,53 @@ across four batches.
 
 Rated 31 July: Hard → 1 Aug, Medium → 3 Aug, Easy → 7 Aug, **all at exactly midnight Manila.**
 Intervals, day boundaries and concept linkage confirmed end to end in production data.
+
+---
+
+### Re-verified on Gemini — 19 August 2026
+
+Run against the live project with a **throwaway student built and deleted by the harness**, so no
+real account was touched — confirmed afterwards by comparing id / definition / `next_review_at` /
+`term` fingerprints on the real student's deck before and after (all four identical). Material:
+"6. Information Security", 28 concepts, 2 batches per generation, **4 model calls total**.
+
+**12 of 12 checks passed.**
+
+*Fresh deck, `format: 'question'` — HTTP 201 in 31.1 s:*
+
+| Check | Result |
+|---|---|
+| Card count equals concept count | **28 / 28** |
+| Every `concept_id` resolves to a real concept | pass |
+| `concept_id`s distinct (no concept twice) | pass |
+| Every back equals its `concepts.definition` **byte for byte** | pass — SQL equality, not eyeball |
+| `is_ai_generated` true exactly where the front is not the term | pass |
+| Fallbacks | **0 / 28** |
+
+*Refresh with `replace: true` on a deck seeded with a week of study history — HTTP 200 in 13.6 s:*
+
+| Check | Result |
+|---|---|
+| Response reports `updated: 28, added: 0, removed: 0` | pass |
+| `flashcards.id` values unchanged | pass — **in-place update, not delete-then-insert** |
+| `spaced_repetition_logs` rows | **28 → 28, none lost** |
+| `next_review_at` unchanged | pass — no schedule reset |
+| Fronts changed (terms → questions) | pass |
+| Backs still byte-for-byte the definitions | pass |
+| `is_ai_generated` flipped to true | 28 / 28 |
+
+**Server-side timing:** `[Questions] 28 written for 28 concepts in 29.5s (2 batches)` and
+`… in 9.6s (2 batches)` — identical work, 3× apart, minutes apart. That variance is
+`gemini-3.6-flash`, not this code; the migration notes record 1.9–20.9 s on identical requests.
+
+**Read by hand — six generated questions.** No automated check can tell whether a question makes
+sense, and CLAUDE.md's Games section records the model inventing facts under a weaker prompt. All six
+named their term (the prompt requires it, or the card is unanswerable), were one sentence, and were
+answerable by the definition on the back with nothing added. One was clumsy — *"What occurs during
+the security vulnerability known as Identification and Authentication Failures?"* — but not wrong.
+
+> **No `temperature` warning appeared in the log**, which is the check that the sampling parameter
+> was genuinely removed rather than passed and silently stripped.
 
 ---
 
@@ -627,4 +745,8 @@ than failing.
 | `LearnSyncAI artifacts/TEST_MODE_IMPLEMENTATION.md` | The other BKT writer |
 | `ARCHITECTURE.md` §4 (spaced repetition) and §8 (the BKT equations) | The rules of record |
 | `CLAUDE.md` | The condensed rules, always in an agent's context |
+| `LearnSyncAI artifacts/MIGRATION_PROMPTS_GEMINI.md` | The Groq → Gemini migration this feature was step 2 of. Carries the model evidence, the ⛔ note on `gemini-3.7-flash`, and the cost estimate. |
 | **Fallback** | A question-format card that shows the term because the model skipped that concept. |
+| **Batch** | Up to 20 concepts sent in one model call. A 28-concept material is 2 batches, a 42-concept one is 3. |
+| **Thinking level** | Gemini 3's reasoning budget. Set to `MINIMAL` here — nothing in writing a question reasons, and thinking tokens bill at the output rate. |
+| **RPD** | Requests per day. 20 on `gemini-3.6-flash` free tier, per project, shared across every feature using that model. |

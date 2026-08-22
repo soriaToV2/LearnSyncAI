@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Loader2, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck } from 'lucide-react';
 import FlashcardStudyView from '../components/FlashcardStudyView';
@@ -74,6 +74,15 @@ interface FlashcardsTabProps {
   setSelectedSetContent: (id: string | null) => void;
   onRefresh: () => void;
   availableResources: SpaceMaterial[];
+  /**
+   * PRE/POST GATE — temporary (migration 0024). Materials still awaiting a test.
+   *
+   * ⚠️ ONLY THE "ADD CARDS" PICKER IS FILTERED. `availableResources` stays whole
+   * because `deckSummary()` resolves it to name a deck's source lessons — filtering
+   * it would silently drop a locked lesson out of "from 6. Information Security,
+   * 7. Networking" on a deck that genuinely contains its cards.
+   */
+  lockedIds?: Set<string>;
 }
 
 export default function FlashcardsTab({
@@ -83,6 +92,7 @@ export default function FlashcardsTab({
   setSelectedSetContent,
   onRefresh,
   availableResources,
+  lockedIds,
 }: FlashcardsTabProps) {
   const [isStudying, setIsStudying] = useState(false);
   /** 'due' opens with only the cards that are due; 'practice' with all of them. */
@@ -93,6 +103,12 @@ export default function FlashcardsTab({
   // Every failed action lands here and is rendered. Writing failures to the
   // console only would leave a student assuming the action worked.
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // PRE/POST GATE — temporary. Only the generation picker reads this; see the prop.
+  const unlockedResources = useMemo(
+    () => availableResources.filter(m => !lockedIds?.has(m.id)),
+    [availableResources, lockedIds]
+  );
 
   // Create deck
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -881,14 +897,16 @@ export default function FlashcardsTab({
             </div>
           )}
 
+          {/* PRE/POST GATE: generation, not browsing — so the locked lessons come
+              out here. The banner on StudySpace explains where they went. */}
           <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-            {availableResources.length === 0 ? (
+            {unlockedResources.length === 0 ? (
               <p className="font-sans text-xs text-slate-500 text-center py-8 leading-relaxed">
                 There are no materials in this study space yet.<br />
                 Open the Learning Resources tab to see what your teacher has published.
               </p>
             ) : (
-              availableResources.map(material => {
+              unlockedResources.map(material => {
                 const alreadyHere = materialsInDeck.has(material.id);
                 const isBusy = generatingId === material.id;
                 return (

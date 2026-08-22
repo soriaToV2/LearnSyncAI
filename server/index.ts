@@ -25,6 +25,8 @@ import chatRoutes from './routes/chat.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import educatorRoutes from './routes/educator.routes';
 import adminRoutes from './routes/admin.routes';
+// PRE/POST GATE — temporary research instrument, removed after the school study.
+import assessmentRoutes from './routes/assessments.routes';
 import { loadBktParameters } from './lib/bkt';
 
 const app = express();
@@ -111,6 +113,13 @@ app.use('/api/games', gamesRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/educator', educatorRoutes);
+/*
+ * PRE/POST GATE — TEMPORARY. `/api/assessments` serves the paper's RQ4 (p. 55)
+ * and is removed after the school study. It is the one router that serves BOTH
+ * educators and students, so every route carries its own `requireRole`; see the
+ * file header for why that is a security requirement and not a style choice.
+ */
+app.use('/api/assessments', assessmentRoutes);
 /*
  * `/api/admin` is the third endpoint shape, and the narrowest in what it reads.
  * Per-space (`requireOwnedSpace`) is the student default; `/api/educator` is

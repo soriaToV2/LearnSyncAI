@@ -966,3 +966,103 @@ export const ChatRequestSchema = z.object({
   mode: z.enum(['rag', 'full']).optional().default('rag'),
 });
 export type ChatRequestInput = z.infer<typeof ChatRequestSchema>;
+
+// ── Pre-Test / Post-Test  (TEMPORARY research instrument) ──
+//
+// Removed after the school study — see schema.sql §17. Nothing in this block
+// feeds BKT, practice_telemetry or activity_logs.
+
+export const ASSESSMENT_PHASES = ['pre', 'post'] as const;
+export type AssessmentPhaseValue = (typeof ASSESSMENT_PHASES)[number];
+
+/** Options per item. Four: the concept's own term plus three other terms from the
+ *  same material. The model never writes an option and never writes an answer. */
+export const ASSESSMENT_OPTIONS_PER_ITEM = 4;
+
+/** Hard ceiling on items (the study's spec: "1-20 items"). */
+export const ASSESSMENT_MAX_ITEMS = 20;
+
+/** Floor. Four options need four distinct terms, plus one spare so a rejected
+ *  item can be refilled. Below this the material cannot carry a test at all. */
+export const ASSESSMENT_MIN_ITEMS = 5;
+
+/**
+ * One item, as stored in `material_assessments.items`.
+ *
+ * BOTH FORMS LIVE ON THIS ONE OBJECT, and that is the whole design. The pre-test
+ * and the post-test ask about the same concept, with the same `answer` and the
+ * same four options; only `pre_stem`/`post_stem` and the option ORDER differ. A
+ * parallel form is therefore structural — two separate generations could drift
+ * apart on the answer, and this cannot.
+ *
+ * ⚠️ `answer` AND `post_stem` ARE BOTH ANSWER-KEY MATERIAL DURING A PRE-TEST.
+ * `stripAssessmentKey()` in `assessments.routes.ts` is the only function
+ * permitted to serialise an item toward a browser, and it takes the phase for
+ * exactly that reason: showing a student the post wording during the pre-test
+ * hands them every question of the test they have not sat yet.
+ */
+export interface StoredAssessmentItem {
+  index: number;
+  concept_id: string;
+  concept_term: string;
+  /** The pre-test wording. Describes the concept and never names it. */
+  pre_stem: string;
+  /** The post-test wording. Same concept, different sentence — validated to differ. */
+  post_stem: string;
+  /** Four terms, shuffled for the pre form. */
+  options_pre: string[];
+  /** The same four terms, shuffled with a different seed. */
+  options_post: string[];
+  /** The concept's own `term`, verbatim. Present in both option arrays. */
+  answer: string;
+}
+
+/** The envelope `material_assessments.items` holds. Versioned, like `StoredTestPayload`. */
+export interface StoredAssessmentPayload {
+  version: 1;
+  items: StoredAssessmentItem[];
+}
+
+/**
+ * Releasing or un-releasing a phase.
+ *
+ * `null` UN-RELEASES, and that is the escape hatch rather than an oversight: a
+ * released phase locks the material until the student completes it, so without
+ * un-release a student who will not sit the test is locked out permanently.
+ * Un-releasing destroys no attempts — the same doctrine archiving and re-grading
+ * follow.
+ *
+ * There is no `items` field and no `item_count`. Both are written once by
+ * generation and are never editable, because changing a question after any
+ * student has answered it destroys the pre/post comparison the study rests on.
+ */
+export const ReleaseAssessmentSchema = z
+  .object({
+    pre_released: z.boolean().optional(),
+    post_released: z.boolean().optional(),
+  })
+  .refine((v) => v.pre_released !== undefined || v.post_released !== undefined, {
+    message: 'Provide pre_released or post_released',
+  });
+export type ReleaseAssessmentInput = z.infer<typeof ReleaseAssessmentSchema>;
+
+/** Starting (or resuming) an attempt. Idempotent — see the route. */
+export const StartAssessmentAttemptSchema = z.object({
+  phase: z.enum(ASSESSMENT_PHASES),
+});
+export type StartAssessmentAttemptInput = z.infer<typeof StartAssessmentAttemptSchema>;
+
+/**
+ * Recording one answer as the student works.
+ *
+ * Deliberately shaped exactly like `SubmitAnswerSchema` above, and for the same
+ * reason: NO `is_correct` and NO `concept_id`. Both are derivable from the stored
+ * item, and accepting either would let a student post their own score for the
+ * study's primary measurement.
+ */
+export const SubmitAssessmentAnswerSchema = z.object({
+  item_index: z.number().int().nonnegative(),
+  answer: z.string().max(200),
+  latency_ms: z.number().int().nonnegative().max(86_400_000),
+});
+export type SubmitAssessmentAnswerInput = z.infer<typeof SubmitAssessmentAnswerSchema>;

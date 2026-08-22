@@ -8,10 +8,21 @@ import {
   AttemptMaterial, materialLabel,
   type AttemptSummary, type Tone, type ViewMode,
 } from './cognitiveShared';
+import { useBadges } from '../../../context/BadgeContext';
 
 interface FreeRecallTabProps {
   availableResources: { id: string; title: string }[];
   spaceId: string;
+  /**
+   * PRE/POST GATE — temporary (migration 0024). Materials this student still owes
+   * a pre-test or post-test on.
+   *
+   * ⚠️ ONLY THE PICKER IS FILTERED. `availableResources` stays whole, because it
+   * is also how a HISTORICAL attempt gets its lesson title — filtering the list
+   * itself would blank the label on past attempts for a briefly-locked material.
+   * The server is the enforcement point either way.
+   */
+  lockedIds?: Set<string>;
 }
 
 // The shape returned from GET /api/cognitive/history/:spaceId
@@ -154,9 +165,11 @@ function resultHeadline(f: ParsedFeedback, scorePercent: number): string {
   return `${f.covered_count} of ${f.total_concepts} ideas`;
 }
 
-export default function FreeRecallTab({ availableResources, spaceId }: FreeRecallTabProps) {
+export default function FreeRecallTab({ availableResources, spaceId, lockedIds }: FreeRecallTabProps) {
   // Keyed on material id, not title — two materials may share a title.
-  const resourceOptions = availableResources.map(r => ({ value: r.id, label: r.title }));
+  const resourceOptions = availableResources
+    .filter(r => !lockedIds?.has(r.id))   // PRE/POST GATE
+    .map(r => ({ value: r.id, label: r.title }));
 
   const [viewMode, setViewMode] = useState<ViewMode>('study');
   /** Exactly one material. The coverage ratio is scored against one lesson. */
@@ -175,6 +188,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
   // list. Sharing one variable would make the two views fight over it.
   const [historyLogs, setHistoryLogs] = useState<CognitiveLog[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const { celebrate } = useBadges();
   const [resultLogId, setResultLogId] = useState<string | null>(null);
   const [historyLogId, setHistoryLogId] = useState<string | null>(null);
   const [showMissed, setShowMissed] = useState(false);
@@ -273,6 +287,9 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
       setShowMissed(false);
       setShowAnswer(false);
       setRecallText('');
+      // Both the fresh and the memo-hit server paths log activity, so a
+      // resubmission can award a streak badge just as a first attempt can.
+      celebrate();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Something went wrong.';
       setEvalError(message);

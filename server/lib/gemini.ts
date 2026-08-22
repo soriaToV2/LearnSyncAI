@@ -1,6 +1,7 @@
 import {
   FinishReason,
   GoogleGenAI,
+  type Content,
   type GenerateContentResponse,
   type SchemaUnion,
   type ThinkingLevel,
@@ -17,19 +18,29 @@ const genai = new GoogleGenAI({ apiKey: apiKey ?? '' });
 /*
  * ── Choosing a model for a new call site ──────────────────────────────────
  *
- * One question decides it:
+ * Two questions, in this order:
  *
- *     Does the MODEL'S OWN JUDGEMENT become a number the student is shown?
+ *  1. Does the MODEL'S OWN JUDGEMENT become a number the student is shown?
  *
- *   yes → GEMINI_GRADING_MODEL. A plausible-but-wrong score is invisible; nobody
- *         can eyeball it the way they can spot a bad trivia question.
- *   no  → GEMINI_UTILITY_MODEL. Extraction, classification and prose, where the
- *         model enumerates and CODE does any scoring.
+ *     yes → GEMINI_GRADING_MODEL. A plausible-but-wrong score is invisible;
+ *           nobody can eyeball it the way they can spot a bad trivia question.
  *
- * Free Recall is the instructive case: it *looks* like grading, but the model
- * only lists what the student mentioned. The score is coveredCount/totalConcepts,
- * computed here from cosine similarity against a fixed threshold — so it belongs
- * on the utility model. Feynman genuinely grades, so it does not.
+ *     Free Recall is the instructive case: it *looks* like grading, but the model
+ *     only lists what the student mentioned. The score is coveredCount/totalConcepts,
+ *     computed here from cosine similarity against a fixed threshold — so it is a
+ *     "no". Feynman genuinely grades, so it is a "yes".
+ *
+ *  2. If no — does the output become CONTENT A STUDENT READS AS FACT?
+ *
+ *     yes → GEMINI_CONTENT_MODEL. Test questions, game content, flashcard fronts.
+ *           Nothing scores them, so a wrong one ships.
+ *     no  → GEMINI_UTILITY_MODEL. Extraction, classification and coaching prose,
+ *           where the model enumerates and CODE does any scoring.
+ *
+ * The second question exists because question 1 alone sends every authoring call
+ * to the utility model — test grading is deterministic (`testGrading.ts`), so no
+ * model judgement there ever becomes a score. That would be the wrong call: see
+ * GEMINI_CONTENT_MODEL for the measured reason.
  *
  * Gemini 3 semantics differ from 2.5 across all of these — see `isGemini3` below.
  */
@@ -60,18 +71,40 @@ export const GEMINI_GRADING_MODEL = 'gemini-3.6-flash';
 export const GEMINI_UTILITY_MODEL = 'gemini-3.5-flash-lite';
 
 /**
- * Adaptive test generation (`practice.routes.ts`) — the last caller.
+ * Calls that AUTHOR CONTENT A STUDENT READS AS FACT: adaptive test questions
+ * (`testGeneration.ts`), game content, flashcard fronts.
  *
- * ⚠️ ALREADY DEAD. Verified 2026-08-01 against our own key: every call returns
- * HTTP 404 "no longer available to new users". It is still listed by ListModels,
- * which is why it looks alive. The published 2026-10-16 shutdown date is moot —
- * the call site naming this constant is broken NOW, not in October.
+ * By the "does a model judgement become a score?" rule alone these would all sit
+ * on the utility model, because test grading is deterministic (`testGrading.ts`)
+ * and the server owns every decision that affects a mark. That would be wrong,
+ * and it has been measured: CLAUDE.md's Games section records three separate
+ * attempts to push authoring down, which produced invented facts ("What does
+ * Cross-Site Scripting *prevent*?" — XSS causes it), ungrammatical fragments and
+ * subjectless stems naming no concept at all. A bad score is invisible; a bad
+ * question is visible but nothing is checking, so it ships either way.
  *
- * Migrating it is easy (it passes no `temperature`), but its prompt asks the model
- * to echo `concept_id` UUIDs and a wrong one silently corrupts BKT, so the echoed
- * ids must be validated. See `LearnSyncAI artifacts/GEMINI_MIGRATION_STATUS.md`.
+ * ⛔ NOT `gemini-3.7-flash`, however attractive its "50% introductory cut" looks.
+ * Verified 2026-08-18 against our own key: it rejects `MINIMAL` thinking outright
+ * (HTTP 400, floor is LOW), and four of five requests failed with "This model is
+ * currently experiencing high demand". Since thinking tokens bill at the OUTPUT
+ * rate, a forced LOW floor makes its cheapest call dearer than 3.6-flash at
+ * MINIMAL — and the discount is measured against 3.7's own future price, not
+ * against what 3.6 costs today. Re-evaluate after the study, not before.
  */
-const GEMINI_LEGACY_TEXT_MODEL = 'gemini-2.5-flash';
+export const GEMINI_CONTENT_MODEL = 'gemini-3.6-flash';
+
+/**
+ * The RAG study assistant (`chat.routes.ts`). Conversational rather than
+ * authoritative: a student can push back on an answer mid-conversation, which is
+ * exactly what they cannot do with a test question, so the faster and cheaper
+ * model is the right trade here even though this is also student-facing prose.
+ *
+ * Flash-Lite at MINIMAL was the most consistent thing measured across the whole
+ * migration — 1.8 / 2.1 / 1.8 / 1.9 / 1.9s over five samples, where 3.6-flash
+ * ranged 2s to 20s on identical requests. Time-to-first-token is what a chat UI
+ * is judged on.
+ */
+export const GEMINI_CHAT_MODEL = 'gemini-3.5-flash-lite';
 
 /**
  * Gemini 3.x deprecated the sampling parameters. `temperature`, `top_p` and
@@ -337,38 +370,19 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   return values;
 }
 
-/**
- * Generates plain text content.
- *
- * NOTE: currently unreferenced. Kept on the legacy model — migrate or delete it
- * before the 2026-10-16 shutdown rather than leaving a dead 2.5 call behind.
- *
- * @param prompt - The prompt to send to the model
- * @returns The generated text string
- */
-export async function generateContent(prompt: string): Promise<string> {
-  const response = await withRetry(
-    () =>
-      genai.models.generateContent({
-        model: GEMINI_LEGACY_TEXT_MODEL,
-        contents: prompt,
-      }),
-    'generateContent'
-  );
-
-  const text = response.text;
-  if (!text) {
-    throw new Error('Failed to generate content: empty response from Gemini API');
-  }
-  return text;
-}
-
 export interface GenerateJsonOptions {
   /**
-   * Which model to call. Defaults to `gemini-2.5-flash` so callers that predate
-   * the Gemini 3 migration are unaffected. Pass `GEMINI_EXTRACTION_MODEL` to opt in.
+   * Which model to call. REQUIRED — there is deliberately no default.
+   *
+   * It defaulted to `gemini-2.5-flash` until 2026-08-19, so that callers
+   * predating the Gemini 3 migration kept working. That model had already been
+   * returning HTTP 404 for months by then (verified 2026-08-01, "no longer
+   * available to new users"), so the default had stopped sparing anyone and
+   * become a trap: a call site that forgot `model` failed at runtime, on a live
+   * student request, instead of at compile time. Every caller already passed one
+   * explicitly, so requiring it cost nothing and closed the hole.
    */
-  model?: string;
+  model: string;
   /**
    * Sampling temperature. Omit to use Gemini's default (some variation between
    * identical calls). Pass 0 for reproducible output — required when the result
@@ -395,21 +409,14 @@ export interface GenerateJsonOptions {
 }
 
 /**
- * Generates structured JSON content.
+ * The request config shared by `generateJson()` and `generateJsonFromDocument()`.
  *
- * Defaults to `gemini-2.5-flash`; pass `model` to target another. Gemini 3
- * parameter semantics are applied automatically — see `isGemini3`.
- *
- * @param prompt - The prompt (should instruct the model to return JSON)
- * @param options - Model, sampling and output controls. Defaults preserve prior behaviour.
- * @returns Parsed JavaScript object/array
+ * ONE copy on purpose. The `temperature` rule below backs student-facing scores,
+ * and a second copy of it is exactly the kind of thing that drifts — the version
+ * that quietly kept sending `temperature` would leave its caller believing in a
+ * reproducibility guarantee Gemini 3 no longer offers.
  */
-export async function generateJson<T = unknown>(
-  prompt: string,
-  options: GenerateJsonOptions = {}
-): Promise<T> {
-  const model = options.model ?? GEMINI_LEGACY_TEXT_MODEL;
-
+function jsonRequestConfig(model: string, options: GenerateJsonOptions) {
   // Drop `temperature` loudly on Gemini 3, never silently: a caller that still
   // believes `temperature: 0` pins its output would be relying on a guarantee it
   // no longer has, and on this codebase that guarantee backs student-facing scores.
@@ -421,22 +428,39 @@ export async function generateJson<T = unknown>(
   }
   const sendTemperature = options.temperature !== undefined && !isGemini3(model);
 
+  return {
+    responseMimeType: 'application/json',
+    // Each of these is sent only when the caller asked for it, so a caller that
+    // omits one keeps Gemini's own default rather than one of ours.
+    ...(sendTemperature && { temperature: options.temperature }),
+    ...(options.responseSchema !== undefined && { responseSchema: options.responseSchema }),
+    ...(options.maxOutputTokens !== undefined && { maxOutputTokens: options.maxOutputTokens }),
+    ...(options.thinkingLevel !== undefined && {
+      thinkingConfig: { thinkingLevel: options.thinkingLevel },
+    }),
+  };
+}
+
+/**
+ * Generates structured JSON content.
+ *
+ * `options.model` is required — see the note on it. Gemini 3 parameter semantics
+ * are applied automatically; see `isGemini3`.
+ *
+ * @param prompt - The prompt (should instruct the model to return JSON)
+ * @param options - Model (required), sampling and output controls
+ * @returns Parsed JavaScript object/array
+ */
+export async function generateJson<T = unknown>(
+  prompt: string,
+  options: GenerateJsonOptions
+): Promise<T> {
   const response = await withRetry(
     () =>
       genai.models.generateContent({
-        model,
+        model: options.model,
         contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          // Each of these is sent only when the caller asked for it, so existing
-          // callers keep Gemini's defaults untouched.
-          ...(sendTemperature && { temperature: options.temperature }),
-          ...(options.responseSchema !== undefined && { responseSchema: options.responseSchema }),
-          ...(options.maxOutputTokens !== undefined && { maxOutputTokens: options.maxOutputTokens }),
-          ...(options.thinkingLevel !== undefined && {
-            thinkingConfig: { thinkingLevel: options.thinkingLevel },
-          }),
-        },
+        config: jsonRequestConfig(options.model, options),
       }),
     'generateJson'
   );
@@ -453,28 +477,139 @@ export async function generateJson<T = unknown>(
   }
 }
 
+export interface StreamContentOptions {
+  /** Which model to call. No default: a chat turn has no "legacy caller" to preserve. */
+  model: string;
+  /**
+   * The grounding prompt. Goes in `config.systemInstruction` — Gemini has NO
+   * system role inside `contents`, so a caller that ports an OpenAI-shaped
+   * `[{ role: 'system' }, …]` array through the message list loses it silently.
+   */
+  systemInstruction: string;
+  /** Prior turns, oldest first. Empty on the first message of a conversation. */
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /** The message being answered now. Kept separate so the caller cannot forget it. */
+  message: string;
+  /** Gemini 3.x. Thinking is ON by default and its tokens draw on `maxOutputTokens`. */
+  thinkingLevel?: ThinkingLevel;
+  /** Output ceiling. Worth setting explicitly whenever thinking is on. */
+  maxOutputTokens?: number;
+}
+
 /**
- * Generates structured JSON content from a document passed as inlineData.
+ * Streams a chat reply, yielding text as it arrives.
  *
- * NOTE: referenced only by `server/test-gemini.ts`, a scratch script. Kept on the
- * legacy model — migrate or delete it before the 2026-10-16 shutdown.
+ * The only streaming call in the codebase. `generateJson()` waits for a whole
+ * response, which is right for authoring work and wrong for a chat UI, where
+ * time-to-first-token is what the student actually experiences.
+ *
+ * ⚠️ IT AWAITS THE STREAM'S INITIATION AND RETURNS AN ITERABLE — it is
+ * deliberately NOT an `async function*`. `generateContentStream()` issues the
+ * HTTP request itself and its promise REJECTS on the initial failure (429, 400,
+ * 5xx) before any chunk exists. Written as a generator, that rejection would be
+ * deferred to the caller's first `for await` — which in `chat.routes.ts` happens
+ * after `res.flushHeaders()`, so a spent daily quota would reach the student as
+ * an SSE error blob rendered "something went wrong" instead of a real HTTP 429
+ * carrying `quotaMessage()`. Awaiting initiation is what keeps the typed error
+ * reachable.
+ *
+ * ⚠️ `withRetry()` WRAPS THE INITIATION ONLY, and that is a correctness rule
+ * rather than an oversight. Retrying is safe here precisely because nothing has
+ * been yielded yet. A failure *during* iteration must never be retried: the
+ * client already holds half an answer and there is no way to replay it, so a
+ * retry would splice a second attempt into the middle of a sentence. Those
+ * errors propagate untouched to the caller, which is what the route's
+ * `res.headersSent` branch exists to handle.
+ *
+ * NO `temperature`, and no reproducibility guarantee to lose. Gemini 3 dropped
+ * the sampling parameters; nothing here is scored, so unlike Free Recall and
+ * Feynman there is no memoisation to compensate.
+ */
+export async function streamContent(options: StreamContentOptions): Promise<AsyncIterable<string>> {
+  const { model, systemInstruction, history = [], message, thinkingLevel, maxOutputTokens } = options;
+
+  // 'assistant' is the OpenAI name; Gemini calls the same turn 'model'.
+  const turns: Content[] = history.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+
+  // A conversation must open on a user turn. Callers trim history to a fixed
+  // window (the chat route keeps the last 4 messages), and such a window can
+  // legitimately begin mid-exchange on a model reply.
+  while (turns.length > 0 && turns[0].role === 'model') turns.shift();
+
+  turns.push({ role: 'user', parts: [{ text: message }] });
+
+  const stream = await withRetry(
+    () =>
+      genai.models.generateContentStream({
+        model,
+        contents: turns,
+        config: {
+          systemInstruction,
+          ...(maxOutputTokens !== undefined && { maxOutputTokens }),
+          ...(thinkingLevel !== undefined && { thinkingConfig: { thinkingLevel } }),
+        },
+      }),
+    'streamContent'
+  );
+
+  return (async function* () {
+    let finishReason: FinishReason | undefined;
+
+    for await (const chunk of stream) {
+      finishReason = chunk.candidates?.[0]?.finishReason ?? finishReason;
+      // `.text` already skips parts flagged `thought` and returns undefined for a
+      // chunk carrying none, so thinking output can never leak into the answer.
+      const text = chunk.text;
+      if (text) yield text;
+    }
+
+    // `describeEmptyResponse()` cannot see this one: a truncated STREAM throws
+    // nothing and returns no empty response — the reply simply stops mid-sentence
+    // and the only symptom is a student saying the assistant cut off.
+    if (finishReason === FinishReason.MAX_TOKENS) {
+      console.warn(
+        `[Gemini] streamContent hit its output limit (finishReason=MAX_TOKENS) — the reply was ` +
+          `truncated. Raise maxOutputTokens (currently ${maxOutputTokens ?? 'unset'}) or lower thinkingLevel.`
+      );
+    }
+  })();
+}
+
+/**
+ * Generates structured JSON content from a document passed as inlineData —
+ * the file itself goes to the model, with no text-extraction step in front.
+ *
+ * NO PRODUCTION CALLER TODAY; `server/test-gemini.ts` is the only one. It is
+ * kept because it is the natural route for SCANNED materials, which the ingest
+ * pipeline already detects and records (`materials.is_scanned`) without yet
+ * doing anything about — a scanned PDF yields no extractable text, so
+ * `conceptExtraction.ts` has nothing to work from and this is the way in.
+ *
+ * `options.model` is required for the same reason `generateJson()`'s is: this
+ * function used to hardcode `gemini-2.5-flash`, which has returned HTTP 404
+ * since before it was last touched. Anything reaching it was broken.
  *
  * @param prompt - The instructions for extraction.
  * @param mimeType - The mime type of the file (e.g. 'application/pdf').
  * @param base64Data - The raw file data encoded as a base64 string.
+ * @param options - Model (required), sampling and output controls.
  * @returns Parsed JavaScript object/array
  */
 export async function generateJsonFromDocument<T = unknown>(
   prompt: string,
   mimeType: string,
-  base64Data: string
+  base64Data: string,
+  options: GenerateJsonOptions
 ): Promise<T> {
   // @google/genai v1.x requires a single content object with a `parts` array
   // for multimodal requests (text instruction + inlineData file).
   const response = await withRetry(
     () =>
       genai.models.generateContent({
-        model: GEMINI_LEGACY_TEXT_MODEL,
+        model: options.model,
         contents: [
           {
             role: 'user',
@@ -484,9 +619,7 @@ export async function generateJsonFromDocument<T = unknown>(
             ],
           },
         ],
-        config: {
-          responseMimeType: 'application/json',
-        },
+        config: jsonRequestConfig(options.model, options),
       }),
     'generateJsonFromDocument'
   );

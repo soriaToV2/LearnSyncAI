@@ -13,6 +13,7 @@ import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
 import { CARD, SECTION, scoreTone, toneText, type Tone } from '../../../components/ui/surfaces';
 import TestSessionView from '../components/TestSessionView';
 import TestResultsView from '../components/TestResultsView';
+import { useBadges } from '../../../context/BadgeContext';
 import {
   ALL_FORMATS,
   FORMAT_META,
@@ -68,9 +69,20 @@ type Screen = 'overview' | 'setup' | 'generating' | 'session' | 'results';
 interface AdaptiveTestTabProps {
   spaceId: string;
   availableResources: { id: string; title: string; concept_count: number }[];
+  /**
+   * PRE/POST GATE — temporary (migration 0024). Materials this student still owes
+   * a pre-test or post-test on.
+   *
+   * ⚠️ ONLY THE PICKER IS FILTERED. `availableResources` stays whole, because it
+   * is also how a HISTORICAL attempt gets its lesson title — filtering the list
+   * itself would blank the label on past attempts for a briefly-locked material.
+   * The server is the enforcement point either way.
+   */
+  lockedIds?: Set<string>;
 }
 
-export default function AdaptiveTestTab({ spaceId, availableResources }: AdaptiveTestTabProps) {
+export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds }: AdaptiveTestTabProps) {
+  const { celebrate } = useBadges();
   const [screen, setScreen] = useState<Screen>('overview');
   const [summaries, setSummaries] = useState<TestSummary[]>([]);
   const [mastery, setMastery] = useState<SpaceMastery | null>(null);
@@ -229,6 +241,12 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
           setJustFinished(true);
           setScreen('results');
           void refreshList();
+          // Here and not on the results screen itself: `openSummary` also lands
+          // there when a student opens a PAST test, and re-celebrating a badge
+          // every time they review an old score would be nonsense. `onFinish`
+          // runs only after PUT /complete resolved, which is also the point the
+          // badge has certainly been written.
+          celebrate();
         }}
       />
     );
@@ -287,7 +305,9 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
             <SingleSelectDropdown
               selectedValue={materialId}
               onChange={setMaterialId}
-              options={availableResources.map((r) => ({ value: r.id, label: r.title }))}
+              options={availableResources
+                .filter((r) => !lockedIds?.has(r.id))   /* PRE/POST GATE */
+                .map((r) => ({ value: r.id, label: r.title }))}
               placeholder="Select a lesson..."
             />
             {material && (

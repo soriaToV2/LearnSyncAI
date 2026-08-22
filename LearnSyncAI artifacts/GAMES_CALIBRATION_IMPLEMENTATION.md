@@ -41,7 +41,7 @@ with explanatory `COMMENT`s and had never been written by any code.
 1. **Games never write `bkt_mastery` or `bkt_update_logs`.** No `applyGameCompletion`, no import of
    `server/lib/bkt.ts` anywhere under the games path. `bkt_source` stays a two-value enum.
 2. **Zero additional model calls.** The only new I/O is one `masteryRows()` read, which feeds both
-   EQ(4) and the selection. Groq's 12k tok/min and 100k tok/day budget is untouched.
+   EQ(4) and the selection. The model budget is untouched.
 3. **The client never supplies a difficulty, tier, mastery number or timer.**
 4. **`mastery_snapshot` is pre-generation and stays pre-generation.**
 
@@ -66,7 +66,7 @@ POST /api/games/generate { space_id, material_ids, game_type }     ← no diffic
    6. masterySnapshot() -> { snapshot, byConcept }               ← EQ(4)
    7. masteryTier(snapshot) -> foundational|intermediate|advanced
    8. pickConceptsByMastery(concepts, byConcept, SELECT_BUFFER)  ← p.58 selection
-   9. Groq, prompt carrying the tier three ways                  -> 502
+   9. Gemini, prompt carrying the tier three ways                -> 429/503/502
   10. INSERT game_content { difficulty: tier, mastery_snapshot: snapshot,
                             payload: { …, settings: { questionMs } } }
   11. 201 { id, payload, difficulty, mastery_snapshot }
@@ -88,7 +88,8 @@ Result screen → POST /api/gamification/session { content_id, accuracy, time_sp
 - `server/lib/spaceAccess.ts` — `loadOwnedSpace` / `requireOwnedSpace` / `spaceMaterialIds`
 - `supabase/migrations/20260809090020_game_difficulty_tiers.sql`
 
-**Modified** — `server/lib/groq.ts` (the three game prompts), `server/routes/games.routes.ts`,
+**Modified** — the three game prompts (in `server/lib/groq.ts` at the time; they moved to
+`server/lib/gameContent.ts` on 2026-08-19 — see below), `server/routes/games.routes.ts`,
 `server/routes/gamification.routes.ts`, `server/types/{api,database}.ts`, `schema.sql`,
 `server/routes/{practice,studyspaces}.routes.ts` (migrated onto `spaceAccess`),
 `src/pages/student/games/{gamesData.ts, gameUi.tsx, TimedTriviaGame.tsx, CrosswordGame.tsx,
@@ -259,8 +260,8 @@ Nothing in `FORMAT_TIER_GUIDANCE` corresponds — a test never asks for a single
 letter-count constraint.
 
 ⚠️ **Keep `A–Z only, 3–10 letters` and `NEVER abbreviate` tier-independent and immediately after the
-tier'd `"answer"` line.** Advanced answers name consequences and are the longest; `groq.ts` filters
-that range, `buildCrossword` needs ≥2 survivors, and the route throws on an empty layout. This is
+tier'd `"answer"` line.** Advanced answers name consequences and are the longest; `gameContent.ts`
+filters that range, `buildCrossword` needs ≥2 survivors, and the route throws on an empty layout. This is
 where a 502 would come from.
 
 ---
@@ -360,7 +361,7 @@ the likeliest way to make the preview disagree with the row it predicts. The 4dp
 | Advanced crossword | 8 words placed, 59 cells, no 502 |
 | Advanced term matching | 4 pairs, technical/confusable terms selected |
 
-**Gates (zero Groq cost — all fail before the model call):** missing field → 400 · another student's
+**Gates (zero model cost — all fail before the model call):** missing field → 400 · another student's
 space → 404 · another grade's material → 403 · readable-but-not-in-this-space → 404 · no token → 401
 · missing `content_id` → 400 · random `content_id` → 404 · another student's content → 404 · own
 content → 201 with `space_id` / `material_id` / `game_type` / `mastery_snapshot` all copied server-side
@@ -373,7 +374,7 @@ verify by reading the row, not the response code.
 **Never-writes invariant:** the throwaway student ends with **0** `bkt_update_logs` rows and the table
 is unchanged table-wide (56 → 56) after generating and playing all three games.
 
-### The measured gradient (material: *6. Information Security*, 28 concepts)
+### The measured gradient — Groq era, 9 August 2026 (material: *6. Information Security*, 28 concepts)
 
 | Tier | Timer | Question | Options | Sample |
 |---|---|---|---|---|
@@ -384,6 +385,68 @@ is unchanged table-wide (56 → 56) after generating and playing all three games
 All ten advanced answers verified factually correct. Crossword clue gradient: foundational *"A
 collection of related web pages"* (the term's own definition) vs advanced *"Consequence of a
 successful cyber attack"* (an effect, never naming the term).
+
+### Re-verified on Gemini — 19 August 2026
+
+The three generators moved from Groq to `server/lib/gameContent.ts` on `GEMINI_CONTENT_MODEL`
+(`gemini-3.6-flash`) at `ThinkingLevel.MINIMAL`. **Transport only** — the three prompt strings were
+diffed against the originals and are byte-identical, as are all three post-parse filters; the only
+deliberate text changes are the `Groq did not return…` messages, now model-neutral. Same material,
+same 28 concepts, same real mastery map.
+
+| Check | Result |
+|---|---|
+| `tsc --noEmit` | clean |
+| 3 games × 3 tiers, generated directly | **9 / 9**, zero failures |
+| `POST /api/games/generate` end to end | **13 / 13** |
+| Advanced trivia, read by hand against the definitions | **10 / 10 factually correct, 0 invented facts** |
+| `[Gemini] temperature is ignored` warning | **never appeared** — the parameter is genuinely gone |
+| Crossword layouts | 3 / 3 non-empty — no 502 path reached at any tier |
+
+**Wall clock per game** (one model call each): term matching 3.9 / 17.3s · trivia 7.2 / 23.0s ·
+crossword 4.4 / 5.0s (fastest and slowest of three tiers), and 21.2s for the full HTTP round trip.
+The spread is `gemini-3.6-flash`'s own documented latency variance, not tier-dependent.
+
+**⚠️ THE READING BUDGET IS THE ONE REAL BEHAVIOUR CHANGE, AND IT IS THE PROMPT FINALLY WORKING.**
+`TRIVIA_TIER_RULES` states the budget two-sided — "aim for roughly N words, not far under it" —
+because a one-sided version collapsed advanced to `"What is XSS?"`. Measured as question + 4 options
+against `seconds × 4`:
+
+| Tier | Clock | Budget | Groq era | Gemini |
+|---|---|---|---|---|
+| foundational | 20s | 80 w | 42.3 w — **47% under** | 95.1 w — 19% over |
+| intermediate | 15s | 60 w | 18.7 w — **69% under** | 48.7 w — 19% under |
+| advanced | 10s | 40 w | 15.9 w — **60% under** | 41.4 w — on budget |
+
+Groq undershot at every tier, worst at advanced — exactly the failure the two-sided wording exists to
+prevent, still happening. Gemini uses the room. **Foundational now overshoots by 19%**, because its
+`options` rule asks for full definitions of clearly different things and this corpus's definitions are
+long; at ~4 words/second that is ~24s of reading against a 20s clock. Recorded, not fixed — the fix
+is a prompt edit, and §7.2 is the record of what prompt edits cost here. Note the mitigation already
+in the rule: foundational distractors are *clearly different things*, so they are scanned, not read.
+
+**The tier gradient still holds on all three levers.** Term-matching definition length runs
+foundational 16.5 w → intermediate 13.5 w → advanced 11.3 w (literal restatement → purpose → effect).
+Crossword answers run from the term's own name (`WEBSITE`, `TRANSPORT`, `FIREWALL`, `INJECTION`) at
+foundational to consequences naming nothing (`CORRUPTION`, `BLINDNESS`, `LEAKAGE`, `TAKEOVER`,
+`GARBLED`) at advanced. Advanced trivia distractors are all neighbouring lesson concepts.
+
+**One ambiguous item found in 10**, worth knowing about rather than fixing: *"What protection do
+Security Headers directly provide?"* offered "Preventing execution of injected JavaScript in user
+browsers" as a distractor — but the Security Headers definition names XSS prevention explicitly, so
+that option is arguably also correct. That is the advanced rule working slightly too well: it draws
+distractors from neighbouring concepts, and neighbours sometimes genuinely overlap.
+
+**⚠️ THE FREE-TIER LIMIT THAT ACTUALLY BITES IS PER-MINUTE, AND OUR OWN ERROR HANDLER MISREPORTS IT.**
+Measured: six consecutive generations succeeded in ~36s, the seventh returned
+`HTTP 429 RESOURCE_EXHAUSTED … limit 5`, and a **90-second wait cleared it completely** — so it is
+5 requests/minute on `gemini-3.6-flash`, not the daily cap. `classifyFailure()` in `gemini.ts` decides
+per-minute vs per-day by testing `quotaMetric`, which is
+`…/generate_content_free_tier_requests` and names no window; the window lives in `quotaId`
+(`GenerateRequestsPerMinutePerProjectPerModel-FreeTier`), which `parseUpstreamError()` only falls back
+to when `quotaMetric` is absent. So a burst limit is classified `quota`, gets one retry instead of the
+full transient backoff, and tells the student the **daily** allowance is spent. Not fixed here — it is
+in `gemini.ts` and affects every caller.
 
 ### The p. 98 Difficulty Alignment evidence, as one number
 
@@ -425,8 +488,11 @@ live engine.
 - **Term-matcher advanced definitions stay fairly literal** on this corpus, for the same reason: the
   stored definitions are literally *"A security vulnerability that occurs when …"*. The *selection*
   half of that rule does work — it picks technical, confusable terms.
-- **Groq's free tier is ~11 test generations/day account-wide** and games now draw on the same
-  budget. Unresolved; needs a paid tier for a 50-student study.
+- **The free Gemini tier is the binding constraint, and it bites in TWO windows.** Measured
+  2026-08-19 on `gemini-3.6-flash`: **5 requests per minute** and 20 per day, both per model and both
+  shared with concept extraction, Feynman grading, adaptive tests and flashcard fronts. One game is
+  one call, so a student playing three games in a row is 3 of the 5. Unresolved; needs the paid key
+  for a 50-student study. (Groq's old ~11 generations/day figure is historical — see below.)
 - **Streaks and badges remain dead.** `trigger_update_streak` fires on `activity_logs` and nothing in
   `server/` ever inserts one, so `day_streak` is 0 for every student and `user_badges` is empty.
   Untouched here; the false comment claiming this route updates the streak has been removed.

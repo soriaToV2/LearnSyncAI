@@ -43,7 +43,7 @@ The production infrastructure follows a dual-portal, three-tier model:
 | **Presentation** | Educator Dashboard | React, Tailwind CSS | Material upload, grade-level access control, class-level mastery analytics. |
 | **Presentation** | Student Portal (Study Space Hub, PlayMe Portal, Dashboard) | React, Tailwind CSS | Study space access, adaptive learning activities, gamified review, personal analytics. |
 | **Application** | API Gateway | Node.js / Express | Routing, input validation, JWT authentication, role-based access control. |
-| **Application** | AI & BKT Engine | Express backend + Gemini/Groq APIs | Document parsing, concept extraction, BKT mastery calculation, adaptive content generation, AI feedback. |
+| **Application** | AI & BKT Engine | Express backend + Gemini API | Document parsing, concept extraction, BKT mastery calculation, adaptive content generation, AI feedback. |
 | **Data Tier** | Unified Backend | Supabase (PostgreSQL + pgvector) | Relational storage, vector embeddings, Blob storage, Row-Level Security (RLS) for multi-tenant data isolation. |
 
 ---

@@ -12,8 +12,10 @@ import type { QuestionFormat } from './testAllocation';
  *   - `P(G_id) = 0.05` (paper p. 75) states that identification and
  *     fill-in-the-blank are near-impossible to guess. Lenient grading quietly
  *     falsifies that number, and the BKT update built on it.
- *   - It costs no quota, so a 29-question test is one Groq round of generation
- *     and nothing else.
+ *   - It costs no quota, so a 29-question test is one round of generation and
+ *     nothing else. That matters more on Gemini than it did on Groq: generation
+ *     is metered per REQUEST rather than per token, and one test already spends
+ *     five of them.
  *
  * `is_correct` is ALWAYS computed here from the stored key. The old endpoint
  * took it from the request body, which let a student post `{is_correct: true}`

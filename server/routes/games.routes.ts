@@ -2,9 +2,12 @@ import { Router, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
-import { generateTermMatches, generateTrivia, generateCrosswordWords } from '../lib/groq';
+import { generateTermMatches, generateTrivia, generateCrosswordWords } from '../lib/gameContent';
+import { GeminiUnavailableError } from '../lib/gemini';
 import { buildCrossword } from '../lib/crossword';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
+// PRE/POST GATE — temporary (migration 0024). Delete with the feature.
+import { rejectLockedMaterials } from '../lib/assessmentGate';
 import { requireOwnedSpace, spaceMaterialIds } from '../lib/spaceAccess';
 import { masterySnapshot, masteryTier } from '../lib/testDifficulty';
 import {
@@ -55,7 +58,7 @@ type ConceptRow = { id: string; term: string; definition: string };
  * concepts that became the same defect CLAUDE.md records for
  * `POST /api/flashcards/rate`.
  *
- * Then: concepts -> M_doc -> tier -> mastery-weighted selection -> Groq -> insert.
+ * Then: concepts -> M_doc -> tier -> mastery-weighted selection -> Gemini -> insert.
  * BOTH `difficulty` and `mastery_snapshot` are persisted, because the paper's
  * Difficulty Alignment check (p. 98) verifies that the mastery parameter reached
  * the prompt and cannot be run against data that was never written.
@@ -73,6 +76,9 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
   const space = await requireOwnedSpace(space_id, req, res);
   if (!space) return;
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
+  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
+  // before: that ordering is what lets archiving and re-grading answer first.
+  if (!(await rejectLockedMaterials(req, res, material_ids))) return;
 
   const inSpace = new Set(await spaceMaterialIds(space));
   if (!material_ids.every((id) => inSpace.has(id))) {
@@ -114,6 +120,22 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
       space.title
     );
   } catch (err) {
+    // Logged, because this catch used to discard the cause entirely — which left
+    // a failed game with no server-side trace of WHY.
+    console.error('[Games] content generation failed:', err);
+
+    // A typed Gemini failure carries its own status and its own true sentence:
+    // 429 when the key's daily allowance is spent, 503 for an outage. Answering a
+    // flat 502 to both tells a student "please try again" on a day when retrying
+    // cannot possibly work — the same split `failGeneration()` makes for adaptive
+    // tests and the deck generator makes for flashcards.
+    if (err instanceof GeminiUnavailableError) {
+      res.status(err.status).json({ error: 'Game content generation failed', message: err.message });
+      return;
+    }
+
+    // Everything else, including "Could not lay out a crossword from the generated
+    // words." — genuinely a generation failure, and genuinely worth retrying.
     const message = err instanceof Error ? err.message : 'Unknown generation error';
     res.status(502).json({ error: 'Game content generation failed', message });
     return;

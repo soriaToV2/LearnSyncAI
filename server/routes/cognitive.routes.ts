@@ -12,6 +12,8 @@ import {
   GEMINI_UTILITY_MODEL,
 } from '../lib/gemini';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
+// PRE/POST GATE — temporary (migration 0024). Delete with the feature.
+import { rejectLockedMaterials } from '../lib/assessmentGate';
 // The canonical term-matching convention, shared with extraction so a student
 // typing "SSDLC" resolves to the same concept the fold would have joined it to.
 import { foldKey, acronymOf } from '../lib/conceptExtraction';
@@ -25,6 +27,7 @@ import {
   type FreeRecallFeedback,
   type FreeRecallWrittenFeedback,
 } from '../types/api';
+import { logActivity } from '../lib/activity';
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
@@ -451,6 +454,9 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
   const studentId = await requireOwnedSpace(space_id, req, res);
   if (!studentId) return;
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
+  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
+  // before: that ordering is what lets archiving and re-grading answer first.
+  if (!(await rejectLockedMaterials(req, res, material_ids))) return;
 
   try {
     // ── 1. Fetch all reference concepts for the selected materials ────────
@@ -522,6 +528,19 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
         res.status(500).json({ error: 'Failed to save cognitive log', message: logError.message });
         return;
       }
+
+      /*
+       * A memoised attempt still counts. It writes a real `cognitive_logs` row
+       * and appears in the student's history exactly as a fresh one does, so it
+       * must count toward the streak too — only the model calls are skipped,
+       * not the fact that the student sat down and did the work.
+       */
+      await logActivity({
+        studentId,
+        type: 'free_recall',
+        spaceId: space_id,
+        materialId: material_ids?.[0] ?? null,
+      });
 
       res.status(201).json({
         data: {
@@ -857,6 +876,14 @@ Example output:
       return;
     }
 
+      // Streak + badges. Never throws, so no try/catch of its own.
+    await logActivity({
+      studentId,
+      type: 'free_recall',
+      spaceId: space_id,
+      materialId: material_ids?.[0] ?? null,
+    });
+
     // ── 9. Return results to the frontend ────────────────────────────────
     res.status(201).json({
       data: {
@@ -1146,6 +1173,9 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
   const studentId = await requireOwnedSpace(space_id, req, res);
   if (!studentId) return;
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
+  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
+  // before: that ordering is what lets archiving and re-grading answer first.
+  if (!(await rejectLockedMaterials(req, res, material_ids))) return;
 
   try {
     // ── 1. Reject duplicate concept submissions up front ──────────────────
@@ -1238,6 +1268,15 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
         res.status(500).json({ error: 'Failed to save cognitive log', message: memoLogError.message });
         return;
       }
+
+      // Counts toward the streak for the same reason it writes a log row: the
+      // student did the work, and only the model call was skipped.
+      await logActivity({
+        studentId,
+        type: 'feynman',
+        spaceId: space_id,
+        materialId: material_ids?.[0] ?? null,
+      });
 
       res.status(201).json({
         data: { log_id: log.id, created_at: log.created_at, ...memoised },
@@ -1428,6 +1467,14 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
       res.status(500).json({ error: 'Failed to save cognitive log', message: logError.message });
       return;
     }
+
+    // Streak + badges. Never throws, so no try/catch of its own.
+    await logActivity({
+      studentId,
+      type: 'feynman',
+      spaceId: space_id,
+      materialId: material_ids?.[0] ?? null,
+    });
 
     res.status(201).json({
       data: {

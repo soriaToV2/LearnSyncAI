@@ -1502,7 +1502,7 @@ Lower → more aggressive. Higher → keep more distinct rows. There is no same-
 ```typescript
 const MAX_MERGED_DEFINITION_CHARS = 800;
 ```
-Lower it if flashcard backs read poorly or full-mode chat starts returning 413. Parts are dropped from the *end* (latest pages first), never truncated mid-sentence.
+Lower it if flashcard backs read poorly. It used to serve full-mode chat as well, which 413'd on Groq past ~6000 tokens; since the 2026-08-19 Gemini migration that route has its own `MAX_CONTEXT_CHARS` and a ~1M-token window, so the flashcard back is the only remaining reason for this cap. Parts are dropped from the *end* (latest pages first), never truncated mid-sentence.
 
 ---
 

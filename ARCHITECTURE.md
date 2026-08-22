@@ -120,7 +120,11 @@ Logic Flow:
   - The AI writes short, encouraging feedback that points out what the student got right, names any factual errors directly, and tells them specifically how to improve.
   - Two independent axes are scored: accuracy_score (against the stored definition) and simplicity_score (against the audience rubric). A fluent but false explanation must not score well, and neither must a textbook-perfect one a child could not follow.
   - The verdict is derived in the backend from accuracy_score (≥80 Correct, ≥30 Needs Improvement, else Incorrect), never taken from the model — asked for it directly, the model leaks the simplicity axis into it.
-  - Grading runs at temperature 0, so an identical resubmission cannot drift across a verdict band boundary.
+  - An identical resubmission cannot drift across a verdict band boundary — but temperature 0 is
+    no longer what guarantees it. Gemini 3 dropped the sampling parameters entirely, so there is
+    no model-side knob left; findMemoisedAttempt() answers a byte-identical resubmission from the
+    row it produced last time. That is exact, costs no API call, and holds whichever model is
+    configured.
   - The audience is fixed at a 10-year-old child. FEYNMAN_AUDIENCES is a single-value enum so adding an audience later is one rubric plus one entry, not a data migration.
   - The ai_feedback is stored in cognitive_logs as a JSON string and surfaced to the student.
   - The Feynman Technique provides personalized feedback but does not directly update BKT mastery estimates, and like Free Recall it does not read them either — its grading is against the stored concept definition and the audience rubric, neither of which depends on mastery.
@@ -130,17 +134,28 @@ Logic Flow:
 7. Test Mode (Adaptive BKT Testing)
 
 Core Tables: practice_tests, practice_telemetry, bkt_mastery
-AI Integration: Groq llama-3.3-70b-versatile (question writing)
-  - Chosen over Gemini for one reason that outweighs the rest: Gemini's free quota is 20 requests
-    per day PER MODEL, and concept extraction, Free Recall and Feynman already spend it. Putting
-    test generation on the same key would trade working features for a new one during the study.
-    Groq carries a separate, far larger budget and already runs chat, flashcard question writing
-    and all three games.
+AI Integration: Gemini gemini-3.6-flash at ThinkingLevel.MINIMAL (question writing)
   - The paper (p. 81) specifies only "the large language model", so nothing in the write-up
-    depends on which provider this is.
-  - Generation is one call PER FORMAT, not one for the whole test: Groq's JSON mode gives no
-    structural guarantee, and a five-way union of question shapes in one response has no safe
-    recovery. Per format the shape is uniform and a malformed item falls back to a template.
+    depends on which provider this is. That mattered: this call site has moved twice.
+  - HISTORY. It ran on Gemini, moved to Groq llama-3.3-70b-versatile on 2026-08-06 to escape
+    Gemini's per-model daily quota, and came back to Gemini on 2026-08-18. Groq had
+    DECOMMISSIONED that model on 17 June 2026 — verified against our own key, "The model does
+    not exist or you do not have access to it" — and closed its paid tier to new signups, so the
+    escape route stopped existing and could never have scaled to the 50-student study anyway.
+    Groq was removed from the project entirely on 2026-08-19.
+  - The quota problem the Groq detour was fleeing is therefore still real, and is now a reason to
+    buy the paid key rather than to switch provider. Gemini's free tier refuses on TWO windows,
+    both per model: 5 requests per MINUTE and 20 per day. One test is five calls, so a single
+    test consumes the whole per-minute allowance, and the daily bucket is shared with concept
+    extraction, Feynman grading, flashcard fronts and all three games — roughly four tests a day.
+  - MINIMAL thinking is not a tuning preference. Measured: gemini-3.6-flash runs ~2s at MINIMAL
+    against 5-20s at LOW and 8s+ at MEDIUM, and thinking tokens bill at the OUTPUT rate. Nothing
+    in generation reasons — the server owns the true/false verdict, the correct option's position
+    and the matching blocks, and grading is deterministic in server/lib/testGrading.ts.
+  - Generation is one call PER FORMAT, not one for the whole test. responseSchema now does pin
+    the structure per call, which Groq's JSON mode never did — but a five-way union of question
+    shapes in one response still has no safe recovery. Per format the shape is uniform and a
+    malformed item falls back to a template.
   - Grading involves NO model call. Multiple choice, true/false and matching compare exactly;
     identification and fill-in-the-blank use a mechanical alias ladder (server/lib/testGrading.ts)
     so a score the student is shown is reproducible.
@@ -216,7 +231,9 @@ Student Dashboard (learning analytics display): [IMPLEMENTED]
   - It returns: M_doc across every concept in every space (the p. 81 progress bar) with a per-space breakdown; a mastery curve; the weakest assessed concepts across all spaces; the global flashcards-due count; any unfinished test; and a merged recent-activity feed.
   - The mastery curve is reconstructed BACKWARD from bkt_mastery using the p_l_prior column of bkt_update_logs, so its final point equals the displayed mastery number by construction. bkt_mastery remains authoritative for the current value; the audit log only draws the history, which is why a failed log write stays non-fatal.
   - The curve's x axis is the learning-opportunity index t, not wall-clock time: updates within a session share a timestamp, and BKT has no forgetting term, so a time axis would misrepresent both.
-  - Study streaks, digital badges and total study hours are NOT displayed. Nothing writes activity_logs and nothing awards user_badges, so those figures have no source; they are omitted rather than shown as zeros or stale values.
+  - Study streaks and earned badges ARE displayed, as of 2026-08-19, fed by the gamification block on GET /api/dashboard — two plain SELECTs, never the GET /api/gamification/profile route, which used to INSERT a row on a GET. They are fetched alongside identity and spaces rather than with the other history reads, so a student whose educator archived every material still sees the streak they earned instead of a zero.
+  - TOTAL STUDY HOURS IS STILL NOT DISPLAYED, and stays that way until something measures it. Only games and adaptive tests carry a real duration; flashcards, both cognitive modes and chat measure nothing, so the stored figure is a partial sum that would read as a total.
+  - There is still no weekly activity chart and no heatmap. Both became buildable when activity_logs gained a writer, and both stay rejected: over a two-week study with a handful of attempts, an honest heatmap renders as an accusation.
   - Identity comes from GET /api/auth/me via src/context/AuthContext.tsx.
 
 Accounts and sign-in: [IMPLEMENTED]
@@ -300,21 +317,35 @@ BKT-Adaptive Difficulty (Gamification Calibration): [IMPLEMENTED]
 Session Logging:
   - When a game session concludes, the frontend posts { content_id, accuracy, time_spent_ms, detail } to game_sessions. Everything identifying what was played — space_id, material_id, game_type and mastery_snapshot — is copied server-side from the owner-checked game_content row, so the recorded mastery snapshot is the one the prompt was actually built from.
 
-Database Autopilot (Triggers):
-  - An AFTER INSERT PostgreSQL trigger intercepts the new game session.
-  - It updates gamification_profiles (day streak, total hours studied).
-  - Streak Logic: If the student's last active timestamp was less than 48 hours ago, day_streak += 1 (day streak increments). If more than 48 hours have elapsed, day_streak resets to 1.
-  - The trigger also accumulates total hours studied across all activity types (flashcards, games, recall sessions, etc.).
+Database Autopilot (Triggers): [IMPLEMENTED]
+  - trigger_update_streak is an AFTER INSERT trigger on activity_logs — NOT on game_sessions. It moved there in migration 0005, because the earlier version incremented day_streak on every game insert, so five games in one afternoon produced a five-day streak.
+  - It maintains day_streak, longest_streak, last_active_on and total_study_hours on gamification_profiles, and needs no help from application code: one insert into activity_logs is the whole streak mechanism.
+  - STREAK LOGIC IS CALENDAR-DAY SUCCESSION IN ASIA/MANILA, NOT A 48-HOUR CLOCK. This document claimed the 48-hour rule until 2026-08-19 and was wrong; schema.sql has said so on the column comment since 0005. A new day extends the run only when it is exactly last_active_on + 1, and otherwise restarts at 1; repeat activity on a day already counted changes nothing. Manila rather than UTC because an early-morning session in the Philippines would otherwise be attributed to the previous day, and a bare occurred_at::date depends on the session TimeZone and cannot be indexed.
 
-Streaks:
-  - The application tracks two streak dimensions:
-      * Day Streaks: Consecutive days a student has engaged with any study activity. Example: using flashcards or crossword games for 5 consecutive days results in a 5-day streak.
-      * Total Hours: Cumulative time spent studying, tracked across all modules.
+Activity writer: [IMPLEMENTED 2026-08-19]
+  - Until this date NOTHING inserted into activity_logs, so the trigger had never once fired and day_streak was 0 for every student. Every gamification table had existed since migration 0005; the missing piece was a writer, not a schema.
+  - server/lib/activity.ts is the single writer. logActivity() NEVER THROWS — it has nine call sites and no consumer that can act on a failure, so it logs to console.error and returns [] rather than making each caller remember a try/catch. A missing streak day must never cost a student their score.
+  - Nine call sites: both flashcard branches (counted AND not-due practice), adaptive test completion, both Free Recall paths (fresh AND memo-hit), both Feynman paths, the game session insert, and the normal chat turn.
+  - Three deliberate exclusions: the flashcard compare-and-swap loser (a duplicate request, not a second study event), the off-topic chat refusal (nothing was studied), and any PUT /complete that does not flip the status.
+  - duration_ms is 0 wherever time is not measured. Only a game reports a real one (time_spent_ms) and only a test derives one — from the summed per-question latencies, not completed_at minus created_at, which would bill a test left open over dinner as three hours of study.
 
-Badges:
-  - Badges are awarded based on milestone achievements, evaluated by backend cron jobs or trigger-based endpoint checks.
-  - Example: A student achieving a 5-day streak on flashcards earns a Flashcard Streak badge.
-  - Badge records are inserted into user_badges upon milestone completion.
+Streaks: [IMPLEMENTED]
+  - Day Streaks: consecutive Asia/Manila calendar days on which the student engaged with any study activity — flashcards, adaptive tests, Free Recall, Feynman, games or the chatbot.
+  - TOTAL HOURS IS WRITTEN BUT DELIBERATELY NOT DISPLAYED ANYWHERE. Only games and adaptive tests contribute a real duration, so the figure is a partial sum that would read as a total — the same failure as the frozen day_streak that kept streaks off the dashboard for months. GET /api/dashboard does not serialise it. The missing piece is real timing, not a widget.
+
+Badges: [IMPLEMENTED]
+  - Evaluated synchronously by server/lib/badges.ts immediately after each activity is logged, not by a cron job. The student sees a badge the moment they earn it, and UNIQUE (student_id, badge_name) makes the award idempotent, so an INSERT ... ON CONFLICT DO NOTHING needs no read-then-write lock.
+  - Fourteen badges in four families: streaks (3 / 5 / 7 consecutive days), first-time activities (first flashcard, test, recall, explanation, game), mastery milestones (1 / 10 / 25 concepts at or above 0.85), and performance (a 100% test, a flawless game, 100 cards reviewed).
+  - Streak badges are awarded off longest_streak, so they stack and are permanent: reaching 7 days leaves all three held, and breaking a streak never removes one.
+  - Streak thresholds are sized to the roughly 2-week study. A 14-day badge was considered and dropped: an unreachable badge renders as a permanently grey tile that reads as a broken feature.
+  - The catalogue lives in code, not in a badges table. badge_name is bare TEXT and the string IS the identity, so a badge is never renamed once live. A table nobody can edit would be a constant with extra steps, and building an editor for it would repeat the educator_assignments mistake.
+  - Evaluation cost is bounded by ordering: one indexed read of the badges already held, then the catalogue is narrowed to (not held) AND (triggered by this activity type), and if nothing survives it returns without another query. That is the steady state, so an established student pays one lookup per activity — which matters because this runs after every individual flashcard rating.
+  — Earning a badge opens a celebration modal, added 2026-08-20. Before it, a badge was awarded silently and the student only found out on their next dashboard visit.
+  — The client is not TOLD about the award; it DIFFS. A provider mounted on the student layout re-reads GET /api/gamification/badges at six "you just finished something" moments and compares against what the session has already seen. Threading the award onto each write response was rejected for two concrete reasons: the flashcard rating POST is deliberately not awaited, so a badge on that response would open a modal over a card the student had already moved past; and the chat route logs its activity after res.end(), so its stream cannot carry one.
+  — The baseline is seeded on mount and celebrates nothing, so a student who already holds badges is not ambushed on their next login. It is in-memory, so a reload re-seeds and nothing is celebrated twice.
+  — One modal lists every badge that action earned, rather than a queue of dialogs. It is silent by choice — the modal can appear anywhere in the portal, unlike the games, which are opt-in and may have sound. Dismissal is manual, via button, Escape or the backdrop.
+  — The confetti and the badge animations are all CSS keyframes in index.css and are all disabled under prefers-reduced-motion; the modal still opens and still names the badge.
+  — Migration 0023 dropped the student INSERT policy on activity_logs. update_study_streak() is SECURITY DEFINER, so an anon-key insert moved day_streak, longest_streak and total_study_hours directly — harmless while nothing read them, a live fabrication route the moment a dashboard printed them. Express writes with the service role, which bypasses RLS, so nothing legitimate depended on it.
 
 ---
 
@@ -353,15 +384,40 @@ The Free Recall evaluation pipeline works as follows:
   4. Grade: A reference concept is "Covered" if its best match score ≥ 0.70; otherwise "Missed".
   5. Score: similarity_score = coveredCount / totalConcepts (coverage ratio, NOT average of raw scores).
 
-Verdict bands: Strong ≥ 0.30, Partial ≥ 0.15, otherwise Needs Review.
+Verdict bands: overall_verdict is still computed and stored, and is deliberately NOT DISPLAYED. The old absolute bands (Strong >= 0.30, Partial >= 0.15) were tuned against a 78-concept lesson; applied to a 29-concept one they put an 86% answer and a 36% answer containing two factual errors in the same "Strong" band. Do not reintroduce a fixed threshold on this ratio — any constant is wrong for the next material uploaded. What the student sees instead is progressLine(), which compares covered_count against their own earlier attempt on the SAME material, past a noise floor of max(2, ceil(total * 0.1)).
 The denominator is every concept extracted from the selected materials, and extraction is granular — a single lesson produced 78 concepts, including supporting details ("radio waves", "light pulses") no student writes out from memory. Recalling a document well therefore lands near 20–30%, not 75%. The ratio is left honest and the bands are calibrated to it, rather than rescaling the score itself.
 
-Reproducibility: the concept-extraction call runs at temperature 0. It is the only sampling step in the scoring pipeline, so without it an identical resubmission would extract a different concept list and score differently.
+Reproducibility: concept extraction is the only sampling step in the scoring pipeline, so an identical resubmission would otherwise extract a different concept list and score differently — measured, 14 / 16 / 17 covered across three runs of one submission. Temperature 0 used to pin it; Gemini 3 dropped the sampling parameters, so findMemoisedAttempt() now answers a byte-identical resubmission from the row it produced last time instead. It is keyed on a content fingerprint of the concept set (concepts has no updated_at column), so an educator editing a definition correctly forces a fresh evaluation.
 
 Written Feedback:
-  - After scoring, a second Gemini call writes three short pieces of coaching — strengths, gaps, next_steps — stored as written_feedback inside the ai_feedback JSON. No separate column.
+  - After scoring, a second Gemini call writes ONE short prose passage plus corrections, stored as written_feedback inside the ai_feedback JSON. No separate column. It was three fields — strengths, gaps, next_steps — and the split was measured and removed: across every logged attempt next_steps was a paraphrase of gaps ("you left out injection" -> "review injection"), which is what forced structure does when the model must fill a slot and has nothing new to put in it. Rows written before the merge are not migrated, so treat every key inside ai_feedback as optional.
   - The prompt receives the student's raw text, the points extracted from it, the reference concepts they covered, and the ones they missed. Two students who score the same but wrote different things therefore receive different feedback.
   - It is told NOT to recite the missed list. That list is generated against the whole document and is full of supporting detail nobody recalls from memory; the model picks the 2-3 ideas that actually matter and names those in plain language.
-  - Reproducibility is guaranteed by REUSE, not by temperature. Temperature 0 pins the score because extraction returns a structured list and the 0.70 threshold quantises the remainder — but free prose has no such quantisation, and in testing the same input reliably scored the same while producing reworded paragraphs. So before generating, findPreviousFeedback() looks for an earlier attempt by the same student with the same text, the same materials AND the same resulting score, and reuses its prose. Requiring the score to match means feedback is never reused after an educator changes the material underneath it.
+  - Reproducibility is guaranteed by REUSE, not by temperature — and since Gemini 3 dropped the sampling parameters, reuse is the only mechanism left. findMemoisedAttempt() looks for an earlier attempt by the same student with the same text, the same materials AND the same concepts_fingerprint, and answers from it. Matching the fingerprint rather than the score means feedback is never reused after an educator changes the material underneath it, and it also means a resubmission costs zero API calls.
   - Failure is isolated. generateRecallFeedback() catches its own errors and returns null; the call sits outside the scoring try block and before the insert, so the row is still written with its score, verdict and missed list. The response carries feedback_unavailable: true and the tab shows a note instead of an error. Losing the feedback cannot cost the score.
   - When extraction finds nothing recognisable in the submission, a fixed in-code message is used rather than an AI call — there is nothing personal to say, and a canned message cannot fail.
+12. Pre-Test / Post-Test — TEMPORARY research instrument [IMPLEMENTED 2026-08-21]
+  - REMOVED AFTER THE SCHOOL STUDY. Full reference and removal checklist:
+    LearnSyncAI artifacts/PREPOST_TEST_IMPLEMENTATION.md. Migration 0024.
+  - Serves paper RQ4 (p. 55) — the difference between a student's standard pre-test score
+    and their post-test score — which p. 103 names the primary evaluation instrument.
+  - ONE PARALLEL PAIR PER MATERIAL, generated on an educator's explicit click, never on
+    upload. Up to 20 multiple-choice items, each holding BOTH wordings on one row: same
+    concept, same answer, same four options, different sentence and different option order.
+    Everyone sits the same paper, which is what makes the two scores comparable at all.
+  - THE MODEL WRITES ONLY THE SENTENCES. Options are four educator-vetted concepts.term
+    values chosen by the server from the answer's document neighbourhood, so there is no
+    hallucination surface on the answer key. One Gemini call per material.
+  - NO DIFFICULTY TIER. A "standard pre-test" must not adapt; nothing reads bkt_mastery.
+  - THE LOCK: a material is locked for a student while its assessment's LATEST released
+    phase has no completed attempt by them — no PDF, no chatbot, no flashcards, no games,
+    no Free Recall, no Feynman, no adaptive test. A pre-test is a baseline, so a student who
+    reads the lesson first has an inflated baseline and a shrunken measured gain. Enforced
+    server-side at nine call sites, each one line below the existing access check.
+  - IT WRITES NOTHING THAT FEEDS THE PLATFORM — no bkt_mastery, no bkt_update_logs, no
+    practice_telemetry, no activity_logs. bkt_source stays a two-value enum and activity_type
+    gains no value. Consequence, stated rather than hidden: a pre-test does not extend a
+    study streak.
+  - The educator downloads a CSV of pre score / post score / gain per student. That table is
+    the only place the study's primary measurement lives — export it before the tables are
+    dropped.
