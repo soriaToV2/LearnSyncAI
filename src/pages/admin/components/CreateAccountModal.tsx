@@ -1,5 +1,7 @@
+import { inkOn } from '../../../context/ThemeContext';
 import React, { useState } from 'react';
-import { Check, Copy, Loader2, UserPlus, Wand2 } from 'lucide-react';
+import { Check, Copy, UserPlus, Wand2 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import Modal from '../../../components/ui/Modal';
 import { Field, SaveButton, StatusLine, messageOf, useSubmitLatch, type Status } from '../../../components/common/formKit';
 import { USERNAME_HINT, usernameProblem } from '../../../lib/account';
@@ -178,7 +180,7 @@ export default function CreateAccountModal({
             <button
               type="button"
               onClick={copyCredentials}
-              className="self-start flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors font-sans text-xs"
+              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] self-start flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors font-sans text-xs"
             >
               {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
               {copied ? 'Copied' : 'Copy both'}
@@ -207,15 +209,15 @@ export default function CreateAccountModal({
             <button
               type="button"
               onClick={reset}
-              className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 hover:text-white font-display text-xs font-bold transition-colors"
+              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 hover:text-white font-display text-xs font-bold transition-colors"
             >
               Create another
             </button>
             <button
               type="button"
               onClick={close}
-              style={{ backgroundColor: accent, color: '#04121a' }}
-              className="px-5 py-2.5 rounded-xl font-display text-xs font-bold hover:brightness-110 transition-all active:scale-95"
+              style={{ backgroundColor: accent, color: inkOn(accent) }}
+              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] px-5 py-2.5 rounded-xl font-display text-xs font-bold hover:brightness-110 transition-all active:scale-95"
             >
               Done
             </button>
@@ -310,7 +312,7 @@ export default function CreateAccountModal({
               }`}
             >
               {isSuggesting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Spinner className="w-3.5 h-3.5" />
               ) : (
                 <Wand2 className="w-3.5 h-3.5" />
               )}

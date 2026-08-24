@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  FileText, Send, Sparkles, Loader2, AlertCircle, BookOpen,
+  FileText, Send, Sparkles, AlertCircle, BookOpen,
   MessageSquare, Lightbulb, HelpCircle, X, Inbox, Download, ScanLine, Lock
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import { api } from '../../../lib/api';
 import { supabase } from '../../../lib/supabase';
 import Markdown from '../../../components/ui/Markdown';
@@ -416,14 +417,46 @@ export default function ResourcesTab({
   const subjectLabel = subject ? subjectName(subject) : 'course';
 
   return (
-    <div className="relative animate-in fade-in duration-500 h-[calc(100vh-140px)] flex flex-col xl:flex-row gap-4">
+    /*
+     * `h-full`, not `h-[calc(100vh-140px)]`.
+     *
+     * That 140px was a guess at the chrome above this tab, and it was wrong on
+     * every phone: the parent <main> is ALREADY a definite-height flex child
+     * (`flex-1` inside StudySpace's `h-[calc(100vh-4rem)] md:h-screen` column)
+     * and it carries its own `p-4 sm:p-6 md:p-8`, while the mobile header is
+     * taller than the desktop one because the tab bar collapses into a dropdown.
+     * So the panel was measured against a constant that matched no layout.
+     * `h-full` inherits the height main already computed correctly.
+     *
+     * The height must stay DEFINITE rather than becoming `min-h-full`: the chat
+     * drawer and its FAB are positioned `absolute` against this element, so a
+     * content-driven height would stretch the drawer past the viewport.
+     */
+    <div className="relative fade-in duration-500 h-full flex flex-col xl:flex-row gap-4">
 
       {/* ─── LEFT: Materials ─────────────────────────────────── */}
-      <aside className="w-full xl:w-[300px] shrink-0 flex flex-col gap-3 h-[38vh] xl:h-full bg-surface-container-lowest border border-white/5 rounded-2xl shadow-sm p-3">
+      {/*
+        * `max-h-[40vh]` on mobile rather than a fixed `h-[38vh]`.
+        *
+        * A hard height reserved 38% of the screen whether the space held twelve
+        * materials or one — and one is the common case early in a term, so the
+        * panel sat mostly empty while the document below it was squeezed. A max
+        * lets the panel shrink to its content and only cap out when the list is
+        * genuinely long; the inner list keeps its own `overflow-y-auto`, so
+        * scrolling behaviour is unchanged.
+        */}
+      <aside className="w-full xl:w-[300px] shrink-0 flex flex-col gap-3 max-h-[40vh] xl:max-h-none xl:h-full bg-surface-container-lowest border border-white/5 rounded-2xl shadow-sm p-3">
         {/* Title + count */}
-        <div className="flex items-center justify-between px-1 shrink-0">
-          <h2 className="font-display font-semibold text-[15px] text-white">Materials</h2>
-          <span className="font-mono text-[11px] text-slate-500 tabular-nums bg-white/5 px-1.5 py-0.5 rounded">
+        <div className="flex items-center justify-between gap-2 px-1 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Same tinted icon chip the dashboard cards use, so the two screens
+                read as one system rather than two. */}
+            <div className="w-7 h-7 rounded-lg bg-primary-fixed-dim/10 text-primary-fixed-dim flex items-center justify-center shrink-0">
+              <BookOpen className="w-4 h-4" />
+            </div>
+            <h2 className="font-display font-semibold text-[15px] text-white truncate">Materials</h2>
+          </div>
+          <span className="font-mono text-[11px] text-slate-400 tabular-nums bg-white/5 border border-white/5 px-2 py-0.5 rounded-md shrink-0">
             {materials.length}
           </span>
         </div>
@@ -445,7 +478,7 @@ export default function ResourcesTab({
               className="w-full py-2 rounded-lg bg-primary-fixed-dim text-on-primary-fixed font-sans text-[12.5px] font-semibold hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
             >
               {isSyncing
-                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Adding…</>
+                ? <><Spinner className="w-3.5 h-3.5" /> Adding…</>
                 : <><Download className="w-3.5 h-3.5" /> Add to my space</>}
             </button>
           </div>
@@ -462,13 +495,13 @@ export default function ResourcesTab({
         )}
 
         {/* Material list */}
-        <div className="flex-1 overflow-y-auto -mx-1 px-1 space-y-0.5 no-scrollbar min-h-0">
+        <div className="flex-1 overflow-y-auto -mx-1 px-1 no-scrollbar min-h-0">
           {materialsLoading ? (
             <div className="h-full flex items-center justify-center">
-              <Loader2 className="w-5 h-5 text-primary-fixed-dim animate-spin" />
+              <Spinner className="w-5 h-5 text-primary-fixed-dim" />
             </div>
           ) : materials.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center px-4 text-slate-500">
+            <div className="h-full flex flex-col items-center justify-center text-center px-4 text-slate-500 animate-tab-in">
               <FileText className="w-7 h-7 mb-2 opacity-30" />
               <p className="font-sans text-xs leading-relaxed">
                 {availableCount > 0
@@ -477,26 +510,55 @@ export default function ResourcesTab({
               </p>
             </div>
           ) : (
-            materials.map(material => {
+            /* Wrapped so the list has something to animate — `.map()` returns an
+               array and a class cannot go on an array. `space-y-0.5` moves here
+               from the scroll container: the rows are this div's children now,
+               so the spacing has to follow them or the list loses its gaps.
+               Entrance on the loaded rows, never on the spinner above. */
+            <div className="space-y-0.5 animate-tab-in">
+            {materials.map(material => {
               const isSelected = material.id === selectedId;
               const locked = lockedIds?.has(material.id) ?? false;   // PRE/POST GATE
               const blocked = material.parsed_status !== 'completed' || locked;
 
               return (
-                <div
+                /* A real <button>, not a <div onClick>. The whole materials list
+                   was unreachable by keyboard — no Tab stop and no focus ring —
+                   and this row is the only way to open a document. It contains no
+                   nested interactive element, so a plain button is valid here.
+                   `aria-pressed` carries the selected state, which the border
+                   colour was conveying visually and to nobody else. */
+                <button
                   key={material.id}
+                  type="button"
+                  aria-pressed={isSelected}
                   onClick={() => setSelectedId(isSelected ? null : material.id)}
-                  className={`flex items-start gap-2.5 pl-2.5 pr-2 py-2 rounded-lg cursor-pointer transition-colors border-l-2 ${isSelected
+                  /* ⚠️ THE FOCUS RING MUST BE `ring-inset` HERE. A default ring is
+                     an OUTWARD `box-shadow: 0 0 0 2px`, and this list is
+                     `space-y-0.5` — a 2px gap — so an outward 2px ring exactly
+                     fills the space between rows and butts against its
+                     neighbours. Instead of a crisp outline you get a continuous
+                     cyan bloom, compounded on the selected row by the ring being
+                     the same accent as its `/10` tint and its `border-l-2`.
+                     Inset draws inside the row's own rounded edge: no bleed into
+                     the gap, no collision, same 2px visibility. */
+                  className={`w-full text-left flex items-start gap-2.5 pl-2.5 pr-2 py-2.5 rounded-lg cursor-pointer transition-colors border-l-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] ${isSelected
                     ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim'
                     : 'border-transparent hover:bg-white/5'
                     }`}
                 >
+                  {/* A READY document is no longer red. Red is the alarm colour
+                      this list uses for "Not available", so painting the healthy
+                      state red — while locked and scanned both got a calmer
+                      amber — inverted the whole scale. */}
                   <div className="shrink-0 opacity-90 mt-0.5">
                     {locked
                       ? <Lock className="w-5 h-5 text-amber-400" />
                       : material.is_scanned
                         ? <ScanLine className="w-5 h-5 text-amber-400" />
-                        : <FileText className="w-5 h-5 text-red-400" />}
+                        : material.parsed_status === 'failed'
+                          ? <FileText className="w-5 h-5 text-red-400" />
+                          : <FileText className="w-5 h-5 text-primary-fixed-dim" />}
                   </div>
 
                   <div className="flex-1 min-w-0">
@@ -504,14 +566,18 @@ export default function ResourcesTab({
                       {material.title}
                     </p>
 
-                    <div className="flex items-center gap-1.5 mt-1">
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1">
                       <SubjectBadge code={material.subject} />
-                      <span className="font-mono text-[10px] text-slate-500 tabular-nums">
+                      <span className="font-mono text-[11px] text-slate-500 tabular-nums">
                         {formatFileSize(material.file_size_bytes)}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5 mt-1 text-[10.5px] leading-none">
+                    {/* `text-[10.5px]` and `text-[10px]` were below any sensible
+                        floor for a 12-to-16-year-old reader, and this row is where
+                        the status ("Being prepared", "Take the test first") is
+                        stated. Wraps rather than overflowing the 300px panel. */}
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px] leading-tight">
                       {(material.parsed_status === 'pending' || material.parsed_status === 'processing') && (
                         <span className="flex items-center gap-1 text-amber-400/90">
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" /> Being prepared
@@ -534,16 +600,17 @@ export default function ResourcesTab({
                     </div>
 
                     {isSelected && blocked && (
-                      <p className="mt-1.5 font-sans text-[10.5px] text-slate-400 leading-relaxed">
+                      <p className="mt-1.5 font-sans text-[11px] text-slate-400 leading-relaxed">
                         {locked
                           ? 'Open the Pre-Test or Post-Test tab and finish the test for this lesson. It unlocks straight afterwards.'
                           : unavailableReason(material)}
                       </p>
                     )}
                   </div>
-                </div>
+                </button>
               );
-            })
+            })}
+            </div>
           )}
         </div>
       </aside>
@@ -601,13 +668,13 @@ export default function ResourcesTab({
           <div className="flex-1 overflow-y-auto p-3 space-y-3 scroll-smooth no-scrollbar">
             {!historyLoaded ? (
               <div className="h-full flex items-center justify-center">
-                <Loader2 className="w-6 h-6 text-primary-fixed-dim animate-spin" />
+                <Spinner className="w-6 h-6 text-primary-fixed-dim" />
               </div>
             ) : (
               messages.map(msg => (
                 <div
                   key={msg.id}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-1 duration-300`}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} fade-in duration-300`}
                 >
                   <div className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 ${msg.role === 'user'
                     ? 'bg-primary-fixed-dim text-on-primary-fixed rounded-br-md'
@@ -616,7 +683,7 @@ export default function ResourcesTab({
                     {msg.content ? (
                       msg.role === 'ai'
                         ? <Markdown content={msg.content} />
-                        : <p className="font-sans text-[13.5px] leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                        : <p className="font-sans text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                     ) : (
                       <div className="flex items-center gap-1.5 py-0.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -674,7 +741,12 @@ export default function ResourcesTab({
                       ? 'Ask about this material…'
                       : 'Select a material…'
                 }
-                className="flex-1 bg-transparent border-none outline-none font-sans text-[13.5px] text-white placeholder:text-slate-500 min-h-[36px] max-h-[150px] resize-none py-2 px-1.5 scrollbar-thin overflow-hidden disabled:opacity-50"
+                /* `scrollbar-thin` was undefined — same dead family as the
+                   `scrollbar-none` on the study-space tab strip; the real utility
+                   in index.css is `.no-scrollbar`. Dropped rather than swapped,
+                   since `overflow-hidden` beside it means there is no scrollbar
+                   to style in the first place. */
+                className="flex-1 bg-transparent border-none outline-none font-sans text-sm text-white placeholder:text-slate-500 min-h-[36px] max-h-[150px] resize-none py-2 px-1.5 overflow-hidden disabled:opacity-50"
                 rows={1}
               />
               <button
@@ -683,7 +755,7 @@ export default function ResourcesTab({
                 className="shrink-0 w-9 h-9 bg-primary-fixed-dim text-on-primary-fixed rounded-lg flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary-container transition-colors"
               >
                 {isStreaming
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  ? <Spinner className="w-4 h-4" />
                   : <Send className="w-4 h-4 ml-0.5" />}
               </button>
             </form>

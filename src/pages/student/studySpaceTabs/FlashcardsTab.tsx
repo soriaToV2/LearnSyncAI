@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Loader2, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck } from 'lucide-react';
+import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import FlashcardStudyView from '../components/FlashcardStudyView';
 import Modal from '../../../components/ui/Modal';
 import DueBadge from '../../../components/ui/DueBadge';
@@ -327,7 +328,7 @@ export default function FlashcardsTab({
 
   /** Shared inline error banner. Dismissible — it must not trap the student. */
   const errorBanner = actionError && (
-    <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 animate-in fade-in duration-200">
+    <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 fade-in duration-200">
       <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
       <p className="font-sans text-xs text-rose-300 leading-relaxed flex-1">{actionError}</p>
       <button
@@ -348,7 +349,7 @@ export default function FlashcardsTab({
     const sessionCards = studyMode === 'due' ? dueCards(selectedSet) : selectedSet.cards;
     if (sessionCards.length > 0) {
       return (
-        <div className="animate-in fade-in duration-300">
+        <div className="fade-in duration-300">
           <FlashcardStudyView
             cards={sessionCards.map(c => ({
               id: c.id,
@@ -366,10 +367,10 @@ export default function FlashcardsTab({
   }
 
   return (
-    <div className="animate-in fade-in duration-300">
+    <div className="fade-in duration-300">
       {/* ══ Deck list ══════════════════════════════════════════════════ */}
       {selectedSetContent === null ? (
-        <div key="deck-list" className="animate-in fade-in duration-500">
+        <div key="deck-list" className="fade-in duration-500">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
               <h2 className="font-display text-2xl font-semibold text-white mb-1">Study Decks</h2>
@@ -418,15 +419,24 @@ export default function FlashcardsTab({
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
               {flashcardSets.map(set => {
                 const isEmpty = set.cardCount === 0;
                 const due = dueCards(set).length;
                 return (
+                  /* A deck with work waiting now LOOKS different, not just
+                     badged. Every tile was the same grey regardless of state, so
+                     "which deck do I owe something to" was a counting task
+                     against a small badge; the accent border and soft glow make
+                     it a glance. Caught-up decks stay deliberately neutral —
+                     if every tile glowed, none would. */
                   <div
                     key={set.id}
-                    onClick={() => setSelectedSetContent(set.id)}
-                    className="bg-surface-container-lowest rounded-2xl border border-white/5 p-6 hover:-translate-y-1 transition-all duration-300 group hover:border-primary-fixed-dim/30 hover:shadow-lg hover:shadow-primary-fixed-dim/5 flex flex-col cursor-pointer"
+                    className={`relative bg-surface-container-lowest rounded-2xl border p-6 hover:-translate-y-1 focus-within:-translate-y-1 transition-all duration-300 group hover:shadow-lg flex flex-col ${
+                      due > 0
+                        ? 'border-primary-fixed-dim/30 shadow-[0_0_25px_-12px] shadow-primary-fixed-dim/35 hover:border-primary-fixed-dim/50 hover:shadow-primary-fixed-dim/10'
+                        : 'border-white/5 hover:border-white/15 hover:shadow-black/20'
+                    }`}
                   >
                     {/* The badge rides the icon rather than the title: scanning
                         a grid of six decks for "which one has work waiting" is a
@@ -437,8 +447,20 @@ export default function FlashcardsTab({
                     </div>
 
                     <div className="flex-1 mb-5">
-                      <h3 className="font-display text-xl font-medium text-white mb-1.5 group-hover:text-primary-fixed-dim transition-colors line-clamp-2">
-                        {set.title}
+                      {/* The tile was a bare `<div onClick>` — no Tab stop, no
+                          focus ring, so the deck grid could not be navigated by
+                          keyboard at all. The title is a real button whose
+                          `::after` stretches over the card, keeping the whole
+                          surface mouse-clickable while giving the tile ONE focus
+                          stop. Its action button below carries `relative z-10` to
+                          stay clickable through that overlay. */}
+                      <h3 className="font-display text-xl font-medium text-white mb-1.5 group-hover:text-primary-fixed-dim transition-colors">
+                        <button
+                          onClick={() => setSelectedSetContent(set.id)}
+                          className="text-left rounded after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                        >
+                          <span className="line-clamp-2">{set.title}</span>
+                        </button>
                       </h3>
                       {set.description && (
                         <p className="font-sans text-xs text-slate-500 mb-2 line-clamp-2">{set.description}</p>
@@ -452,7 +474,7 @@ export default function FlashcardsTab({
                       <button
                         onClick={e => { e.stopPropagation(); setSelectedSetContent(set.id); openAddCards(); }}
                         disabled={!hasMaterials}
-                        className="w-full px-4 py-2.5 bg-surface-container border border-primary-fixed-dim/30 text-primary-fixed-dim hover:bg-primary-fixed-dim/10 rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-container"
+                        className="relative z-10 w-full px-4 py-2.5 bg-surface-container border border-primary-fixed-dim/30 text-primary-fixed-dim hover:bg-primary-fixed-dim/10 rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-container"
                       >
                         <Sparkles className="w-4 h-4" />
                         {hasMaterials ? 'Add Cards' : 'No Materials'}
@@ -460,7 +482,7 @@ export default function FlashcardsTab({
                     ) : due > 0 ? (
                       <button
                         onClick={e => { e.stopPropagation(); studyDeck(set.id, 'due'); }}
-                        className="w-full px-4 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(0,218,243,0.15)] hover:shadow-[0_0_30px_rgba(0,218,243,0.3)] transition-all"
+                        className="relative z-10 w-full px-4 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 shadow-[0_0_20px] shadow-primary-fixed-dim/15 hover:shadow-[0_0_30px] shadow-primary-fixed-dim/30 transition-all"
                       >
                         <Play className="w-4 h-4" />
                         Review {due}
@@ -470,7 +492,7 @@ export default function FlashcardsTab({
                          quietly — it is not the recommended next action. */
                       <button
                         onClick={e => { e.stopPropagation(); studyDeck(set.id, 'practice'); }}
-                        className="w-full px-4 py-2.5 bg-surface-container border border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all"
+                        className="relative z-10 w-full px-4 py-2.5 bg-surface-container border border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all"
                       >
                         <RotateCcw className="w-4 h-4" />
                         Practice all
@@ -484,7 +506,7 @@ export default function FlashcardsTab({
         </div>
       ) : (
         /* ══ Inside a deck — browsing and managing, not a step to studying ══ */
-        <div key="selected-deck" className="animate-in fade-in duration-500">
+        <div key="selected-deck" className="fade-in duration-500">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5 mb-8">
             <div className="min-w-0">
               <button
@@ -515,7 +537,7 @@ export default function FlashcardsTab({
                   dueCards(selectedSet).length > 0 ? (
                     <button
                       onClick={() => studyDeck(selectedSet.id, 'due')}
-                      className="px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(0,218,243,0.2)] hover:shadow-[0_0_30px_rgba(0,218,243,0.35)] transition-all"
+                      className="px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 shadow-[0_0_20px] shadow-primary-fixed-dim/20 hover:shadow-[0_0_30px] shadow-primary-fixed-dim/35 transition-all"
                     >
                       <Play className="w-4 h-4" />
                       Review {dueCards(selectedSet).length}
@@ -566,7 +588,7 @@ export default function FlashcardsTab({
 
           {/* Result of the last generation. */}
           {generateNotice && (
-            <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 animate-in fade-in duration-200">
+            <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 fade-in duration-200">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <p className="font-sans text-xs text-emerald-300 leading-relaxed flex-1">{generateNotice}</p>
               <button
@@ -626,22 +648,46 @@ export default function FlashcardsTab({
 
           {/* Card grid — for reviewing what is in the deck. No controls on cards. */}
           {selectedSet && selectedSet.cards.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
               {selectedSet.cards.map((card) => {
                 const source = materialTitle(card.sourceMaterialId);
+                const flipped = flippedCardId === card.id;
                 return (
-                  <div key={card.id} className="group relative h-64 [perspective:1000px]">
+                  /* Focus, role and the key handler live on the OUTER box, not on
+                     the rotating inner one: a focus ring on the flipping element
+                     rotates away with it. There is no global key handler on this
+                     grid (unlike the study view, where Space is already bound
+                     window-wide), so Enter/Space are wired here. */
+                  <div
+                    key={card.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={flipped}
+                    aria-label={`Flashcard: ${card.front}`}
+                    onClick={() => toggleFlip(card.id)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleFlip(card.id);
+                      }
+                    }}
+                    className="group relative h-64 [perspective:1000px] cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  >
                     <div
-                      onClick={() => toggleFlip(card.id)}
-                      className={`relative w-full h-full transition-transform duration-500 [transform-style:preserve-3d] ${flippedCardId === card.id ? '[transform:rotateY(180deg)]' : ''} cursor-pointer`}
+                      className={`relative w-full h-full transition-transform duration-500 [transform-style:preserve-3d] ${flipped ? '[transform:rotateY(180deg)]' : ''}`}
                     >
                       {/* Front */}
                       <div className="absolute inset-0 [backface-visibility:hidden] rounded-2xl border border-white/10 bg-surface-container flex flex-col shadow-lg overflow-hidden">
                         {/* The grid always shows every card — it is for browsing
                             a lesson. Scheduled cards are marked, never hidden. */}
                         <div className="shrink-0 flex items-baseline justify-between gap-2 px-5 pt-4">
-                          <p className="font-sans text-[10px] text-slate-600 truncate min-w-0">{source ?? ''}</p>
-                          <span className={`font-sans text-[10px] shrink-0 ${
+                          {/* `[11px]`/`slate-500`, not `[10px]`/`slate-600`: this
+                              is a lesson TITLE, not an uppercase micro-label, and
+                              10px at the lowest slate on a dark card is the least
+                              legible text in the tab. `[10px]` stays correct for
+                              the tracking-widest labels below. */}
+                          <p className="font-sans text-[11px] text-slate-500 truncate min-w-0">{source ?? ''}</p>
+                          <span className={`font-sans text-[11px] shrink-0 ${
                             isDue(card.nextReviewAt) ? 'text-primary-fixed-dim/80' : 'text-slate-600'
                           }`}>
                             {dueLabel(card.nextReviewAt)}
@@ -660,7 +706,7 @@ export default function FlashcardsTab({
                         </span>
                       </div>
                       {/* Back */}
-                      <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-primary-fixed-dim/5 flex flex-col shadow-[0_0_30px_rgba(0,218,243,0.1)] overflow-hidden">
+                      <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-primary-fixed-dim/5 flex flex-col shadow-[0_0_30px] shadow-primary-fixed-dim/10 overflow-hidden">
                         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col">
                           <p className="my-auto font-sans text-sm text-primary-fixed-dim font-medium text-center leading-relaxed">{card.back}</p>
                         </div>
@@ -678,7 +724,7 @@ export default function FlashcardsTab({
       {isSaving && createPortal(
         <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-md flex items-center justify-center">
           <div className="bg-surface-container border border-white/10 px-6 py-4 rounded-xl flex items-center gap-3 text-white">
-            <Loader2 className="w-5 h-5 animate-spin text-primary-fixed-dim" />
+            <Spinner className="w-5 h-5 text-primary-fixed-dim" />
             <span className="font-sans text-sm font-semibold">Saving changes...</span>
           </div>
         </div>,
@@ -848,8 +894,14 @@ export default function FlashcardsTab({
                       </span>
                       <span className="font-sans text-xs font-bold text-slate-200">{option.label}</span>
                     </div>
-                    <p className="font-sans text-[10px] text-slate-500 mb-1.5 ml-5.5">{option.blurb}</p>
-                    <p className="font-sans text-[10px] text-slate-600 italic leading-snug line-clamp-2">
+                    {/* `ml-5.5` generated NO CSS and the indent silently never
+                        applied — Tailwind v4 invents dynamic spacing for whole
+                        numbers (`max-h-68` compiles) but not for arbitrary
+                        fractions. Written as an explicit length instead: the
+                        w-3.5 radio (0.875rem) plus its gap-2 (0.5rem) is exactly
+                        1.375rem, which aligns this under the label text. */}
+                    <p className="font-sans text-[11px] text-slate-400 mb-1.5 ml-[1.375rem]">{option.blurb}</p>
+                    <p className="font-sans text-[11px] text-slate-500 italic leading-snug line-clamp-2">
                       “{option.example}”
                     </p>
                   </button>
@@ -918,7 +970,7 @@ export default function FlashcardsTab({
                   >
                     <div className="w-9 h-9 rounded-lg bg-surface-container-high border border-white/5 flex items-center justify-center shrink-0">
                       {isBusy
-                        ? <Loader2 className="w-4 h-4 text-primary-fixed-dim animate-spin" />
+                        ? <Spinner className="w-4 h-4 text-primary-fixed-dim" />
                         : <FileText className="w-4 h-4 text-slate-400" />}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -950,7 +1002,7 @@ export default function FlashcardsTab({
         maxWidth="max-w-sm"
       >
         <div className="space-y-6 text-center">
-          <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto shadow-inner animate-in fade-in duration-300">
+          <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto shadow-inner fade-in duration-300">
             <Trash2 className="w-5 h-5" />
           </div>
 
@@ -971,7 +1023,7 @@ export default function FlashcardsTab({
             <button
               type="button"
               onClick={handleDeleteDeck}
-              className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-sans text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-red-600/20"
+              className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-[#ffffff] font-sans text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-red-600/20"
             >
               Delete
             </button>

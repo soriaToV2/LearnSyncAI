@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import {} from 'lucide-react';
+import Spinner from '../../components/ui/Spinner';
 import { useAuth, type UserRole } from '../../context/AuthContext';
 
 /**
@@ -45,7 +46,7 @@ export default function RequireRole({
   if (isLoading) {
     return (
       <div className="min-h-screen bg-page flex items-center justify-center">
-        <Loader2 className="w-6 h-6 text-slate-500 animate-spin" />
+        <Spinner className="w-6 h-6 text-slate-500" />
       </div>
     );
   }

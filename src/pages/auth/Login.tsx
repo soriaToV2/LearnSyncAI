@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { BrainCircuit, AtSign, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Eye, EyeOff} from 'lucide-react';
+import Spinner from '../../components/ui/Spinner';
 import type { Session } from '@supabase/supabase-js';
-import { ACTIVE_THEME, applyThemeToElement } from '../../context/ThemeContext';
 import { supabase } from '../../lib/supabase';
 import { api } from '../../lib/api';
+import { AuthShell, AuthField, BrandMark } from './authKit';
 
 /**
  * ⚠️ SIGN-IN IS BY USERNAME, AND THE TRANSLATION HAPPENS ON THE SERVER.
@@ -27,16 +28,10 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showResetHint, setShowResetHint] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const wrapperRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (wrapperRef.current) {
-      applyThemeToElement(ACTIVE_THEME, wrapperRef.current);
-    }
-  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,29 +60,23 @@ export default function Login() {
        * An account still holding the password an administrator set goes straight
        * to `/set-password`, whatever its role. Sending it to a portal first would
        * render a dashboard whose every request `requireRole` refuses with a 403,
-       * and nothing on screen would say why.
+       * and nothing on screen would say why. This is a shortcut, not the
+       * enforcement: `RequireRole` catches the same condition on any other entry
+       * point, and the server refuses regardless.
        *
-       * This is a shortcut, not the enforcement: `RequireRole` catches the same
-       * condition on any other entry point, and the server refuses regardless.
-       */
-      if (data.must_change_password) {
-        navigate('/set-password', { replace: true });
-        return;
-      }
-
-      /*
        * ⚠️ ADMINS GO TO THE ADMIN PORTAL. They used to be sent to
        * `/educator/dashboard` alongside educators, where `requireRole('educator')`
        * 403s every single data call — so the one admin account could sign in and
-       * then do nothing at all. The portal exists now; this is the branch that
-       * reaches it.
+       * then do nothing at all.
        */
       navigate(
-        data.role === 'admin'
-          ? '/admin/dashboard'
-          : data.role === 'educator'
-            ? '/educator/dashboard'
-            : '/student/dashboard',
+        data.must_change_password
+          ? '/set-password'
+          : data.role === 'admin'
+            ? '/admin/dashboard'
+            : data.role === 'educator'
+              ? '/educator/dashboard'
+              : '/student/dashboard',
         { replace: true }
       );
     } catch (err: unknown) {
@@ -99,182 +88,133 @@ export default function Login() {
   };
 
   return (
-    <div ref={wrapperRef} className="min-h-screen bg-page text-slate-200 flex flex-col relative overflow-hidden font-sans animate-page-fade">
-
-      <div className="fixed inset-0 pointer-events-none z-0">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(218,226,253,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(218,226,253,0.03)_1px,transparent_1px)] bg-[size:4rem_4rem]"></div>
-        <div className="absolute top-[-10%] right-[-10%] w-[60vw] h-[60vw] max-w-[800px] max-h-[800px] bg-primary-fixed-dim/15 rounded-full blur-[120px] mix-blend-screen animate-pulse duration-1000"></div>
-        <div className="absolute bottom-[-10%] left-[-10%] w-[50vw] h-[50vw] max-w-[700px] max-h-[700px] bg-emerald-500/10 rounded-full blur-[150px] mix-blend-screen"></div>
+    <AuthShell>
+      <div className="flex flex-col items-center text-center mb-7">
+        <BrandMark />
+        {/* The wordmark is a `<p>`, not a heading — the page keeps ONE `<h1>`,
+            and it is "Welcome back", which is what this screen is about. A
+            product name stacked above it as a second heading would give the
+            document two competing top-level titles for a screen with one job.
+            It sits tight under the mark (`mt-3`) so the two read as one logo
+            lockup, with the larger gap below separating the brand from the
+            greeting. */}
+        <p className="font-display text-lg font-bold text-white tracking-tight mt-3">LearnSyncAI</p>
+        <p className="font-sans text-xs text-slate-500 mt-6">Please enter your details</p>
+        <h1 className="font-display text-3xl font-bold text-white mt-1">Welcome back</h1>
       </div>
 
-      <main className="flex-grow flex items-center justify-center p-4 w-full max-w-[1000px] mx-auto relative z-10 min-h-screen">
-
-        <div className="w-full bg-surface-container/40 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col lg:flex-row max-h-none lg:max-h-[90vh]">
-
-          <div className="hidden lg:flex w-full lg:w-1/2 relative bg-gradient-to-br from-surface-container-high/80 to-surface-container-lowest/80 p-8 flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
-            <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop')] bg-cover bg-center opacity-10 mix-blend-luminosity"></div>
-
-            <div className="relative z-10">
-              <div className="w-14 h-14 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
-                <BrainCircuit className="w-7 h-7 text-primary-fixed-dim" />
-              </div>
-              <h1 className="font-display text-4xl font-bold text-white mb-4 leading-tight">Welcome back to <span className="text-primary-fixed-dim">LearnSync AI</span></h1>
-              <p className="font-sans text-slate-400 leading-relaxed">
-                Access your private BKT adaptive study space, track your latent mastery vectors, and securely clone peer workspaces.
-              </p>
-            </div>
-
-            <div className="relative z-10 space-y-3 mt-10">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 backdrop-blur-md">
-                <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                <div>
-                  <p className="font-display font-semibold text-sm text-slate-200">Database-Level Security</p>
-                  <p className="font-sans text-xs text-slate-400">PostgreSQL Row-Level Security (RLS)</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 backdrop-blur-md">
-                <Sparkles className="w-5 h-5 text-amber-400" />
-                <div>
-                  <p className="font-display font-semibold text-sm text-slate-200">Adaptive AI Tracking</p>
-                  <p className="font-sans text-xs text-slate-400">Bayesian Knowledge Tracing (BKT) routing</p>
-                </div>
-              </div>
-            </div>
+      <form className="flex flex-col gap-3" onSubmit={handleLogin}>
+        {error && (
+          <div
+            role="alert"
+            className="bg-rose-500/10 border border-rose-500/20 text-rose-300 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in"
+          >
+            <span className="shrink-0 w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center font-bold text-xs mt-px">
+              !
+            </span>
+            <p>{error}</p>
           </div>
+        )}
 
-          <div className="w-full lg:w-1/2 p-6 md:p-10 flex flex-col justify-center bg-surface-container-lowest/50 relative overflow-y-auto no-scrollbar">
+        <AuthField
+          id="username"
+          label="Username"
+          type="text"
+          value={username}
+          onChange={setUsername}
+          autoComplete="username"
+          inputProps={{ spellCheck: false, autoCapitalize: 'none' }}
+        />
 
-            <div className="w-full max-w-[320px] mx-auto flex flex-col justify-center">
-              <div className="lg:hidden flex flex-col items-center mb-6 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(0,218,243,0.2)]">
-                  <BrainCircuit className="w-8 h-8 text-primary-fixed-dim" />
-                </div>
-                <h1 className="font-display text-3xl font-bold text-white">LearnSync AI</h1>
-                <p className="font-sans text-sm text-slate-400 mt-2">Authenticate tenant session.</p>
-              </div>
+        <AuthField
+          id="password"
+          label="Password"
+          type={showPassword ? 'text' : 'password'}
+          value={password}
+          onChange={setPassword}
+          /* ⚠️ `current-password`, NOT `new-password`. This is a sign-in form;
+             `new-password` tells a password manager to offer to GENERATE one
+             rather than fill the saved one, so the field fought the browser on
+             every visit. */
+          autoComplete="current-password"
+          trailing={
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-pressed={showPassword}
+              className="absolute inset-y-0 right-0 px-4 flex items-center text-slate-500 hover:text-white transition-colors rounded-r-xl focus-visible:outline-none focus-visible:text-primary-fixed-dim"
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          }
+        />
 
-              <div className="mb-6">
-                <h2 className="hidden lg:block font-display text-2xl font-bold text-white mb-1">Sign In</h2>
-                <p className="hidden lg:block font-sans text-sm text-slate-400">Authenticate via Supabase Gateway to access your study space.</p>
-              </div>
+        {/*
+          ⚠️ A PLACEHOLDER FOR THE REAL RESET FLOW — KEEP IT. There is no SMTP on
+          this project yet (`register` passes `email_confirm: true` precisely
+          because none exists), so a reset mail cannot be sent today; the mail
+          flow is planned and this is where it lands. When it does, swap the
+          `onClick` for a route and delete the hint below.
 
-              <form className="flex flex-col gap-5" onSubmit={handleLogin}>
+          ⚠️ IT IS A `<button>`, NOT `<a href="#">`, WHICH IS WHAT IT USED TO BE.
+          An empty-fragment href scrolls the page to the top on click and is
+          announced as a link to nowhere; a button with no destination yet is
+          simply a control. Do not "fix" it back into an anchor before there is
+          somewhere for it to go.
 
-                {error && (
-                  <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl text-sm flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
-                    <div className="shrink-0 w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center mt-0.5">!</div>
-                    <p>{error}</p>
-                  </div>
-                )}
-
-                <div className="relative group">
-                  <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
-                  <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
-                    <div className="pl-4 pr-3 py-3 flex items-center justify-center text-slate-500 group-focus-within:text-primary-fixed-dim transition-colors">
-                      <AtSign className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
-                    </div>
-                    <div className="relative flex-1 flex flex-col justify-center">
-                      <input
-                        type="text"
-                        id="username"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        required
-                        placeholder=" "
-                        autoComplete="username"
-                        spellCheck={false}
-                        autoCapitalize="none"
-                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-4 focus:outline-none transition-all placeholder-transparent z-10"
-                      />
-                      <label
-                        htmlFor="username"
-                        className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300
-                        peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
-                        peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
-                      >
-                        Username
-                      </label>
-                      <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="relative group">
-                  <div className="absolute -inset-0.5 bg-gradient-to-r from-primary-fixed-dim via-indigo-500 to-emerald-400 rounded-2xl blur opacity-0 group-focus-within:opacity-20 transition duration-700"></div>
-                  <div className="relative flex items-stretch bg-page-60 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden group-focus-within:border-white/20 transition-all duration-300 shadow-[inset_0_2px_15px_rgba(0,0,0,0.4)]">
-                    <div className="pl-4 pr-3 py-3 flex items-center justify-center text-slate-500 group-focus-within:text-primary-fixed-dim transition-colors">
-                      <Lock className="w-5 h-5 group-focus-within:scale-110 group-focus-within:-rotate-3 transition-transform duration-300" />
-                    </div>
-                    <div className="relative flex-1 flex flex-col justify-center">
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        id="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                        placeholder=" "
-                        autoComplete="new-password"
-                        className="peer w-full bg-transparent text-white font-sans text-sm pt-4 pb-1 pr-12 focus:outline-none transition-all placeholder-transparent z-10"
-                      />
-                      <label
-                        htmlFor="password"
-                        className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-400 text-sm transition-all duration-300 
-                        peer-focus:text-[9px] peer-focus:top-2.5 peer-focus:text-primary-fixed-dim peer-focus:font-bold peer-focus:tracking-widest peer-focus:uppercase
-                        peer-[:not(:placeholder-shown)]:text-[9px] peer-[:not(:placeholder-shown)]:top-2.5 peer-[:not(:placeholder-shown)]:font-bold peer-[:not(:placeholder-shown)]:tracking-widest peer-[:not(:placeholder-shown)]:uppercase pointer-events-none"
-                      >
-                        Password
-                      </label>
-                      <div className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-primary-fixed-dim via-indigo-400 to-emerald-400 w-0 peer-focus:w-full transition-all duration-500 ease-out"></div>
-
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-500 hover:text-white transition-colors focus:outline-none z-20"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between mt-0">
-                  <label className="flex items-center gap-2 cursor-pointer group">
-                    <div className="relative flex items-center justify-center w-4 h-4 rounded border border-white/20 bg-surface-container group-hover:border-primary-fixed-dim/50 transition-colors">
-                      <input type="checkbox" className="peer sr-only" />
-                      <div className="absolute inset-0 bg-primary-fixed-dim scale-0 peer-checked:scale-100 rounded transition-transform"></div>
-                      <ShieldCheck className="w-3 h-3 text-black absolute opacity-0 peer-checked:opacity-100 transition-opacity z-10" />
-                    </div>
-                    <span className="font-sans text-xs text-slate-400 group-hover:text-slate-200 transition-colors">Remember me</span>
-                  </label>
-                  <a href="#" className="font-sans text-xs text-primary-fixed-dim hover:text-primary-container transition-colors">Forgot password?</a>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="mt-2 w-full bg-gradient-to-r from-primary-fixed-dim to-primary-fixed text-on-primary-fixed font-display text-base font-bold py-3 px-6 rounded-xl hover:shadow-[0_0_30px_rgba(0,218,243,0.3)] transition-all duration-300 active:scale-[0.98] flex justify-center items-center gap-2 group disabled:opacity-70 disabled:pointer-events-none"
-                >
-                  {isLoading ? (
-                    <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
-                  ) : (
-                    <>
-                      <span>Login</span>
-                      <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                    </>
-                  )}
-                </button>
-              </form>
-
-              <div className="mt-6 pt-6 border-t border-white/5 text-center">
-                <span className="font-sans text-slate-400">Don't have an account? </span>
-                <Link to="/register" className="font-sans font-semibold text-primary-fixed-dim hover:text-white transition-colors ml-1">
-                  Create one now
-                </Link>
-              </div>
-            </div>
-          </div>
+          Until then it answers the question truthfully rather than doing
+          nothing: an administrator is the ONLY password-recovery path in the
+          product (`POST /api/admin/accounts/:userId/password`).
+        */}
+        <div className="flex justify-end -mt-0.5">
+          <button
+            type="button"
+            onClick={() => setShowResetHint((prev) => !prev)}
+            aria-expanded={showResetHint}
+            className="font-sans text-xs font-semibold text-primary-fixed-dim hover:text-white transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-fixed-dim"
+          >
+            Forgot password?
+          </button>
         </div>
-      </main>
-    </div>
+
+        {showResetHint && (
+          <p className="font-sans text-xs text-slate-400 bg-white/[0.03] border border-white/10 rounded-xl px-3.5 py-2.5 leading-relaxed fade-in">
+            Ask your school administrator to set a new password for you. They can reset it from the
+            Accounts page.
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="mt-3 w-full bg-primary-fixed-dim text-on-primary-fixed font-display text-sm font-bold py-3 px-6 rounded-xl hover:brightness-110 transition-all active:scale-[0.98] flex justify-center items-center gap-2 disabled:opacity-70 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest"
+        >
+          {isLoading ? <Spinner className="w-4 h-4" /> : 'Sign in'}
+        </button>
+      </form>
+
+      {/*
+        ⚠️ ONE LINE, AND IT REPLACES THREE CONTROLS THAT COULD NOT WORK.
+        (Forgot password is NOT one of them — it is kept above, as a placeholder
+        for the mail flow that is coming.)
+
+        "Remember for 30 days" — an unbound checkbox with nothing to bind it to:
+        `supabase-js` persists the session to localStorage regardless, so it
+        offered a choice the library does not expose, and 30 days is not the
+        refresh-token lifetime either.
+
+        "Sign in with Google" — removed at the team's request, and the reasoning
+        holds all the way down: an account here carries a role and a grade level
+        that decide which materials it can open, and a Google identity supplies
+        neither. It was inert anyway — no `onClick`, no provider configured, and
+        `signInWithOAuth` appears nowhere in the codebase.
+
+        "Don't have an account? Sign up" — the page it pointed at is deleted.
+      */}
+      <p className="mt-6 pt-5 border-t border-white/5 font-sans text-xs text-slate-500 text-center leading-relaxed">
+        Accounts are created by your school administrator.
+      </p>
+    </AuthShell>
   );
 }

@@ -6,9 +6,9 @@ import {
   BookOpen,
   Flag,
   LayoutGrid,
-  RefreshCw,
-  X,
+  X
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import Modal from '../../../components/ui/Modal';
 import { LABEL } from '../../../components/ui/surfaces';
 import {
@@ -247,14 +247,14 @@ export default function TestSessionView({
   );
 
   return (
-    <div className="animate-in fade-in duration-300 lg:grid lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-8 lg:items-start">
+    <div className="fade-in duration-300 lg:grid lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-8 lg:items-start">
       <div className="flex flex-col items-center min-w-0">
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="w-full max-w-3xl mb-5">
         <div className="flex items-center justify-between gap-3 mb-3">
           <button
             onClick={() => setShowExit(true)}
-            className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 font-sans font-semibold text-xs sm:text-sm uppercase tracking-widest shrink-0"
+            className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 font-sans font-semibold text-xs sm:text-sm uppercase tracking-widest shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]"
           >
             <ArrowLeft className="w-4 h-4" /> Exit
           </button>
@@ -269,7 +269,7 @@ export default function TestSessionView({
               it above lg, so there is never both. */}
           <button
             onClick={() => setShowNav(true)}
-            className="lg:hidden flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition-colors font-sans text-xs text-slate-400 tabular-nums"
+            className="lg:hidden flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors font-sans text-xs text-slate-400 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]"
           >
             <LayoutGrid className="w-3.5 h-3.5" />
             {positionLabel}
@@ -311,7 +311,7 @@ export default function TestSessionView({
       <div className="w-full max-w-3xl">
         <div
           key={screenIdx}
-          className="bg-surface-container-lowest rounded-3xl border border-white/10 p-5 sm:p-8 min-h-[20rem] animate-in fade-in duration-200"
+          className="bg-surface-container-lowest rounded-3xl border border-white/10 shadow-xl shadow-black/25 p-5 sm:p-8 min-h-[20rem] fade-in duration-200"
         >
           {screen.kind === 'matching' ? (
             <MatchingBlock screen={screen} answers={answers} onAnswer={setAnswer} />
@@ -339,7 +339,7 @@ export default function TestSessionView({
           <button
             onClick={() => goTo(screenIdx - 1)}
             disabled={screenIdx === 0}
-            className="px-4 sm:px-5 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:text-white hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-3 sm:px-5 py-2.5 rounded-xl font-sans text-sm font-semibold text-slate-300 hover:text-white hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]"
           >
             <ArrowLeft className="w-4 h-4" /> Previous
           </button>
@@ -347,7 +347,7 @@ export default function TestSessionView({
           {screenIdx < screens.length - 1 ? (
             <button
               onClick={() => goTo(screenIdx + 1)}
-              className="px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all flex items-center gap-2"
+              className="px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 rounded-xl font-sans text-sm font-semibold transition-all flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
               Next <ArrowRight className="w-4 h-4" />
             </button>
@@ -355,12 +355,19 @@ export default function TestSessionView({
             <button
               onClick={() => void handleFinish()}
               disabled={isFinishing}
-              className="px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-5 sm:px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
               {isFinishing ? (
-                <><RefreshCw className="w-4 h-4 animate-spin" /> Checking…</>
+                <><Spinner className="w-4 h-4" /> Checking…</>
               ) : (
-                <><Flag className="w-4 h-4" /> Finish &amp; See Results</>
+                /* "Previous" + "Finish & See Results" measures ~338px of the
+                   343px a 375px phone has, and overflows outright at 360px. Same
+                   shortening as `AssessmentRunner`'s submit. */
+                <>
+                  <Flag className="w-4 h-4" />
+                  <span className="sm:hidden">Finish</span>
+                  <span className="hidden sm:inline">Finish &amp; See Results</span>
+                </>
               )}
             </button>
           )}
@@ -384,6 +391,18 @@ export default function TestSessionView({
       </div>
 
       {/* ── Navigator, desktop ──────────────────────────────────────────── */}
+      {/*
+       * ⚠️ `9rem` IS A BOUND, NOT A MEASUREMENT, and `AssessmentRunner` carries
+       * the same literal. Deliberately NOT deduplicated into a shared constant:
+       * that runner is the temporary pre/post instrument and must delete in one
+       * file without reaching into Test Mode.
+       *
+       * The real constraint is the scrollport of `<main>` in `StudySpace`, which
+       * is `100vh` minus the study-space header (~7rem: `pt-4`, a `pb-4` title
+       * row, and a `pb-3` tab strip). Erring LARGE is free — `max-h` only ever
+       * caps — so if the bottom of the rail is ever clipped on a short window,
+       * raise this number rather than lowering it.
+       */}
       <aside className="hidden lg:block sticky top-0 max-h-[calc(100vh-9rem)] overflow-y-auto no-scrollbar">
         {nav}
       </aside>
@@ -410,7 +429,7 @@ export default function TestSessionView({
           </button>
           <button
             onClick={() => void handleExit()}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-white text-black font-sans text-sm font-semibold hover:bg-slate-200 transition-colors"
+            className="flex-1 px-4 py-2.5 rounded-xl bg-primary-fixed-dim text-black font-sans text-sm font-semibold hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface transition-colors"
           >
             Leave
           </button>
@@ -467,7 +486,7 @@ function QuestionNav({
     <div className="space-y-4">
       {groups.map((group) => (
         <div key={`${group.format}-${group.items[0].index}`}>
-          <p className="font-sans text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+          <p className="font-sans text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
             <span className="text-primary-fixed-dim">{sectionLabel(formats, group.format)}</span>
             {' · '}
             {FORMAT_META[group.format].label}
@@ -482,7 +501,7 @@ function QuestionNav({
                   onClick={() => onJump(screenOf.get(q.index) ?? 0)}
                   aria-current={isCurrent ? 'true' : undefined}
                   aria-label={`Question ${q.index + 1}${isAnswered ? ', answered' : ', not answered'}`}
-                  className={`h-8 rounded-lg font-display text-xs font-bold tabular-nums transition-all ${
+                  className={`h-9 lg:h-8 rounded-lg font-display text-xs font-bold tabular-nums transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] ${
                     isCurrent
                       ? 'bg-primary-fixed-dim text-black'
                       : isAnswered
@@ -544,7 +563,8 @@ function SingleQuestion({
               <button
                 key={option}
                 onClick={() => onAnswer(option)}
-                className={`py-4 rounded-xl border font-display text-base font-semibold transition-all ${
+                aria-pressed={selected}
+                className={`py-4 rounded-xl border font-display text-base font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest ${
                   selected
                     ? 'bg-primary-fixed-dim/15 border-primary-fixed-dim text-primary-fixed-dim'
                     : 'bg-surface-container/40 border-white/10 text-slate-300 hover:border-white/25 hover:text-white'
@@ -611,7 +631,8 @@ function ChoiceList({
           <button
             key={option}
             onClick={() => onAnswer(option)}
-            className={`w-full flex items-start gap-3 text-left p-3.5 rounded-xl border transition-all ${
+            aria-pressed={selected}
+            className={`w-full flex items-start gap-3 text-left p-3.5 rounded-xl border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest ${
               selected
                 ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/60'
                 : 'bg-surface-container/30 border-white/10 hover:border-white/25'
@@ -754,7 +775,7 @@ function MatchingBlock({
         }}
         onClick={(e) => e.stopPropagation()}
         aria-pressed={isHeld}
-        className={`inline-flex items-center gap-2 pl-2 pr-2.5 py-1.5 rounded-lg font-sans text-xs font-semibold cursor-grab active:cursor-grabbing select-none transition-all ${
+        className={`inline-flex items-center gap-2 pl-2 pr-2.5 py-2 sm:py-1.5 rounded-lg font-sans text-xs font-semibold cursor-grab active:cursor-grabbing select-none transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest ${
           isHeld
             ? 'bg-primary-fixed-dim text-black shadow-lg shadow-primary-fixed-dim/20 scale-105'
             : placed

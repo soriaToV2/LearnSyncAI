@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { ChevronLeft, Plus, BookOpen, Layers, Lock, Brain, Award, BrainCircuit, ChartColumn, ChevronDown, Loader2, ClipboardList } from 'lucide-react';
+import { ChevronLeft, Plus, BookOpen, Layers, Lock, Brain, Award, BrainCircuit, ChartColumn, ChevronDown, ClipboardList } from 'lucide-react';
+import Spinner from '../../components/ui/Spinner';
 import { Link, useParams } from 'react-router-dom';
 import FlashcardsTab from './studySpaceTabs/FlashcardsTab';
 import FreeRecallTab from './studySpaceTabs/FreeRecallTab';
@@ -10,10 +11,11 @@ import AnalyticsTab from './studySpaceTabs/AnalyticsTab';
 import { api } from '../../lib/api';
 import { isDue } from '../../lib/reviewSchedule';
 import DueBadge from '../../components/ui/DueBadge';
+import { SUBJECT_COLOR } from '../../components/educator/SubjectBadge';
 import { subjectName } from '../../data/mockEducator';
 // PRE/POST GATE — temporary research instrument (migration 0024). Delete this
 // import, the two tabs it mounts, the lock state and the banner to remove it.
-import AssessmentTab from './studySpaceTabs/AssessmentTab';
+import StudentAssessmentTab from './studySpaceTabs/StudentAssessmentTab';
 import { assessmentApi, type AssessmentSummary } from '../../lib/assessments';
 
 interface Flashcard {
@@ -193,11 +195,19 @@ export default function StudySpace() {
 
   const handleConnectCourse = () => setCourseConnected(true);
 
+  /* Subject accent, matching the card in the spaces list and `SubjectBadge`
+     everywhere else — one subject, one colour across the whole app. */
+  const subjectAccent = (currentSpace?.subject && SUBJECT_COLOR[currentSpace.subject]) || '#94a3b8';
+
   if (isLoading) {
+    /* Height must match the loaded view below. It was a bare `h-screen`, which on
+       mobile is 4rem taller than the shell allows (StudentLayout reserves pt-16
+       for its fixed top bar) — so the page scrolled by a header's height and then
+       snapped back the moment the data landed. */
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-background">
+      <div className="h-[calc(100vh-4rem)] md:h-screen w-full flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 text-white">
-          <Loader2 className="w-8 h-8 animate-spin text-primary-fixed-dim" />
+          <Spinner className="w-8 h-8 text-primary-fixed-dim" />
           <span className="font-sans text-sm font-semibold">Loading study space...</span>
         </div>
       </div>
@@ -208,7 +218,7 @@ export default function StudySpace() {
     <div className="h-[calc(100vh-4rem)] md:h-screen w-full flex flex-col bg-background overflow-hidden relative animate-page-fade">
 
       {/* Header */}
-      <header className="shrink-0 pt-4 px-4 md:px-6 border-b border-white/10 bg-page-50 backdrop-blur-md flex flex-col z-40">
+      <header className="shrink-0 pt-4 px-4 sm:px-5 md:px-6 border-b border-white/10 bg-page-50 backdrop-blur-md flex flex-col z-40">
         <div className="flex items-center justify-between pb-4 gap-2">
           <div className="flex items-center gap-2 md:gap-4 min-w-0">
             <Link to="/student/spaces" className="p-2 -ml-2 text-slate-400 hover:text-white transition-colors rounded-full hover:bg-white/5 shrink-0">
@@ -216,12 +226,31 @@ export default function StudySpace() {
             </Link>
             <div className="flex flex-wrap items-center gap-2 min-w-0">
               <h1 className="font-display text-base md:text-xl font-medium text-on-surface flex items-center gap-2 min-w-0">
-                <span className="w-2.5 h-2.5 rounded-full bg-primary-fixed-dim shadow-[0_0_10px_rgba(0,218,243,0.5)] shrink-0" />
+                {/* The glow was `rgba(0,218,243,0.5)` — the cyan theme's accent
+                    written out as a literal, so it stayed cyan under every
+                    other palette and became an invisible cyan haze on white.
+                    `--theme-glow` is the token `applyThemeToElement` sets for
+                    exactly this, and it is already per-theme. */}
+                <span className="w-2.5 h-2.5 rounded-full bg-primary-fixed-dim shadow-[0_0_10px_var(--theme-glow)] shrink-0" />
                 <span className="truncate">{currentSpace ? currentSpace.title : 'Study Space'}</span>
               </h1>
+              {/*
+                * No `Lock` icon here any more. It meant "the subject is fixed",
+                * but `Lock` ALSO means "this lesson is blocked by an unsat test"
+                * on this very screen (the amber banner below, and the pickers in
+                * every tab). One icon carrying two meanings on one page is worse
+                * than the pill carrying none — it is self-evidently a subject
+                * label, and nothing here offers to change it.
+                */}
               {currentSpace?.subject && (
-                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-white/10 bg-white/5 text-slate-400 font-sans text-[10px] font-bold uppercase tracking-wider shrink-0">
-                  <Lock className="w-3 h-3" />
+                <span
+                  className="px-2.5 py-1 rounded-full border font-sans text-[10px] font-bold uppercase tracking-wider shrink-0"
+                  style={{
+                    color: subjectAccent,
+                    backgroundColor: `${subjectAccent}1a`,
+                    borderColor: `${subjectAccent}33`,
+                  }}
+                >
                   {subjectName(currentSpace.subject)}
                 </span>
               )}
@@ -231,17 +260,26 @@ export default function StudySpace() {
 
         {/* Navigation Tabs Container */}
         <div className="relative w-full mb-2">
-          <div className="hidden sm:flex gap-4 md:gap-8 overflow-x-auto pb-px scrollbar-none pr-8">
+          {/* `scrollbar-none` was a dead class — nothing in the codebase or in
+              Tailwind v4 defines it, so the strip has been showing the scrollbar
+              it meant to hide. The real utility is `.no-scrollbar` (index.css).
+              Gaps are tighter than the old `gap-4 md:gap-8` because this row now
+              carries up to EIGHT tabs once both study phases are released. */}
+          <div className="hidden sm:flex gap-3 md:gap-6 overflow-x-auto pb-px no-scrollbar pr-8">
             <button
               onClick={() => setActiveTab('resources')}
-              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'resources' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'resources' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
               <BookOpen className="w-4 h-4" />
-              <span className="hidden sm:inline">Learning Resources</span>
-            </button>            
+              {/* `hidden sm:inline` here was a no-op: this span lives inside a
+                  `hidden sm:flex` row, so it appeared exactly when its parent
+                  did. Moved to `lg:` so the three long labels actually shorten
+                  the strip on tablet widths, where eight tabs overflow. */}
+              <span><span className="hidden lg:inline">Learning </span>Resources</span>
+            </button>
             <button
               onClick={() => setActiveTab('flashcards')}
-              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'flashcards' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'flashcards' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
               <Layers className="w-4 h-4" />
               Flashcards
@@ -249,28 +287,28 @@ export default function StudySpace() {
             </button>
             <button
               onClick={() => setActiveTab('free-recall')}
-              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'free-recall' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'free-recall' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
               <Brain className="w-4 h-4" />
-              Free Recall<span className="hidden sm:inline"> AI</span>
+              Free Recall<span className="hidden lg:inline"> AI</span>
             </button>
             <button
               onClick={() => setActiveTab('feynman')}
-              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'feynman' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'feynman' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
               <Award className="w-4 h-4" />
-              Feynman<span className="hidden sm:inline"> Technique</span>
+              Feynman<span className="hidden lg:inline"> Technique</span>
             </button>
             <button
               onClick={() => setActiveTab('adaptive-test')}
-              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'adaptive-test' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'adaptive-test' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
               <BrainCircuit className="w-4 h-4" />
               Test Mode
             </button>
             <button
               onClick={() => setActiveTab('analytics')}
-              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'analytics' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+              className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'analytics' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
               {/* No `hidden sm:inline` split: the other labels drop a long half
                   on small screens, and "Analytics" is already one short word. */}
@@ -283,7 +321,7 @@ export default function StudySpace() {
             {hasPre && (
               <button
                 onClick={() => setActiveTab('pre-test')}
-                className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'pre-test' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+                className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'pre-test' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
               >
                 <ClipboardList className="w-4 h-4" />
                 Pre-Test
@@ -293,7 +331,7 @@ export default function StudySpace() {
             {hasPost && (
               <button
                 onClick={() => setActiveTab('post-test')}
-                className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'post-test' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
+                className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'post-test' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
               >
                 <ClipboardList className="w-4 h-4" />
                 Post-Test
@@ -306,34 +344,42 @@ export default function StudySpace() {
           <div className="sm:hidden relative z-50">
             <button
               onClick={() => setIsMobileTabMenuOpen(!isMobileTabMenuOpen)}
-              className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-white/10 bg-white/5 text-white font-sans text-sm font-semibold hover:bg-white/10 transition-all duration-300"
+              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-white/10 bg-white/5 text-white font-sans text-sm font-semibold hover:bg-white/10 transition-all duration-300"
             >
-              <div className="flex items-center gap-2.5">
-                {activeTab === 'flashcards' && <><Layers className="w-4 h-4 text-primary-fixed-dim" /> <span>Flashcards</span></>}
-                {/* On the collapsed button the menu is shut, so the badge has to
-                    ride here too — otherwise a student on a phone only learns
-                    cards are due by opening the menu. */}
-                {activeTab !== 'flashcards' && <DueBadge count={dueCount} />}
-                {activeTab === 'free-recall' && <><Brain className="w-4 h-4 text-primary-fixed-dim" /> <span>Free Recall AI</span></>}
-                {activeTab === 'feynman' && <><Award className="w-4 h-4 text-primary-fixed-dim" /> <span>Feynman Technique</span></>}
-                {activeTab === 'adaptive-test' && <><BrainCircuit className="w-4 h-4 text-primary-fixed-dim" /> <span>Test Mode</span></>}
-                {activeTab === 'resources' && <><BookOpen className="w-4 h-4 text-primary-fixed-dim" /> <span>Learning Resources</span></>}
-                {activeTab === 'analytics' && <><ChartColumn className="w-4 h-4 text-primary-fixed-dim" /> <span>Analytics</span></>}
+              <div className="flex items-center gap-2.5 min-w-0">
+                {activeTab === 'flashcards' && <><Layers className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Flashcards</span></>}
+                {activeTab === 'free-recall' && <><Brain className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Free Recall AI</span></>}
+                {activeTab === 'feynman' && <><Award className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Feynman Technique</span></>}
+                {activeTab === 'adaptive-test' && <><BrainCircuit className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Test Mode</span></>}
+                {activeTab === 'resources' && <><BookOpen className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Learning Resources</span></>}
+                {activeTab === 'analytics' && <><ChartColumn className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Analytics</span></>}
                 {/* PRE/POST GATE — temporary. */}
-                {activeTab === 'pre-test' && <><ClipboardList className="w-4 h-4 text-primary-fixed-dim" /> <span>Pre-Test</span></>}
-                {activeTab === 'post-test' && <><ClipboardList className="w-4 h-4 text-primary-fixed-dim" /> <span>Post-Test</span></>}
+                {activeTab === 'pre-test' && <><ClipboardList className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Pre-Test</span></>}
+                {activeTab === 'post-test' && <><ClipboardList className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Post-Test</span></>}
               </div>
-              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isMobileTabMenuOpen ? 'rotate-180' : ''}`} />
+
+              <div className="flex items-center gap-2 shrink-0">
+                {/* The menu is shut on the collapsed button, so the due count has
+                    to ride out here — otherwise a student on a phone only learns
+                    cards are waiting by opening the menu. It sits beside the
+                    CHEVRON rather than beside the active tab's label, where it
+                    rendered immediately left of that label and read as though
+                    Analytics (or whichever tab was open) had items due. */}
+                {activeTab !== 'flashcards' && <DueBadge count={dueCount} />}
+                <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isMobileTabMenuOpen ? 'rotate-180' : ''}`} />
+              </div>
             </button>
 
             {isMobileTabMenuOpen && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl z-[60] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="absolute top-full left-0 right-0 mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl z-[60] py-2 fade-in duration-200">
                 {[
                   { id: 'flashcards', label: 'Flashcards', icon: Layers },
                   { id: 'free-recall', label: 'Free Recall AI', icon: Brain },
                   { id: 'feynman', label: 'Feynman Technique', icon: Award },
                   { id: 'adaptive-test', label: 'Test Mode', icon: BrainCircuit },
-                  { id: 'resources', label: 'Course Resources', icon: BookOpen },
+                  // "Course Resources" here vs "Learning Resources" on the desktop
+                  // tab — same destination, two names. Matched to the tab.
+                  { id: 'resources', label: 'Learning Resources', icon: BookOpen },
                   { id: 'analytics', label: 'Analytics', icon: ChartColumn },
                   // PRE/POST GATE — temporary. Absent until the phase is released.
                   ...(hasPre ? [{ id: 'pre-test', label: 'Pre-Test', icon: ClipboardList }] : []),
@@ -369,10 +415,10 @@ export default function StudySpace() {
           the student moves between tabs looking for the lesson that vanished from
           their pickers. */}
       {lockedNotice && activeTab !== 'pre-test' && activeTab !== 'post-test' && (
-        <div className="w-full max-w-7xl mx-auto px-4 md:px-8 pt-4">
+        <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 pt-4">
           <button
             onClick={() => setActiveTab(lockedNotice.phase === 'pre' ? 'pre-test' : 'post-test')}
-            className="w-full text-left flex items-start gap-3 p-3.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] hover:bg-amber-500/10 transition-colors"
+            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] w-full text-left flex items-start gap-3 p-3.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] hover:bg-amber-500/10 transition-colors"
           >
             <Lock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
             <span className="min-w-0">
@@ -392,7 +438,23 @@ export default function StudySpace() {
       )}
 
       {/* Main Content */}
-      <main key={activeTab} className="flex-1 overflow-y-auto w-full max-w-7xl mx-auto p-4 md:p-8 relative animate-page-fade">
+      {/*
+        * `scrollbar-gutter: stable` — this is what stops the content twitching
+        * horizontally when you switch tabs.
+        *
+        * The tabs disagree about whether they can overflow: Resources, Free Recall
+        * and Feynman root at `h-full` and so exactly fit this box, while Flashcards
+        * and Test Mode are natural-flow and can exceed it. Since this element is
+        * `overflow-y-auto`, moving from one of the first group to one of the second
+        * ADDS a scrollbar, which narrows the content box by the scrollbar's width —
+        * and it lands mid-`animate-page-fade`, so the reflow reads as the panel
+        * animating inwards rather than as a scrollbar appearing.
+        *
+        * Reserving the gutter permanently costs a few px of width on platforms with
+        * classic scrollbars and nothing at all where they overlay (mobile, macOS),
+        * in exchange for a content width that never changes between tabs.
+        */}
+      <main key={activeTab} className="flex-1 overflow-y-auto [scrollbar-gutter:stable] w-full max-w-7xl mx-auto p-4 sm:p-6 md:p-8 relative animate-page-fade">
 
         {activeTab === 'flashcards' && (
           <FlashcardsTab
@@ -422,11 +484,11 @@ export default function StudySpace() {
             difference between the two is what the SERVER will return afterwards
             (a pre-test result carries no per-question review). */}
         {activeTab === 'pre-test' && (
-          <AssessmentTab spaceId={spaceId!} phase="pre" onLocksChanged={() => void refreshLocks()} />
+          <StudentAssessmentTab spaceId={spaceId!} phase="pre" onLocksChanged={() => void refreshLocks()} />
         )}
 
         {activeTab === 'post-test' && (
-          <AssessmentTab spaceId={spaceId!} phase="post" onLocksChanged={() => void refreshLocks()} />
+          <StudentAssessmentTab spaceId={spaceId!} phase="post" onLocksChanged={() => void refreshLocks()} />
         )}
 
         {/* Read-only. `<main key={activeTab}>` remounts this on every entry, so

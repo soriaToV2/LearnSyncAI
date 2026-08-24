@@ -1,9 +1,10 @@
-import { User, GraduationCap, CalendarDays, Clock } from 'lucide-react';
+import { User, GraduationCap, CalendarDays, Clock, UserCircle } from 'lucide-react';
 import { useStudentTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatDate } from '../../data/mockEducator';
 import ProfileCard, { type ProfileFact } from '../../components/common/ProfileCard';
 import AccountForms from '../../components/common/AccountForms';
+import AppearanceCard from '../../components/common/AppearanceCard';
 
 /**
  * The student's own account.
@@ -21,7 +22,7 @@ import AccountForms from '../../components/common/AccountForms';
  * 0003 removed as contradicting the paper's data-isolation guarantee.
  */
 export default function Profile() {
-  const { theme } = useStudentTheme();
+  const { theme, mode, setMode } = useStudentTheme();
   const { user, isLoading, error } = useAuth();
 
   const facts: ProfileFact[] = [
@@ -56,12 +57,25 @@ export default function Profile() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-[900px] mx-auto px-4 md:px-8 py-8 md:py-12">
-        <header className="mb-8">
-          <h1 className="font-display text-3xl font-semibold text-on-surface">Profile</h1>
-          <p className="font-sans text-sm text-on-surface-variant mt-1.5">
-            Your account details and how you sign in.
-          </p>
+      {/* `sm:` steps on both axes so a tablet does not jump straight from phone
+          padding to desktop padding — the scale the rest of the student portal
+          uses. */}
+      <div className="max-w-[900px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
+        <header className="mb-7 sm:mb-8 flex items-center gap-3 min-w-0">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+            style={{ backgroundColor: theme.accentSoft }}
+          >
+            <UserCircle className="w-5 h-5" style={{ color: theme.accent }} />
+          </div>
+          <div className="min-w-0">
+            <h1 className="font-display text-2xl sm:text-3xl font-semibold text-on-surface truncate">
+              Profile
+            </h1>
+            <p className="font-sans text-sm text-on-surface-variant mt-0.5">
+              Your account details and how you sign in.
+            </p>
+          </div>
         </header>
 
         {error && (
@@ -79,6 +93,16 @@ export default function Profile() {
             accentSoft={theme.accentSoft}
             roleLabel="Student"
             facts={facts}
+          />
+
+          {/* Above the credential forms: it is the one control here that takes
+              effect instantly and asks for nothing, so burying it under two
+              password fields would hide the cheapest thing on the page. */}
+          <AppearanceCard
+            mode={mode}
+            onChange={setMode}
+            accent={theme.accent}
+            accentSoft={theme.accentSoft}
           />
 
           <AccountForms accent={theme.accent} />

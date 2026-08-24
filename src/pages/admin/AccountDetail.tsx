@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, AtSign, CalendarDays, Clock, GraduationCap, Hourglass, KeyRound,
-  Loader2, ShieldCheck, ShieldOff, User, UserPen, Check, Copy,
+  ArrowLeft, AtSign, CalendarDays, Clock, GraduationCap, Hourglass, KeyRound, ShieldCheck, ShieldOff, User, UserPen, Check, Copy
 } from 'lucide-react';
-import { useAdminTheme } from '../../context/ThemeContext';
+import Spinner from '../../components/ui/Spinner';
+import { useAdminTheme, inkOn } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import {
   Field, Section, SaveButton, StatusLine, messageOf, useSubmitLatch, type Status,
@@ -40,6 +40,17 @@ import { CannotSignInPill, ErrorBanner, formatWhen, RolePill, StatusPill } from 
 
 const GRADES = [7, 8, 9, 10];
 /* The password rule lives in `src/lib/account.ts`, mirroring the server. */
+
+/**
+ * ⚠️ `ring-inset`, matching the rest of the admin portal. Several of these
+ * controls are segmented pickers spaced `gap-2` — the four grade buttons are 8px
+ * apart — so an outward ring plus an offset overlaps the neighbour it sits
+ * beside. The page had NO focus indicator on anything: not the back link, not
+ * the role or grade pickers, not the copy button, and not the three buttons that
+ * disable an account.
+ */
+const FOCUS =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
 // ── details: names, username, role, grade ───────────────────────────────────
 
@@ -168,8 +179,9 @@ function DetailsForm({
                     setRole(r);
                     if (r === 'educator') setGrade(null);
                   }}
+                  aria-pressed={role === r}
                   style={role === r ? { borderColor: accent, color: accent } : undefined}
-                  className={`px-4 py-2.5 rounded-xl border font-display text-xs font-bold capitalize transition-colors ${
+                  className={`px-4 py-2.5 rounded-xl border font-display text-xs font-bold capitalize transition-colors ${FOCUS} ${
                     role === r ? 'bg-white/[0.06]' : 'border-white/10 text-slate-400 hover:text-slate-200'
                   }`}
                 >
@@ -183,7 +195,7 @@ function DetailsForm({
                * fully reversible — the same property archiving a material relies
                * on. Without saying so, an admin reasonably assumes it is not.
                */
-              <p className="font-sans text-[11px] text-amber-300/90 leading-relaxed">
+              <p className="font-sans text-[11px] text-amber-300/90 leading-relaxed animate-swap-in">
                 Changing the role changes which portal they land in. Nothing is deleted — their
                 study spaces and progress stay exactly as they are, and switching back restores
                 access to them.
@@ -192,8 +204,10 @@ function DetailsForm({
           </div>
         )}
 
+        {/* Appears when the role becomes `student`, so it gets the in-place
+            entrance rather than snapping into the middle of the form. */}
         {role === 'student' && (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 animate-swap-in">
             <span className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
               Grade level
             </span>
@@ -203,8 +217,10 @@ function DetailsForm({
                   key={g}
                   type="button"
                   onClick={() => setGrade(g)}
+                  aria-pressed={grade === g}
+                  aria-label={`Grade ${g}`}
                   style={grade === g ? { borderColor: accent, color: accent } : undefined}
-                  className={`px-3 py-2.5 rounded-xl border font-display text-xs font-bold transition-colors ${
+                  className={`px-3 py-2.5 rounded-xl border font-display text-xs font-bold transition-colors ${FOCUS} ${
                     grade === g ? 'bg-white/[0.06]' : 'border-white/10 text-slate-400 hover:text-slate-200'
                   }`}
                 >
@@ -286,8 +302,10 @@ function PasswordForm({ account, accent }: { account: AdminAccountDetail; accent
           }
         />
 
+        {/* The one moment the new password exists in readable form, so it arrives
+            with an entrance rather than appearing without acknowledgement. */}
         {issued && (
-          <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 flex flex-col gap-2">
+          <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 flex flex-col gap-2 animate-swap-in">
             <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
               Give them these
             </p>
@@ -297,7 +315,7 @@ function PasswordForm({ account, accent }: { account: AdminAccountDetail; accent
             <button
               type="button"
               onClick={copy}
-              className="self-start flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors font-sans text-xs"
+              className={`self-start flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors font-sans text-xs ${FOCUS}`}
             >
               {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
               {copied ? 'Copied' : 'Copy'}
@@ -401,24 +419,27 @@ function StatusForm({
           </div>
 
           {confirming && !disabled ? (
-            <div className="rounded-xl bg-rose-500/[0.07] border border-rose-500/20 p-4 flex flex-col gap-3">
+            <div className="rounded-xl bg-rose-500/[0.07] border border-rose-500/20 p-4 flex flex-col gap-3 animate-swap-in">
               <p className="font-sans text-sm text-rose-200 leading-relaxed">
                 Disable {account.first_name} {account.last_name}? They will be signed out of
                 everything immediately. Nothing is deleted — you can enable the account again at any
                 time and it returns exactly as it is now.
               </p>
+              {/* Equal halves on a phone: two content-fitted buttons here are
+                  ~130px and ~90px, and the confirming one being visibly the
+                  smaller of a destructive pair is the wrong way round. */}
               <div className="flex gap-3">
                 <button
                   onClick={apply}
                   disabled={busy}
-                  className="px-5 py-2.5 rounded-xl bg-rose-600 text-white font-display text-xs font-bold hover:brightness-110 transition-all active:scale-95 flex items-center gap-2 disabled:opacity-60"
+                  className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-rose-600 text-[#ffffff] font-display text-xs font-bold hover:brightness-110 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 whitespace-nowrap ${FOCUS}`}
                 >
-                  {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  {busy && <Spinner className="w-3.5 h-3.5" />}
                   Yes, disable
                 </button>
                 <button
                   onClick={() => setConfirming(false)}
-                  className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 hover:text-white font-display text-xs font-bold transition-colors"
+                  className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 hover:text-white font-display text-xs font-bold transition-colors whitespace-nowrap ${FOCUS}`}
                 >
                   Cancel
                 </button>
@@ -429,12 +450,12 @@ function StatusForm({
               <button
                 onClick={() => (disabled ? apply() : setConfirming(true))}
                 disabled={busy}
-                style={disabled ? { backgroundColor: accent, color: '#04121a' } : undefined}
-                className={`px-5 py-2.5 rounded-xl font-display text-xs font-bold flex items-center gap-2 transition-all active:scale-95 disabled:opacity-60 ${
+                style={disabled ? { backgroundColor: accent, color: inkOn(accent) } : undefined}
+                className={`px-5 py-2.5 rounded-xl font-display text-xs font-bold flex items-center gap-2 transition-all active:scale-95 disabled:opacity-60 whitespace-nowrap ${FOCUS} ${
                   disabled ? 'hover:brightness-110' : 'bg-white/5 border border-rose-500/30 text-rose-300 hover:bg-rose-500/10'
                 }`}
               >
-                {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {busy && <Spinner className="w-3.5 h-3.5" />}
                 {disabled ? 'Enable account' : 'Disable account'}
               </button>
               <StatusLine status={status} />
@@ -475,12 +496,12 @@ export default function AccountDetail() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-[900px] mx-auto px-4 md:px-8 py-8 md:py-12">
+      <div className="max-w-[900px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
         <Link
           to="/admin/accounts"
-          className="inline-flex items-center gap-2 font-sans text-xs text-slate-400 hover:text-white transition-colors mb-6"
+          className={`inline-flex items-center gap-2 font-sans text-xs text-slate-400 hover:text-white transition-colors mb-6 rounded group ${FOCUS}`}
         >
-          <ArrowLeft className="w-3.5 h-3.5" />
+          <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
           All accounts
         </Link>
 
@@ -488,19 +509,21 @@ export default function AccountDetail() {
 
         {isLoading && (
           <div className="flex items-center gap-2.5 text-slate-500 py-12 justify-center">
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Spinner className="w-4 h-4" />
             <span className="font-sans text-sm">Loading…</span>
           </div>
         )}
 
+        {/* Entrance on the loaded body, not the wrapper — the wrapper's own fade
+            fires while the spinner is the only thing on screen. */}
         {account && (
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-6 animate-tab-in">
             {/*
               Rendered only while it is true, and it says what to DO about it —
               a banner that appears on every account would stop being read.
             */}
             {account.must_change_password && account.status === 'active' && (
-              <div className="flex items-start gap-3 px-5 py-4 rounded-2xl bg-amber-500/[0.07] border border-amber-500/20">
+              <div className="flex items-start gap-3 px-4 sm:px-5 py-4 rounded-2xl bg-amber-500/[0.07] border border-amber-500/20">
                 <Hourglass className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-display text-sm font-bold text-white">Waiting for first sign-in</p>
@@ -513,10 +536,18 @@ export default function AccountDetail() {
               </div>
             )}
 
-            <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-              <div className="flex items-center gap-4 mb-6">
+            {/* ⚠️ MATCHES `Section`'s SURFACE EXACTLY — `shadow-lg shadow-black/20`
+                and `p-5 sm:p-6`. This card had neither, so the page opened with a
+                flat identity block sitting above three raised forms, which read as
+                the top card having failed to render rather than as a deliberate
+                difference. */}
+            <section className="rounded-2xl bg-white/[0.02] border border-white/5 shadow-lg shadow-black/20 p-5 sm:p-6">
+              {/* `items-start` below `sm:`, not `items-center`: the pill row wraps
+                  to two lines on a phone, and centring a 56px monogram against a
+                  three-line block leaves it floating in the middle of the name. */}
+              <div className="flex items-start sm:items-center gap-3.5 sm:gap-4 mb-6">
                 <div
-                  className="w-16 h-16 rounded-2xl border flex items-center justify-center shrink-0 font-display text-xl font-bold select-none"
+                  className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl border flex items-center justify-center shrink-0 font-display text-lg sm:text-xl font-bold select-none"
                   style={{
                     backgroundColor: theme.accentSoft,
                     borderColor: `${theme.accent}40`,
@@ -526,11 +557,15 @@ export default function AccountDetail() {
                   {(account.first_name[0] ?? '') + (account.last_name[0] ?? '') || '?'}
                 </div>
                 <div className="min-w-0">
-                  <h1 className="font-display text-xl font-semibold text-white truncate">
+                  {/* `break-words`, not `truncate`. A truncated NAME on the page
+                      whose entire subject is that one person is the wrong thing to
+                      cut — "Maria Cristina Villanueva-Santos" became "Maria Cristi…"
+                      at 375px with a whole line of empty space beneath it. */}
+                  <h1 className="font-display text-lg sm:text-xl font-semibold text-white break-words">
                     {account.first_name} {account.last_name}
                     {isSelf && <span className="text-slate-500 font-sans text-sm ml-2">(you)</span>}
                   </h1>
-                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2">
                     <RolePill role={account.role} />
                     <StatusPill account={account} />
                     {account.username === null && <CannotSignInPill />}

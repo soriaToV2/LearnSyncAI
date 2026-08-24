@@ -258,8 +258,8 @@ export default function TimedTriviaGame() {
 
   if (loading || !targetData) {
     return (
-      <div className="max-w-3xl mx-auto animate-in fade-in duration-300">
-        <GameStatusScreen tone="cyan" state={error ? 'error' : 'loading'} />
+      <div className="max-w-3xl mx-auto fade-in duration-300">
+        <GameStatusScreen tone="violet" state={error ? 'error' : 'loading'} />
       </div>
     );
   }
@@ -268,10 +268,10 @@ export default function TimedTriviaGame() {
     const summary = summaryFor(score, queue.length);
     const perfect = queue.length > 0 && score === queue.length;
     return (
-      <div className="max-w-3xl mx-auto animate-in fade-in duration-300">
+      <div className="max-w-3xl mx-auto fade-in duration-300">
         <ScreenFlash flash={flash} />
         <ResultScreen
-          tone="cyan"
+          tone="violet"
           icon={Trophy}
           title={summary.title}
           message={summary.message}
@@ -291,11 +291,11 @@ export default function TimedTriviaGame() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto animate-in fade-in zoom-in-95 duration-300">
+    <div className="max-w-3xl mx-auto fade-in duration-300">
       <ScreenFlash flash={flash} />
 
       <GameStage
-        tone="cyan"
+        tone="violet"
         icon={Hourglass}
         title="Timed Trivia"
         subtitle={targetData.courseName}
@@ -362,13 +362,16 @@ export default function TimedTriviaGame() {
                     className={clsx(
                       'group relative flex items-center gap-3 rounded-2xl border p-4 text-left',
                       'font-sans text-sm font-medium transition-all duration-300 outline-none select-none',
+                      /* `outline-none` above strips the browser indicator and
+                         nothing replaced it — on the only control in this game. */
+                      'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]',
                       answered
                         ? isCorrect
                           ? 'bg-emerald-500/10 border-emerald-500 text-emerald-300 animate-pop'
                           : isSelected
                             ? 'bg-rose-500/10 border-rose-500 text-rose-300'
                             : 'border-white/5 text-slate-600'
-                        : 'bg-white/[0.02] border-white/[0.08] text-slate-300 hover:bg-white/[0.05] hover:border-cyan-400/40 active:scale-[0.98]',
+                        : 'bg-white/[0.02] border-white/[0.08] text-slate-300 hover:bg-white/[0.05] hover:border-violet-400/40 active:scale-[0.98]',
                       dimmed && 'opacity-50'
                     )}
                   >
@@ -382,7 +385,7 @@ export default function TimedTriviaGame() {
                             : isSelected
                               ? 'bg-rose-500 border-rose-500 text-white'
                               : 'border-white/5 text-slate-600'
-                          : 'bg-white/[0.03] border-white/10 text-slate-500 group-hover:border-cyan-400/50 group-hover:text-cyan-400'
+                          : 'bg-white/[0.03] border-white/10 text-slate-500 group-hover:border-violet-400/50 group-hover:text-violet-400'
                       )}
                     >
                       {OPTION_KEYS[i]}

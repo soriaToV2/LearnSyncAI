@@ -92,6 +92,10 @@ export default function TermMatchingGame() {
     return clearTimers;
   }, [startGame, clearTimers]);
 
+  /* The card currently anchored, for the mobile selection bar below. */
+  const selectedCard =
+    [...termCards, ...defCards].find((c) => c.id === selectedCardId) ?? null;
+
   const totalPairs = targetData?.terms.length ?? 0;
   const matchedPairs = matchedIds.length / 2;
   const accuracy = moves === 0 ? 100 : Math.round((matchedPairs / moves) * 100);
@@ -199,9 +203,15 @@ export default function TermMatchingGame() {
         disabled={isMatched}
         aria-pressed={isSelected}
         className={clsx(
-          'group relative w-full flex items-start gap-3 rounded-2xl border p-4 text-left',
+          'group relative w-full flex items-start gap-3 rounded-2xl border p-3.5 sm:p-4 text-left',
           'font-sans text-sm leading-relaxed transition-all duration-300 outline-none select-none',
-          isTerm ? 'min-h-[4.5rem]' : 'min-h-[6rem]',
+          /* Natural height on a phone. The fixed minimums existed to keep the two
+             columns visually aligned, and below `sm:` there are no two columns —
+             they cost ~200px of dead space across a stacked board instead. */
+          isTerm ? 'sm:min-h-[4.5rem]' : 'sm:min-h-[6rem]',
+          /* `outline-none` above removes the browser indicator, and nothing
+             replaced it — on the primary interaction of the game. */
+          'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]',
           isRecent && 'animate-pop',
           isFailed && 'animate-shake',
           isMatched
@@ -211,7 +221,13 @@ export default function TermMatchingGame() {
               : isSelected
                 ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim text-white'
                 : isHinted
-                  ? 'bg-cyan-500/[0.07] border-cyan-400/60 text-white'
+                  ? /* ⚠️ AMBER, NOT CYAN. `cyan-400` (#22d3ee) is eight units from
+                       this game's own `primary-fixed-dim` (#00daf3), so the hinted
+                       card looked identical to the SELECTED card — erasing the one
+                       distinction the hint exists to make. Amber is already the
+                       hint colour across the games: the crossword's AI Assist and
+                       the hint badge in the post-game review both use it. */
+                    'bg-amber-400/[0.07] border-amber-400/60 text-white'
                   : 'bg-white/[0.02] border-white/[0.08] text-slate-300 hover:bg-white/[0.05] hover:border-primary-fixed-dim/40 active:scale-[0.98]'
         )}
       >
@@ -224,7 +240,7 @@ export default function TermMatchingGame() {
               : isSelected
                 ? 'bg-primary-fixed-dim border-primary-fixed-dim text-black'
                 : isHinted
-                  ? 'bg-cyan-400 border-cyan-400 text-black'
+                  ? 'bg-amber-400 border-amber-400 text-black'
                   : 'bg-white/[0.03] border-white/10 text-slate-500 group-hover:border-primary-fixed-dim/50 group-hover:text-primary-fixed-dim'
           )}
         >
@@ -241,8 +257,8 @@ export default function TermMatchingGame() {
         </span>
 
         {isHinted && (
-          <span className="absolute bottom-1.5 right-2.5 flex items-center gap-1 font-sans text-[9px] font-bold uppercase tracking-widest text-cyan-400">
-            <Sparkles className="w-2.5 h-2.5" /> AI Hint
+          <span className="absolute bottom-1.5 right-2.5 flex items-center gap-1 font-sans text-[10px] font-bold uppercase tracking-widest text-amber-400">
+            <Sparkles className="w-3 h-3" /> AI Hint
           </span>
         )}
 
@@ -255,7 +271,7 @@ export default function TermMatchingGame() {
 
   if (loading || !targetData) {
     return (
-      <div className="max-w-4xl mx-auto animate-in fade-in duration-300">
+      <div className="max-w-4xl mx-auto fade-in duration-300">
         <GameStatusScreen tone="primary" state={error ? 'error' : 'loading'} />
       </div>
     );
@@ -263,7 +279,7 @@ export default function TermMatchingGame() {
 
   if (victory) {
     return (
-      <div className="max-w-4xl mx-auto animate-in fade-in duration-300">
+      <div className="max-w-4xl mx-auto fade-in duration-300">
         <ScreenFlash flash={flash} />
         <ResultScreen
           tone="primary"
@@ -285,7 +301,15 @@ export default function TermMatchingGame() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto animate-in fade-in zoom-in-95 duration-300">
+    /* Clearance only while the selection bar is up, so an idle board does not
+       carry a strip of dead space at the foot of the page — the mistake made on
+       the crossword, where permanent padding sat inside the card. */
+    <div
+      className={clsx(
+        'max-w-4xl mx-auto fade-in duration-300',
+        selectedCard && 'pb-24 sm:pb-0'
+      )}
+    >
       <ScreenFlash flash={flash} />
 
       <GameStage
@@ -309,7 +333,7 @@ export default function TermMatchingGame() {
         actions={
           <button
             onClick={startGame}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] text-slate-400 hover:text-white hover:bg-white/[0.06] transition-all font-sans text-xs font-semibold"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] text-slate-400 hover:text-white hover:bg-white/[0.06] transition-all font-sans text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
           >
             <RefreshCw className="w-3.5 h-3.5" /> Reset
           </button>
@@ -324,19 +348,23 @@ export default function TermMatchingGame() {
           </div>
 
           {/* Board: two panels split by a spine */}
-          <div className="relative grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-10">
+          {/* Paired from `sm:` up, not `md:`. At 640px each column is still ~276px,
+              which a definition reads fine in — and every width below that is the
+              stacked board the bar at the foot of this file exists to rescue, so
+              it is worth ending 128px sooner. */}
+          <div className="relative grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 md:gap-10">
             {/* Center spine */}
             <div
               aria-hidden
-              className="hidden md:block absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-gradient-to-b from-transparent via-white/10 to-transparent"
+              className="hidden sm:block absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-gradient-to-b from-transparent via-white/10 to-transparent"
             />
 
-            <div className="space-y-3">
+            <div className="space-y-2.5 sm:space-y-3">
               <ColumnHeader label="Terms" count={termCards.length} />
               {termCards.map(renderCard)}
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2.5 sm:space-y-3">
               <ColumnHeader label="Definitions" count={defCards.length} />
               {defCards.map(renderCard)}
             </div>
@@ -356,6 +384,40 @@ export default function TermMatchingGame() {
           </div>
         </div>
       </GameStage>
+
+      {/*
+        ── THE MOBILE SELECTION BAR ──
+        Below `sm:` the two columns stack, so every Term sits above every
+        Definition. With 8 pairs you tap a term, scroll ~500px to reach the
+        definitions, and THE CARD YOU ANCHORED IS OFF SCREEN THE WHOLE TIME — its
+        `Crosshair` and coloured border are the only feedback and neither is
+        visible. This keeps the anchor on screen for the one moment it matters.
+
+        Conditional, not permanent chrome: it appears only between the two taps,
+        which is why the wrapper's bottom clearance is conditional too.
+
+        `fixed` for the same reason as the crossword's solving bar — `GameStage`
+        is `overflow-hidden`, which makes it a scrollport that never scrolls, so
+        a sticky child would be inert. No keyboard is involved here, so this one
+        needs no `visualViewport` handling.
+      */}
+      {selectedCard && (
+        <div className="sm:hidden fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-surface-container-lowest/95 backdrop-blur border-t border-white/10">
+          <div className="min-w-0 flex-1">
+            <p className="font-sans text-[10px] font-bold uppercase tracking-widest text-primary-fixed-dim">
+              {selectedCard.type === 'term' ? 'Now pick its definition' : 'Now pick its term'}
+            </p>
+            <p className="font-sans text-sm text-white truncate mt-0.5">{selectedCard.text}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedCardId(null)}
+            className="shrink-0 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03] font-sans text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,13 +6,14 @@ import {
   ClipboardList,
   Flame,
   Gamepad2,
+  History,
   Layers,
   PenLine,
-  RefreshCw,
   Sparkles,
   Target,
-  Trophy,
+  Trophy
 } from 'lucide-react';
+import Spinner from '../../components/ui/Spinner';
 import { CARD, SECTION, toneText } from '../../components/ui/surfaces';
 import MeterBar from '../../components/ui/MeterBar';
 import DueBadge from '../../components/ui/DueBadge';
@@ -71,12 +72,25 @@ import {
  * screen, and a button would advertise a staleness the mount already handles.
  */
 
-const FOCUS_ICON_BY_KIND: Record<ActivityItem['kind'], typeof ClipboardList> = {
+type IconType = typeof ClipboardList;
+
+const FOCUS_ICON_BY_KIND: Record<ActivityItem['kind'], IconType> = {
   test: ClipboardList,
   free_recall: PenLine,
   feynman: Sparkles,
   game: Gamepad2,
 };
+
+/**
+ * Local, presentation-only surfaces layered on top of the shared `CARD` token.
+ *
+ * Kept in this file rather than in `surfaces.ts` — that token is reused by Test
+ * Mode and the cognitive tabs, and giving every card on the app a border/shadow
+ * is a decision for those pages to make separately, not a side effect of this
+ * one's redesign.
+ */
+const PANEL = `${CARD} border border-white/5 shadow-lg shadow-black/20`;
+const PANEL_INTERACTIVE = `${PANEL} hover:bg-surface-container-lowest/70 hover:border-white/10 hover:shadow-xl transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface`;
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -114,7 +128,7 @@ export default function StudentDashboard() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-[1200px] mx-auto px-4 md:px-8 py-8 md:py-12">
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12">
         <header className="mb-8">
           <h1 className="font-display text-3xl md:text-4xl font-bold text-on-surface tracking-tight">
             {name ? `Hi, ${name}` : 'Your progress'}
@@ -132,7 +146,7 @@ export default function StudentDashboard() {
 
         {isLoading ? (
           <div className="flex items-center justify-center py-24">
-            <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />
+            <Spinner className="w-5 h-5 text-slate-500" />
           </div>
         ) : !data || noSpaces ? (
           <EmptyCard
@@ -147,19 +161,22 @@ export default function StudentDashboard() {
             cta={{ to: '/student/spaces', label: 'Open your spaces' }}
           />
         ) : (
-          <>
+          <div className="animate-tab-in">
             {/* ── Summary strip ────────────────────────────────────────────── */}
-            <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
-              <Stat label="Study spaces" value={String(data.counts.spaces)} />
-              <Stat label="Lessons" value={String(data.counts.materials)} />
+            <section className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+              <Stat icon={Layers} label="Study spaces" value={String(data.counts.spaces)} tone="text-primary-fixed-dim" />
+              <Stat icon={ClipboardList} label="Lessons" value={String(data.counts.materials)} tone="text-secondary-fixed-dim" />
               <Stat
+                icon={Target}
                 label="Concepts assessed"
                 value={`${m!.concepts_assessed} / ${m!.concepts_total}`}
+                tone="text-slate-200"
               />
               <Stat
+                icon={Trophy}
                 label="Concepts mastered"
                 value={nothingAssessed ? '—' : String(m!.concepts_mastered)}
-                className={nothingAssessed ? '' : toneText.good}
+                tone={nothingAssessed ? 'text-white' : toneText.good}
               />
             </section>
 
@@ -172,7 +189,7 @@ export default function StudentDashboard() {
               </div>
 
               {/* ── Side column ────────────────────────────────────────────── */}
-              <div className="col-span-12 lg:col-span-4 space-y-6">
+              <div className="col-span-12 lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-6">
                 <StreakCard g={data.gamification} />
                 <DueCard total={data.flashcards_due} spaces={m!.by_space} />
                 {data.resume_test && <ResumeCard test={data.resume_test} />}
@@ -180,7 +197,7 @@ export default function StudentDashboard() {
                 <RecentCard items={data.recent} />
               </div>
             </div>
-          </>
+          </div>
         )}
       </div>
     </main>
@@ -189,10 +206,30 @@ export default function StudentDashboard() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Stat({ label, value, className = '' }: { label: string; value: string; className?: string }) {
+/** A small tinted box behind a card's header icon — the page's color-coding device. */
+function IconChip({ icon: Icon, className = '' }: { icon: IconType; className?: string }) {
   return (
-    <div className={`${CARD} p-4 text-center`}>
-      <p className={`font-display text-xl font-bold tabular-nums ${className || 'text-white'}`}>{value}</p>
+    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${className}`}>
+      <Icon className="w-4 h-4" />
+    </div>
+  );
+}
+
+function Stat({
+  icon: Icon,
+  label,
+  value,
+  tone = 'text-white',
+}: {
+  icon: IconType;
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className={`${CARD} border border-white/5 p-4 text-center`}>
+      <Icon className={`w-4 h-4 mx-auto mb-2 ${tone}`} />
+      <p className={`font-display text-xl font-bold tabular-nums ${tone}`}>{value}</p>
       <p className="font-sans text-[10px] uppercase tracking-widest text-slate-500 font-semibold mt-1">
         {label}
       </p>
@@ -210,14 +247,14 @@ function EmptyCard({
   cta?: { to: string; label: string };
 }) {
   return (
-    <div className={`${CARD} py-16 px-6 text-center`}>
+    <div className={`${PANEL} py-16 px-6 text-center animate-tab-in`}>
       <Layers className="w-10 h-10 text-slate-500 opacity-20 mx-auto mb-4" />
       <p className="font-sans text-sm text-slate-400 mb-1">{title}</p>
       <p className="font-sans text-xs text-slate-600 max-w-md mx-auto leading-relaxed">{body}</p>
       {cta && (
         <Link
           to={cta.to}
-          className="inline-flex items-center gap-2 mt-6 px-5 py-2.5 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-container transition-all active:scale-[0.98]"
+          className="inline-flex items-center gap-2 mt-6 px-5 py-2.5 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-container transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         >
           {cta.label} <ArrowRight className="w-4 h-4" />
         </Link>
@@ -246,9 +283,11 @@ function MasteryCard({ data }: { data: DashboardData }) {
   const tone = TIER_TONE[tier];
 
   return (
-    <div className={`${CARD} p-5`}>
+    <div
+      className={`${CARD} border border-white/10 shadow-[0_10px_25px_-8px_rgba(0,0,0,0.35),0_0_45px_-12px_var(--theme-glow)] p-5`}
+    >
       <div className="flex items-center gap-2">
-        <ChartColumn className="w-4 h-4 text-primary-fixed-dim" />
+        <IconChip icon={ChartColumn} className="bg-primary-fixed-dim/10 text-primary-fixed-dim" />
         <h2 className={SECTION}>Overall mastery</h2>
       </div>
 
@@ -289,7 +328,10 @@ function MasteryCard({ data }: { data: DashboardData }) {
           {data.curve && (
             <div className="mt-6">
               <MasteryCurve points={data.curve.points} toneClass={toneText[tone]} />
-              <div className="flex items-center justify-between mt-2">
+              {/* Wraps rather than overflows: with a stride AND truncation the
+                  right-hand caption runs to ~275px, which does not fit beside
+                  the range on a 375px phone. */}
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mt-2">
                 <p className="font-sans text-[11px] text-slate-600">
                   {masteryPercent(data.curve.points[0].m_doc)}% →{' '}
                   <span className="text-slate-400 font-semibold">
@@ -298,7 +340,7 @@ function MasteryCard({ data }: { data: DashboardData }) {
                 </p>
                 <p className="font-sans text-[11px] text-slate-600">
                   {data.curve.total_updates} update{data.curve.total_updates === 1 ? '' : 's'}
-                  {data.curve.stride > 1 && ` · showing every ${ordinal(data.curve.stride)}`}
+                  {data.curve.stride > 1 && ` · showing every ${ordinal(data.curve.stride)} point`}
                   {data.curve.truncated && ' · most recent only'}
                 </p>
               </div>
@@ -332,9 +374,9 @@ function FocusCard({
   if (assessed === 0) return null;
 
   return (
-    <div className={`${CARD} p-5`}>
+    <div className={`${PANEL} p-5`}>
       <div className="flex items-center gap-2">
-        <Target className="w-4 h-4 text-primary-fixed-dim" />
+        <IconChip icon={Target} className="bg-primary-fixed-dim/10 text-primary-fixed-dim" />
         <h2 className={SECTION}>Focus next</h2>
       </div>
       {/* The honesty guard, same wording as the Analytics tab. Without it a student
@@ -375,7 +417,7 @@ function FocusRow({ concept }: { concept: FocusConcept }) {
   return (
     <Link
       to={concept.space_id ? `/student/space/${concept.space_id}` : '/student/spaces'}
-      className="block group"
+      className="block group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
@@ -401,7 +443,10 @@ function SpacesCard({ spaces }: { spaces: SpaceMasteryRow[] }) {
 
   return (
     <div>
-      <h2 className={`${SECTION} mb-4`}>Your study spaces</h2>
+      <div className="flex items-center gap-2 mb-4">
+        <IconChip icon={Layers} className="bg-primary-fixed-dim/10 text-primary-fixed-dim" />
+        <h2 className={SECTION}>Your study spaces</h2>
+      </div>
       <div className="space-y-2">
         {spaces.map((s) => (
           <Fragment key={s.space_id}>
@@ -421,7 +466,7 @@ function SpaceRow({ space }: { space: SpaceMasteryRow }) {
   return (
     <Link
       to={`/student/space/${space.space_id}`}
-      className={`${CARD} block p-4 hover:bg-surface-container-lowest/70 transition-colors group`}
+      className={`${PANEL_INTERACTIVE} block p-4 group`}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -484,9 +529,12 @@ function StreakCard({ g }: { g: GamificationBlock }) {
   const days = g.day_streak;
 
   return (
-    <div className={`${CARD} p-5`}>
+    <div className={`${PANEL} p-5`}>
       <div className="flex items-center gap-2">
-        <Flame className={`w-4 h-4 ${days > 0 ? 'text-orange-400' : 'text-slate-500'}`} />
+        <IconChip
+          icon={Flame}
+          className={days > 0 ? 'bg-orange-400/10 text-orange-400' : 'bg-white/5 text-slate-500'}
+        />
         <h2 className={SECTION}>Study streak</h2>
       </div>
 
@@ -521,9 +569,9 @@ function BadgesCard({ badges }: { badges: GamificationBlock['badges'] }) {
   if (badges.length === 0) return null;
 
   return (
-    <div className={`${CARD} p-5`}>
+    <div className={`${PANEL} p-5`}>
       <div className="flex items-center gap-2">
-        <Trophy className="w-4 h-4 text-amber-400" />
+        <IconChip icon={Trophy} className="bg-amber-400/10 text-amber-400" />
         <h2 className={SECTION}>Badges</h2>
         <span className="font-sans text-xs text-slate-500 tabular-nums ml-auto">{badges.length}</span>
       </div>
@@ -558,10 +606,10 @@ function DueCard({ total, spaces }: { total: number; spaces: SpaceMasteryRow[] }
   return (
     <Link
       to={busiest ? `/student/space/${busiest.space_id}` : '/student/spaces'}
-      className={`${CARD} block p-5 hover:bg-surface-container-lowest/70 transition-colors group`}
+      className={`${PANEL_INTERACTIVE} block p-5 group`}
     >
       <div className="flex items-center gap-2">
-        <Layers className="w-4 h-4 text-primary-fixed-dim" />
+        <IconChip icon={Layers} className="bg-primary-fixed-dim/10 text-primary-fixed-dim" />
         <h2 className={SECTION}>Flashcards due</h2>
       </div>
       <p className="font-display text-3xl font-bold text-white tabular-nums mt-3">{total}</p>
@@ -581,10 +629,10 @@ function ResumeCard({ test }: { test: NonNullable<DashboardData['resume_test']> 
   return (
     <Link
       to={`/student/space/${test.space_id}`}
-      className={`${CARD} block p-5 hover:bg-surface-container-lowest/70 transition-colors group`}
+      className={`${PANEL_INTERACTIVE} block p-5 group`}
     >
       <div className="flex items-center gap-2">
-        <ClipboardList className="w-4 h-4 text-amber-400" />
+        <IconChip icon={ClipboardList} className="bg-tertiary-fixed-dim/10 text-tertiary-fixed-dim" />
         <h2 className={SECTION}>Unfinished test</h2>
       </div>
       <p className="font-sans text-sm font-semibold text-slate-200 mt-3 truncate">{test.title}</p>
@@ -598,7 +646,7 @@ function ResumeCard({ test }: { test: NonNullable<DashboardData['resume_test']> 
         label={`${test.answered} of ${test.total} answered`}
         className="mt-3"
       />
-      <span className="inline-flex items-center gap-1.5 font-sans text-xs font-semibold text-amber-400 mt-4 group-hover:gap-2.5 transition-all">
+      <span className="inline-flex items-center gap-1.5 font-sans text-xs font-semibold text-tertiary-fixed-dim mt-4 group-hover:gap-2.5 transition-all">
         Pick up where you left off <ArrowRight className="w-3.5 h-3.5" />
       </span>
     </Link>
@@ -607,8 +655,11 @@ function ResumeCard({ test }: { test: NonNullable<DashboardData['resume_test']> 
 
 function RecentCard({ items }: { items: ActivityItem[] }) {
   return (
-    <div className={`${CARD} p-5`}>
-      <h2 className={SECTION}>Recent activity</h2>
+    <div className={`${PANEL} p-5`}>
+      <div className="flex items-center gap-2">
+        <IconChip icon={History} className="bg-white/5 text-slate-400" />
+        <h2 className={SECTION}>Recent activity</h2>
+      </div>
       {items.length === 0 ? (
         <p className="font-sans text-xs text-slate-600 mt-3 leading-relaxed">
           Nothing yet. Study a deck, take a test or play a game and it shows up here.
@@ -675,7 +726,7 @@ const GAME_LABEL: Record<string, string> = {
   timed_trivia: 'Timed Trivia',
 };
 
-/** "2nd", "3rd", "4th" — for the curve's "showing every Nth" caption. */
+/** "2nd", "3rd", "4th" — for the curve's "showing every Nth point" caption. */
 function ordinal(n: number): string {
   const suffix = n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th';
   return `${n}${suffix}`;

@@ -183,7 +183,10 @@ function EmailForm({ accent }: { accent: string }) {
       title="Email address"
       description="Where the school can reach you. Changing it does not change how you sign in."
     >
-      <div className="mb-4 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/5">
+      {/* `bg-white/5` for the same reason as `ProfileCard`'s fact tiles — the
+          `Section` behind this is `bg-white/[0.02]`, so at the same value the
+          box had no edge against its own container. */}
+      <div className="mb-4 px-4 py-3 rounded-xl bg-white/5 border border-white/5">
         <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">
           Current
         </p>

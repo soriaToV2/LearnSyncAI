@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Award, RefreshCw, AlertCircle, CheckCircle2, MessageSquare, Lightbulb,
-  XCircle, AlertTriangle, PenTool, History,
+  Award, AlertCircle, CheckCircle2, MessageSquare, Lightbulb,
+  XCircle, AlertTriangle, PenTool, History, ChevronLeft
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import MultiSelectDropdown from '../../../components/ui/MultiSelectDropdown';
 import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
 import { api } from '../../../lib/api';
@@ -350,7 +351,10 @@ export default function FeynmanTab({ availableResources, spaceId, lockedIds }: F
     const activeFeedback = feedback;
     const activeLog = log;
     return (
-            <div className="space-y-5 animate-in fade-in duration-300">
+            /* `key` on the attempt id — see the twin note in `FreeRecallTab`.
+               Without it, switching between past explanations reuses the same
+               DOM node and the entrance never re-fires. */
+            <div key={activeLog.id} className="space-y-5 animate-tab-in">
               {/* Named before the score: the concepts graded below belong to
                   one lesson, and History can hold attempts across several. */}
               <AttemptMaterial label={materialLabel(activeLog.material_ids, availableResources)} />
@@ -474,7 +478,7 @@ export default function FeynmanTab({ availableResources, spaceId, lockedIds }: F
                 <div className="pt-2">
                   <button
                     onClick={startNewAttempt}
-                    className="w-full sm:w-auto px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all flex items-center justify-center gap-2"
+                    className="w-full sm:w-auto px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all flex items-center justify-center gap-2"
                   >
                     <PenTool className="w-4 h-4" /> Explain another
                   </button>
@@ -493,7 +497,7 @@ export default function FeynmanTab({ availableResources, spaceId, lockedIds }: F
   );
 
   const composer = (
-            <div className="animate-in fade-in">
+            <div className="fade-in">
               <div className="flex flex-wrap items-end gap-x-6 gap-y-4 mb-6">
                 <div className="flex flex-col gap-1.5">
                   <span className={LABEL}>Material</span>
@@ -507,7 +511,7 @@ export default function FeynmanTab({ availableResources, spaceId, lockedIds }: F
 
                 <div className="flex flex-col gap-1.5">
                   <span className={`${LABEL} flex items-center gap-1.5`}>
-                    Concepts {isFetchingConcepts && <RefreshCw className="w-3 h-3 animate-spin" />}
+                    Concepts {isFetchingConcepts && <Spinner className="w-3 h-3" />}
                   </span>
                   <MultiSelectDropdown
                     selectedValues={selectedConceptIds}
@@ -569,10 +573,10 @@ export default function FeynmanTab({ availableResources, spaceId, lockedIds }: F
                 <button
                   onClick={handleEvaluate}
                   disabled={!canEvaluate}
-                  className="px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {isEvaluating ? (
-                    <><RefreshCw className="w-4 h-4 animate-spin" /> Evaluating...</>
+                    <><Spinner className="w-4 h-4" /> Evaluating...</>
                   ) : (
                     'Evaluate Explanation'
                   )}
@@ -602,7 +606,10 @@ export default function FeynmanTab({ availableResources, spaceId, lockedIds }: F
               : composer}
         </div>
       ) : (
-        <div className="h-full flex flex-col sm:flex-row gap-6 animate-in fade-in">
+        /* One pane at a time below `lg`, for the nested-scroll reason spelled out
+           in the twin comment in FreeRecallTab. `historyLogId` already carries the
+           choice, so no extra state is involved. */
+        <div className="h-full flex flex-col lg:flex-row gap-5 lg:gap-6 fade-in">
           <AttemptsList
             title="Past Explanations"
             attempts={attempts}
@@ -613,10 +620,25 @@ export default function FeynmanTab({ availableResources, spaceId, lockedIds }: F
               setHistoryLogId(id);
               setShowAnswer(false);
             }}
+            className={historyLogId ? 'hidden lg:flex' : 'flex'}
           />
 
           {/* Same horizontal-clip rule as the study pane above. */}
-          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10 px-2">
+          <div
+            className={`flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10 px-2 ${
+              historyLogId ? 'block' : 'hidden lg:block'
+            }`}
+          >
+            {/* Outside the branches below, so it is present on the unreadable
+                case too — that is precisely when a student needs to get back. */}
+            {historyLogId && (
+              <button
+                onClick={() => setHistoryLogId(null)}
+                className="lg:hidden mb-4 inline-flex items-center gap-1.5 font-sans text-xs font-semibold uppercase tracking-widest text-slate-400 hover:text-white transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]"
+              >
+                <ChevronLeft className="w-4 h-4" /> All explanations
+              </button>
+            )}
             {activeLog && activeFeedback ? (
               <div className="max-w-3xl">{resultView(activeLog, activeFeedback, false)}</div>
             ) : activeLog ? (

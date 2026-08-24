@@ -5,9 +5,9 @@ import {
   BookOpen,
   Flag,
   LayoutGrid,
-  RefreshCw,
-  AlertTriangle,
+  AlertTriangle
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import Modal from '../../../components/ui/Modal';
 import { LABEL } from '../../../components/ui/surfaces';
 import {
@@ -84,6 +84,34 @@ export default function AssessmentRunner({
   const answered = Object.keys(answers).length;
   const unanswered = items.length - answered;
 
+  /*
+   * ⚠️ ACCIDENTAL-SKIP SAFETY NET — this is a measurement instrument, and RQ4
+   * subtracts the pre-test score from the post-test score, so a question lost to
+   * a stray tap is not a cosmetic problem: unanswered counts as wrong, which
+   * pushes the baseline DOWN and inflates the apparent gain.
+   *
+   * `skipped` counts only questions the student has already moved PAST without
+   * answering — not merely unanswered ones. That distinction is what makes it
+   * usable as a persistent indicator: `unanswered` starts at 20 and would scream
+   * on question one, whereas `skipped` is 0 until something is genuinely left
+   * behind.
+   *
+   * It informs and offers a one-tap return. It must NEVER gate `Next` — that rule
+   * is deliberate and documented below: blocking advance traps a student who
+   * cannot answer, and a trapped student loses the whole sitting rather than one
+   * item.
+   */
+  const skipped = useMemo(
+    () => items.filter((q, i) => i < current && !answers[q.index]).length,
+    [items, answers, current]
+  );
+
+  /** First unanswered question, for the jump-back controls. -1 when none. */
+  const firstUnanswered = useMemo(
+    () => items.findIndex((q) => !answers[q.index]),
+    [items, answers]
+  );
+
   useEffect(() => {
     enteredAt.current = Date.now();
   }, [current]);
@@ -158,7 +186,7 @@ export default function AssessmentRunner({
   if (!item) return null;
 
   return (
-    <div className="animate-in fade-in duration-300 lg:grid lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-8 lg:items-start">
+    <div className="fade-in duration-300 lg:grid lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-8 lg:items-start">
       <div className="flex flex-col items-center min-w-0">
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="w-full max-w-3xl mb-5">
@@ -175,18 +203,45 @@ export default function AssessmentRunner({
               <span className="hidden sm:inline"> · Multiple Choice</span>
             </span>
 
-            {/* Below lg the counter IS the way into the navigator; the rail
-                replaces it above lg, so there is never both. */}
-            <button
-              onClick={() => setShowNav(true)}
-              className="lg:hidden flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition-colors font-sans text-xs text-slate-400 tabular-nums"
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              {current + 1}/{items.length}
-            </button>
-            <span className="hidden lg:inline font-sans text-xs text-slate-500 tabular-nums shrink-0">
-              {current + 1}/{items.length}
-            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/*
+                * The skip signal, and it is a BUTTON rather than a label — one tap
+                * returns to the first question left behind. Appears on every
+                * question, at every width, because the two existing signals both
+                * failed on a phone: the unanswered warning showed only on the
+                * FINAL question, and the progress bar encodes answered state as
+                * `bg-primary-fixed-dim/40` against `bg-white/10`, which is
+                * indistinguishable across twenty ~15px segments.
+                *
+                * Amber, not rose: leaving a question is recoverable and not an
+                * error. Icon plus a bare number so it stays ~48px and does not
+                * squeeze the phase label on a 320px screen.
+                */}
+              {skipped > 0 && firstUnanswered >= 0 && (
+                <button
+                  onClick={() => goTo(firstUnanswered)}
+                  title={`${skipped} question${skipped === 1 ? '' : 's'} skipped — go back to the first one`}
+                  aria-label={`${skipped} question${skipped === 1 ? '' : 's'} skipped. Go back to the first unanswered question.`}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/15 border border-amber-500/25 text-amber-300 hover:bg-amber-500/25 transition-colors font-sans text-xs font-semibold tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                >
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  {skipped}
+                </button>
+              )}
+
+              {/* Below lg the counter IS the way into the navigator; the rail
+                  replaces it above lg, so there is never both. */}
+              <button
+                onClick={() => setShowNav(true)}
+                className="lg:hidden flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition-colors font-sans text-xs text-slate-400 tabular-nums"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                {current + 1}/{items.length}
+              </button>
+              <span className="hidden lg:inline font-sans text-xs text-slate-500 tabular-nums shrink-0">
+                {current + 1}/{items.length}
+              </span>
+            </div>
           </div>
 
           {/* One segment per question. Neutral by design — colouring by
@@ -219,7 +274,7 @@ export default function AssessmentRunner({
         <div className="w-full max-w-3xl">
           <div
             key={current}
-            className="bg-surface-container-lowest rounded-3xl border border-white/10 p-5 sm:p-8 min-h-[20rem] animate-in fade-in duration-200"
+            className="bg-surface-container-lowest rounded-3xl border border-white/10 p-5 sm:p-8 min-h-[20rem] fade-in duration-200"
           >
             <p className="font-display text-lg sm:text-xl text-white leading-relaxed mb-6">
               {item.prompt}
@@ -280,7 +335,7 @@ export default function AssessmentRunner({
             {current < items.length - 1 ? (
               <button
                 onClick={() => goTo(current + 1)}
-                className="px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all flex items-center gap-2"
+                className="px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all flex items-center gap-2"
               >
                 Next <ArrowRight className="w-4 h-4" />
               </button>
@@ -288,12 +343,22 @@ export default function AssessmentRunner({
               <button
                 onClick={() => setShowConfirm(true)}
                 disabled={isFinishing}
-                className="px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {isFinishing ? (
-                  <><RefreshCw className="w-4 h-4 animate-spin" /> Checking…</>
+                  <><Spinner className="w-4 h-4" /> Checking…</>
                 ) : (
-                  <><Flag className="w-4 h-4" /> Finish &amp; See Results</>
+                  <>
+                    <Flag className="w-4 h-4" />
+                    {/* "Previous" + "Finish & See Results" measures ~337px, which
+                        overflows a 320px phone once the card's own padding is
+                        taken — and 320px devices are realistic in the study
+                        cohort. The label shortens rather than the row wrapping,
+                        because a submit control that moves position between
+                        devices is worse than one with a shorter name. */}
+                    <span className="sm:hidden">Finish</span>
+                    <span className="hidden sm:inline">Finish &amp; See Results</span>
+                  </>
                 )}
               </button>
             )}
@@ -301,11 +366,21 @@ export default function AssessmentRunner({
 
           {/* Skipping is allowed on purpose — blocking Next means a stuck student
               can never reach the end. An unanswered item is simply wrong. */}
-          {current === items.length - 1 && unanswered > 0 && !isFinishing && (
-            <p className="font-sans text-xs text-amber-400/80 text-right mt-2">
-              {unanswered} question{unanswered === 1 ? '' : 's'} still unanswered — these will be
-              marked wrong.
-            </p>
+          {/* Actionable, not just informative. It named a problem the student had
+              no control to act on — the navigator that fixes it is behind a modal
+              on mobile, which you have to know to open. */}
+          {current === items.length - 1 && unanswered > 0 && !isFinishing && firstUnanswered >= 0 && (
+            <button
+              onClick={() => goTo(firstUnanswered)}
+              className="mt-2 w-full flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-left hover:bg-amber-500/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+              <span className="font-sans text-xs text-amber-200 leading-relaxed">
+                {unanswered} question{unanswered === 1 ? '' : 's'} still unanswered, and unanswered
+                questions are marked wrong.{' '}
+                <span className="font-semibold underline">Go to the first one</span>
+              </span>
+            </button>
           )}
 
           <p className="hidden sm:block font-sans text-[11px] text-slate-600 text-center mt-6">
@@ -315,6 +390,10 @@ export default function AssessmentRunner({
       </div>
 
       {/* ── Navigator, desktop ──────────────────────────────────────────── */}
+      {/* ⚠️ `9rem` is a BOUND, not a measurement — see the long note on the same
+          literal in `TestSessionView.tsx`. Kept as a duplicate on purpose: this
+          file is the temporary pre/post instrument and must delete without
+          reaching into Test Mode. Erring large is free; `max-h` only caps. */}
       <aside className="hidden lg:block sticky top-0 max-h-[calc(100vh-9rem)] overflow-y-auto no-scrollbar">
         {nav}
       </aside>
@@ -340,7 +419,7 @@ export default function AssessmentRunner({
           </button>
           <button
             onClick={onExit}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-white text-black font-sans text-sm font-semibold hover:bg-slate-200 transition-colors"
+            className="flex-1 px-4 py-2.5 rounded-xl bg-primary-fixed-dim text-black font-sans text-sm font-semibold hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface transition-colors"
           >
             Leave
           </button>
@@ -360,16 +439,30 @@ export default function AssessmentRunner({
         <p className="font-sans text-sm text-slate-400 leading-relaxed mb-6">
           You can only take this test once, so you will not be able to change your answers afterwards.
         </p>
-        <div className="flex gap-3">
+        {/*
+          * Still two buttons, but the left one now DOES something when it matters.
+          * "Keep working" only closed the dialog, dropping the student back on the
+          * last question — the furthest possible point from the one they skipped,
+          * with the navigator behind another modal. When anything is unanswered it
+          * becomes "Answer them" and jumps to the first.
+          *
+          * Stacks below `sm`: three lines of copy plus two buttons is tight in a
+          * `max-w-sm` dialog on a 320px screen, and Submit is irreversible here —
+          * `UNIQUE (assessment_id, student_id, phase)` means one sitting only.
+          */}
+        <div className="flex flex-col sm:flex-row gap-3">
           <button
-            onClick={() => setShowConfirm(false)}
+            onClick={() => {
+              setShowConfirm(false);
+              if (unanswered > 0 && firstUnanswered >= 0) goTo(firstUnanswered);
+            }}
             className="flex-1 px-4 py-2.5 rounded-xl bg-surface-container border border-white/10 text-on-surface font-sans text-sm font-semibold hover:bg-surface-container-high transition-colors"
           >
-            Keep working
+            {unanswered > 0 ? 'Answer them' : 'Keep working'}
           </button>
           <button
             onClick={() => void submit()}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-white text-black font-sans text-sm font-semibold hover:bg-slate-200 transition-colors"
+            className="flex-1 px-4 py-2.5 rounded-xl bg-primary-fixed-dim text-black font-sans text-sm font-semibold hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface transition-colors"
           >
             Submit
           </button>

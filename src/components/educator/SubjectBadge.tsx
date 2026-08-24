@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { subjectName } from '../../data/mockEducator';
 
 /**
@@ -28,15 +29,19 @@ interface SubjectBadgeProps {
 export default function SubjectBadge({ code, full = false, className = '' }: SubjectBadgeProps) {
   const color = SUBJECT_COLOR[code] ?? FALLBACK;
 
+  /*
+   * ⚠️ `.tone-chip` + `--tone`, NOT three inline colours. The inline version
+   * could not be themed at all — an inline style beats every stylesheet rule,
+   * so the light theme's overrides could not reach it and these badges rendered
+   * at ~2:1 contrast on white. See the TINTED CHIPS block in `index.css` for the
+   * measurements and for how the light value is derived. Dark mode is
+   * unchanged: 10% and 20% are exactly what the `1a`/`33` suffixes meant.
+   */
   return (
     <span
       title={subjectName(code)}
-      className={`inline-flex items-center px-2 py-0.5 rounded-md border font-sans text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${className}`}
-      style={{
-        color,
-        backgroundColor: `${color}1a`,
-        borderColor: `${color}33`,
-      }}
+      className={`tone-chip inline-flex items-center px-2 py-0.5 rounded-md border font-sans text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${className}`}
+      style={{ '--tone': color } as CSSProperties}
     >
       {full ? subjectName(code) : code}
     </span>

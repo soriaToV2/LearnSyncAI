@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Users, ChevronDown, Loader2, AlertTriangle, HelpCircle, BookOpen, TrendingDown,
+  Users, ChevronDown, AlertTriangle, HelpCircle, BookOpen, TrendingDown
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import MeterBar from '../../../components/ui/MeterBar';
 import TierBadge from '../../../components/educator/TierBadge';
 import { toneText } from '../../../components/ui/surfaces';
@@ -127,15 +128,29 @@ export default function ClassPerformance({ materialId }: { materialId: string })
   if (loading) {
     return (
       <section className={`${PANEL} p-10 flex items-center justify-center gap-3`}>
-        <Loader2 className="w-4 h-4 text-slate-500 animate-spin" />
+        <Spinner className="w-4 h-4 text-slate-500" />
         <p className="font-sans text-sm text-slate-400">Loading class performance…</p>
       </section>
     );
   }
 
+  /*
+    ⚠️ EVERY POST-LOADING BRANCH BELOW CARRIES `animate-tab-in`, AND THE LOADING
+    BRANCH ABOVE DELIBERATELY DOES NOT. `MaterialDetail` animates the tab panel
+    when it mounts, but this component mounts into a spinner and fetches — so
+    that entrance played on the loader and was over before anything readable
+    arrived, and the content then just appeared. The animation has to fire on
+    the transition the reader actually sees, which is loading → result.
+
+    No `key` is needed: React reuses the `<section>` across that render, and a
+    CSS animation restarts whenever `animation-name` changes from `none` to a
+    name. The three empty/error branches get it too — they are results as much
+    as the table is, and an empty state that snaps in while a populated one
+    animates would look like a different component.
+  */
   if (error || !data) {
     return (
-      <section className={`${PANEL} p-6 flex items-start gap-2.5`}>
+      <section className={`${PANEL} p-6 flex items-start gap-2.5 animate-tab-in`}>
         <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
         <p className="font-sans text-sm text-rose-300">{error ?? 'Could not load class performance.'}</p>
       </section>
@@ -152,7 +167,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
    */
   if (material.concept_count === 0) {
     return (
-      <section className={`${PANEL} p-8 text-center`}>
+      <section className={`${PANEL} p-8 text-center animate-tab-in`}>
         <BookOpen className="w-5 h-5 text-slate-500 mx-auto mb-3" />
         <p className="font-sans text-sm text-slate-300 font-medium">No concepts yet</p>
         <p className="font-sans text-xs text-slate-500 mt-1.5 max-w-sm mx-auto">
@@ -166,7 +181,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
 
   if (cls.size === 0) {
     return (
-      <section className={`${PANEL} p-8 text-center`}>
+      <section className={`${PANEL} p-8 text-center animate-tab-in`}>
         <Users className="w-5 h-5 text-slate-500 mx-auto mb-3" />
         <p className="font-sans text-sm text-slate-300 font-medium">No students in these grades</p>
         <p className="font-sans text-xs text-slate-500 mt-1.5 max-w-sm mx-auto">
@@ -181,7 +196,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
   const tone = TIER_TONE[cls.tier];
 
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-4 animate-tab-in">
 
       {/* ── Class summary ─────────────────────────────────────────────── */}
       <div className={`${PANEL} p-6`}>
@@ -234,27 +249,40 @@ export default function ClassPerformance({ materialId }: { materialId: string })
       </div>
 
       {/* ── By student / By concept ───────────────────────────────────── */}
+      {/* Labels shorten below `sm:` for the same reason the dashboard's control
+          and the material tab bar do — this sits inside a padded card, so on a
+          320px phone the two content-fitted buttons have ~240px to share. "By "
+          carries nothing: the heading above already says what is being listed. */}
       <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/5 self-start">
-        {([['students', `By student (${cls.size})`], ['concepts', `By concept (${material.concept_count})`]] as const).map(
-          ([id, label]) => (
+        {([
+          ['students', 'Students', 'By student', cls.size],
+          ['concepts', 'Concepts', 'By concept', material.concept_count],
+        ] as const).map(
+          ([id, shortLabel, longLabel, count]) => (
             <button
               key={id}
               onClick={() => setView(id)}
-              className={`px-3.5 py-1.5 rounded-lg font-sans text-xs font-semibold transition-colors ${
+              aria-pressed={view === id}
+              className={`px-3 sm:px-3.5 py-1.5 rounded-lg font-sans text-xs font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] ${
                 view === id
                   ? 'bg-white/[0.06] text-white'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {label}
+              <span className="sm:hidden">{shortLabel}</span>
+              <span className="hidden sm:inline">{longLabel}</span> ({count})
             </button>
           )
         )}
       </div>
 
       {/* ── By student ────────────────────────────────────────────────── */}
+      {/* Both branches carry the entrance. No `key` is needed: they are siblings
+          at different child positions, so switching genuinely unmounts one and
+          mounts the other — unlike a single slot whose content changes, which is
+          what needs a key. */}
       {view === 'students' && (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 animate-tab-in">
           {students.map((s) => {
             const isOpen = expanded === s.student_id;
             const detail = details[s.student_id];
@@ -310,7 +338,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
                   <div className="border-t border-white/5 px-4 py-4">
                     {detailLoading === s.student_id && (
                       <div className="flex items-center justify-center gap-2.5 py-4">
-                        <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin" />
+                        <Spinner className="w-3.5 h-3.5 text-slate-500" />
                         <p className="font-sans text-xs text-slate-500">Loading concepts…</p>
                       </div>
                     )}
@@ -321,8 +349,14 @@ export default function ClassPerformance({ materialId }: { materialId: string })
                       </p>
                     )}
 
+                    {/* On the loaded list, not on the panel — expanding a row
+                        shows a spinner first, so an entrance on the panel
+                        itself would play against the loader and be over before
+                        the concepts arrived. Same rule as the tab panels; the
+                        `.animate-tab-in` name is about the motion, not the
+                        widget. */}
                     {detail && (
-                      <div className="flex flex-col gap-1.5">
+                      <div className="flex flex-col gap-1.5 animate-tab-in">
                         {detail.concepts.map((c) => (
                           <div
                             key={c.concept_id}
@@ -380,7 +414,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
 
       {/* ── By concept ────────────────────────────────────────────────── */}
       {view === 'concepts' && (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 animate-tab-in">
           <p className="font-sans text-xs text-slate-500 mb-1 leading-relaxed">
             {cls.started === 0
               ? 'No student has been assessed on this material yet, so no concept has a class average.'
@@ -443,7 +477,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
                   <div className="border-t border-white/5 px-4 py-4">
                     {conceptLoading === c.concept_id && (
                       <div className="flex items-center justify-center gap-2.5 py-4">
-                        <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin" />
+                        <Spinner className="w-3.5 h-3.5 text-slate-500" />
                         <p className="font-sans text-xs text-slate-500">Loading students…</p>
                       </div>
                     )}
@@ -454,8 +488,12 @@ export default function ClassPerformance({ materialId }: { materialId: string })
                       </p>
                     )}
 
+                    {/* A plain `<div>` rather than the fragment this was, purely
+                        so the entrance has something to sit on — it wraps the
+                        definition AND the student list, which arrive together.
+                        Block-in-block, so nothing about the flow changes. */}
                     {detail && (
-                      <>
+                      <div className="animate-tab-in">
                         <p className="font-sans text-[11px] text-slate-500 mb-3 leading-relaxed">
                           <span className="text-slate-400 font-medium">{detail.concept.term}</span>
                           {' — '}{detail.concept.definition}
@@ -509,7 +547,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
                             );
                           })}
                         </div>
-                      </>
+                      </div>
                     )}
                   </div>
                 )}

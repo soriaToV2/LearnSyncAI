@@ -1,20 +1,32 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useCallback, useState } from 'react';
 
 /**
- * ⚠️ THERE IS NO THEME PICKER, AND THE PROVIDERS ARE PINNED TO `THEMES[0]`.
+ * DARK / LIGHT ONLY — NOT A SEVEN-THEME PICKER, AND THE DIFFERENCE IS THE POINT.
  *
- * The picker lived only inside the two Settings pages, which were deleted along
- * with the invented student data they rendered. Removing the UI alone would not
- * have been enough: the provider also READ `localStorage`, so anyone who had
- * previously chosen a theme would have been locked into it permanently with no
- * way back. The read and the write both go, and every portal now renders Cyber
- * Cyan deterministically.
+ * The original picker offered all seven palettes and lived inside the two
+ * Settings pages; it was deleted with them, and the providers were pinned to
+ * `THEMES[0]` so that a stale `localStorage` choice could not strand anyone in a
+ * palette they had no UI to leave. That note said keeping the array would make a
+ * future control "a revert rather than a rewrite", and this is that revert.
  *
- * SIX OF THE SEVEN `THEMES` ENTRIES ARE NOW UNREACHABLE, AND THAT IS DELIBERATE.
- * The palettes are the design system — `applyThemeToElement()` writes them into
- * the CSS custom properties every screen reads through `theme.accent` — so
- * keeping them makes a future picker a revert rather than a rewrite. Do not
- * "clean up" the array on the grounds that only the first element is used.
+ * What came back is deliberately narrower than what went away: a BINARY mode.
+ * Only `THEMES[0]` (Cyber Cyan) and the `white` entry are reachable, because
+ * only those two have a stylesheet behind them — `index.css` carries ~500 lines
+ * of `[data-theme="white"]` overrides plus the completion block at the end of
+ * that file, and nothing equivalent exists for indigo, violet, emerald, rose or
+ * amber. Exposing all seven would ship five options that render as the dark
+ * theme with a different accent, which is not what "theme" promises.
+ *
+ * THE OTHER FIVE ENTRIES STAY, STILL UNREACHABLE, FOR THE ORIGINAL REASON. They
+ * are the design system's palettes, and `applyThemeToElement()` is what writes
+ * them into the custom properties every screen reads. Do not "clean up" the
+ * array.
+ *
+ * ⚠️ THE STORAGE KEYS ARE NEW (`…_mode`), NOT THE OLD `…_theme` PAIR. A value
+ * left in the old keys is a palette id like `violet` — a vocabulary this context
+ * no longer speaks. Reading them would mean either honouring an unreachable
+ * theme or silently discarding a preference; a fresh key means an old value is
+ * simply never consulted, which is the same reasoning that retired them.
  */
 export interface ThemeDefinition {
   id: string;
@@ -110,8 +122,112 @@ export const THEMES: ThemeDefinition[] = [
  */
 export const ACTIVE_THEME = THEMES[0];
 
-// Apply theme to element
+/** The two reachable themes. `ACTIVE_THEME` stays the dark one and the default. */
+export const DARK_THEME = THEMES[0];
+export const LIGHT_THEME = THEMES.find((t) => t.id === 'white')!;
+
+export type ColorMode = 'dark' | 'light';
+
+/**
+ * The text/icon colour that reads on a block of `accent`.
+ *
+ * ⚠️ IT IS COMPUTED, NOT A CONSTANT, BECAUSE THE CONSTANT WAS WRONG THE MOMENT
+ * A LIGHT THEME EXISTED. Nine call sites across seven files paired
+ * `backgroundColor: accent` with a hard-coded `color: '#04121a'` — a near-black
+ * ink, correct on all six dark palettes, whose accents are bright cyan, violet,
+ * emerald and so on. The light theme's accent is `#0284c7` (sky-600), a DARK
+ * blue, and near-black on it measures about 2.6:1 — under the 4.5:1 floor, on
+ * the primary button of every form in the app.
+ *
+ * A CSS override cannot fix this: these are inline styles, so a stylesheet would
+ * have to fight them with `!important` on an attribute selector broad enough to
+ * catch every themed button. Deriving the ink at the call site is both smaller
+ * and self-correcting — a palette added later gets a readable label without
+ * anyone remembering this rule.
+ *
+ * Relative luminance per WCAG 2.x, with the sRGB gamma expansion. The 0.45
+ * threshold rather than 0.5 leans slightly toward the dark ink, which is what
+ * the six existing accents want.
+ */
+export function inkOn(accent: string): string {
+  const hex = accent.trim().replace('#', '');
+  const full =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : hex;
+
+  // Anything unparseable (a named colour, an rgba string) keeps the old ink
+  // rather than guessing — the dark themes are the ones that shipped with it.
+  if (!/^[0-9a-f]{6}$/i.test(full)) return '#04121a';
+
+  const channel = (offset: number) => {
+    const v = parseInt(full.slice(offset, offset + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+
+  const luminance = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+  return luminance > 0.45 ? '#04121a' : '#ffffff';
+}
+
+export const themeForMode = (mode: ColorMode) => (mode === 'light' ? LIGHT_THEME : DARK_THEME);
+
+/*
+ * Every read and write is wrapped: `localStorage` THROWS rather than returning
+ * null in a Safari private window and under some school-managed browser
+ * policies, which is exactly the deployment this is going to. A student whose
+ * browser refuses storage gets the default theme, not a blank screen.
+ */
+function readMode(key: string): ColorMode {
+  try {
+    return localStorage.getItem(key) === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+
+function writeMode(key: string, mode: ColorMode) {
+  try {
+    localStorage.setItem(key, mode);
+  } catch {
+    /* Preference is not persisted this session. The toggle still works. */
+  }
+}
+
+/**
+ * ⚠️ THE THEME GOES ON `documentElement` AS WELL AS THE WRAPPER, AND WITHOUT
+ * THAT HALF THE LIGHT THEME IS BROKEN IN TWO WAYS THAT LOOK UNRELATED.
+ *
+ * `data-theme` used to be set only on each layout's wrapper `<div>`. Two
+ * consequences, both measured:
+ *
+ *   1. EVERY MODAL STAYED DARK. `Modal` renders through
+ *      `createPortal(…, document.body)`, so it is a SIBLING of the themed
+ *      wrapper, not a descendant — no `[data-theme="white"] …` selector can
+ *      reach it, and none of the inline custom properties inherit into it. In
+ *      light mode that meant a near-black dialog over a white page.
+ *
+ *   2. 99 RULES IN `index.css` HAD NEVER ONCE RUN. The white block is written
+ *      twice, the second copy prefixed `:root[data-theme="white"]` for
+ *      specificity. `:root` IS `<html>`, which never carried the attribute, so
+ *      that entire copy was inert. It is a byte-identical duplicate of the
+ *      first, so switching it on is a visual no-op — verified by diffing the
+ *      two — but it is now doing the job it was written for.
+ *
+ * The wrapper still gets it too. That costs nothing (the declarations are
+ * identical, so double-matching resolves to the same values) and it keeps
+ * `theme.accent` inline on the subtree that reads it.
+ */
 export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
+  if (typeof document !== 'undefined' && document.documentElement !== el) {
+    applyThemeVars(t, document.documentElement);
+  }
+  applyThemeVars(t, el);
+}
+
+function applyThemeVars(t: ThemeDefinition, el: HTMLElement) {
   el.dataset.theme = t.id;
   el.style.setProperty('--theme-accent', t.accent);
   el.style.setProperty('--theme-accent-dim', t.accentDim);
@@ -125,30 +241,56 @@ export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
 }
 
 /*
- * `setTheme` is GONE from this value, not merely unused. Leaving a setter that
- * every caller has stopped calling is how a "preference" quietly comes back with
- * nowhere to set it; the shape a consumer sees should say what it can do.
+ * `mode` and `setMode` replace the old `setTheme`, which took any of the seven
+ * palettes. A consumer can only ask for dark or light, so the shape says what it
+ * can do — the same principle that removed the old setter.
  */
 interface ThemeContextValue {
   theme: ThemeDefinition;
+  mode: ColorMode;
+  setMode: (mode: ColorMode) => void;
 }
 
-const StudentThemeContext = createContext<ThemeContextValue>({ theme: ACTIVE_THEME });
-const EducatorThemeContext = createContext<ThemeContextValue>({ theme: ACTIVE_THEME });
-
-/*
- * Both providers exist only so `useStudentTheme()` / `useEducatorTheme()` keep
- * working unchanged at ~15 call sites across both portals. They are kept separate
- * rather than merged into one because the split is the seam a future per-portal
- * preference would reopen, and merging them would be the irreversible half of
- * this change.
+/**
+ * ⚠️ ONE HOOK, THREE KEYS — THE PER-PORTAL SPLIT IS PRESERVED ON PURPOSE.
+ *
+ * The three providers were kept separate rather than merged because "the split
+ * is the seam a future per-portal preference would reopen". This is that
+ * preference, so the seam earns its keep: a key each. A user only ever holds one
+ * role, so in practice that is one key per person — but an admin who is also
+ * shown a student view does not have their choice follow them across portals,
+ * which is the behaviour the original design chose.
+ *
+ * The state is seeded from storage in the initialiser rather than in an effect.
+ * An effect runs AFTER the first paint, so a student who chose light mode would
+ * see the dark theme flash on every page load.
  */
-export function StudentThemeProvider({ children }: { children: React.ReactNode }) {
-  return (
-    <StudentThemeContext.Provider value={{ theme: ACTIVE_THEME }}>
-      {children}
-    </StudentThemeContext.Provider>
+function useColorMode(storageKey: string): ThemeContextValue {
+  const [mode, setModeState] = useState<ColorMode>(() => readMode(storageKey));
+
+  const setMode = useCallback(
+    (next: ColorMode) => {
+      setModeState(next);
+      writeMode(storageKey, next);
+    },
+    [storageKey]
   );
+
+  return { theme: themeForMode(mode), mode, setMode };
+}
+
+const DEFAULT_VALUE: ThemeContextValue = {
+  theme: ACTIVE_THEME,
+  mode: 'dark',
+  setMode: () => {},
+};
+
+const StudentThemeContext = createContext<ThemeContextValue>(DEFAULT_VALUE);
+const EducatorThemeContext = createContext<ThemeContextValue>(DEFAULT_VALUE);
+
+export function StudentThemeProvider({ children }: { children: React.ReactNode }) {
+  const value = useColorMode('learnsyncai_student_mode');
+  return <StudentThemeContext.Provider value={value}>{children}</StudentThemeContext.Provider>;
 }
 
 export function useStudentTheme() {
@@ -156,30 +298,19 @@ export function useStudentTheme() {
 }
 
 export function EducatorThemeProvider({ children }: { children: React.ReactNode }) {
-  return (
-    <EducatorThemeContext.Provider value={{ theme: ACTIVE_THEME }}>
-      {children}
-    </EducatorThemeContext.Provider>
-  );
+  const value = useColorMode('learnsyncai_educator_mode');
+  return <EducatorThemeContext.Provider value={value}>{children}</EducatorThemeContext.Provider>;
 }
 
 export function useEducatorTheme() {
   return useContext(EducatorThemeContext);
 }
 
-const AdminThemeContext = createContext<ThemeContextValue>({ theme: ACTIVE_THEME });
+const AdminThemeContext = createContext<ThemeContextValue>(DEFAULT_VALUE);
 
-/**
- * The admin portal's provider. A third near-identical copy is deliberate for the
- * same reason the first two were not merged: the per-portal split is the seam a
- * future preference would reopen, and collapsing it is the irreversible half.
- */
 export function AdminThemeProvider({ children }: { children: React.ReactNode }) {
-  return (
-    <AdminThemeContext.Provider value={{ theme: ACTIVE_THEME }}>
-      {children}
-    </AdminThemeContext.Provider>
-  );
+  const value = useColorMode('learnsyncai_admin_mode');
+  return <AdminThemeContext.Provider value={value}>{children}</AdminThemeContext.Provider>;
 }
 
 export function useAdminTheme() {

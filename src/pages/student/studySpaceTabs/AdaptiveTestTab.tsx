@@ -5,12 +5,15 @@ import {
   BrainCircuit,
   Check,
   ChevronRight,
+  ClipboardList,
+  ListChecks,
   Play,
   Plus,
-  RefreshCw,
+  TrendingUp
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
-import { CARD, SECTION, scoreTone, toneText, type Tone } from '../../../components/ui/surfaces';
+import { CARD, SECTION, scoreTone, toneText } from '../../../components/ui/surfaces';
 import TestSessionView from '../components/TestSessionView';
 import TestResultsView from '../components/TestResultsView';
 import { useBadges } from '../../../context/BadgeContext';
@@ -272,9 +275,9 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
 
   if (screen === 'generating') {
     return (
-      <div className="animate-in fade-in duration-300 max-w-lg mx-auto py-20 text-center">
+      <div className="fade-in duration-300 max-w-lg mx-auto py-20 text-center">
         <div className="w-14 h-14 rounded-2xl bg-primary-fixed-dim/10 flex items-center justify-center mx-auto mb-6">
-          <RefreshCw className="w-6 h-6 text-primary-fixed-dim animate-spin" />
+          <Spinner className="w-6 h-6 text-primary-fixed-dim" />
         </div>
         <h2 className="font-display text-xl font-semibold text-white mb-2">Writing your test…</h2>
         {/* Measured 1.6s for a 29-question test across all five sections. The
@@ -292,7 +295,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
 
   if (screen === 'setup') {
     return (
-      <div className="animate-in fade-in duration-300 max-w-3xl mx-auto pb-10 px-2">
+      <div className="fade-in duration-300 max-w-3xl mx-auto pb-10 px-2">
         <button
           onClick={() => setScreen('overview')}
           className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 font-sans font-semibold text-xs uppercase tracking-widest mb-6"
@@ -345,7 +348,12 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
                   <button
                     key={format}
                     onClick={() => toggleFormat(format)}
-                    className={`flex items-start gap-3 text-left p-3.5 rounded-xl border transition-all ${
+                    /* These are toggles, and the on/off state was carried only by
+                       background colour — nothing announced it, and there was no
+                       focus ring, so the setup screen's main control could not be
+                       operated or understood without sight. */
+                    aria-pressed={on}
+                    className={`flex items-start gap-3 text-left p-3.5 rounded-xl border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                       on
                         ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/50'
                         : 'bg-surface-container/30 border-white/10 hover:border-white/25'
@@ -409,7 +417,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
                       <span className="font-display text-sm font-bold text-slate-300 tabular-nums shrink-0">
                         {count}
                         {format === 'matching_type' && (
-                          <span className="font-sans text-[10px] font-medium text-slate-500 ml-1.5">
+                          <span className="font-sans text-[11px] font-medium text-slate-500 ml-1.5">
                             {count / MATCH_TERMS_PER_BLOCK} block
                             {count / MATCH_TERMS_PER_BLOCK === 1 ? '' : 's'}
                           </span>
@@ -451,7 +459,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
             <button
               onClick={() => void handleGenerate()}
               disabled={!canGenerate}
-              className="w-full px-6 py-3 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full px-6 py-3 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Play className="w-4 h-4" />
               {total > 0 ? `Start Test · ${total} question${total === 1 ? '' : 's'}` : 'Start Test'}
@@ -478,7 +486,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
   const noMaterials = availableResources.length === 0;
 
   return (
-    <div className="animate-in fade-in duration-300 pb-10">
+    <div className="fade-in duration-300 pb-10">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-5">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center shrink-0">
@@ -499,10 +507,12 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
           </div>
         </div>
 
+        {/* `w-full` on mobile: the header stacks below `sm`, and at its natural
+            width this sat left-aligned and orphaned under the subtitle. */}
         <button
           onClick={() => openSetup()}
           disabled={noMaterials}
-          className="px-5 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 shrink-0"
+          className="w-full sm:w-auto px-5 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 shrink-0"
         >
           <Plus className="w-4 h-4" /> New Test
         </button>
@@ -521,14 +531,15 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
           tab is the mastery sentence on the setup screen, which is not a
           duplicate — it explains why the test about to be generated is the
           difficulty it is. */}
-      <div className="grid grid-cols-3 gap-3 mt-6">
-        <Stat label="Tests taken" value={String(completed.length)} />
+      <div className="grid grid-cols-3 gap-2.5 sm:gap-3 mt-6">
+        <Stat icon={ClipboardList} label="Tests taken" value={String(completed.length)} />
         <Stat
+          icon={TrendingUp}
           label="Average score"
           value={avgScore === null ? '—' : `${avgScore}%`}
           tone={avgScore === null ? undefined : scoreTone(avgScore)}
         />
-        <Stat label="Items answered" value={String(itemsAnswered)} />
+        <Stat icon={ListChecks} label="Items answered" value={String(itemsAnswered)} />
       </div>
 
       <div className="mt-8">
@@ -536,10 +547,10 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
 
         {isLoadingList ? (
           <div className="flex items-center justify-center py-16">
-            <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />
+            <Spinner className="w-5 h-5 text-slate-500" />
           </div>
         ) : summaries.length === 0 ? (
-          <div className={`${CARD} py-16 px-6 text-center`}>
+          <div className={`${CARD} py-16 px-6 text-center animate-tab-in`}>
             <BrainCircuit className="w-10 h-10 text-slate-500 opacity-20 mx-auto mb-4" />
             <p className="font-sans text-sm text-slate-400 mb-1">
               {noMaterials ? 'No lessons in this study space yet.' : 'No tests yet.'}
@@ -551,7 +562,11 @@ export default function AdaptiveTestTab({ spaceId, availableResources, lockedIds
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          /* Entrance on the loaded list, not on the spinner above it — the
+             spinner is what is on screen while `animate-page-fade` would be
+             running, so an entrance up there is over before a single past test
+             arrives. Same rule everywhere in the app. */
+          <div className="space-y-2 animate-tab-in">
             {/* Keyed on a Fragment, not on SummaryRow: this project has no
                 `@types/react`, so a locally-declared component's props are
                 enforced exactly and `key` is not among them. */}
@@ -600,13 +615,31 @@ function Note({ tone, children }: { tone: 'mid' | 'poor'; children: ReactNode })
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: ReturnType<typeof scoreTone> }) {
+/**
+ * `p-3` on phones, not `p-4`. Three tiles across a 320px screen leave ~88px each,
+ * and `p-4` cut that to 56px of content — narrower than "ANSWERED" renders at 10px
+ * with `tracking-widest`. The tinted icon is what stops the row reading as three
+ * interchangeable numbers; only Average score was ever coloured, and only then
+ * because it happens to carry a tone.
+ */
+function Stat({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: typeof ClipboardList;
+  label: string;
+  value: string;
+  tone?: ReturnType<typeof scoreTone>;
+}) {
   return (
-    <div className={`${CARD} p-4 text-center`}>
+    <div className={`${CARD} border border-white/5 p-3 sm:p-4 text-center`}>
+      <Icon className={`w-4 h-4 mx-auto mb-1.5 ${tone ? toneText[tone] : 'text-primary-fixed-dim'}`} />
       <p className={`font-display text-xl font-bold tabular-nums ${tone ? toneText[tone] : 'text-white'}`}>
         {value}
       </p>
-      <p className="font-sans text-[10px] uppercase tracking-widest text-slate-500 font-semibold mt-1">
+      <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-semibold mt-1 leading-tight">
         {label}
       </p>
     </div>
@@ -628,7 +661,7 @@ function SummaryRow({
   return (
     <button
       onClick={onOpen}
-      className={`${CARD} w-full text-left p-4 flex items-center gap-4 hover:bg-surface-container-lowest/70 transition-colors`}
+      className={`${CARD} w-full text-left p-4 flex items-center gap-3 sm:gap-4 border border-white/5 hover:border-white/15 hover:bg-surface-container-lowest/70 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-1">
@@ -667,7 +700,7 @@ function SummaryRow({
             <p className={`font-display text-lg font-bold ${toneText[scoreTone(percent ?? 0)]}`}>
               {percent}%
             </p>
-            <p className="font-sans text-[10px] text-slate-500 tabular-nums">
+            <p className="font-sans text-[11px] text-slate-500 tabular-nums">
               {summary.total} items
             </p>
           </>

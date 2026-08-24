@@ -1,7 +1,9 @@
+import { inkOn } from '../../../context/ThemeContext';
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Check, Copy, Download, FileDown, Loader2, RotateCcw, UploadCloud,
+  AlertTriangle, Check, Copy, Download, FileDown, RotateCcw, UploadCloud
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import Modal from '../../../components/ui/Modal';
 import { useSubmitLatch } from '../../../components/common/formKit';
 import { usernameProblem } from '../../../lib/account';
@@ -316,7 +318,7 @@ export default function ImportAccountsModal({
   const createdCount = results ? results.filter((r) => r.ok).length : 0;
 
   const secondaryButton =
-    'px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 hover:text-white font-display text-xs font-bold transition-colors flex items-center gap-2';
+    'px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 hover:text-white font-display text-xs font-bold transition-colors flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
   return (
     <Modal
@@ -396,7 +398,7 @@ export default function ImportAccountsModal({
                 <button
                   type="button"
                   onClick={downloadTemplate}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors font-sans text-xs"
+                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors font-sans text-xs"
                 >
                   <Download className="w-3.5 h-3.5" />
                   Download template
@@ -440,7 +442,7 @@ export default function ImportAccountsModal({
                 >
                   <div className="pointer-events-none flex flex-col items-center gap-2 text-center">
                     {isChecking ? (
-                      <Loader2 className="w-7 h-7 text-slate-400 animate-spin" />
+                      <Spinner className="w-7 h-7 text-slate-400" />
                     ) : (
                       <UploadCloud
                         className={`w-7 h-7 ${isDragging ? 'text-white' : 'text-slate-500'}`}
@@ -669,8 +671,8 @@ export default function ImportAccountsModal({
               <button
                 type="button"
                 onClick={() => setConfirming(null)}
-                style={{ backgroundColor: accent, color: '#04121a' }}
-                className="px-5 py-2.5 rounded-xl font-display text-xs font-bold hover:brightness-110 transition-all active:scale-95"
+                style={{ backgroundColor: accent, color: inkOn(accent) }}
+                className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] px-5 py-2.5 rounded-xl font-display text-xs font-bold hover:brightness-110 transition-all active:scale-95"
               >
                 Go back
               </button>
@@ -706,7 +708,7 @@ export default function ImportAccountsModal({
                   style={
                     problemCount > 0 || busy || rows.length === 0
                       ? undefined
-                      : { backgroundColor: accent, color: '#04121a' }
+                      : { backgroundColor: accent, color: inkOn(accent) }
                   }
                   className={`px-5 py-2.5 rounded-xl font-display text-xs font-bold flex items-center gap-2 transition-all active:scale-95 ${
                     problemCount > 0 || busy || rows.length === 0
@@ -715,7 +717,7 @@ export default function ImportAccountsModal({
                   }`}
                 >
                   {busy ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <Spinner className="w-3.5 h-3.5" />
                   ) : (
                     <UploadCloud className="w-3.5 h-3.5" />
                   )}
@@ -749,7 +751,7 @@ export default function ImportAccountsModal({
                   onClick={copyAll}
                   disabled={createdCount === 0}
                   style={
-                    createdCount === 0 ? undefined : { backgroundColor: accent, color: '#04121a' }
+                    createdCount === 0 ? undefined : { backgroundColor: accent, color: inkOn(accent) }
                   }
                   className={`px-5 py-2.5 rounded-xl font-display text-xs font-bold flex items-center gap-2 transition-all active:scale-95 ${
                     createdCount === 0

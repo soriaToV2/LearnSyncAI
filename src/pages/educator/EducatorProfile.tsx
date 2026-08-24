@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { formatDate } from '../../data/mockEducator';
 import ProfileCard, { type ProfileFact } from '../../components/common/ProfileCard';
 import AccountForms from '../../components/common/AccountForms';
+import AppearanceCard from '../../components/common/AppearanceCard';
 
 /**
  * The educator's own account.
@@ -22,7 +23,7 @@ import AccountForms from '../../components/common/AccountForms';
  * upload something, and this is where that is said.
  */
 export default function EducatorProfile() {
-  const { theme } = useEducatorTheme();
+  const { theme, mode, setMode } = useEducatorTheme();
   const { user, isLoading, error } = useAuth();
 
   const facts: ProfileFact[] = [
@@ -52,9 +53,9 @@ export default function EducatorProfile() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-[900px] mx-auto px-4 md:px-8 py-8 md:py-12">
+      <div className="max-w-[900px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
         <header className="mb-8">
-          <h1 className="font-display text-3xl font-semibold text-on-surface">Profile</h1>
+          <h1 className="font-display text-2xl sm:text-3xl font-semibold text-on-surface">Profile</h1>
           <p className="font-sans text-sm text-on-surface-variant mt-1.5">
             Your account details and how you sign in.
           </p>
@@ -67,6 +68,12 @@ export default function EducatorProfile() {
         )}
 
         <div
+          /* ⚠️ NO `animate-tab-in` HERE, DELIBERATELY. This page has no
+             loading→content swap: the forms render immediately and are merely
+             DIMMED while the profile loads, so the wrapper's `animate-page-fade`
+             already covers everything a reader sees arrive. Adding the panel
+             entrance too would nest an 8px rise inside a fade and make the body
+             travel while the heading above it stayed put. */
           className={`flex flex-col gap-6 ${isLoading ? 'opacity-60 transition-opacity' : 'transition-opacity'}`}
         >
           <ProfileCard
@@ -75,6 +82,13 @@ export default function EducatorProfile() {
             accentSoft={theme.accentSoft}
             roleLabel="Educator"
             facts={facts}
+          />
+
+          <AppearanceCard
+            mode={mode}
+            onChange={setMode}
+            accent={theme.accent}
+            accentSoft={theme.accentSoft}
           />
 
           <AccountForms accent={theme.accent} />

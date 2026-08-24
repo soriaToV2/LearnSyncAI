@@ -99,7 +99,7 @@ function StudentLayoutInner() {
     'text-slate-400 hover:text-slate-200 hover:bg-white/5 border-r-2 border-transparent';
 
   const navBase =
-    'flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95 font-display text-sm tracking-wide';
+    'flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95 font-display text-sm tracking-wide focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
   const collapsedNavClass = (collapsed: boolean) =>
     collapsed ? 'justify-center px-0 gap-0' : '';
@@ -175,18 +175,37 @@ function StudentLayoutInner() {
         onClick={handleSignOut}
         disabled={isSigningOut}
         title="Logout"
-        className={`flex items-center gap-4 px-4 py-3 mb-1 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide disabled:opacity-60 disabled:pointer-events-none ${collapsedNavClass(collapsed)}`}
+        className={`flex items-center gap-4 px-4 py-3 mb-1 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide disabled:opacity-60 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-rose-400 ${collapsedNavClass(collapsed)}`}
       >
         <LogOut className="w-5 h-5 shrink-0" />
         {!collapsed && (isSigningOut ? 'Signing out…' : 'Logout')}
       </button>
 
+      {/*
+       * ⚠️ THE CARD SHEDS ITS PADDING AND BORDER WHEN COLLAPSED, AND THE
+       * MONOGRAM DROPS A SIZE. THE ARITHMETIC IS WHY, NOT TASTE:
+       *
+       *   collapsed nav   w-20 (80px) − p-6 (24px × 2)          = 32px inner
+       *   this card       − border (1px × 2) − p-3 (12px × 2)   =  6px content
+       *   monogram        size="lg" → w-10                      = 40px
+       *
+       * A 40px `shrink-0` avatar in a 6px box overflows 17px each side, straight
+       * through the card's own border — which is what it looked like. `p-1` would
+       * not have been enough either; at 32px of inner width the only thing that
+       * fits a 32px avatar is no chrome at all. That reads correctly anyway: a
+       * bordered box drawn tight around an avatar that fills it adds nothing.
+       *
+       * The expanded state is untouched — 64px of inner width is plenty for the
+       * lg monogram plus the name and grade beside it.
+       */}
       <div
         title={fullName(user)}
-        className={`flex items-center gap-3 p-3 rounded-xl border border-white/5 w-full text-left ${collapsed ? 'justify-center' : ''}`}
+        className={`flex items-center gap-3 w-full text-left ${
+          collapsed ? 'justify-center' : 'p-3 rounded-xl border border-white/5'
+        }`}
       >
         <div className="relative shrink-0">
-          <Monogram user={user} size="lg" accent={theme.accent} />
+          <Monogram user={user} size={collapsed ? 'sm' : 'lg'} accent={theme.accent} />
           <span
             className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-page"
             style={{ backgroundColor: theme.accent }}
@@ -213,7 +232,8 @@ function StudentLayoutInner() {
       <header className="fixed top-0 left-0 right-0 h-16 bg-slate-950/80 border-b border-white/10 backdrop-blur-xl z-40 px-6 flex items-center justify-between md:hidden">
         <button
           onClick={() => setIsMobileMenuOpen(true)}
-          className="p-2 -ml-2 text-slate-400 hover:text-white rounded-lg focus:outline-none"
+          aria-label="Open menu"
+          className="p-2 -ml-2 text-slate-400 hover:text-white rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
         >
           <Menu className="w-6 h-6" />
         </button>
@@ -271,7 +291,8 @@ function StudentLayoutInner() {
           </div>
           <button
             onClick={() => setIsMobileMenuOpen(false)}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all"
+            aria-label="Close menu"
+            className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
           >
             <X className="w-5 h-5" />
           </button>
@@ -295,7 +316,7 @@ function StudentLayoutInner() {
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
           title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="absolute -right-3 top-9 w-6 h-6 rounded-full bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg"
+          className="absolute -right-3 top-9 w-6 h-6 rounded-full bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition-all duration-300 shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
         >
           {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
         </button>
@@ -337,8 +358,21 @@ function StudentLayoutInner() {
       </nav>
 
       {/* Main Content Area */}
+      {/*
+        * `transition-[margin]`, not `transition-all`.
+        *
+        * The only thing here that is MEANT to animate is the left margin tracking
+        * the sidebar collapse (`md:ml-64` ↔ `md:ml-20`). `transition-all` animated
+        * every animatable property of the box that holds every page — so any width
+        * change originating elsewhere got replayed as a smooth 300ms horizontal
+        * slide. That is what made a scrollbar appearing inside a child read as the
+        * layout deliberately compressing itself.
+        *
+        * Scoped to margin, the intended sidebar animation is unchanged and
+        * unrelated reflows land instantly instead of being dramatised.
+        */}
       <div
-        className={`flex-1 flex flex-col min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'
+        className={`flex-1 flex flex-col min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden transition-[margin] duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'
           }`}
       >
         <div key={location.pathname} className="flex-1 flex flex-col animate-page-fade">

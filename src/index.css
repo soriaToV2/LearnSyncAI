@@ -534,6 +534,37 @@
   color: #ffffff !important;
 }
 
+/* -------------------------------------------------------------------
+   `bg-red-*` — the Delete buttons. MISSING FROM THE LIST ABOVE.
+   -------------------------------------------------------------------
+   ⚠️ THE LIST ABOVE COVERS `rose` AND NOT `red`, AND THE APP USES BOTH.
+   Rose is the validation/incorrect ramp; RED is used in exactly one
+   role — the confirming Delete button — and there are three of them:
+   the concept delete confirmation in `MaterialDetail`, and the delete
+   modals in `MaterialDetail` and `MaterialsLibrary`.
+
+   All three are `bg-red-600 … text-white`, and in the light theme
+   `--color-white` is `#0f172a`, so `text-white` resolved to dark navy
+   ON A SATURATED RED FILL. That is the one button in the product where
+   a misread is unrecoverable — deleting a material cascades its
+   concepts and every student's mastery for them.
+
+   ⚠️ `button.` PREFIX, NOT THE `:not([class*="/"])` FORM THE BLOCK
+   ABOVE USES. Those guards exist to skip opacity variants like
+   `bg-rose-500/10`, but they test the WHOLE class attribute — and the
+   delete modal's button also carries `shadow-red-600/20`, so the guard
+   would see that slash and exclude the button it was meant to catch.
+   Every current call site is a real `<button>`, which is a cleaner
+   anchor anyway. `hover:bg-red-500` compiles to a differently-named
+   class and is not matched here; it does not need to be, since the
+   colour is set on the element for both states.                        */
+[data-theme="white"] button.bg-red-500,
+[data-theme="white"] button.bg-red-600,
+[data-theme="white"] button.bg-red-500 *,
+[data-theme="white"] button.bg-red-600 * {
+  color: #ffffff !important;
+}
+
 /* Hero "Join Private Course" Card-Button in Course Catalog page — make it stand out under white theme */
 [data-theme="white"] .relative.mb-10.bg-surface-container button.group {
   background: linear-gradient(to bottom right, var(--color-primary-fixed), var(--color-primary-fixed-dim)) !important;
@@ -618,8 +649,25 @@
   color: var(--color-primary-fixed-dim) !important;
 }
 
-/* AR-READY badge: bg-primary-fixed-dim/20 is dark — override specifically */
-[data-theme="white"] span[class*="bg-primary-fixed-dim"] {
+/* Tinted pills: `bg-primary-fixed-dim/10` and friends are dark on this theme.
+ *
+ * ⚠️ THE TRAILING SLASH IS LOAD-BEARING. This was
+ * `span[class*="bg-primary-fixed-dim"]`, a substring match that also caught the
+ * SOLID `bg-primary-fixed-dim` — so any span using the accent as a fill was
+ * repainted at 8% opacity. That is what made the status dot beside a study
+ * space's title all but invisible on the light theme while it glowed on the
+ * dark one; reported from the running app, and it would have hit every future
+ * solid-accent span the same way.
+ *
+ * `bg-primary-fixed-dim/` only appears when an opacity modifier follows, which
+ * is exactly the tinted case this rule was written for. `ProfileCard`'s role
+ * pill (`/10`) still matches; solid fills no longer do.
+ *
+ * The same trap is live elsewhere in this file — `[class*="bg-surface-variant"]`
+ * and `[class*="border-dashed"]` are unanchored too. Left alone because they
+ * have no solid counterpart today, but a substring selector on a class
+ * attribute is a landmine: it matches utilities that had not been written yet. */
+[data-theme="white"] span[class*="bg-primary-fixed-dim/"] {
   background-color: rgba(2, 132, 199, 0.08) !important;
   color: var(--color-primary-fixed-dim) !important;
 }
@@ -1003,10 +1051,131 @@
   animation: pageFadeIn 0.35s ease-out forwards;
 }
 
+/*
+ * ⚠️ `.animate-in.fade-in` HAS BEEN DROPPED FROM THIS SELECTOR LIST, AND
+ * `animate-in` NOW APPEARS NOWHERE IN THE MARKUP. It existed to keep the
+ * `animate-in fade-in duration-300` idiom working — an import from
+ * tailwindcss-animate, which this project does not have, so `animate-in`,
+ * `zoom-in-*` and `slide-in-from-*` all compiled to nothing and the whole
+ * effect was carried by `.fade-in` alone. Every call site has been reduced to
+ * the token that actually did the work, so the compound selector had no
+ * remaining matches.
+ *
+ * If you find yourself writing `animate-in` again, you want `.fade-in`,
+ * `.animate-page-fade` or `.animate-tab-in` — all three are real, defined here,
+ * and covered by the reduced-motion block.
+ */
 .fade-in,
-.animate-fade-in,
-.animate-in.fade-in {
+.animate-fade-in {
   animation: pageFadeIn 0.35s ease-out forwards;
+}
+
+/*
+ * The entrance for a TAB PANEL, as distinct from a page.
+ *
+ * `pageFadeIn` is opacity-only, which is right for a whole page arriving after a
+ * spinner — nothing is on screen to move relative to. A tab panel swaps inside a
+ * frame that stays put, and a pure cross-fade there reads as a flicker rather
+ * than as new content: the header, the tab bar and the page background are all
+ * unchanged, so opacity alone gives the eye no direction to follow. The 8px rise
+ * supplies it.
+ *
+ * Kept short (0.28s) and eased out hard. This fires on every tab click, so
+ * anything slower turns a navigation control into a wait.
+ *
+ * `both` rather than `forwards`, so the panel starts at the from-state on the
+ * frame it mounts. With `forwards` the first painted frame is the un-animated
+ * default — a flash of the finished position before the animation begins.
+ */
+@keyframes tabPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-tab-in {
+  animation: tabPanelIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/*
+ * The entrance for content that REPLACES something in place — an inline editor
+ * opening over a row, a confirmation appearing under one, a read-only value
+ * becoming a form control.
+ *
+ * Shorter and shallower than `tabPanelIn` on purpose, and the difference is not
+ * decorative. A tab panel replaces the whole body of a screen, so 8px of travel
+ * is proportionate to what moved. An inline editor replaces one row inside a
+ * list that stays exactly where it was — 8px there is the row visibly sliding
+ * against its unmoved neighbours, which reads as the list having shifted.
+ *
+ * ⚠️ WHAT THIS DOES NOT DO, AND CANNOT: the row also GROWS, from about 60px to
+ * about 220px, and that jump is instant. `height` is not animatable from `auto`,
+ * so smoothing it needs a measured max-height or a size observer — real work,
+ * and out of scope for a fade. This softens the arrival of the new content, not
+ * the reflow underneath it. Do not describe it as animating the expansion.
+ *
+ * ⚠️ IT FIRES WITHOUT A `key`, WHICH IS THE ONLY REASON IT CAN BE USED HERE.
+ * The read view and the editor are both a `<div>` in the same position, so React
+ * reuses the DOM node and only swaps the class — and a CSS animation restarts
+ * whenever `animation-name` goes from `none` to a name. A `key` would be the
+ * usual fix, but `ConceptForm` is a locally-declared component and this project
+ * has no `@types/react`, so its props are enforced exactly and `key` is not
+ * among them — the same constraint `AdaptiveTestTab` works around with a keyed
+ * `Fragment`.
+ */
+@keyframes swapIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-swap-in {
+  animation: swapIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/*
+ * A loading state that STAYS INVISIBLE FOR ITS FIRST 350ms.
+ *
+ * ⚠️ THIS IS THE FIX FOR "DOUBLE LOADING FLICKER", AND THE DELAY IS THE WHOLE
+ * MECHANISM. Launching a game is two operations with two loading states: the
+ * landing page POSTs `/games/generate` and shows a spinner in its modal for the
+ * real AI wait, then navigates to the game route, which GETs
+ * `/games/content/:id` and shows a second, full-page spinner. The second fetch
+ * takes ~100ms because the content is already in the database — long enough to
+ * paint, far too short to read. So the student sees a spinner, a page change, a
+ * second spinner that blinks, and then the game.
+ *
+ * `both` with a 0.35s delay means the element renders at `opacity: 0` from its
+ * very first frame. A fetch that resolves inside 350ms therefore unmounts it
+ * before it was ever visible — no flash, and no timer, no state, no risk of a
+ * `setTimeout` outliving the component. A genuinely slow load still gets its
+ * spinner, a third of a second later, which is well inside the window where
+ * nobody has begun to wonder.
+ *
+ * ⚠️ FOR LOADING STATES ONLY. An error, an empty state or real content must
+ * appear immediately — hiding those for 350ms is just a slower app.
+ */
+@keyframes delayedFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-delayed-in {
+  animation: delayedFadeIn 0.25s ease-out 0.35s both;
 }
 
 .duration-200 {
@@ -1071,18 +1240,208 @@
   animation: drawerSlideIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Phone Rotation Animation */
-@keyframes phoneRotate {
-  0%, 100% {
-    transform: rotate(0deg);
+/* ===========================================================
+   Orientation gate
+   =========================================================== */
+
+/*
+ * ⚠️ THE ROTATION DIRECTION IS THE INSTRUCTION, AND THE OLD ONE TAUGHT THE
+ * OPPOSITE OF WHAT THE MESSAGE SAID.
+ *
+ * `phoneRotate` ran 0° → 90° → 0°: it started the phone UPRIGHT and turned it
+ * sideways. But the gate only appears when the device is ALREADY sideways and
+ * the copy reads "please rotate your device to vertical orientation", so the
+ * one animated thing on screen demonstrated the wrong move — and then undid it,
+ * on a loop. There was also a single animation for both warnings, so the
+ * landscape case was doubly wrong.
+ *
+ * There are two now, each ending at the orientation the student needs to reach
+ * and RESTING there for roughly half the cycle. The reset is hidden rather than
+ * played backwards: the icon fades out at the target, snaps to the start while
+ * invisible, and fades back in. A visible counter-rotation would read as "and
+ * now turn it back", which is the loop's whole problem.
+ */
+@keyframes phoneToPortrait {
+  0% {
+    transform: rotate(-90deg);
+    opacity: 0;
   }
-  45%, 55% {
-    transform: rotate(90deg);
+  10% {
+    transform: rotate(-90deg);
+    opacity: 1;
+  }
+  45%,
+  80% {
+    transform: rotate(0deg);
+    opacity: 1;
+  }
+  95%,
+  100% {
+    transform: rotate(0deg);
+    opacity: 0;
   }
 }
 
-.animate-phone-rotate {
-  animation: phoneRotate 2.5s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+@keyframes phoneToLandscape {
+  0% {
+    transform: rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    transform: rotate(0deg);
+    opacity: 1;
+  }
+  45%,
+  80% {
+    transform: rotate(-90deg);
+    opacity: 1;
+  }
+  95%,
+  100% {
+    transform: rotate(-90deg);
+    opacity: 0;
+  }
+}
+
+.animate-phone-to-portrait {
+  animation: phoneToPortrait 3s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.animate-phone-to-landscape {
+  animation: phoneToLandscape 3s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+/*
+ * A ring that expands out of the icon once per cycle, timed to start as the
+ * phone begins turning. It is what makes the gate read as "act now" rather than
+ * as a static error card — the icon alone is 40px of movement in the middle of
+ * a full-screen overlay.
+ */
+@keyframes orientationPulse {
+  0%,
+  8% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.5;
+  }
+  55%,
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+.animate-orientation-pulse {
+  animation: orientationPulse 3s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+/*
+ * ⚠️ THE PANEL ENTRANCE IS A REAL KEYFRAME BECAUSE THE TAILWIND ONE IS NOT
+ * AVAILABLE HERE. `animate-in`, `zoom-in-*` and `slide-in-from-*` come from
+ * tailwindcss-animate, which this project does not install, so all three
+ * compiled to NOTHING — verified against the built stylesheet. The
+ * `animate-in fade-in duration-200` idiom that once appeared in ~48 places was
+ * carried entirely by `.fade-in`, a hand-written class further up this file,
+ * and the overlay therefore faded while the content inside it simply appeared.
+ *
+ * Those dead tokens have since been stripped from every call site; only the
+ * real classes remain. This keyframe stays because a fade alone was never the
+ * effect the overlay wanted.
+ */
+@keyframes orientationPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-orientation-panel {
+  animation: orientationPanelIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ===========================================================
+   Auth page ambience
+   =========================================================== */
+
+/*
+ * An aurora behind the sign-in card: one very large, heavily blurred conic
+ * gradient, turning slowly.
+ *
+ * ⚠️ ROTATION IS THE ONLY THING THAT ANIMATES, AND THE REASON IS COST, NOT TASTE.
+ * This layer carries an 80px blur across more than a viewport. A blur is
+ * re-rasterised whenever the thing under it changes, so animating the gradient
+ * itself — its angle, its stops, a background-position — would re-run that blur
+ * on every frame across the whole screen. A static gradient plus a `transform`
+ * is painted ONCE and then handed to the compositor, which is why
+ * `will-change: transform` is here: it promotes the layer so the rotation never
+ * triggers a repaint.
+ *
+ * It replaces two pulsing blobs, which read as exactly that — two circles
+ * breathing in and out. A single slow rotation has no identifiable object in it:
+ * the colour simply moves, which is what a background should do. The blobs in
+ * turn replaced `animate-pulse duration-1000`, which had its own bug —
+ * `duration-*` is a TRANSITION utility and never reached the animation, so the
+ * pulse ran at Tailwind's default 2s, fast enough to compete with the form.
+ *
+ * 46s is deliberately past the point of being watchable. The gradient has two
+ * accent arcs at uneven angles, so no half-turn repeats the previous one.
+ */
+@keyframes authAuroraSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.auth-aurora {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  /* `vmax` so it still covers the diagonal on a wide desktop and a tall phone;
+     the negative margins centre it without a transform, which would otherwise
+     be overwritten by the animation. */
+  width: 130vmax;
+  height: 130vmax;
+  margin-top: -65vmax;
+  margin-left: -65vmax;
+  border-radius: 9999px;
+  /* ⚠️ LITERAL COLOURS, NOT `var(--theme-accent)`, AND ON PURPOSE. The auth
+     pages are pinned to `ACTIVE_THEME` — nobody is signed in, so there is no
+     portal preference to read — which makes cyan and emerald the correct fixed
+     answer here. Writing it as a token would also be a trap: the build resolves
+     `color-mix()` against `:root` at compile time and bakes the cyan in
+     regardless, so the source would imply a theme-awareness the output does not
+     have. */
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(34, 211, 238, 0.2) 50deg,
+    transparent 115deg,
+    rgba(52, 211, 153, 0.16) 195deg,
+    transparent 260deg,
+    rgba(34, 211, 238, 0.14) 320deg,
+    transparent 360deg
+  );
+  filter: blur(80px);
+  will-change: transform;
+  animation: authAuroraSpin 46s linear infinite;
+}
+
+/* A vignette over the aurora. Without it the colour runs to all four edges and
+   the card looks pasted onto a screensaver; darkening the corners puts the
+   light behind the card instead of around it. */
+.auth-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 30%, var(--page-bg) 78%);
 }
 
 /* ===========================================================
@@ -1275,13 +1634,414 @@
     animation: none !important;
   }
 
+  /* The panel still appears — only the 8px rise is dropped. `animation: none`
+     is safe here because the from-state is the only thing being skipped and the
+     to-state is the element's natural position. */
+  .animate-tab-in,
+  .animate-swap-in {
+    animation: none !important;
+  }
+
+  /* ⚠️ NOT `animation: none` — that is the one case in this block where killing
+     the animation would break the thing rather than calm it. This class hides a
+     loading state for 350ms so a fast fetch never flashes; dropping the
+     animation reinstates the flash, which is exactly the motion a
+     reduced-motion user least wants. The delay is kept and only the fade is
+     removed, so it appears instantly at full opacity once the delay is up. */
+  .animate-delayed-in {
+    animation: delayedFadeIn 0.01s linear 0.35s both;
+  }
+
   /* The modal still opens and still names the badge — only the celebration
      stops. Hidden rather than un-animated: a static halo is a coloured smudge. */
   .animate-badge-glow {
     display: none;
   }
 
+  /*
+   * ⚠️ THE ORIENTATION ICON IS PINNED TO ITS TARGET, NOT LEFT WHERE IT LANDS.
+   * `animation: none` alone would leave the phone at `rotate(0deg)` — upright,
+   * which is correct for the portrait warning and exactly backwards for the
+   * landscape one. This gate is the one animation in the app that carries
+   * information rather than delight, so it has to survive reduced motion as a
+   * still image of the goal.
+   */
+  .animate-phone-to-portrait,
+  .animate-phone-to-landscape,
+  .animate-orientation-panel {
+    animation: none !important;
+  }
+
+  /* The aurora stays — it is the page's colour, not its motion. Only the
+     rotation stops, leaving the gradient at its starting angle. */
+  .auth-aurora {
+    animation: none !important;
+  }
+
+  .animate-phone-to-portrait {
+    transform: rotate(0deg);
+  }
+
+  .animate-phone-to-landscape {
+    transform: rotate(-90deg);
+  }
+
+  /* A ring that expands forever is the definition of what this block is for. */
+  .animate-orientation-pulse {
+    display: none;
+  }
+
   .game-screen-flash {
     display: none;
   }
+}
+/* ===================================================================
+   LIGHT THEME — COMPLETION PASS (2026-08-24)
+   ===================================================================
+
+   Everything above this line is the original `[data-theme="white"]` work.
+   It covered the app as it stood, but the app kept growing: the block was
+   last touched 2026-08-20 and the pre/post-test instrument, the games
+   calibration UI and the whole responsive pass landed after it. This
+   section closes the measured gaps rather than editing ~500 lines of
+   working, hand-tuned overrides in two places.
+
+   ⚠️ APPEND ONLY, AND KEEP IT LAST. Every rule here is single-class
+   specificity, so source order is what settles ties against the block
+   above. Insert new light-theme rules HERE, not up there.
+   =================================================================== */
+
+/* -------------------------------------------------------------------
+   1. `--color-white` — the one line that does most of the work.
+   -------------------------------------------------------------------
+   Tailwind v4 compiles `text-white`, `bg-white/<n>`, `border-white/<n>`,
+   `stroke-white/<n>` and `.glass-card` to `var(--color-white)` and NOTHING
+   ELSE reads it (verified against the built stylesheet). On a dark theme
+   white is the ink and the highlight; on a light one both roles invert, so
+   redefining the token flips all of them together.
+
+   That is ~726 occurrences across 55 files — 275 `text-white`, 111
+   `bg-white/*`, 340 `border-white/*` — handled by one declaration. It is
+   the same move the block above already makes with `--color-slate-*`,
+   which is why 730 `text-slate-*` occurrences needed no per-class rules.
+
+   #0f172a is not a new colour: the hand-written overrides above already
+   resolve `bg-white/10` to `rgba(15, 23, 42, 0.06)`. Those keep winning
+   on `!important` where they exist; this catches the opacities nobody got
+   round to — `[0.015]`, `[0.03]`, `[0.04]`, `[0.05]`, `[0.06]`, `[0.08]`
+   for backgrounds and `15`, `25`, `30`, `40`, `[0.06]`, `[0.08]` for
+   borders — and lands them on the same values by construction rather than
+   by someone remembering to match.                                     */
+[data-theme="white"] {
+  --color-white: #0f172a;
+}
+
+/* ⚠️ THE ONE PLACE THAT MEANS LITERAL WHITE. `PdfViewer` renders the page
+   canvas on `bg-white` because a document page IS white paper — inverting
+   it would print the student's lesson on a slate background. It is the
+   only bare `bg-white` in the codebase; every other usage carries an
+   opacity and is a surface tint, which is exactly what should invert. */
+[data-theme="white"] .bg-white {
+  background-color: #ffffff !important;
+}
+
+/* -------------------------------------------------------------------
+   2. `bg-black/*` — wells, and the one that must stay dark.
+   -------------------------------------------------------------------
+   These are recessed surfaces (the crossword grid's tray, a couple of
+   inset panels). At 20–30% black on a light page they read as heavy
+   charcoal blocks, so they invert to the same slate tint the wells above
+   use.
+
+   ⚠️ `bg-black/60` IS DELIBERATELY ABSENT. That is `Modal`'s backdrop
+   scrim, and a scrim is dark in BOTH themes — dimming the page behind a
+   dialog is what tells you the page is inert. Inverting it would leave a
+   white veil over a white page and the modal would look like it was
+   floating in nothing.                                                  */
+[data-theme="white"] .bg-black\/20,
+[data-theme="white"] .bg-black\/25,
+[data-theme="white"] .bg-black\/30 {
+  background-color: rgba(15, 23, 42, 0.05) !important;
+}
+
+/* -------------------------------------------------------------------
+   3. Semantic tone colours — TEXT ONLY, never the fills.
+   -------------------------------------------------------------------
+   ⚠️ NEVER WRITE A TAILWIND OPACITY PATTERN AS `bg-*` FOLLOWED BY A SLASH
+   INSIDE A COMMENT IN THIS FILE. That sequence is the CSS comment
+   terminator. This block once described "every `bg-*` slash-10 tint" using
+   the literal glyphs, which CLOSED THE COMMENT mid-sentence; the remaining
+   prose parsed as a selector and silently ate the rule immediately below
+   it — the emerald one — so `text-emerald-300` was never overridden and the
+   flashcard "Refreshed from …" banner rendered mint-on-mint in light mode.
+   It cost a long hunt because the source looked perfect and only the BUILT
+   stylesheet showed the rule missing. Say "ten-percent tint" instead.
+   -------------------------------------------------------------------
+   ⚠️ THESE ARE PER-CLASS RULES AND NOT A `--color-amber-400` REMAP, WHICH
+   WOULD BREAK THE BUTTONS. The tone palette does two unrelated jobs: pale
+   levels (200–400) are TEXT on near-black, and the same levels are also
+   SOLID FILLS — the crossword's amber "Check Answers", the trivia option
+   states, every ten-percent tint behind a badge. Remapping the token darkens
+   both, so the fills lose the vividness that makes a tier or a
+   correct/incorrect state readable at a glance, and `bg-amber-400
+   text-black` becomes black on brown.
+
+   Only the text side is wrong on a light background — amber-400 on white
+   is about 1.9:1, well under the 4.5:1 floor. Each rule drops to the
+   600/700 level of its own hue, so the semantics (amber = hint, rose =
+   wrong, emerald = correct, violet = trivia) survive intact.
+
+   Counts are real usage: amber-400 ×48, emerald-400 ×40, rose-400 ×38,
+   rose-300 ×35, amber-200 ×12, amber-300 ×9, emerald-300 ×7, violet-400
+   ×6, rose-200 ×4, orange-400 ×2, and one each of violet-300, sky-300,
+   indigo-400, emerald-200, emerald-100.                                 */
+/* ⚠️ EACH TONE IS **ONE** RULE COVERING BOTH THE BARE CLASS AND ITS OPACITY
+   VARIANTS. THIS WAS TWO SECTIONS AND THE SPLIT SILENTLY LOST A RULE.
+   `text-amber-200` and `text-amber-200/70` are different classes, so both forms
+   have to be listed — but written as two separate rules with a byte-identical
+   declaration, the minifier collapsed them and the EMERALD pair came out of the
+   production bundle with only the opacity half surviving. Verified in the built
+   stylesheet: `#047857` appeared exactly once, from the `[class*=…/]` rule, with
+   the bare selectors nowhere in it — while the identically-shaped rose and red
+   rules beside it shipped fine. The visible symptom was the flashcard
+   "Refreshed from …" banner still rendering mint-on-mint in light mode.
+
+   One rule per tone leaves nothing to collapse. Adding `!important` did NOT fix
+   it and is kept only because every override in the original white block above
+   carries it. **Grep the built CSS after touching this section — the source
+   file is not evidence that a rule shipped.**
+
+   ⚠️ THE `[class*="…/"]` SELECTORS NEED THEIR TRAILING SLASH. That substring can
+   only occur where an opacity modifier follows, so it cannot collide with a
+   background utility, and it deliberately also catches `hover:`/`group-hover:`
+   forms. Same anchoring the `bg-primary-fixed-dim/` fix needed.
+
+   THE ALPHA IS DROPPED, DELIBERATELY. Preserving it would need one rule per
+   (tone, level, opacity) pair — 34 of them — and a 70% wash of an already-dark
+   ink on white lands near 3.6:1, under the floor, which is the defect being
+   fixed. Hierarchy between such lines is carried by size and position, which is
+   where it already was. */
+[data-theme="white"] .text-emerald-100,
+[data-theme="white"] .text-emerald-200,
+[data-theme="white"] .text-emerald-300,
+[data-theme="white"] .text-emerald-400,
+[data-theme="white"] [class*="text-emerald-200/"],
+[data-theme="white"] [class*="text-emerald-300/"],
+[data-theme="white"] [class*="text-emerald-400/"] {
+  color: #047857 !important;
+}
+
+[data-theme="white"] .text-rose-200,
+[data-theme="white"] .text-rose-300,
+[data-theme="white"] .text-rose-400,
+[data-theme="white"] [class*="text-rose-300/"],
+[data-theme="white"] [class*="text-rose-400/"] {
+  color: #be123c !important;
+}
+
+/* ⚠️ AMBER GOES ONE STEP DARKER THAN THE OTHER TONES (800, not 700) AND IT IS
+   NOT AN AESTHETIC PREFERENCE. Tone text almost always sits on a tint of its
+   own hue, and amber is the palest of the four, so the backdrop is lighter
+   exactly where the ink is too. Measured on the flashcard refresh prompt —
+   `text-amber-200` inside `bg-amber-500/20` over `bg-amber-500/10` over white —
+   amber-700 lands near 4.0:1 behind 11px bold uppercase, which is under the
+   floor. amber-800 clears it on both the tint and plain white. Rose, emerald
+   and red are ~5:1 at the 700 level and stay there. */
+[data-theme="white"] .text-amber-200,
+[data-theme="white"] .text-amber-300,
+[data-theme="white"] .text-amber-400,
+[data-theme="white"] [class*="text-amber-200/"],
+[data-theme="white"] [class*="text-amber-300/"],
+[data-theme="white"] [class*="text-amber-400/"] {
+  color: #92400e !important;
+}
+
+[data-theme="white"] .text-orange-400 {
+  color: #c2410c !important;
+}
+
+[data-theme="white"] .text-violet-300,
+[data-theme="white"] .text-violet-400 {
+  color: #6d28d9 !important;
+}
+
+[data-theme="white"] .text-sky-300 {
+  color: #0369a1 !important;
+}
+
+[data-theme="white"] .text-indigo-400 {
+  color: #4338ca !important;
+}
+
+/* The hint/selected state on a Term Matching card sets text and fill
+   together; the fill stays amber, so the label must not follow the rule
+   above into brown-on-amber. */
+[data-theme="white"] .bg-amber-400 .text-amber-400,
+[data-theme="white"] .bg-emerald-400 .text-emerald-400,
+[data-theme="white"] .bg-violet-400 .text-violet-400 {
+  color: #ffffff !important;
+}
+
+/* -------------------------------------------------------------------
+   4. Shadows — a dark theme's shadow is a glow, a light theme's is a drop.
+   -------------------------------------------------------------------
+   `shadow-black/20` and friends are tuned to separate a panel from a
+   near-black page. On white they turn into grey haze around every card.
+   Softened rather than removed: a light UI still needs elevation, it just
+   needs a tenth of the opacity.                                         */
+[data-theme="white"] .shadow-black\/20,
+[data-theme="white"] .shadow-black\/25,
+[data-theme="white"] .shadow-black\/30 {
+  --tw-shadow-color: rgba(15, 23, 42, 0.06);
+}
+
+/* -------------------------------------------------------------------
+   5. The two decorative game layers.
+   -------------------------------------------------------------------
+   `game-stage-glow` is a radial accent bloom sized for a black backdrop;
+   at full strength on white it is a wash. The dot grid already has a
+   light-theme rule above (line ~1196) and is left alone.                */
+[data-theme="white"] .game-stage-glow {
+  opacity: 0.35;
+}
+
+/* -------------------------------------------------------------------
+   6. App chrome — the mobile bar, the drawer and the tab menu.
+   -------------------------------------------------------------------
+   ⚠️ THESE ARE THE FRAME, SO GETTING THEM WRONG IS THE MOST VISIBLE
+   FAILURE OF ALL: a near-black app bar and slide-in drawer wrapped
+   around a white page reads as a half-loaded stylesheet rather than a
+   theme. All three layouts (`StudentLayout`, `EducatorLayout`,
+   `AdminLayout`) build their sub-`md:` header and drawer from raw
+   `bg-slate-950`, `StudySpace` uses `bg-slate-900` for its mobile tab
+   menu, and `AccountsList` uses it on native `<option>` elements — the
+   one case where the browser paints the dropdown itself and a dark value
+   would give a light page a black menu.
+
+   `--color-slate-950` is remapped in the block above, but to `#020617`,
+   which is the same near-black it already was, so it offers nothing here.
+   The utilities have to be addressed directly.                          */
+[data-theme="white"] .bg-slate-900,
+[data-theme="white"] .bg-slate-950 {
+  background-color: #ffffff !important;
+}
+
+/* The bar and the drawer sit over scrolling content on a blur, so they
+   keep their translucency rather than becoming opaque white slabs. */
+[data-theme="white"] .bg-slate-950\/80 {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+}
+
+[data-theme="white"] .bg-slate-950\/50 {
+  background-color: rgba(241, 245, 249, 0.7) !important;
+}
+
+/* -------------------------------------------------------------------
+   7. The sidebar collapse toggle — and why the palette remap caused it.
+   -------------------------------------------------------------------
+   ⚠️ `--color-slate-700/800/900` ARE REMAPPED *DARKER* BY THE BLOCK ABOVE
+   (to #0f172a, #090d16, #020617) AND THAT IS CORRECT — for TEXT. On a dark
+   theme slate-700/800 are faint greys used for muted copy and borders; on
+   a light one that role needs a near-black. The remap serves every
+   `text-slate-*` in the app, which is why 730 occurrences needed no rules.
+
+   It is exactly wrong for a FILL. The collapse toggle on each of the three
+   sidebars is `bg-slate-800 hover:bg-slate-700`, so on the light theme it
+   renders as a near-black disc pinned to the edge of a white sidebar —
+   reported from the running app, which is how this was found rather than
+   by grep. Backgrounds have to be addressed as utilities, the same split
+   the tone colours needed in section 3.                                  */
+[data-theme="white"] .bg-slate-800 {
+  background-color: #e2e8f0 !important;
+}
+
+[data-theme="white"] .bg-slate-700,
+[data-theme="white"] .hover\:bg-slate-700:hover {
+  background-color: #cbd5e1 !important;
+}
+
+/* -------------------------------------------------------------------
+   8. `text-red-*` — the sign-out control.
+   -------------------------------------------------------------------
+   Section 3 covered rose, which is what the app uses for validation and
+   incorrect answers. Red is a separate ramp used in exactly one place:
+   Logout, in all three sidebar footers, plus a handful of destructive
+   confirmations. red-400 on white is about 3:1, under the floor, on the
+   one control a student on a shared school computer most needs to find. */
+[data-theme="white"] .text-red-300,
+[data-theme="white"] .text-red-400,
+[data-theme="white"] [class*="text-red-400/"] {
+  color: #b91c1c !important;
+}
+
+[data-theme="white"] .hover\:text-red-300:hover {
+  color: #991b1b !important;
+}
+
+/* ===================================================================
+   TINTED CHIPS — one primitive for every subject / status / phase pill
+   ===================================================================
+
+   ⚠️ THESE PILLS WERE UNREADABLE IN LIGHT MODE, AND THE CAUSE WAS THE
+   MECHANISM, NOT THE PALETTE. `SubjectBadge`, `ParseStatusPill` and the
+   pre/post `AssessmentPill` each wrote three INLINE styles from one hex —
+   the text colour, the same hex at 10% for the fill, and at 20% for the
+   border. An inline style beats every stylesheet rule short of
+   `!important` on a property that is not inherited, so the large
+   `[data-theme="white"]` block above could not reach them at all: no
+   amount of CSS can override `style="color:#22d3ee"`.
+
+   And the hexes were all chosen against a near-black page, so on white
+   they measured roughly:
+
+     slate  #94a3b8  2.3:1      emerald #34d399  2.0:1
+     cyan   #22d3ee  1.9:1      rose    #fb7185  2.9:1
+     violet #a78bfa  2.9:1
+
+   — every one of them under the 4.5:1 floor, on the labels that say
+   whether a lesson finished processing and whether its pre-test is open.
+
+   THE FIX IS TO STOP PASSING A COLOUR AND START PASSING A VARIABLE. Each
+   component now sets only `--tone` and wears `.tone-chip`; the three
+   derived colours are computed here, where a theme selector can reach
+   them. Dark mode is byte-identical to what shipped — 10% and 20% are
+   exactly what the `1a` and `33` alpha suffixes meant.
+
+   In light mode the text is mixed 55% toward slate-900, which lands every
+   colour in the palette between 5:1 and 7.4:1 while keeping it
+   recognisably the same hue — the fill and border stay tinted with the
+   ORIGINAL colour, so a Science badge is still green at a glance. Mixing
+   toward the text colour rather than picking nine new hexes is what keeps
+   this from becoming a second palette to maintain.
+
+   `color-mix()` is safe to rely on: Tailwind v4 already requires Chrome
+   111 / Safari 16.4 / Firefox 128, and every one of those ships it.
+
+   The fallback in `var(--tone, …)` is slate-400 — the same value all three
+   components use for an unrecognised code.                              */
+
+/* ⚠️ DO NOT HAND-WRITE A FALLBACK DECLARATION ABOVE THESE — IT WILL BE
+   DISCARDED. Lightning CSS splits every `color-mix()` into its own
+   `@supports (color: color-mix(in lab, red, red))` block and emits its
+   OWN fallback ahead of it, which for these rules is the bare
+   `var(--tone)`. A `background-color: transparent` written first is
+   simply overwritten by that generated line — verified in the built CSS,
+   where the pair comes out as `background-color:#0000;
+   background-color:var(--tone,#94a3b8)`.
+
+   So the degraded form is an opaque chip, and it is left that way
+   deliberately: the fallback is unreachable. Tailwind v4 already
+   requires Chrome 111 / Safari 16.4 / Firefox 128, and `color-mix` ships
+   in all three — a browser old enough to take the fallback cannot render
+   the rest of the app at all.                                           */
+.tone-chip {
+  color: var(--tone, #94a3b8);
+  background-color: color-mix(in srgb, var(--tone, #94a3b8) 10%, transparent);
+  border-color: color-mix(in srgb, var(--tone, #94a3b8) 20%, transparent);
+}
+
+[data-theme="white"] .tone-chip {
+  color: color-mix(in srgb, var(--tone, #94a3b8) 55%, #0f172a);
+  background-color: color-mix(in srgb, var(--tone, #94a3b8) 14%, transparent);
+  border-color: color-mix(in srgb, var(--tone, #94a3b8) 40%, transparent);
 }

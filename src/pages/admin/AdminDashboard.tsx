@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { Users, GraduationCap, BookUser, Hourglass, KeyRound, ShieldOff, Loader2, ArrowRight } from 'lucide-react';
+import {
+  Users, GraduationCap, BookUser, Hourglass, KeyRound, ShieldOff, ShieldCheck, ArrowRight,
+} from 'lucide-react';
+import Spinner from '../../components/ui/Spinner';
 import { useAuth, displayName } from '../../context/AuthContext';
 import { adminApi, type AdminOverview } from '../../lib/adminAccounts';
 import { ErrorBanner } from './components/accountUi';
@@ -21,27 +24,68 @@ import { ErrorBanner } from './components/accountUi';
  * future global read should meet it too.
  */
 
+/**
+ * ⚠️ TWO TOKENS, SAME SPLIT AS `EducatorDashboard`. `CARD` is a surface you look
+ * at; `PANEL` is a row inside a list. Giving one constant a shadow would put a
+ * drop shadow under every attention row, which reads as a stack of floating
+ * cards rather than a list.
+ */
+const PANEL = 'rounded-2xl bg-white/[0.02] border border-white/5';
+const CARD = `${PANEL} shadow-lg shadow-black/20`;
+
+/**
+ * ⚠️ `ring-inset`, matching both other dashboards. The grade tiles sit in a
+ * `gap-4` grid so an outward ring would survive there, but the attention rows
+ * are `gap-3` and every one of these is a `<Link>` with a rounded border — an
+ * inset ring reads as the card itself lighting up rather than as a halo around
+ * it, and it cannot bleed into a neighbour at any width.
+ */
+const FOCUS =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
+
+/**
+ * A headline count.
+ *
+ * ⚠️ THE ICON IS TINTED PER CARD, VIA `.tone-chip`. All four were the same
+ * `text-slate-500` glyph at the same size, so the strip read as four identical
+ * grey boxes and the only way to tell students from educators was to read the
+ * 10px label. The colours are decorative — nothing here encodes a value — but
+ * they make the strip scannable, which is the entire job of a summary row.
+ *
+ * `.tone-chip` rather than `bg-emerald-400/10 text-emerald-400` and friends: the
+ * light theme's overrides cover tone TEXT and deliberately not tone FILLS, so a
+ * hand-rolled chip would come out as a near-invisible tint behind text that had
+ * been darkened independently. See the TINTED CHIPS block in `index.css`.
+ */
 function StatCard({
   icon: Icon,
   label,
   value,
   hint,
+  tone,
 }: {
   icon: typeof Users;
   label: string;
   value: number | string;
   hint?: string;
+  /** Hex for the icon chip. Decorative — it never encodes a count. */
+  tone: string;
 }) {
   return (
-    <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-5">
-      <div className="flex items-center gap-2 mb-3">
-        <Icon className="w-4 h-4 text-slate-500" />
-        <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+    <div className={`${CARD} p-4 sm:p-5`}>
+      <div className="flex items-center gap-2.5 mb-3">
+        <span
+          className="tone-chip w-7 h-7 rounded-lg border flex items-center justify-center shrink-0"
+          style={{ '--tone': tone } as CSSProperties}
+        >
+          <Icon className="w-3.5 h-3.5" />
+        </span>
+        <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold leading-tight">
           {label}
         </p>
       </div>
-      <p className="font-display text-3xl font-bold text-white tabular-nums">{value}</p>
-      {hint && <p className="font-sans text-[11px] text-slate-500 mt-1.5">{hint}</p>}
+      <p className="font-display text-2xl sm:text-3xl font-bold text-white tabular-nums">{value}</p>
+      {hint && <p className="font-sans text-[11px] text-slate-500 mt-1.5 leading-relaxed">{hint}</p>}
     </div>
   );
 }
@@ -77,8 +121,13 @@ export default function AdminDashboard() {
    * rendered only when something actually needs attention. A permanent "all
    * clear" card is a widget that reports nothing, every day, forever.
    *
-   * `never_signed_in` is null when `auth.users` could not be paged — shown as
-   * "unknown" rather than 0, because 0 would be a claim the page cannot support.
+   * ⚠️ THE "UNKNOWN" BRANCH IS GONE, AND SO IS THE PARAGRAPH THAT EXPLAINED IT.
+   * It described `never_signed_in`, which needed a paged sweep of `auth.users`
+   * and could therefore fail and come back null. That field no longer exists —
+   * `not_activated` replaced it and is a plain column read — so all three counts
+   * on `AdminOverview.attention` are typed `number`. The null checks below were
+   * unreachable, and the fallback sentence ("the sign-in records could not be
+   * read just now") described a request the page no longer makes.
    */
   const attentionItems = overview
     ? [
@@ -114,9 +163,12 @@ export default function AdminDashboard() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-[1100px] mx-auto px-4 md:px-8 py-8 md:py-12">
+      {/* `sm:` steps on both axes and the entrance the other two portals now
+          use — see `EducatorDashboard` for why it is `animate-page-fade` rather
+          than a bare `fade-in`. */}
+      <div className="max-w-[1100px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
         <header className="mb-8">
-          <h1 className="font-display text-3xl font-semibold text-on-surface">
+          <h1 className="font-display text-3xl md:text-4xl font-bold text-on-surface tracking-tight">
             {user ? `Hi, ${displayName(user)}` : 'Dashboard'}
           </h1>
           <p className="font-sans text-sm text-on-surface-variant mt-1.5">
@@ -128,27 +180,46 @@ export default function AdminDashboard() {
 
         {isLoading && (
           <div className="flex items-center gap-2.5 text-slate-500 py-12 justify-center">
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Spinner className="w-4 h-4" />
             <span className="font-sans text-sm">Loading accounts…</span>
           </div>
         )}
 
+        {/* ⚠️ `animate-tab-in` ON THE LOADED BODY, NOT ON THE PAGE WRAPPER. The
+            wrapper's entrance fires while the spinner is the only thing on
+            screen, so it is over before a single count arrives. Same rule as
+            every other fetching screen in the app. */}
         {overview && (
-          <div className="flex flex-col gap-8">
-            <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="flex flex-col gap-8 animate-tab-in">
+            {/* 4-across from `md:`, not `lg:`. At 768px two tiles were ~350px
+                wide each, carrying a 14px icon and one number — the widest
+                things on the page holding the least. */}
+            <section className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
               <StatCard
                 icon={Users}
                 label="All accounts"
                 value={overview.totals.all}
                 hint={`${overview.totals.active} active · ${overview.totals.disabled} disabled`}
+                tone="#22d3ee"
               />
-              <StatCard icon={GraduationCap} label="Students" value={overview.totals.students} />
-              <StatCard icon={BookUser} label="Educators" value={overview.totals.educators} />
               <StatCard
-                icon={Users}
+                icon={GraduationCap}
+                label="Students"
+                value={overview.totals.students}
+                tone="#34d399"
+              />
+              <StatCard
+                icon={BookUser}
+                label="Educators"
+                value={overview.totals.educators}
+                tone="#a78bfa"
+              />
+              <StatCard
+                icon={ShieldCheck}
                 label="Admins"
                 value={overview.totals.admins}
                 hint="Created from the Supabase dashboard"
+                tone="#fbbf24"
               />
             </section>
 
@@ -162,7 +233,7 @@ export default function AdminDashboard() {
                     <Link
                       key={key}
                       to={to}
-                      className={`flex items-start gap-3.5 px-5 py-4 rounded-2xl border transition-colors group ${
+                      className={`flex items-start gap-3 sm:gap-3.5 px-4 sm:px-5 py-4 rounded-2xl border transition-colors group ${FOCUS} ${
                         tone === 'amber'
                           ? 'bg-amber-500/[0.07] border-amber-500/20 hover:bg-amber-500/10'
                           : 'bg-white/[0.02] border-white/5 hover:bg-white/[0.04]'
@@ -172,16 +243,20 @@ export default function AdminDashboard() {
                         className={`w-4 h-4 shrink-0 mt-0.5 ${tone === 'amber' ? 'text-amber-400' : 'text-slate-400'}`}
                       />
                       <div className="min-w-0 flex-1">
+                        {/* The count leads and is `tabular-nums` so the three
+                            rows' titles line up when the numbers differ in
+                            width. */}
                         <p className="font-display text-sm font-bold text-white">
-                          {count === null ? 'Unknown' : count} · {title}
+                          <span className="tabular-nums">{count}</span> · {title}
                         </p>
-                        <p className="font-sans text-xs text-slate-400 mt-1 leading-relaxed">
-                          {count === null
-                            ? 'The sign-in records could not be read just now. Try again shortly.'
-                            : body}
-                        </p>
+                        <p className="font-sans text-xs text-slate-400 mt-1 leading-relaxed">{body}</p>
                       </div>
-                      <ArrowRight className="w-4 h-4 text-slate-600 group-hover:text-slate-400 shrink-0 mt-0.5 transition-colors" />
+                      {/* Hidden below `sm:`: at 375px the row has ~280px for two
+                          lines of body copy, and a decorative chevron is the
+                          first thing that should give that width back. The whole
+                          row is the link, so nothing is lost — it was never the
+                          hit target. */}
+                      <ArrowRight className="hidden sm:block w-4 h-4 text-slate-600 group-hover:text-slate-400 shrink-0 mt-0.5 transition-colors" />
                     </Link>
                   ))}
                 </div>
@@ -192,17 +267,22 @@ export default function AdminDashboard() {
               <h2 className="font-sans text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">
                 Students by grade
               </h2>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Four JHS grades, so `md:grid-cols-4` lands them on one row
+                  exactly — matching the summary strip above rather than
+                  reflowing at a different width to it. */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
                 {overview.by_grade.map(({ grade, count }) => (
                   <Link
                     key={grade}
                     to={`/admin/accounts?role=student&grade=${grade}`}
-                    className="rounded-2xl bg-white/[0.02] border border-white/5 p-5 hover:bg-white/[0.04] transition-colors"
+                    className={`${CARD} p-4 sm:p-5 hover:bg-white/[0.04] hover:border-white/10 transition-colors group ${FOCUS}`}
                   >
-                    <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3">
+                    <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 group-hover:text-slate-400 transition-colors">
                       Grade {grade}
                     </p>
-                    <p className="font-display text-3xl font-bold text-white tabular-nums">{count}</p>
+                    <p className="font-display text-2xl sm:text-3xl font-bold text-white tabular-nums">
+                      {count}
+                    </p>
                   </Link>
                 ))}
               </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { RotateCcw, Trophy, ArrowLeft, Zap, Clock, AlertTriangle, Brain, Calendar, CheckCircle2 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import { api } from '../../../lib/api';
 import { useBadges } from '../../../context/BadgeContext';
 
@@ -377,7 +378,7 @@ export default function FlashcardStudyView({
     };
 
     return (
-      <div className="animate-in fade-in duration-500 flex flex-col items-center justify-center py-6 sm:py-10">
+      <div className="fade-in duration-500 flex flex-col items-center justify-center py-6 sm:py-10">
         <div className="w-full max-w-lg bg-surface-container-lowest rounded-3xl border border-white/5 p-6 sm:p-10 text-center relative overflow-hidden shadow-2xl shadow-black/30">
           <div className="absolute inset-0 bg-gradient-to-b from-primary-fixed-dim/5 via-transparent to-transparent pointer-events-none" />
 
@@ -415,33 +416,36 @@ export default function FlashcardStudyView({
             <p className="font-sans text-sm text-slate-300 mb-8">{getGradeMessage()}</p>
 
             {/* Rating breakdown */}
-            <div className="grid grid-cols-3 gap-3 mb-8">
+            {/* `text-[9px]` on the interval line was unreadable, and at three
+                columns on a 320px phone `p-4` left the numbers touching their
+                borders. Padding steps up instead of starting large. */}
+            <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-8">
               {/* Hard */}
-              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4">
+              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 sm:p-4">
                 <div className="flex items-center justify-center gap-1.5 mb-1">
                   <AlertTriangle className="w-4 h-4 text-red-400" />
                   <span className="font-display text-2xl font-bold text-red-400">{hardCount}</span>
                 </div>
                 <p className="font-sans text-[10px] uppercase tracking-widest text-red-400/70 font-semibold">Hard</p>
-                <p className="font-sans text-[9px] text-slate-600 mt-0.5">1 day</p>
+                <p className="font-sans text-[11px] text-slate-500 mt-0.5">1 day</p>
               </div>
               {/* Medium */}
-              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 sm:p-4">
                 <div className="flex items-center justify-center gap-1.5 mb-1">
                   <Clock className="w-4 h-4 text-amber-400" />
                   <span className="font-display text-2xl font-bold text-amber-400">{mediumCount}</span>
                 </div>
                 <p className="font-sans text-[10px] uppercase tracking-widest text-amber-400/70 font-semibold">Medium</p>
-                <p className="font-sans text-[9px] text-slate-600 mt-0.5">3 days</p>
+                <p className="font-sans text-[11px] text-slate-500 mt-0.5">3 days</p>
               </div>
               {/* Easy */}
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 sm:p-4">
                 <div className="flex items-center justify-center gap-1.5 mb-1">
                   <Zap className="w-4 h-4 text-emerald-400" />
                   <span className="font-display text-2xl font-bold text-emerald-400">{easyCount}</span>
                 </div>
                 <p className="font-sans text-[10px] uppercase tracking-widest text-emerald-400/70 font-semibold">Easy</p>
-                <p className="font-sans text-[9px] text-slate-600 mt-0.5">7 days</p>
+                <p className="font-sans text-[11px] text-slate-500 mt-0.5">7 days</p>
               </div>
             </div>
 
@@ -512,7 +516,7 @@ export default function FlashcardStudyView({
   const ratingOrder: EaseRating[] = ['hard', 'medium', 'easy'];
 
   return (
-    <div className="animate-in fade-in duration-300 flex flex-col items-center">
+    <div className="fade-in duration-300 flex flex-col items-center">
 
       {/* Said up front, not discovered at the end: these cards are not due, so
           rating them is for the student's own benefit and nothing else. */}
@@ -540,9 +544,16 @@ export default function FlashcardStudyView({
             {deckTitle}
           </span>
 
-          <div className="flex items-center gap-4 shrink-0">
-            {/* Mini rating pills */}
-            <div className="hidden sm:flex items-center gap-2">
+          <div className="flex items-center gap-2.5 sm:gap-4 shrink-0">
+            {/*
+              * Visible on phones now. It was `hidden sm:flex`, and since the deck
+              * title is `hidden md:block`, a phone was left with nothing in this
+              * row but "3 / 12" — the running tally of how the session is actually
+              * going disappeared on the smallest screen, which is where the card
+              * itself already shows the least context. Three icon+number pairs
+              * cost ~90px, which fits beside Exit and the counter at 375px.
+              */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <span className="flex items-center gap-1 font-sans text-xs text-red-400">
                 <AlertTriangle className="w-3 h-3" />
                 {hardCount}
@@ -583,9 +594,21 @@ export default function FlashcardStudyView({
 
       {/* ── Flashcard ───────────────────────────────────────────────── */}
       <div className="w-full max-w-3xl mb-6">
+        {/*
+          * `role="button"` + `tabIndex` give the card a focus stop and screen-reader
+          * semantics it had none of — but deliberately NO `onKeyDown`. Space is
+          * already bound window-wide in the effect above, so a key handler here
+          * would fire alongside it and flip the card twice, i.e. not at all. Enter
+          * is therefore unbound on purpose; Space is the documented shortcut and it
+          * works whether or not this element holds focus.
+          */}
         <div
+          role="button"
+          tabIndex={0}
+          aria-pressed={isFlipped}
+          aria-label={isFlipped ? 'Answer shown. Press Space to hide.' : 'Question shown. Press Space to reveal the answer.'}
           onClick={handleFlip}
-          className={`relative w-full h-72 sm:h-80 md:h-[23rem] cursor-pointer select-none transition-all duration-350
+          className={`relative w-full h-72 sm:h-80 md:h-[23rem] cursor-pointer select-none transition-all duration-350 rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-4 focus-visible:ring-offset-background
             ${slideDirection === 'right' ? 'translate-x-[130%] opacity-0 rotate-6' : ''}
             ${slideDirection === 'left' ? '-translate-x-[130%] opacity-0 -rotate-6' : ''}
           `}
@@ -745,8 +768,11 @@ export default function FlashcardStudyView({
 
       {/* Saving indicator */}
       {isSaving && !saveError && (
+        /* Was a hand-rolled `border-t-transparent` ring — the app's THIRD
+           spinner design, on a screen a student sees on every card. See
+           `components/ui/Spinner.tsx`. */
         <div className="mt-4 flex items-center gap-2 text-slate-600">
-          <div className="w-3 h-3 rounded-full border-2 border-slate-600 border-t-transparent animate-spin" />
+          <Spinner className="w-3 h-3" label="Saving your rating" />
           <span className="font-sans text-[10px] uppercase tracking-widest">Saving...</span>
         </div>
       )}
@@ -754,7 +780,7 @@ export default function FlashcardStudyView({
       {/* A rating that did not reach the server. The session continues — losing
           one schedule update must not cost the student their place. */}
       {saveError && (
-        <div className="mt-4 w-full max-w-3xl flex items-start gap-2.5 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 animate-in fade-in duration-200">
+        <div className="mt-4 w-full max-w-3xl flex items-start gap-2.5 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 fade-in duration-200">
           <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
           <p className="font-sans text-xs text-rose-300 leading-relaxed">
             That rating wasn't saved, so this card's next review date didn't change. You can keep

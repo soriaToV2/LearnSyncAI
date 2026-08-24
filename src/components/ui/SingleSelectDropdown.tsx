@@ -85,8 +85,14 @@ export default function SingleSelectDropdown({
         //
         // w-full rather than a repeated w-56 so the panel tracks the button if
         // its width is ever changed.
-        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md z-[100]">
-          <div className="py-1 max-h-68 overflow-y-auto scrollbar-none" role="listbox">
+        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden fade-in duration-150 backdrop-blur-md z-[100]">
+          {/* `scrollbar-none` removed, NOT swapped for `no-scrollbar`. Verified
+              against the built CSS: it generated zero rules, so the panel has
+              always shown its scrollbar — and for a scrolling option list that
+              scrollbar is the only cue that more options exist below. Activating
+              the author's original intent would delete a useful affordance, so
+              this drops the dead class and leaves behaviour exactly as it is. */}
+          <div className="py-1 max-h-68 overflow-y-auto" role="listbox">
             {options.map((option) => {
               const isSelected = option.value === selectedValue;
               return (

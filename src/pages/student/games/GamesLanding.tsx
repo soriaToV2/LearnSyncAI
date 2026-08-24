@@ -9,15 +9,15 @@ import {
   AlertCircle,
   FileText,
   Check,
-  Loader2,
   History,
   Sparkles,
   CheckCircle2,
   XCircle,
   Lightbulb,
   ChevronRight,
-  LucideIcon,
+  LucideIcon
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import clsx from 'clsx';
 import Modal from '../../../components/ui/Modal';
 import { api } from '../../../lib/api';
@@ -105,8 +105,13 @@ const GAME_META: Record<
     title: 'Timed Trivia',
     description: 'Answer rapid-fire questions against the clock and chase your best streak.',
     icon: Hourglass,
-    accent: 'text-cyan-400',
-    iconWrap: 'bg-cyan-400/10 border-cyan-400/20 text-cyan-400',
+    /* Violet, not cyan. `cyan-400` (#22d3ee) is a shade off `term_matcher`'s
+       `primary-fixed-dim` (#00daf3), so two of the three games read as the same
+       colour and the trio had only two identities. `violet-400` (#a78bfa) is the
+       `[data-theme="violet"]` accent, so it is a value the design system already
+       carries, and it is light enough to take `text-black` like amber does. */
+    accent: 'text-violet-400',
+    iconWrap: 'bg-violet-400/10 border-violet-400/20 text-violet-400',
   },
 };
 
@@ -117,7 +122,7 @@ const GAME_FX: Record<
   { cardHover: string; glow: string; playIdle: string; playHover: string }
 > = {
   term_matcher: {
-    cardHover: 'hover:border-primary-fixed-dim/40 hover:shadow-[0_14px_44px_-14px_rgba(0,218,243,0.45)]',
+    cardHover: 'hover:border-primary-fixed-dim/40 hover:shadow-[0_14px_44px_-14px] hover:shadow-primary-fixed-dim/45',
     glow: 'bg-primary-fixed-dim/10 group-hover:bg-primary-fixed-dim/25',
     playIdle: 'bg-primary-fixed-dim/10 text-primary-fixed-dim',
     playHover: 'group-hover:bg-primary-fixed-dim group-hover:text-on-primary-fixed',
@@ -129,10 +134,12 @@ const GAME_FX: Record<
     playHover: 'group-hover:bg-amber-400 group-hover:text-black',
   },
   timed_trivia: {
-    cardHover: 'hover:border-cyan-400/40 hover:shadow-[0_14px_44px_-14px_rgba(34,211,238,0.45)]',
-    glow: 'bg-cyan-400/10 group-hover:bg-cyan-400/25',
-    playIdle: 'bg-cyan-400/10 text-cyan-400',
-    playHover: 'group-hover:bg-cyan-400 group-hover:text-black',
+    // rgba is violet-400 #a78bfa = rgb(167,139,250) — the shadow cannot take a
+    // Tailwind colour token, so it is the one place the hex has to be restated.
+    cardHover: 'hover:border-violet-400/40 hover:shadow-[0_14px_44px_-14px_rgba(167,139,250,0.45)]',
+    glow: 'bg-violet-400/10 group-hover:bg-violet-400/25',
+    playIdle: 'bg-violet-400/10 text-violet-400',
+    playHover: 'group-hover:bg-violet-400 group-hover:text-black',
   },
 };
 
@@ -329,7 +336,7 @@ export default function GamesLanding() {
   const preview = unionMastery(mastery, selectedMaterialIds);
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-300">
+    <div className="space-y-10 fade-in duration-300">
       {/* Game launchers */}
       <section className="space-y-4">
         <h2 className="font-sans text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -351,8 +358,21 @@ export default function GamesLanding() {
                   'group relative overflow-hidden glass-card rounded-2xl border border-white/5 p-5 text-left flex flex-col gap-4',
                   'transition-all duration-300 ease-out will-change-transform',
                   'hover:-translate-y-1.5 active:translate-y-0 active:scale-[0.98]',
-                  'focus:outline-none focus-visible:border-white/25',
-                  'animate-in fade-in slide-in-from-bottom-3 fill-mode-both',
+                  /* `focus:outline-none` removes the browser's indicator, and what
+                     replaced it was `focus-visible:border-white/25` — a border
+                     going from 5% to 25% white on a card that already animates
+                     its border on hover. Effectively invisible, on the three
+                     primary actions of the page. Same defect as `INPUT_CLASS` in
+                     formKit.
+
+                     `ring-on-surface` rather than the usual accent: each card
+                     carries a DIFFERENT accent (cyan / amber / violet), so an
+                     accent ring would match one card's identity and mislabel the
+                     other two — and on the cyan card it would land accent-on-
+                     accent. A neutral max-contrast ring reads the same on all
+                     three. */
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  'fade-in',
                   fx.cardHover
                 )}
               >
@@ -414,10 +434,10 @@ export default function GamesLanding() {
         <div className="glass-card rounded-2xl border border-white/5 divide-y divide-white/[0.04]">
           {historyLoading ? (
             <div className="flex items-center gap-2 p-5 text-slate-500 font-sans text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading your history…
+              <Spinner className="w-4 h-4" /> Loading your history…
             </div>
           ) : sessions.length === 0 ? (
-            <div className="flex flex-col items-center text-center gap-1.5 px-6 py-12">
+            <div className="flex flex-col items-center text-center gap-1.5 px-6 py-12 animate-tab-in">
               <div className="w-11 h-11 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-1">
                 <Sparkles className="w-5 h-5 text-slate-500" />
               </div>
@@ -427,7 +447,13 @@ export default function GamesLanding() {
               </p>
             </div>
           ) : (
-            sessions.map((s) => {
+            /* ⚠️ WRAPPED IN A `divide-y` DIV, NOT JUST GIVEN A CLASS. The rows
+               were direct children of the card, which owns the `divide-y`
+               hairlines — so the wrapper has to carry that class too or every
+               separator between sessions disappears. Entrance on the loaded
+               rows; the spinner above must never animate in. */
+            <div className="divide-y divide-white/[0.04] animate-tab-in">
+            {sessions.map((s) => {
               const meta = GAME_META[s.game_type];
               const accuracyPct =
                 s.accuracy === null ? null : Math.round(Math.max(0, Math.min(1, s.accuracy)) * 100);
@@ -439,7 +465,11 @@ export default function GamesLanding() {
                   disabled={!reviewable}
                   onClick={() => reviewable && setReviewSession(s)}
                   className={clsx(
-                    'w-full flex items-center gap-3 px-4 py-3 text-left transition-colors',
+                    'w-full flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-3 text-left transition-colors',
+                    /* Inset ring: these rows sit in a `divide-y` list inside a
+                       `rounded-2xl` container, so an outward ring would bleed
+                       across the dividers and out of the rounded corners. */
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]',
                     reviewable ? 'hover:bg-white/[0.03] cursor-pointer' : 'cursor-default'
                   )}
                 >
@@ -462,20 +492,28 @@ export default function GamesLanding() {
                   {accuracyPct !== null && (
                     <div className="text-right shrink-0">
                       <p className="font-display text-sm font-bold text-white tabular-nums">{accuracyPct}%</p>
-                      <p className="font-sans text-[9px] uppercase tracking-widest text-slate-500">accuracy</p>
+                      {/* 9px is below the floor used anywhere else in the portal;
+                          10px is the uppercase-micro-label size. */}
+                      <p className="font-sans text-[10px] uppercase tracking-widest text-slate-500">accuracy</p>
                     </div>
                   )}
 
                   {reviewable ? (
+                    /* The word drops below `sm:` and the chevron carries the
+                       affordance alone. At 375px the icon, accuracy block and
+                       this label leave the title and material name ~124px
+                       between them; "Review" alone is ~45px of that. */
                     <span className="flex items-center gap-1 shrink-0 font-sans text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                      Review <ChevronRight className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Review</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
                     </span>
                   ) : (
                     <span className="w-3.5 shrink-0" aria-hidden />
                   )}
                 </button>
               );
-            })
+            })}
+            </div>
           )}
         </div>
       </section>
@@ -487,7 +525,19 @@ export default function GamesLanding() {
         title={selectedGameType ? `Build ${GAME_META[GAME_TYPE_API[selectedGameType]].title} Game` : 'Build Game'}
         maxWidth="max-w-lg"
       >
-        <div className="flex flex-col gap-6 max-h-[70vh] overflow-y-auto pr-1 no-scrollbar">
+      {/* ⚠️ THE ACTION ROW IS A SIBLING OF THE SCROLL BOX, NOT INSIDE IT. It used
+          to sit within the same `overflow-y-auto` element, so on a space with
+          several study spaces and a long material list the student had to scroll
+          the modal to reach "Build & Launch". `ImportAccountsModal` records the
+          same fix for the same reason.
+
+          Sized against the chrome (`85vh` minus the header, error line, action
+          row and gaps) rather than as a flat `vh` fraction — the chrome is a
+          constant pixel height, so a fraction tuned on a 1080px screen overflows
+          a 600px laptop. `Modal` itself has no max-height and centres with
+          `items-center`, so anything taller than the viewport loses both ends. */}
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-6 max-h-[calc(85vh-15rem)] overflow-y-auto pr-1 no-scrollbar">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center">
@@ -512,15 +562,15 @@ export default function GamesLanding() {
 
             {spacesLoading ? (
               <div className="flex items-center gap-2 p-3 text-slate-500 font-sans text-sm">
-                <Loader2 className="w-4 h-4 animate-spin" /> Loading your study spaces…
+                <Spinner className="w-4 h-4" /> Loading your study spaces…
               </div>
             ) : spaces.length === 0 ? (
-              <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-white/5 border border-white/10 p-3 rounded-xl">
+              <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-white/5 border border-white/10 p-3 rounded-xl animate-tab-in">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>No study spaces found. Create one and upload materials first.</span>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-2.5">
+              <div className="grid grid-cols-1 gap-2.5 animate-tab-in">
                 {spaces.map((s) => {
                   const isSelected = selectedSpaceId === s.id;
                   const info = getCourseDisplayInfo({ id: s.id, title: s.title, category: '' });
@@ -529,10 +579,12 @@ export default function GamesLanding() {
                       key={s.id}
                       type="button"
                       onClick={() => setSelectedSpaceId(s.id)}
+                      aria-pressed={isSelected}
                       className={clsx(
                         'w-full flex items-center gap-3 p-3 rounded-xl border font-sans text-left transition-all active:scale-[0.99]',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]',
                         isSelected
-                          ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim text-white shadow-[0_0_15px_rgba(0,218,243,0.15)]'
+                          ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim text-white shadow-[0_0_15px] shadow-primary-fixed-dim/15'
                           : 'bg-surface-container border-white/5 text-slate-300 hover:bg-white/5 hover:text-white'
                       )}
                     >
@@ -542,7 +594,7 @@ export default function GamesLanding() {
                       <div className="flex-1 min-w-0">
                         <span className="block font-semibold text-sm truncate">{s.title}</span>
                         {s.description && (
-                          <span className="block text-[10px] text-slate-500 truncate">{s.description}</span>
+                          <span className="block text-[11px] text-slate-500 truncate">{s.description}</span>
                         )}
                       </div>
                       {isSelected && (
@@ -567,20 +619,41 @@ export default function GamesLanding() {
                 <button
                   type="button"
                   onClick={() => setSelectedMaterialIds(allSelected ? [] : materials.map((m) => m.id))}
-                  className="text-[10px] font-sans font-bold text-primary-fixed-dim hover:underline"
+                  className="text-[11px] font-sans font-bold text-primary-fixed-dim hover:underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest"
                 >
                   {allSelected ? 'Deselect All' : 'Select All'}
                 </button>
               )}
             </div>
 
-            <div className="bg-slate-950/50 border border-white/5 rounded-xl p-3 max-h-48 overflow-y-auto space-y-2.5">
+            {/* No `max-h-48 overflow-y-auto` here any more. It made this a scroll
+                region INSIDE the modal's own scroll region: you scrolled the
+                material list, hit its end, and then the modal began to move —
+                the nested-scrolling confusion already reported on the Free Recall
+                history. The modal has one scroll box now and this grows inside
+                it. The space list above was never capped either, so the inner cap
+                was not what bounded the modal's height. */}
+            {/* ⚠️ `bg-white/<opacity>`, NOT `bg-slate-950/50`, AND THE REASON IS
+                THE LIGHT THEME. `index.css` patches exactly three nested-tile
+                classes under `[data-theme="white"]` — `bg-white/[0.01]`,
+                `bg-white/[0.02]` and `bg-white/5` — remapping them to a slate-100
+                tile with a hairline border. A raw palette class gets no such
+                override: `--color-slate-950` is still `#020617` on the light
+                theme, so this well rendered as a near-black panel inside a pure
+                white modal. Latent rather than live only because `ThemeContext`
+                is currently pinned to `THEMES[0]`.
+
+                It also reads BETTER on the dark themes. `Modal`'s panel is
+                `surface-container-lowest` (#060e20), so a half-opacity slate-950
+                well resolved to ~#040a1b — a well that was very nearly invisible
+                against the surface it was meant to sit in. */}
+            <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-2.5">
               {materialsLoading ? (
                 <div className="flex items-center gap-2 p-2 text-slate-500 font-sans text-xs">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Loading materials…
+                  <Spinner className="w-4 h-4" /> Loading materials…
                 </div>
               ) : materials.length === 0 ? (
-                <div className="flex items-center gap-1.5 text-xs text-slate-500 p-2 font-sans">
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 p-2 font-sans animate-tab-in">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>
                   {lockedCount > 0
@@ -589,15 +662,22 @@ export default function GamesLanding() {
                 </span>
                 </div>
               ) : (
-                materials.map((m) => {
+                /* `space-y-2.5` is repeated here because the rows are this
+                   div's children now, not the well's — without it the checkbox
+                   list collapses into an unspaced block. Entrance on the loaded
+                   rows, not on the spinner. */
+                <div className="space-y-2.5 animate-tab-in">
+                {materials.map((m) => {
                   const isChecked = selectedMaterialIds.includes(m.id);
                   return (
                     <button
                       key={m.id}
                       type="button"
                       onClick={() => toggleMaterial(m.id)}
+                      aria-pressed={isChecked}
                       className={clsx(
                         'w-full flex items-center gap-3 p-2.5 rounded-lg border font-sans text-xs text-left transition-all',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]',
                         isChecked
                           ? 'bg-white/5 border-white/10 text-white'
                           : 'bg-transparent border-transparent text-slate-400 hover:bg-white/5 hover:text-white'
@@ -615,7 +695,8 @@ export default function GamesLanding() {
                       <span className="truncate flex-1 font-medium">{m.title}</span>
                     </button>
                   );
-                })
+                })}
+                </div>
               )}
             </div>
 
@@ -651,20 +732,23 @@ export default function GamesLanding() {
               </p>
             )}
           </div>
+        </div>
 
-          {genError && (
-            <div className="flex items-center gap-1.5 text-xs text-rose-400 bg-rose-500/5 border border-rose-500/10 p-2.5 rounded-xl">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{genError}</span>
-            </div>
-          )}
+        {/* Outside the scroll box too: a generation failure must be visible at
+            the moment the button that caused it is, not parked above the fold. */}
+        {genError && (
+          <div className="flex items-center gap-1.5 text-xs text-rose-400 bg-rose-500/5 border border-rose-500/10 p-2.5 rounded-xl">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{genError}</span>
+          </div>
+        )}
 
-          <div className="flex gap-3 pt-2">
+        <div className="flex gap-3">
             <button
               type="button"
               onClick={() => setIsBuildModalOpen(false)}
               disabled={generating}
-              className="flex-1 py-3 rounded-xl border border-white/10 font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-all disabled:opacity-40"
+              className="flex-1 py-3 rounded-xl border border-white/10 font-sans text-sm font-semibold text-slate-300 hover:bg-white/5 transition-all disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest"
             >
               Cancel
             </button>
@@ -672,11 +756,13 @@ export default function GamesLanding() {
               type="button"
               onClick={handleBuildAndLaunchGame}
               disabled={selectedMaterialIds.length === 0 || generating}
-              className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans font-bold text-sm hover:bg-primary-container transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-primary-fixed-dim/20 flex items-center justify-center gap-2"
+              /* `ring-on-surface`, not the accent — this button's background is
+                 the accent, so an accent ring would be the same colour twice. */
+              className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans font-bold text-sm hover:bg-primary-container transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-primary-fixed-dim/20 flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest"
             >
               {generating ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" /> Generating…
+                  <Spinner className="w-4 h-4" /> Generating…
                 </>
               ) : (
                 'Build & Launch Game'

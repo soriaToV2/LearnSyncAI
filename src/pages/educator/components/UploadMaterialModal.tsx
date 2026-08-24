@@ -1,5 +1,6 @@
 import { useState, useRef, FormEvent, DragEvent } from 'react';
-import { UploadCloud, FileText, X, AlertCircle, Info, Loader2 } from 'lucide-react';
+import { UploadCloud, FileText, X, AlertCircle, Info} from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import Modal from '../../../components/ui/Modal';
 import Dropdown from '../../../components/ui/Dropdown';
 import SubjectBadge from '../../../components/educator/SubjectBadge';
@@ -268,7 +269,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
           >
             {isUploading ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Spinner className="w-4 h-4" />
                 Uploading…
               </>
             ) : (

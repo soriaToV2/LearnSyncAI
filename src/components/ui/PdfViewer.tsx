@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  FileText, Loader2, AlertCircle, ExternalLink, RefreshCw,
-  ChevronUp, ChevronDown, ZoomIn, ZoomOut,
+  FileText, AlertCircle, ExternalLink, RefreshCw,
+  ChevronUp, ChevronDown, ZoomIn, ZoomOut
 } from 'lucide-react';
+import Spinner from '../../components/ui/Spinner';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -187,7 +188,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry }: PdfVi
                   onClick={() => goToPage(currentPage - 1)}
                   disabled={currentPage <= 1}
                   aria-label="Previous page"
-                  className="p-1.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] p-1.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronUp className="w-4 h-4" />
                 </button>
@@ -198,7 +199,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry }: PdfVi
                   onClick={() => goToPage(currentPage + 1)}
                   disabled={currentPage >= pages.length}
                   aria-label="Next page"
-                  className="p-1.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] p-1.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronDown className="w-4 h-4" />
                 </button>
@@ -210,7 +211,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry }: PdfVi
                   onClick={() => setZoom(z => Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2)))}
                   disabled={zoom <= ZOOM_MIN}
                   aria-label="Zoom out"
-                  className="p-1.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] p-1.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
                   <ZoomOut className="w-4 h-4" />
                 </button>
@@ -221,7 +222,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry }: PdfVi
                   onClick={() => setZoom(z => Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2)))}
                   disabled={zoom >= ZOOM_MAX}
                   aria-label="Zoom in"
-                  className="p-1.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] p-1.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
                   <ZoomIn className="w-4 h-4" />
                 </button>
@@ -248,7 +249,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry }: PdfVi
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 relative overflow-auto bg-surface-container/20 no-scrollbar">
         {showLoading ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400">
-            <Loader2 className="w-7 h-7 text-primary-fixed-dim animate-spin" />
+            <Spinner className="w-7 h-7 text-primary-fixed-dim" />
             <p className="font-sans text-sm">Loading document…</p>
           </div>
         ) : showError ? (
@@ -261,7 +262,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry }: PdfVi
               {onRetry && (
                 <button
                   onClick={onRetry}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white transition-all text-xs font-medium"
+                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white transition-all text-xs font-medium"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   Try again

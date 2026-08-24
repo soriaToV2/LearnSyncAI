@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Brain, RefreshCw, CheckCircle2, XCircle, AlertTriangle, PenTool, History } from 'lucide-react';
+import { Brain, CheckCircle2, XCircle, AlertTriangle, PenTool, History, ChevronLeft } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
 import { api } from '../../../lib/api';
 import {
@@ -355,7 +356,20 @@ export default function FreeRecallTab({ availableResources, spaceId, lockedIds }
     const scorePercent = Math.round((activeLog.similarity_score ?? 0) * 100);
     const progress = progressLine(activeFeedback, previousAttempt(activeLog));
     return (
-            <div className="space-y-5 animate-in fade-in duration-300">
+            /*
+              ⚠️ `key` ON THE ATTEMPT ID, WHICH IS WHAT MAKES THE ENTRANCE FIRE
+              AT ALL. This root always carried a fade, but clicking a different
+              attempt in the History rail renders the same element type in the
+              same position — so React reuses the DOM node, the class never
+              changes, and a CSS animation only runs on mount. The result
+              therefore swapped instantly with no transition, which reads as the
+              page not having responded to the click. Keying on the log id makes
+              each attempt its own node.
+
+              It is correct in Study mode too: a new submission is a new log id,
+              so the result animates in there exactly as before.
+            */
+            <div key={activeLog.id} className="space-y-5 animate-tab-in">
               {/* Named before the score, because the score cannot be read
                   without it: the denominator, the missed list and the progress
                   line all belong to one lesson. */}
@@ -462,7 +476,7 @@ export default function FreeRecallTab({ availableResources, spaceId, lockedIds }
                 <div className="pt-2">
                   <button
                     onClick={startNewAttempt}
-                    className="w-full sm:w-auto px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all flex items-center justify-center gap-2"
+                    className="w-full sm:w-auto px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all flex items-center justify-center gap-2"
                   >
                     <PenTool className="w-4 h-4" /> Write another
                   </button>
@@ -473,7 +487,7 @@ export default function FreeRecallTab({ availableResources, spaceId, lockedIds }
   };
 
   const composer = (
-            <div className="animate-in fade-in">
+            <div className="fade-in">
               <div className="flex flex-col items-start gap-1.5 mb-4">
                 <span className={LABEL}>Material</span>
                 <SingleSelectDropdown
@@ -513,10 +527,10 @@ export default function FreeRecallTab({ availableResources, spaceId, lockedIds }
                 <button
                   onClick={handleEvaluate}
                   disabled={!recallText.trim() || isEvaluating || selectedMaterialIds.length === 0}
-                  className="px-6 py-2.5 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {isEvaluating ? (
-                    <><RefreshCw className="w-4 h-4 animate-spin" /> Analyzing...</>
+                    <><Spinner className="w-4 h-4" /> Analyzing...</>
                   ) : (
                     'Evaluate Recall'
                   )}
@@ -544,7 +558,19 @@ export default function FreeRecallTab({ availableResources, spaceId, lockedIds }
           {activeLog && activeFeedback ? resultView(activeLog, activeFeedback, true) : composer}
         </div>
       ) : (
-        <div className="h-full flex flex-col sm:flex-row gap-6 animate-in fade-in">
+        /*
+         * ⚠️ ONE PANE AT A TIME BELOW `lg` — this is master/detail, and stacking
+         * both on a phone gave the student TWO nested scroll regions: scroll the
+         * attempts list, then scroll the attempt inside it. Neither could show
+         * much, and it was not obvious which one a swipe would move.
+         *
+         * So under `lg` the list is the screen until an attempt is picked, then the
+         * attempt is the screen until "All attempts" comes back. No new state does
+         * this — `historyLogId` already records exactly that choice. From `lg` up
+         * there is room for the real two-column layout, and both panes scroll
+         * independently as before.
+         */
+        <div className="h-full flex flex-col lg:flex-row gap-5 lg:gap-6 fade-in">
           <AttemptsList
             title="Past Attempts"
             attempts={attempts}
@@ -556,13 +582,30 @@ export default function FreeRecallTab({ availableResources, spaceId, lockedIds }
               setShowMissed(false);
               setShowAnswer(false);
             }}
+            className={historyLogId ? 'hidden lg:flex' : 'flex'}
           />
 
           {/* Same horizontal-clip rule as the study pane above. */}
-          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10 px-2">
+          <div
+            className={`flex-1 min-h-0 overflow-y-auto no-scrollbar pb-10 px-2 ${
+              historyLogId ? 'block' : 'hidden lg:block'
+            }`}
+          >
             {activeLog && activeFeedback ? (
-              <div className="max-w-3xl">{resultView(activeLog, activeFeedback, false)}</div>
+              <div className="max-w-3xl">
+                {/* Mobile only: the list is off-screen, so this is the way back.
+                    On `lg` it is redundant — the list is sitting right there. */}
+                <button
+                  onClick={() => setHistoryLogId(null)}
+                  className="lg:hidden mb-4 inline-flex items-center gap-1.5 font-sans text-xs font-semibold uppercase tracking-widest text-slate-400 hover:text-white transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]"
+                >
+                  <ChevronLeft className="w-4 h-4" /> All attempts
+                </button>
+                {resultView(activeLog, activeFeedback, false)}
+              </div>
             ) : (
+              /* `lg`-only by construction: below it this pane is hidden whenever
+                 nothing is selected, because the list itself is the empty state. */
               <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 py-20">
                 <History className="w-10 h-10 mb-4 opacity-20" />
                 <p className="font-sans text-sm">Select a past attempt to view its score and feedback.</p>

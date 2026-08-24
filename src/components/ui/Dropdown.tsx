@@ -49,8 +49,8 @@ export default function Dropdown({ value, onChange, options, className = '', ico
           type="button"
           onClick={() => setIsOpen(!isOpen)}
           className={`inline-flex w-full items-center justify-between gap-x-2 rounded-xl bg-surface-container/60 border border-white/10 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-surface-container/85 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40 transition-all active:scale-98 ${icon ? 'pl-9' : ''}`}
-          aria-expanded="true"
-          aria-haspopup="true"
+          aria-expanded={isOpen}
+          aria-haspopup="listbox"
         >
           {icon && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 flex items-center justify-center pointer-events-none">{icon}</span>}
           <span className="truncate">{selectedOption?.label}</span>
@@ -62,13 +62,26 @@ export default function Dropdown({ value, onChange, options, className = '', ico
       </div>
 
       {isOpen && (
-        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md z-[100]">
-          <div className="py-1 max-h-60 overflow-y-auto scrollbar-none" role="none">
+        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden fade-in duration-150 backdrop-blur-md z-[100]">
+          {/* Dead class dropped — see the twin note in SingleSelectDropdown. It
+              generated no CSS, so the scrollbar has always shown, and on a
+              scrolling option list that is the only cue more options exist. */}
+          <div className="py-1 max-h-60 overflow-y-auto" role="none">
             {normalizedOptions.map((option, idx) => {
               const isSelected = option.value === value;
               return (
                 <button
                   key={idx}
+                  /*
+                   * REQUIRED. A <button> with no `type` defaults to
+                   * `type="submit"`, so picking an option inside a <form>
+                   * submitted that form — reaching the handler with the OLD
+                   * value, because the state update had only just been queued.
+                   * Both call sites in `UploadMaterialModal` sit inside
+                   * `<form onSubmit={handleSubmit}>`, as does the subject picker
+                   * in the student create-space modal.
+                   */
+                  type="button"
                   onClick={() => handleSelect(option.value)}
                   className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${isSelected
                       ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim font-bold'

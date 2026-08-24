@@ -1,6 +1,8 @@
 import { type ReactNode } from 'react';
-import { History, PenTool, RefreshCw, ChevronDown, BookOpen } from 'lucide-react';
+import { History, PenTool, ChevronDown, BookOpen } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import { CARD, LABEL, SECTION, toneText, scoreTone, type Tone } from '../../../components/ui/surfaces';
+import MeterBar from '../../../components/ui/MeterBar';
 
 /**
  * Layout shared by the Free Recall and Feynman tabs.
@@ -49,7 +51,18 @@ export function CognitiveTabShell({
     }`;
 
   return (
-    <div className="animate-in fade-in duration-300 h-[calc(100vh-140px)] flex flex-col">
+    /*
+     * `h-full`, not `h-[calc(100vh-140px)]` — the same wrong constant that was in
+     * ResourcesTab, and wrong here for the same reason twice over. The parent
+     * <main> is already a definite-height flex child of StudySpace's
+     * `h-[calc(100vh-4rem)] md:h-screen` column AND carries its own responsive
+     * padding, so 140px described no real layout; on mobile the study-space header
+     * is taller still, because the tab bar collapses into a dropdown.
+     *
+     * Fixing it here fixes Free Recall and Feynman together, which is the point of
+     * this file existing.
+     */
+    <div className="fade-in duration-300 h-full flex flex-col">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-5 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center shrink-0">
@@ -160,16 +173,16 @@ export function VerdictBanner({
                 {secondary.value}
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
-              <div
-                className={`h-full rounded-full ${
-                  scoreTone(secondary.value) === 'good' ? 'bg-emerald-400'
-                  : scoreTone(secondary.value) === 'mid' ? 'bg-amber-400'
-                  : 'bg-red-400'
-                }`}
-                style={{ width: `${Math.max(0, Math.min(100, secondary.value))}%` }}
-              />
-            </div>
+            {/* `MeterBar`, not a sixth hand-rolled bar. This one was byte-identical
+                to it — same `h-1.5 rounded-full bg-white/5` track, and a ternary
+                that reproduced `toneBg` exactly — which is the duplication MeterBar
+                was extracted to end. It also brings the meter ARIA this had none
+                of. MeterBar takes 0–1; `secondary.value` is a 0–100 score. */}
+            <MeterBar
+              value={Math.max(0, Math.min(100, secondary.value)) / 100}
+              tone={scoreTone(secondary.value)}
+              label={secondary.label}
+            />
           </div>
         )}
       </div>
@@ -226,7 +239,8 @@ export function Collapsible({
     <div>
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between gap-3 py-2 group"
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-3 py-2 group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]"
       >
         <span className={`${SECTION} flex items-center gap-2`}>
           {title}
@@ -241,7 +255,7 @@ export function Collapsible({
           <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
         </span>
       </button>
-      {open && <div className="pt-3 animate-in fade-in duration-200">{children}</div>}
+      {open && <div className="pt-3 fade-in duration-200">{children}</div>}
     </div>
   );
 }
@@ -324,6 +338,7 @@ export function AttemptsList({
   isLoading,
   emptyLabel,
   onSelect,
+  className = '',
 }: {
   title: string;
   attempts: AttemptSummary[];
@@ -331,42 +346,79 @@ export function AttemptsList({
   isLoading: boolean;
   emptyLabel: string;
   onSelect: (id: string) => void;
+  /**
+   * Display control from the tab — used to hide this column on mobile once an
+   * attempt is open, so the phone shows the list OR the attempt and never two
+   * scrolling regions stacked on each other. Must supply the `flex`/`hidden`
+   * state, since this root is a flex container.
+   */
+  className?: string;
 }) {
   return (
-    <div className="w-full sm:w-[300px] flex flex-col sm:border-r border-white/5 sm:pr-6 sm:h-full shrink-0 max-h-[40vh] sm:max-h-none">
+    /*
+     * The two-pane split moved from `sm:` (640px) to `lg:` (1024px).
+     *
+     * A fixed 300px column at 640px left roughly 340px for the attempt itself —
+     * the score ring is 88px of that, and the feedback passage is the thing the
+     * student actually came to read.
+     *
+     * ⚠️ `h-full`, NOT the old `max-h-[40vh]`. Capping the height gave this list
+     * its own scrollbar *inside* a pane that also scrolled, so a phone had two
+     * nested scroll regions — scroll the attempts, then scroll the attempt. Below
+     * `lg` the tab now shows one or the other (see `className`), so this column
+     * takes the whole height and owns the only scroll on screen.
+     */
+    <div className={`w-full lg:w-[300px] flex-col lg:border-r border-white/5 lg:pr-6 h-full shrink-0 ${className}`}>
       <div className="flex items-center justify-between mb-4">
         <h3 className={SECTION}>{title}</h3>
         <span className="text-slate-500 text-xs font-medium">{attempts.length}</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-1 sm:pr-2 no-scrollbar">
+      <div className="flex-1 overflow-y-auto space-y-1 lg:pr-2 no-scrollbar">
         {isLoading ? (
           <div className="flex items-center justify-center mt-10">
-            <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />
+            <Spinner className="w-5 h-5 text-slate-500" />
           </div>
         ) : attempts.length === 0 ? (
-          <p className="text-sm text-slate-500 font-sans text-center mt-10 px-4">{emptyLabel}</p>
+          <p className="text-sm text-slate-500 font-sans text-center mt-10 px-4 animate-tab-in">{emptyLabel}</p>
         ) : (
-          attempts.map((a) => (
+          /* Wrapped so the list has something to animate — `attempts.map()`
+             returns an array, and a class cannot be put on an array. The rail
+             shows a spinner while it loads, so the entrance belongs here rather
+             than on the panel, which mounts before the fetch resolves. */
+          <div className="space-y-1 animate-tab-in">
+          {attempts.map((a) => (
             <button
               key={a.id}
               onClick={() => onSelect(a.id)}
-              className={`w-full text-left p-3.5 rounded-xl transition-colors ${
+              aria-current={activeId === a.id ? 'true' : undefined}
+              /* `ring-inset` for the same reason as the material rows in
+                 `ResourcesTab` — see the long note there. A default ring is an
+                 OUTWARD box-shadow, and this is a full-width button inside an
+                 `overflow-y-auto` parent with no horizontal padding to bleed
+                 into, so both vertical edges of the ring are clipped flush by
+                 the scroll container. The 4px `space-y-1` gap leaves it nearly
+                 touching its neighbour too. */
+              className={`w-full text-left p-3.5 rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] ${
                 activeId === a.id ? 'bg-primary-fixed-dim/10' : 'hover:bg-white/[0.03]'
               }`}
             >
               <div className="flex items-center justify-between gap-2 mb-1.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                {/* 10px is too small for a date and, below, for the lesson name —
+                    and the lesson name is what makes the score interpretable at
+                    all, since coverage denominators differ per material. */}
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   {a.dateLabel}
                 </span>
                 <span className={`text-xs font-bold ${toneText[a.scoreTone]}`}>{a.scoreLabel}</span>
               </div>
               {a.meta && (
-                <div className="text-[10px] font-semibold uppercase text-primary-fixed-dim/70 mb-1.5">{a.meta}</div>
+                <div className="text-[11px] font-semibold uppercase text-primary-fixed-dim/70 mb-1.5 line-clamp-1">{a.meta}</div>
               )}
               <p className="font-sans text-sm text-slate-400 line-clamp-2 leading-relaxed">{a.preview}</p>
             </button>
-          ))
+          ))}
+          </div>
         )}
       </div>
     </div>

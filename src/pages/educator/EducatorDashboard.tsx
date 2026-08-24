@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, ChevronDown, ClipboardCheck, FileText, Layers,
-  Loader2, TrendingDown, Upload, UserCheck, Users,
+  AlertTriangle, ArrowRight, ChevronDown, ClipboardCheck, FileText, Layers, TrendingDown, Upload, UserCheck, Users
 } from 'lucide-react';
+import Spinner from '../../components/ui/Spinner';
 import MeterBar from '../../components/ui/MeterBar';
 import { toneText } from '../../components/ui/surfaces';
 import StatCard from '../../components/educator/StatCard';
@@ -68,7 +68,29 @@ import {
 
 type View = 'materials' | 'students' | 'concepts';
 
+/**
+ * ⚠️ TWO TOKENS, AND THE SPLIT MATTERS. `PANEL` was doing both jobs: the page's
+ * big surfaces (class mastery, grade coverage, recent uploads) AND every row
+ * inside the three list views. Giving one constant a shadow would have put a
+ * drop shadow under all ~40 list rows, which reads as forty floating cards
+ * rather than a list.
+ *
+ * `CARD` is a surface you look at; `PANEL` is a row inside one.
+ */
 const PANEL = 'rounded-2xl bg-white/[0.02] border border-white/5';
+const CARD = `${PANEL} shadow-lg shadow-black/20`;
+
+/**
+ * The focus indicator for this page's rows and links.
+ *
+ * ⚠️ `ring-inset`, NOT an offset ring. The list views space their rows with
+ * `gap-1.5` — 6px — so an outward `ring-2` plus a 2px offset is 8px of glow
+ * bleeding into a 6px gap and butting against the neighbouring row. It is the
+ * same defect reported on the student Resources list. Several of these rows also
+ * sit inside `overflow-hidden` parents, which would clip an outward ring anyway.
+ */
+const FOCUS =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
 export default function EducatorDashboard() {
   const { user } = useAuth();
@@ -97,7 +119,21 @@ export default function EducatorDashboard() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-[1200px] mx-auto px-4 md:px-8 py-8 md:py-12">
+      {/* `sm:` steps on both axes so a tablet does not jump straight from phone
+          padding to desktop padding — the scale the rest of the app uses.
+
+          ⚠️ `animate-page-fade`, NOT `fade-in`. The educator portal had NO
+          entrance animation on any page while the student portal uses one on
+          nearly every screen, so this dashboard snapped in after its spinner.
+
+          The student pages used to write `animate-in fade-in duration-300`, of
+          which only two thirds ever did anything: `animate-in`, `zoom-in-*` and
+          `slide-in-from-*` come from tailwindcss-animate, which is not
+          installed, so they compiled to nothing. (`duration-*` DOES apply —
+          `index.css` defines it with `animation-duration` as well as
+          `transition-duration`.) Those dead tokens have since been stripped
+          app-wide; `animate-page-fade` is the same keyframe named honestly. */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
 
         <header className="mb-8">
           <h1 className="font-display text-3xl md:text-4xl font-bold text-white tracking-tight">
@@ -117,7 +153,7 @@ export default function EducatorDashboard() {
 
         {loading ? (
           <div className="flex items-center justify-center py-24">
-            <Loader2 className="w-5 h-5 animate-spin text-slate-500" />
+            <Spinner className="w-5 h-5 text-slate-500" />
           </div>
         ) : !data ? null : data.counts.materials_live === 0 ? (
           <NoMaterials archived={data.counts.materials_archived} />
@@ -143,10 +179,22 @@ function Loaded({
   const { counts, class: cls } = data;
   const tone = TIER_TONE[cls.tier];
 
+  /*
+    ⚠️ `animate-tab-in` SITS ON THE LOADED BODY, NOT ON THE PAGE WRAPPER. The
+    wrapper's `animate-page-fade` fires when the route mounts — which is while
+    the spinner is on screen — so it is finished before a single figure arrives
+    and the dashboard then snaps in. That is the whole "there is a loading
+    spinner, then no entrance animation" report. Every screen in the app with a
+    fetch has the same shape; the fix is always to animate what the reader
+    actually waits for.
+  */
   return (
-    <>
+    <div className="animate-tab-in">
       {/* ── Summary strip ────────────────────────────────────────────── */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* 4-across from `md:` rather than `lg:`. At 768px two tiles were ~370px
+          wide each, holding a 9px icon and two short lines — the widest thing on
+          the page carrying the least. */}
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6">
         <StatCard
           label="Materials"
           value={String(counts.materials_live)}
@@ -201,13 +249,15 @@ function Loaded({
         <div className="col-span-12 lg:col-span-8 flex flex-col gap-6">
 
           {/* ── Class mastery ──────────────────────────────────────── */}
-          <div className={`${PANEL} p-6`}>
-            <div className="flex items-center gap-2 mb-5">
-              <Users className="w-4 h-4 text-slate-400" />
+          <div className={`${CARD} p-5 sm:p-6`}>
+            <div className="flex items-center gap-2.5 mb-5">
+              <span className="w-8 h-8 rounded-lg bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center shrink-0">
+                <Users className="w-4 h-4 text-primary-fixed-dim" />
+              </span>
               <h2 className="font-display text-lg font-bold text-white">Class mastery</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
               <div className="md:col-span-2">
                 <div className="flex items-baseline gap-3 flex-wrap">
                   <span className={`font-display text-3xl font-bold tracking-tight tabular-nums ${cls.m_doc === null ? 'text-slate-600' : toneText[tone]}`}>
@@ -252,33 +302,58 @@ function Loaded({
 
           {/* ── By material / By student / By concept ──────────────── */}
           <div className="flex flex-col gap-4">
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/5 self-start">
+            {/*
+              ⚠️ THIS SEGMENTED CONTROL OVERFLOWED A PHONE. "By material (8) ·
+              By student (24) · By concept (28)" is ~345px of text plus padding
+              inside the 343px a 375px screen leaves after the page gutters, so
+              the third tab was clipped off the right edge with no way to reach
+              it — the control has no scroll and the row does not wrap.
+
+              Fixed on both axes: the labels drop the redundant "By " below
+              `sm:` (the heading above already says what this is), and the
+              control goes full-width with equal thirds instead of hugging its
+              content. The counts stay at every width — they are the reason to
+              pick one tab over another.
+            */}
+            <div className="flex w-full sm:w-auto sm:self-start items-center gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/5">
               {(
                 [
-                  ['materials', `By material (${counts.materials_live})`],
-                  ['students', `By student (${cls.size})`],
-                  ['concepts', `By concept (${counts.concepts_assessed})`],
+                  ['materials', 'Materials', 'By material', counts.materials_live],
+                  ['students', 'Students', 'By student', cls.size],
+                  ['concepts', 'Concepts', 'By concept', counts.concepts_assessed],
                 ] as const
-              ).map(([id, label]) => (
+              ).map(([id, shortLabel, longLabel, count]) => (
                 <button
                   key={id}
                   onClick={() => onView(id)}
-                  className={`px-3.5 py-1.5 rounded-lg font-sans text-xs font-semibold transition-colors ${
+                  aria-pressed={view === id}
+                  className={`flex-1 sm:flex-none px-2.5 sm:px-3.5 py-1.5 rounded-lg font-sans text-xs font-semibold transition-colors whitespace-nowrap ${FOCUS} ${
                     view === id ? 'bg-white/[0.06] text-white' : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  {label}
+                  <span className="sm:hidden">{shortLabel}</span>
+                  <span className="hidden sm:inline">{longLabel}</span> ({count})
                 </button>
               ))}
             </div>
 
-            {view === 'materials' && <MaterialsView materials={data.materials} />}
-            {view === 'students' && (
-              <StudentsView students={data.students} materials={data.materials} />
-            )}
-            {view === 'concepts' && (
-              <ConceptsView concepts={data.concepts} total={counts.concepts_assessed} />
-            )}
+            {/* ⚠️ `key={view}` IS WHAT MAKES THE FADE FIRE. A CSS animation runs
+                once when an element mounts; without the key React reuses the
+                same node across tab switches and only swaps its children, so
+                the class sits there doing nothing after the first render.
+                Keying it remounts on every switch — which is also why
+                `StudentsView`'s expanded row resets when you leave and come
+                back, matching how `<main key={activeTab}>` behaves in the
+                student study space. */}
+            <div key={view} className="animate-tab-in">
+              {view === 'materials' && <MaterialsView materials={data.materials} />}
+              {view === 'students' && (
+                <StudentsView students={data.students} materials={data.materials} />
+              )}
+              {view === 'concepts' && (
+                <ConceptsView concepts={data.concepts} total={counts.concepts_assessed} />
+              )}
+            </div>
           </div>
         </div>
 
@@ -301,7 +376,7 @@ function Loaded({
         change it; free recall and the Feynman technique neither read nor change it. Archived
         materials are left out of every figure on this page.
       </p>
-    </>
+    </div>
   );
 }
 
@@ -320,7 +395,7 @@ const ATTENTION_TONE: Record<AttentionItem['reason'], string> = {
 
 function AttentionStrip({ items }: { items: AttentionItem[] }) {
   return (
-    <section className={`${PANEL} p-5 mb-6`}>
+    <section className={`${CARD} p-5 mb-6`}>
       <div className="flex items-center gap-2 mb-4">
         <AlertTriangle className="w-4 h-4 text-amber-400" />
         <h2 className="font-display text-base font-bold text-white">Needs a look</h2>
@@ -334,7 +409,7 @@ function AttentionStrip({ items }: { items: AttentionItem[] }) {
           <Link
             key={item.material_id}
             to={`/educator/materials/${item.material_id}`}
-            className="flex items-start gap-3 px-3.5 py-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-white/10 transition-all group"
+            className={`flex items-start gap-3 px-3.5 py-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-white/10 transition-all group ${FOCUS}`}
           >
             <AlertTriangle className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${ATTENTION_TONE[item.reason]}`} />
             <div className="flex-1 min-w-0">
@@ -380,7 +455,7 @@ function MaterialsView({ materials }: { materials: MaterialOverview[] }) {
           <button
             key={m.material_id}
             onClick={() => navigate(`/educator/materials/${m.material_id}?tab=performance`)}
-            className={`${PANEL} w-full flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 py-3.5 hover:bg-white/[0.05] transition-colors text-left`}
+            className={`${PANEL} ${FOCUS} w-full flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 py-3.5 hover:bg-white/[0.05] hover:border-white/10 transition-colors text-left`}
           >
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
@@ -399,8 +474,8 @@ function MaterialsView({ materials }: { materials: MaterialOverview[] }) {
               <p className="font-sans text-[11px] text-slate-500 mt-1.5">{materialCaption(m)}</p>
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="w-28 sm:w-40">
+            <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+              <div className="flex-1 sm:flex-none sm:w-40">
                 <MeterBar value={m.m_doc} tone={TIER_TONE[tier]} label={`Class average for ${m.title}`} />
               </div>
               <span className={`font-sans text-xs font-semibold tabular-nums w-9 text-right ${started ? toneText[TIER_TONE[tier]] : 'text-slate-600'}`}>
@@ -435,7 +510,7 @@ function StudentsView({
 
   if (students.length === 0) {
     return (
-      <div className={`${PANEL} p-8 text-center`}>
+      <div className={`${CARD} p-8 text-center`}>
         <Users className="w-5 h-5 text-slate-500 mx-auto mb-3" />
         <p className="font-sans text-sm text-slate-300 font-medium">No students in your grades</p>
         <p className="font-sans text-xs text-slate-500 mt-1.5 max-w-sm mx-auto">
@@ -465,7 +540,7 @@ function StudentsView({
               onClick={() => toggle(s.student_id)}
               aria-expanded={isOpen}
               disabled={!started}
-              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/[0.03] transition-colors text-left disabled:hover:bg-transparent disabled:cursor-default"
+              className={`w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/[0.03] transition-colors text-left disabled:hover:bg-transparent disabled:cursor-default ${FOCUS}`}
             >
               <ChevronDown
                 className={`w-4 h-4 shrink-0 transition-transform duration-200 ${
@@ -484,7 +559,7 @@ function StudentsView({
                 <p className="font-sans text-[11px] text-slate-500">{studentCaption(s)}</p>
               </div>
 
-              <div className="w-24 sm:w-40 shrink-0 flex items-center gap-2.5">
+              <div className="w-20 sm:w-40 shrink-0 flex items-center gap-2.5">
                 <MeterBar
                   value={s.m_doc}
                   tone={TIER_TONE[s.tier]}
@@ -512,7 +587,7 @@ function StudentsView({
                     <Link
                       key={slice.material_id}
                       to={`/educator/materials/${slice.material_id}?tab=performance`}
-                      className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 px-3.5 py-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-colors group"
+                      className={`flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 px-3.5 py-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-colors group ${FOCUS}`}
                     >
                       <div className="flex-1 min-w-0">
                         <p className="font-sans text-sm font-medium text-white truncate group-hover:text-primary-fixed-dim transition-colors">
@@ -522,8 +597,8 @@ function StudentsView({
                           {slice.assessed_concept_count} of {slice.concept_count} concepts assessed
                         </p>
                       </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="w-28 sm:w-36">
+                      <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+                        <div className="flex-1 sm:flex-none sm:w-36">
                           <MeterBar
                             value={slice.m_doc}
                             tone={TIER_TONE[tier]}
@@ -553,7 +628,7 @@ function StudentsView({
 function ConceptsView({ concepts, total }: { concepts: ConceptOverview[]; total: number }) {
   if (concepts.length === 0) {
     return (
-      <div className={`${PANEL} p-8 text-center`}>
+      <div className={`${CARD} p-8 text-center`}>
         <Layers className="w-5 h-5 text-slate-500 mx-auto mb-3" />
         <p className="font-sans text-sm text-slate-300 font-medium">Nothing assessed yet</p>
         <p className="font-sans text-xs text-slate-500 mt-1.5 max-w-sm mx-auto">
@@ -582,7 +657,7 @@ function ConceptsView({ concepts, total }: { concepts: ConceptOverview[]; total:
           <Link
             key={c.concept_id}
             to={`/educator/materials/${c.material_id}?tab=performance`}
-            className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-colors group"
+            className={`flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-colors group ${FOCUS}`}
           >
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
@@ -602,8 +677,8 @@ function ConceptsView({ concepts, total }: { concepts: ConceptOverview[]; total:
               </p>
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="w-28 sm:w-40">
+            <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+              <div className="flex-1 sm:flex-none sm:w-40">
                 <MeterBar
                   value={c.avg_mastery}
                   tone={TIER_TONE[tier]}
@@ -627,9 +702,11 @@ function ConceptsView({ concepts, total }: { concepts: ConceptOverview[]; total:
 
 function GradeCoverage({ grades }: { grades: EducatorOverview['grades'] }) {
   return (
-    <div className={`${PANEL} p-6`}>
-      <div className="flex items-center gap-2 mb-5">
-        <Layers className="w-4 h-4 text-slate-400" />
+    <div className={`${CARD} p-5 sm:p-6`}>
+      <div className="flex items-center gap-2.5 mb-5">
+        <span className="w-8 h-8 rounded-lg bg-indigo-400/10 border border-indigo-400/20 flex items-center justify-center shrink-0">
+          <Layers className="w-4 h-4 text-indigo-400" />
+        </span>
         <h2 className="font-display text-lg font-bold text-white">Grade coverage</h2>
       </div>
 
@@ -669,12 +746,20 @@ function GradeCoverage({ grades }: { grades: EducatorOverview['grades'] }) {
 
 function RecentUploads({ uploads }: { uploads: EducatorOverview['recent_uploads'] }) {
   return (
-    <div className={`${PANEL} p-6`}>
-      <div className="flex items-center justify-between mb-5">
-        <h2 className="font-display text-lg font-bold text-white">Recent uploads</h2>
+    <div className={`${CARD} p-5 sm:p-6`}>
+      {/* An icon chip, matching Class mastery and Grade coverage. This heading
+          was the only one of the three without one, which made the side column
+          read as two cards and a list. */}
+      <div className="flex items-center justify-between gap-3 mb-5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="w-8 h-8 rounded-lg bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center shrink-0">
+            <Upload className="w-4 h-4 text-emerald-400" />
+          </span>
+          <h2 className="font-display text-lg font-bold text-white truncate">Recent uploads</h2>
+        </div>
         <Link
           to="/educator/materials"
-          className="font-sans text-xs text-primary-fixed-dim font-semibold flex items-center gap-1 hover:gap-1.5 transition-all"
+          className={`font-sans text-xs text-primary-fixed-dim font-semibold flex items-center gap-1 hover:gap-1.5 transition-all shrink-0 rounded ${FOCUS}`}
         >
           See all <ArrowRight className="w-3.5 h-3.5" />
         </Link>
@@ -685,7 +770,7 @@ function RecentUploads({ uploads }: { uploads: EducatorOverview['recent_uploads'
           <Link
             key={m.material_id}
             to={`/educator/materials/${m.material_id}`}
-            className="flex items-start gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-white/10 transition-all group"
+            className={`flex items-start gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-white/10 transition-all group ${FOCUS}`}
           >
             <div className="w-8 h-8 rounded-lg bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center shrink-0 mt-0.5">
               <FileText className="w-3.5 h-3.5 text-primary-fixed-dim" />
@@ -713,7 +798,7 @@ function RecentUploads({ uploads }: { uploads: EducatorOverview['recent_uploads'
 
 function NoMaterials({ archived }: { archived: number }) {
   return (
-    <div className={`${PANEL} py-16 px-6 text-center`}>
+    <div className={`${CARD} py-16 px-6 text-center animate-tab-in`}>
       <div className="w-12 h-12 rounded-full bg-surface-container flex items-center justify-center mb-4 mx-auto">
         <Upload className="w-5 h-5 text-slate-400" />
       </div>
@@ -727,7 +812,7 @@ function NoMaterials({ archived }: { archived: number }) {
       </p>
       <Link
         to="/educator/materials"
-        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-xs font-bold hover:bg-primary-fixed transition-colors"
+        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-xs font-bold hover:brightness-110 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
       >
         {archived > 0 ? 'Open your materials' : 'Upload your first material'}
         <ArrowRight className="w-3.5 h-3.5" />

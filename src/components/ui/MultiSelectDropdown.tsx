@@ -98,7 +98,7 @@ export default function MultiSelectDropdown({
         // made the panel overhang its own left edge by 32px, and wherever the
         // control sat flush against a container edge that overhang was clipped,
         // cutting the first characters off every option label.
-        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md z-[100]">
+        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden fade-in duration-150 backdrop-blur-md z-[100]">
           <div className="py-1 max-h-68 overflow-y-auto scrollbar-none" role="none">
             {/* Select All toggle */}
             {options.length > 0 && (

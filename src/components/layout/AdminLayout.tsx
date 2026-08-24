@@ -70,7 +70,7 @@ function AdminLayoutInner() {
     'text-slate-400 hover:text-slate-200 hover:bg-white/5 border-r-2 border-transparent';
 
   const navBase =
-    'flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95 font-display text-sm tracking-wide';
+    'flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 active:scale-95 font-display text-sm tracking-wide focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
   const collapsedNavClass = (collapsed: boolean) =>
     collapsed ? 'justify-center px-0 gap-0' : '';
@@ -122,19 +122,28 @@ function AdminLayoutInner() {
         onClick={handleSignOut}
         disabled={isSigningOut}
         title="Logout"
-        className={`flex items-center gap-4 px-4 py-3 mb-1 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide disabled:opacity-60 disabled:pointer-events-none ${collapsedNavClass(collapsed)}`}
+        className={`flex items-center gap-4 px-4 py-3 mb-1 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all duration-300 active:scale-95 font-display text-sm tracking-wide disabled:opacity-60 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-rose-400 ${collapsedNavClass(collapsed)}`}
       >
         <LogOut className="w-5 h-5 shrink-0" />
         {!collapsed && (isSigningOut ? 'Signing out…' : 'Logout')}
       </button>
 
+      {/* Collapsed: no card chrome, smaller avatar. The collapsed rail is
+          w-20 with p-6, so its inner width is 32px — a 40px avatar inside a
+          bordered `p-3` box had a 6px slot and overflowed through the border.
+          See `StudentLayout` for the full arithmetic; all three sidebars
+          shipped the same block. */}
       <div
         title={adminName}
-        className={`flex items-center gap-3 p-3 rounded-xl border border-white/5 w-full text-left ${collapsed ? 'justify-center' : ''}`}
+        className={`flex items-center gap-3 w-full text-left ${
+          collapsed ? 'justify-center' : 'p-3 rounded-xl border border-white/5'
+        }`}
       >
         <div className="relative shrink-0">
           <div
-            className="w-10 h-10 rounded-full flex items-center justify-center border border-white/10 font-display text-sm font-bold"
+            className={`${
+              collapsed ? 'w-8 h-8 text-[10px]' : 'w-10 h-10 text-sm'
+            } rounded-full flex items-center justify-center border border-white/10 font-display font-bold`}
             style={{ backgroundColor: theme.accentSoft, color: theme.accent }}
           >
             {monogram}
@@ -163,7 +172,7 @@ function AdminLayoutInner() {
       <header className="fixed top-0 left-0 right-0 h-16 bg-slate-950/80 border-b border-white/10 backdrop-blur-xl z-40 px-6 flex items-center justify-between md:hidden">
         <button
           onClick={() => setIsMobileMenuOpen(true)}
-          className="p-2 -ml-2 text-slate-400 hover:text-white rounded-lg focus:outline-none"
+          className="p-2 -ml-2 text-slate-400 hover:text-white rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
           aria-label="Open navigation"
         >
           <Menu className="w-6 h-6" />
@@ -226,7 +235,7 @@ function AdminLayoutInner() {
           </div>
           <button
             onClick={() => setIsMobileMenuOpen(false)}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all"
+            className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
             aria-label="Close navigation"
           >
             <X className="w-5 h-5" />
@@ -246,7 +255,7 @@ function AdminLayoutInner() {
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
           title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="absolute -right-3 top-9 w-6 h-6 rounded-full bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg"
+          className="absolute -right-3 top-9 w-6 h-6 rounded-full bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition-all duration-300 shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
         >
           {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
         </button>

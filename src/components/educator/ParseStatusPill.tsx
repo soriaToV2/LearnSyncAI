@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { Clock, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import type { ParsedStatus } from '../../data/mockEducator';
 
@@ -55,15 +56,17 @@ export default function ParseStatusPill({ status, className = '' }: ParseStatusP
   const style = STATUS_STYLE[status];
   const Icon = style.icon;
 
+  /*
+   * ⚠️ `.tone-chip` + `--tone`, NOT three inline colours — see the twin note in
+   * `SubjectBadge` and the TINTED CHIPS block in `index.css`. This pill was the
+   * worst of the set in light mode: Processing's cyan measured ~1.9:1 on white,
+   * on the label that tells an educator whether their upload is still working.
+   */
   return (
     <span
       title={style.hint}
-      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border font-sans text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${className}`}
-      style={{
-        color: style.color,
-        backgroundColor: `${style.color}1a`,
-        borderColor: `${style.color}33`,
-      }}
+      className={`tone-chip inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border font-sans text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${className}`}
+      style={{ '--tone': style.color } as CSSProperties}
     >
       <Icon className={`w-3 h-3 shrink-0 ${style.spin ? 'animate-spin' : ''}`} />
       {style.label}

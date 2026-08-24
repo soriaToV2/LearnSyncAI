@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import CreateAccount from './pages/auth/CreateAccount';
 import Login from './pages/auth/Login';
 import SetPassword from './pages/auth/SetPassword';
 
@@ -37,7 +36,25 @@ export default function App() {
       <OrientationGate />
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
-        <Route path="/register" element={<CreateAccount />} />
+        {/*
+          ⚠️ SELF-REGISTRATION IS GONE. `CreateAccount.tsx` was deleted on
+          2026-08-24; accounts are issued by an administrator through
+          `POST /api/admin/accounts` or the CSV importer.
+
+          It could not have been made to work from this side anyway:
+          `POST /api/auth/register` sets no `username`, and `profiles.username`
+          has been the login identifier since migration 0021 — so an account
+          created through that page could never sign in. And an open sign-up
+          choosing its own `grade_level` would hand the student another year's
+          materials, because `materialAccess.ts` gates every read on exactly
+          that column.
+
+          A REDIRECT, NOT A DELETION, for the same reason `/admin/import` is one:
+          there is no catch-all route, so an unmatched path renders nothing at
+          all — a blank page rather than a 404 — which is what a bookmark or a
+          URL-bar autocomplete of `/register` would otherwise land on.
+        */}
+        <Route path="/register" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />
         {/*
           ⚠️ OUTSIDE EVERY LAYOUT, DELIBERATELY. `RequireRole` redirects here when

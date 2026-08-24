@@ -4,12 +4,12 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
-  Loader2,
   Lock,
   RefreshCw,
   Sparkles,
-  Users,
+  Users
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import { toCsv } from '../../../lib/csvAccounts';
 import {
   assessmentApi,
@@ -20,6 +20,20 @@ import {
 /**
  * The material's Pre / Post Test tab — TEMPORARY research instrument.
  *
+ * ══ WHICH TEST TAB IS THIS? THERE ARE THREE, AND TWO USED TO SHARE A FILENAME ══
+ *   · THIS FILE — the EDUCATOR half of the pre/post instrument: generate the item
+ *     set, preview it, release or un-release each phase, read class scores, export
+ *     the CSV. Temporary.
+ *   · `student/studySpaceTabs/StudentAssessmentTab.tsx` — the STUDENT half of this
+ *     same instrument: sits the test. Its direct counterpart. Temporary.
+ *   · `student/studySpaceTabs/AdaptiveTestTab.tsx` — "Test Mode". A DIFFERENT,
+ *     PERMANENT feature and no relation. It adapts difficulty to BKT mastery,
+ *     allows unlimited retakes and writes `bkt_mastery`. This instrument does the
+ *     opposite on all three counts, deliberately — see below.
+ *
+ * Both halves were named `AssessmentTab.tsx` until the filenames were split, which
+ * made them indistinguishable in an editor tab bar and in a code review.
+ *
  * Removed after the school study, along with the tab entry in `MaterialDetail`
  * that mounts it. It serves paper RQ4 (p. 55): the significance of the difference
  * between a student's standard pre-test score and their post-test score.
@@ -29,7 +43,7 @@ import {
  * cache and no refresh button here either.
  */
 
-interface AssessmentTabProps {
+interface EducatorAssessmentTabProps {
   materialId: string;
   materialTitle: string;
   conceptCount: number;
@@ -44,7 +58,7 @@ export default function EducatorAssessmentTab({
   materialTitle,
   conceptCount,
   parsedStatus,
-}: AssessmentTabProps) {
+}: EducatorAssessmentTabProps) {
   const [view, setView] = useState<EducatorAssessmentView | null>(null);
   const [results, setResults] = useState<AssessmentResults | null>(null);
   const [loading, setLoading] = useState(true);
@@ -135,13 +149,26 @@ export default function EducatorAssessmentTab({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-5 h-5 animate-spin text-slate-500" />
+        <Spinner className="w-5 h-5 text-slate-500" />
       </div>
     );
   }
 
+  /*
+    ⚠️ `animate-tab-in` IS ON THE LOADED CONTENT, NOT ON THE TAB WRAPPER, AND
+    THAT IS THE WHOLE POINT. `MaterialDetail` animates the panel when the tab
+    mounts — but this tab mounts into a spinner and fetches, so that entrance
+    played on the loader and was long finished by the time anything readable
+    arrived. The content then simply appeared, which is what "there is no
+    entrance animation" describes.
+
+    Applying it here fires the animation on the transition that the reader
+    actually sees. It works without a `key` because React reuses the `<div>`
+    across the loading→loaded render and a CSS animation restarts whenever
+    `animation-name` goes from `none` to a name.
+  */
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-tab-in">
       {error && (
         <p className="font-sans text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 flex items-start gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -182,7 +209,7 @@ export default function EducatorAssessmentTab({
                 className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container/60 border border-white/10 text-slate-300 font-sans text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:border-white/25 transition-colors"
               >
                 {busy === 'generate' ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Spinner className="w-3.5 h-3.5" />
                 ) : (
                   <RefreshCw className="w-3.5 h-3.5" />
                 )}
@@ -281,7 +308,7 @@ export default function EducatorAssessmentTab({
                 </div>
                 <button
                   onClick={downloadCsv}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 text-primary-fixed-dim font-sans text-xs font-semibold hover:bg-primary-fixed-dim/15 transition-colors"
+                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 text-primary-fixed-dim font-sans text-xs font-semibold hover:bg-primary-fixed-dim/15 transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
                   Download CSV
@@ -428,9 +455,9 @@ function EmptyState({
       <button
         onClick={onGenerate}
         disabled={notReady || tooFew || busy}
-        className="mt-5 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-fixed-dim text-black font-display text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+        className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] mt-5 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-fixed-dim text-black font-display text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+        {busy ? <Spinner className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
         {busy ? 'Writing questions — please wait…' : 'Generate pre-test & post-test'}
       </button>
 
@@ -507,14 +534,14 @@ function ReleaseCard({
       <button
         onClick={() => onToggle(!released)}
         disabled={disabled}
-        className={`w-full mt-3 px-3 py-1.5 rounded-lg font-sans text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+        className={`focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] w-full mt-3 px-3 py-1.5 rounded-lg font-sans text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
           released
             ? 'bg-white/5 text-slate-300 hover:bg-white/10'
             : 'bg-primary-fixed-dim text-black'
         }`}
       >
         {busy ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" />
+          <Spinner className="w-3.5 h-3.5 mx-auto" />
         ) : released ? (
           'Close it again'
         ) : (

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
-import { ChartColumn, ChevronRight, RefreshCw, Target } from 'lucide-react';
+import { Award, ChartColumn, ChevronRight, Layers, Target, TrendingUp } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import { CARD, LABEL, SECTION, toneText } from '../../../components/ui/surfaces';
 import MeterBar from '../../../components/ui/MeterBar';
 import {
@@ -56,6 +57,17 @@ interface AnalyticsTabProps {
 
 /** How many concepts the Focus card names. Three fits without becoming a list. */
 const FOCUS_COUNT = 3;
+
+/**
+ * Local depth on top of the shared `CARD`.
+ *
+ * `CARD` stays flat because Test Mode and the two cognitive tabs reuse it, so the
+ * border and shadow live here rather than in `surfaces.ts` — same reason the
+ * dashboard keeps its own copy. Every colour in it (`border-white/5`,
+ * `shadow-black/20`) is one the `[data-theme="white"]` block in `index.css`
+ * already overrides.
+ */
+const PANEL = `${CARD} border border-white/5 shadow-lg shadow-black/20`;
 
 export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsTabProps) {
   const [detail, setDetail] = useState<SpaceMasteryDetail | null>(null);
@@ -118,7 +130,7 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
   const updated = relativeTime(detail?.last_updated ?? null);
 
   return (
-    <div className="animate-in fade-in duration-300 pb-10">
+    <div className="fade-in duration-300 pb-10">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 min-w-0 border-b border-white/5 pb-5">
         <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center shrink-0">
@@ -142,24 +154,32 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
-          <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />
+          <Spinner className="w-5 h-5 text-slate-500" />
         </div>
       ) : noMaterials || !detail || detail.by_material.length === 0 ? (
-        <div className={`${CARD} py-16 px-6 text-center mt-6`}>
-          <ChartColumn className="w-10 h-10 text-slate-500 opacity-20 mx-auto mb-4" />
+        <div className={`${PANEL} py-14 sm:py-16 px-6 text-center mt-6 animate-tab-in`}>
+          <div className="w-14 h-14 rounded-2xl bg-primary-fixed-dim/10 flex items-center justify-center mx-auto mb-4">
+            <ChartColumn className="w-6 h-6 text-primary-fixed-dim/60" />
+          </div>
           <p className="font-sans text-sm text-slate-400 mb-1">No lessons in this study space yet.</p>
           <p className="font-sans text-xs text-slate-600">
             Add a lesson from the Learning Resources tab and your progress will show up here.
           </p>
         </div>
       ) : (
-        <>
+        <div className="animate-tab-in">
           {/* ── Summary ──────────────────────────────────────────────────────
               "Level" dashes out at cold start for the same reason "Mastery"
               does: `foundational` with no evidence behind it is the default the
               system starts everyone at, not something it has found out. */}
-          <div className="grid grid-cols-3 gap-3 mt-6">
+          {/* Two-up then three-up, and NOT `grid-cols-3` at every width: at 375px
+              three tiles leave ~74px of text each, and "Intermediate" — a
+              TIER_LABEL, so not shortenable here — does not fit that in
+              `text-xl`. The third tile spans the row below rather than sitting as
+              a half-width orphan. */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 mt-6">
             <Stat
+              icon={TrendingUp}
               label="Overall mastery"
               value={
                 detail.overall === null || nothingAssessed
@@ -171,17 +191,20 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
               }
             />
             <Stat
+              icon={Award}
               label="Level"
               value={nothingAssessed ? '—' : TIER_LABEL[detail.tier]}
               className={nothingAssessed ? '' : toneText[TIER_TONE[detail.tier]]}
             />
             <Stat
+              icon={Layers}
               label="Concepts tracked"
               value={`${detail.concepts_assessed} / ${detail.concepts_total}`}
+              wrapperClassName="col-span-2 sm:col-span-1"
             />
           </div>
 
-          <p className="font-sans text-[11px] text-slate-600 mt-2">
+          <p className="font-sans text-[11px] text-slate-600 mt-2.5 leading-relaxed">
             {masteryCaption(detail)}
             {updated && !nothingAssessed ? ` · Updated ${updated}.` : ''}
           </p>
@@ -192,7 +215,7 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
               so replacing it with an empty state would hide the one thing the
               student can act on. */}
           {nothingAssessed && (
-            <div className={`${CARD} p-5 mt-6`}>
+            <div className={`${PANEL} p-4 sm:p-5 mt-6`}>
               <p className="font-sans text-sm text-slate-300 font-semibold">Nothing measured yet.</p>
               <p className="font-sans text-xs text-slate-500 mt-1 leading-relaxed">
                 Your mastery updates when you rate a flashcard or finish a test. Until then there is
@@ -203,9 +226,11 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
 
           {/* ── Focus next ───────────────────────────────────────────────── */}
           {focus.length > 0 && (
-            <div className={`${CARD} p-5 mt-6`}>
-              <div className="flex items-center gap-2">
-                <Target className="w-4 h-4 text-primary-fixed-dim" />
+            <div className={`${PANEL} p-4 sm:p-5 mt-6`}>
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary-fixed-dim/10 flex items-center justify-center shrink-0">
+                  <Target className="w-4 h-4 text-primary-fixed-dim" />
+                </div>
                 <h3 className={SECTION}>Focus next</h3>
               </div>
               {/* The honesty guard. Without it a student wonders why a concept
@@ -245,7 +270,7 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
           {/* ── By lesson ────────────────────────────────────────────────── */}
           <div className="mt-8">
             <h3 className={`${SECTION} mb-4`}>By lesson</h3>
-            <div className="space-y-2">
+            <div className="space-y-3">
               {detail.by_material.map((m) => (
                 <Fragment key={m.material_id}>
                   <LessonCard
@@ -257,7 +282,7 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
               ))}
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -265,13 +290,32 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Stat({ label, value, className = '' }: { label: string; value: string; className?: string }) {
+function Stat({
+  label,
+  value,
+  icon: Icon,
+  className = '',
+  wrapperClassName = '',
+}: {
+  label: string;
+  value: string;
+  icon: typeof Target;
+  className?: string;
+  wrapperClassName?: string;
+}) {
   return (
-    <div className={`${CARD} p-4 text-center`}>
-      <p className={`font-display text-xl font-bold tabular-nums ${className || 'text-white'}`}>
+    <div className={`${PANEL} p-3 sm:p-4 text-center ${wrapperClassName}`}>
+      <Icon className="w-4 h-4 text-primary-fixed-dim/70 mx-auto mb-1.5" />
+      {/* `text-lg` on phones: "Intermediate" at `text-xl` overruns a half-width
+          tile at 375px. The tone colour still comes from `className`. */}
+      <p
+        className={`font-display text-lg sm:text-xl font-bold tabular-nums leading-tight ${
+          className || 'text-white'
+        }`}
+      >
         {value}
       </p>
-      <p className="font-sans text-[10px] uppercase tracking-widest text-slate-500 font-semibold mt-1">
+      <p className="font-sans text-[11px] uppercase tracking-widest text-slate-500 font-semibold mt-1">
         {label}
       </p>
     </div>
@@ -289,7 +333,7 @@ function ConceptRow({ concept, materialTitle }: { concept: ConceptMastery; mater
   const tone = TIER_TONE[masteryTier(percent / 100)];
 
   return (
-    <div className="flex items-center gap-3 min-w-0">
+    <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
       <div className="min-w-0 flex-1">
         <p className="font-sans text-sm text-white truncate">{concept.term}</p>
         <p className="font-sans text-[11px] text-slate-500 truncate">
@@ -298,7 +342,10 @@ function ConceptRow({ concept, materialTitle }: { concept: ConceptMastery; mater
           {concept.source_pages?.length ? ` · page ${concept.source_pages.join(', ')}` : ''}
         </p>
       </div>
-      <div className="w-24 shrink-0">
+      {/* The meter narrows on phones so the term keeps its width — a truncated
+          concept name is far less readable than a slightly shorter bar, and the
+          percentage beside it carries the exact value anyway. */}
+      <div className="w-14 sm:w-24 shrink-0">
         <MeterBar value={concept.mastery} tone={tone} label={`Mastery of ${concept.term}`} />
       </div>
       <span className={`font-sans text-xs font-semibold tabular-nums w-9 text-right ${toneText[tone]}`}>
@@ -324,11 +371,15 @@ function LessonCard({
   const untested = material.concepts.filter((c) => !c.assessed);
 
   return (
-    <div className={CARD}>
+    <div
+      className={`${PANEL} transition-colors ${
+        expanded ? 'border-primary-fixed-dim/25' : 'hover:border-white/10'
+      }`}
+    >
       <button
         onClick={onToggle}
         aria-expanded={expanded}
-        className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors rounded-2xl"
+        className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
       >
         <div className="flex items-start gap-3">
           <ChevronRight
@@ -369,7 +420,10 @@ function LessonCard({
       </button>
 
       {expanded && (
-        <div className="px-4 pb-4 pl-11 space-y-5">
+        /* `pl-11` aligns the rows under the lesson title, past the chevron — but
+           at 375px it costs 28px that `ConceptRow`'s term cannot spare, so the
+           indent only applies once there is room for it. */
+        <div className="px-4 pb-4 sm:pl-11 space-y-5">
           {assessed.length > 0 && (
             <div>
               <p className={`${LABEL} mb-3`}>Tested so far ({assessed.length})</p>

@@ -5,10 +5,10 @@ import {
   BookOpen,
   CheckCircle2,
   ClipboardList,
-  Loader2,
   Lock,
-  PlayCircle,
+  PlayCircle
 } from 'lucide-react';
+import Spinner from '../../../components/ui/Spinner';
 import { CARD, LABEL, SECTION, scoreTone, toneText, type Tone } from '../../../components/ui/surfaces';
 import { scorePercent } from '../../../lib/testMode';
 import AssessmentRunner from '../components/AssessmentRunner';
@@ -24,6 +24,24 @@ import {
 /**
  * The Pre-Test / Post-Test tab — TEMPORARY research instrument.
  *
+ * ══ WHICH TEST TAB IS THIS? THERE ARE THREE, AND TWO USED TO SHARE A FILENAME ══
+ *   · THIS FILE — the STUDENT half of the pre/post instrument: sit the test.
+ *     Mounted TWICE by `StudySpace`, once per phase. Temporary.
+ *   · `educator/components/EducatorAssessmentTab.tsx` — the EDUCATOR half of this
+ *     same instrument: writes the items and releases each phase. Temporary.
+ *   · `AdaptiveTestTab.tsx`, its NEIGHBOUR IN THIS VERY FOLDER — "Test Mode". A
+ *     different, PERMANENT feature and no relation, despite sitting next to this
+ *     one in the same tab bar. The distinction that matters:
+ *
+ *       Test Mode asks "how are you doing?"  — adapts to BKT mastery, unlimited
+ *         retakes, five question formats, WRITES `bkt_mastery`.
+ *       This asks "did the platform work?"   — never adapts (a standard pre-test
+ *         must not), ONE attempt per phase, MCQ only, writes NOTHING that feeds
+ *         the platform — not even `activity_logs`, so it cannot extend a streak.
+ *
+ * Both halves were named `AssessmentTab.tsx` until the filenames were split, which
+ * made them indistinguishable in an editor tab bar and in a code review.
+ *
  * ONE component, `phase`-flipped, rather than two near-identical files. The only
  * behavioural difference between the phases is what the results screen may show,
  * and that is decided by the SERVER (`studentResult()` withholds the review on a
@@ -32,7 +50,7 @@ import {
  * Removed after the school study along with the two tab entries that mount it.
  */
 
-interface AssessmentTabProps {
+interface StudentAssessmentTabProps {
   spaceId: string;
   phase: AssessmentPhase;
   /** The parent's lock-map refetch. Completing a test unlocks a material, and the
@@ -48,7 +66,7 @@ interface OpenAttempt {
   answers: Record<string, string>;
 }
 
-export default function AssessmentTab({ spaceId, phase, onLocksChanged }: AssessmentTabProps) {
+export default function StudentAssessmentTab({ spaceId, phase, onLocksChanged }: StudentAssessmentTabProps) {
   const [rows, setRows] = useState<AssessmentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -139,13 +157,16 @@ export default function AssessmentTab({ spaceId, phase, onLocksChanged }: Assess
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-5 h-5 animate-spin text-slate-500" />
+        <Spinner className="w-5 h-5 text-slate-500" />
       </div>
     );
   }
 
+  /* `animate-tab-in` on the LOADED content, never on the loading branch above —
+     the entrance has to fire on the transition the reader sees. See the TAB
+     PANEL entrance note in `index.css`. */
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl animate-tab-in">
       <header className="mb-6">
         <h2 className="font-display text-xl text-white flex items-center gap-2">
           <ClipboardList className="w-5 h-5 text-primary-fixed-dim" />
@@ -190,42 +211,54 @@ export default function AssessmentTab({ spaceId, phase, onLocksChanged }: Assess
             // instruction instead of an error.
             const needsPre = phase === 'post' && !row.pre.taken;
             return (
+              /*
+               * Stacks on phones. As a single `flex items-center` row the icon,
+               * the gaps and the Start button took ~150px of a 375px screen, so
+               * the status line — "20 questions · this lesson stays locked until
+               * you finish" — wrapped to three lines in the ~158px left over,
+               * beside a button. This is the entry point to the research
+               * instrument, so it is the one row that must read cleanly: below
+               * `sm` the text gets the full width and Start becomes a full-width
+               * control under it.
+               */
               <div
                 key={row.assessment_id}
-                className={`${CARD} p-4 flex items-center gap-4 border ${
+                className={`${CARD} p-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 border ${
                   state.taken || needsPre ? 'border-white/5' : 'border-primary-fixed-dim/30'
                 }`}
               >
-                <div
-                  className={`w-9 h-9 shrink-0 rounded-xl flex items-center justify-center ${
-                    state.taken
-                      ? 'bg-emerald-500/10 text-emerald-400'
-                      : needsPre
-                        ? 'bg-white/5 text-slate-500'
-                        : 'bg-primary-fixed-dim/10 text-primary-fixed-dim'
-                  }`}
-                >
-                  {state.taken ? <CheckCircle2 className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-                </div>
+                <div className="flex items-start sm:items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                  <div
+                    className={`w-9 h-9 shrink-0 rounded-xl flex items-center justify-center ${
+                      state.taken
+                        ? 'bg-emerald-500/10 text-emerald-400'
+                        : needsPre
+                          ? 'bg-white/5 text-slate-500'
+                          : 'bg-primary-fixed-dim/10 text-primary-fixed-dim'
+                    }`}
+                  >
+                    {state.taken ? <CheckCircle2 className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                  </div>
 
-                <div className="min-w-0 flex-1">
-                  <p className="font-display text-sm text-white truncate">{row.material_title}</p>
-                  <p className="font-sans text-xs text-slate-500 mt-0.5">
-                    {state.taken ? (
-                      <>
-                        Done — {state.correct_count ?? 0} of {row.item_count} correct
-                        {state.completed_at ? ` · ${formatDate(state.completed_at)}` : ''}
-                      </>
-                    ) : needsPre ? (
-                      <span className="text-amber-400/80">
-                        Take the pre-test for this lesson first
-                      </span>
-                    ) : (
-                      <>
-                        {row.item_count} questions · this lesson stays locked until you finish
-                      </>
-                    )}
-                  </p>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-display text-sm text-white truncate">{row.material_title}</p>
+                    <p className="font-sans text-xs text-slate-500 mt-0.5 leading-relaxed">
+                      {state.taken ? (
+                        <>
+                          Done — {state.correct_count ?? 0} of {row.item_count} correct
+                          {state.completed_at ? ` · ${formatDate(state.completed_at)}` : ''}
+                        </>
+                      ) : needsPre ? (
+                        <span className="text-amber-400/80">
+                          Take the pre-test for this lesson first
+                        </span>
+                      ) : (
+                        <>
+                          {row.item_count} questions · this lesson stays locked until you finish
+                        </>
+                      )}
+                    </p>
+                  </div>
                 </div>
 
                 {!state.taken && (
@@ -233,9 +266,9 @@ export default function AssessmentTab({ spaceId, phase, onLocksChanged }: Assess
                     onClick={() => void start(row)}
                     disabled={busy || needsPre}
                     title={needsPre ? 'The pre-test comes first — it is your starting score.' : undefined}
-                    className="shrink-0 px-3.5 py-2 rounded-lg bg-primary-fixed-dim text-black font-display text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    className="w-full sm:w-auto shrink-0 px-3.5 py-2.5 sm:py-2 rounded-lg bg-primary-fixed-dim text-black font-display text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
                   >
-                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
+                    {busy ? <Spinner className="w-3.5 h-3.5" /> : <PlayCircle className="w-3.5 h-3.5" />}
                     Start
                   </button>
                 )}
@@ -282,7 +315,7 @@ function ResultsView({
   const missed = result.total - result.correct_count;
 
   return (
-    <div className="animate-in fade-in duration-300 max-w-3xl mx-auto space-y-5 pb-10">
+    <div className="fade-in duration-300 max-w-3xl mx-auto space-y-5 pb-10">
       <button
         onClick={onDone}
         className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 font-sans font-semibold text-xs sm:text-sm uppercase tracking-widest"
@@ -393,7 +426,7 @@ function ResultsView({
 
       <button
         onClick={onDone}
-        className="w-full px-6 py-3 bg-white text-black hover:bg-slate-200 rounded-xl font-sans text-sm font-semibold transition-all"
+        className="w-full px-6 py-3 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all"
       >
         Done
       </button>

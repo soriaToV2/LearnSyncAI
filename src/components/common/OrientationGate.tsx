@@ -62,13 +62,36 @@ export default function OrientationGate() {
   if (!warningType) return null;
 
   return (
-    <div className="fixed inset-0 z-[99999] bg-[#0b1326]/95 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 text-white animate-in fade-in duration-200">
-      <div className="max-w-md space-y-6 flex flex-col items-center">
-        {/* Animated Phone Icon */}
-        <div className="w-20 h-20 flex items-center justify-center bg-white/5 rounded-full border border-white/10 shadow-inner">
-          <Smartphone className="w-10 h-10 text-primary-fixed-dim animate-phone-rotate" />
+    /* ⚠️ `bg-surface`, NOT `bg-[#0b1326]`. #0b1326 IS `--color-surface`'s dark
+       value, written out as a literal — so this overlay was the one surface in
+       the app that no theme could reach, and it stayed near-black over a light
+       page. The token is the same colour on every dark theme and follows the
+       light one. Reported from the running app.
+
+       This is also the second thing the `documentElement` fix bought: the gate
+       mounts at the App root, OUTSIDE all three themed layout wrappers, so
+       while `data-theme` lived only on those wrappers no `[data-theme="white"]`
+       rule could have corrected it even if the colour had been a class. */
+    <div className="fixed inset-0 z-[99999] bg-surface/95 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 text-white fade-in duration-200">
+      <div className="max-w-md space-y-6 flex flex-col items-center animate-orientation-panel">
+        {/* The phone turns TOWARDS the orientation being asked for and rests
+            there — see `phoneToPortrait` / `phoneToLandscape` in `index.css`
+            for why the direction is the whole point. The ring behind it
+            expands on the same 3s cycle. */}
+        <div className="relative w-20 h-20 flex items-center justify-center bg-white/5 rounded-full border border-white/10 shadow-inner">
+          <span
+            aria-hidden="true"
+            className="absolute inset-0 rounded-full border border-primary-fixed-dim/40 animate-orientation-pulse"
+          />
+          <Smartphone
+            className={`w-10 h-10 text-primary-fixed-dim ${
+              warningType === 'landscape_required'
+                ? 'animate-phone-to-landscape'
+                : 'animate-phone-to-portrait'
+            }`}
+          />
         </div>
-        
+
         <div className="space-y-2">
           <h2 className="font-display text-xl font-bold text-white tracking-tight">
             {warningType === 'landscape_required' ? 'Landscape Mode Required' : 'Portrait Mode Required'}

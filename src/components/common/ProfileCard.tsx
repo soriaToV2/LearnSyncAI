@@ -46,8 +46,8 @@ interface ProfileCardProps {
  */
 export default function ProfileCard({ user, accent, accentSoft, roleLabel, facts }: ProfileCardProps) {
   return (
-    <section className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-      <div className="flex items-center gap-4 mb-6">
+    <section className="rounded-2xl bg-white/[0.02] border border-white/5 shadow-lg shadow-black/20 p-5 sm:p-6">
+      <div className="flex items-center gap-4 mb-5 sm:mb-6">
         <div
           className="w-16 h-16 rounded-2xl border flex items-center justify-center shrink-0 font-display text-xl font-bold select-none"
           style={{ backgroundColor: accentSoft, borderColor: `${accent}40`, color: accent }}
@@ -79,11 +79,20 @@ export default function ProfileCard({ user, accent, accentSoft, roleLabel, facts
 
       <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {facts.map(({ icon: Icon, label, value, note }) => (
+          /* `bg-white/5`, not `bg-white/[0.02]`: the card behind these is ALSO
+             `bg-white/[0.02]`, so the tiles were invisible against it and the
+             four facts read as one undifferentiated block. Both values are
+             patched in the `[data-theme="white"]` block, so the light theme is
+             unaffected by the swap. */
           <div
             key={label}
-            className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-white/[0.02] border border-white/5"
+            className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-white/5 border border-white/5"
           >
-            <Icon className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+            {/* Tinted with the portal's own accent — the same prop the monogram
+                uses, so the card reads as one object instead of a coloured
+                square above four grey rows. Alpha suffix matches the
+                `${accent}40` idiom already used for the monogram border. */}
+            <Icon className="w-4 h-4 shrink-0 mt-0.5" style={{ color: `${accent}B3` }} />
             <div className="min-w-0">
               <dt className="font-sans text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">
                 {label}

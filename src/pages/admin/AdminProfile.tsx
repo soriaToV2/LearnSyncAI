@@ -3,6 +3,7 @@ import { useAdminTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import ProfileCard, { type ProfileFact } from '../../components/common/ProfileCard';
 import AccountForms from '../../components/common/AccountForms';
+import AppearanceCard from '../../components/common/AppearanceCard';
 import { formatWhen } from './components/accountUi';
 
 /**
@@ -19,7 +20,7 @@ import { formatWhen } from './components/accountUi';
  * administrator out permanently, including out of the request that would undo it.
  */
 export default function AdminProfile() {
-  const { theme } = useAdminTheme();
+  const { theme, mode, setMode } = useAdminTheme();
   const { user, isLoading, error } = useAuth();
 
   const facts: ProfileFact[] = [
@@ -50,9 +51,9 @@ export default function AdminProfile() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-[900px] mx-auto px-4 md:px-8 py-8 md:py-12">
+      <div className="max-w-[900px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
         <header className="mb-8">
-          <h1 className="font-display text-3xl font-semibold text-on-surface">Profile</h1>
+          <h1 className="font-display text-2xl sm:text-3xl font-semibold text-on-surface">Profile</h1>
           <p className="font-sans text-sm text-on-surface-variant mt-1.5">
             Your account details and how you sign in.
           </p>
@@ -65,6 +66,9 @@ export default function AdminProfile() {
         )}
 
         <div
+          /* No `animate-tab-in` — see the twin note in `EducatorProfile`. The
+             forms render immediately and only dim while loading, so the
+             wrapper's fade is the whole entrance. */
           className={`flex flex-col gap-6 ${isLoading ? 'opacity-60 transition-opacity' : 'transition-opacity'}`}
         >
           <ProfileCard
@@ -73,6 +77,13 @@ export default function AdminProfile() {
             accentSoft={theme.accentSoft}
             roleLabel="Administrator"
             facts={facts}
+          />
+
+          <AppearanceCard
+            mode={mode}
+            onChange={setMode}
+            accent={theme.accent}
+            accentSoft={theme.accentSoft}
           />
 
           <AccountForms accent={theme.accent} />

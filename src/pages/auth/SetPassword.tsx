@@ -1,7 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BrainCircuit, KeyRound, Loader2, LogOut, ShieldCheck } from 'lucide-react';
-import { ACTIVE_THEME, applyThemeToElement } from '../../context/ThemeContext';
+import { KeyRound, LogOut, ShieldCheck } from 'lucide-react';
+import Spinner from '../../components/ui/Spinner';
+import { ACTIVE_THEME, inkOn } from '../../context/ThemeContext';
+import { AuthShell, BrandMark } from './authKit';
 import { AuthProvider, useAuth, displayName } from '../../context/AuthContext';
 import { accountApi, isPasswordValid, passwordProblem, PASSWORD_HINT } from '../../lib/account';
 import { signOut } from '../../lib/signOut';
@@ -36,11 +38,6 @@ function SetPasswordInner() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>(null);
   const latch = useSubmitLatch();
-  const wrapperRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (wrapperRef.current) applyThemeToElement(ACTIVE_THEME, wrapperRef.current);
-  }, []);
 
   const homeFor = (role: string) =>
     role === 'admin' ? '/admin/dashboard' : role === 'educator' ? '/educator/dashboard' : '/student/dashboard';
@@ -99,28 +96,32 @@ function SetPasswordInner() {
     }
   };
 
+  /*
+    ⚠️ THIS PAGE NOW USES `AuthShell`, WHICH IT WAS ALWAYS SUPPOSED TO — the
+    shell's own header says so ("SetPassword still hand-builds its own shell and
+    can adopt this unchanged"). It was the last screen carrying the 4rem
+    graph-paper grid that was removed from Login as reading like dashboard chrome
+    that had lost its content, plus its own tinted blur, its own card, its own
+    brand lockup and its own `applyThemeToElement` call.
+
+    That mattered more here than anywhere: this is the FIRST screen a student
+    ever reaches after signing in, arriving directly from Login — so the two
+    screens sitting one click apart looked like two different products.
+
+    `wrapperRef` and the theme effect are gone with it; `AuthShell` pins
+    `ACTIVE_THEME` itself.
+  */
   return (
-    <div
-      ref={wrapperRef}
-      className="min-h-screen bg-page text-slate-200 flex items-center justify-center p-4 font-sans relative overflow-hidden"
-    >
-      <div className="fixed inset-0 pointer-events-none z-0">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(218,226,253,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(218,226,253,0.03)_1px,transparent_1px)] bg-[size:4rem_4rem]" />
-        <div className="absolute top-[-10%] right-[-10%] w-[60vw] h-[60vw] max-w-[800px] max-h-[800px] bg-primary-fixed-dim/15 rounded-full blur-[120px]" />
+    <AuthShell>
+      <div className="flex flex-col items-center text-center mb-7">
+        <BrandMark />
+        <p className="font-display text-lg font-bold text-white tracking-tight mt-3">LearnSyncAI</p>
       </div>
 
-      <div className="relative z-10 w-full max-w-[440px]">
-        <div className="flex items-center gap-3 mb-8 justify-center">
-          <div className="w-11 h-11 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center">
-            <BrainCircuit className="w-6 h-6 text-primary-fixed-dim" />
-          </div>
-          <span className="font-display text-xl font-bold tracking-tighter text-white">LearnSync AI</span>
-        </div>
-
-        <div className="bg-surface-container-lowest/60 backdrop-blur-2xl border border-white/10 rounded-3xl p-7 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+      <div>
           <div className="flex items-center gap-2.5 mb-2">
-            <KeyRound className="w-4 h-4 text-primary-fixed-dim" />
-            <h1 className="font-display text-xl font-bold text-white">
+            <KeyRound className="w-4 h-4 text-primary-fixed-dim shrink-0" />
+            <h1 className="font-display text-lg sm:text-xl font-bold text-white break-words">
               {user ? `Welcome, ${displayName(user)}` : 'Set your password'}
             </h1>
           </div>
@@ -171,34 +172,37 @@ function SetPasswordInner() {
             <button
               type="submit"
               disabled={!canSave}
-              style={canSave ? { backgroundColor: ACTIVE_THEME.accent, color: '#04121a' } : undefined}
+              style={canSave ? { backgroundColor: ACTIVE_THEME.accent, color: inkOn(ACTIVE_THEME.accent) } : undefined}
               className={`mt-1 w-full py-3 rounded-xl font-display text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
                 canSave ? 'hover:brightness-110' : 'bg-white/5 text-slate-500 cursor-not-allowed'
               }`}
             >
-              {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+              {busy && <Spinner className="w-4 h-4" />}
               Set my password and continue
             </button>
 
             <StatusLine status={status} />
           </form>
 
-          <div className="mt-6 pt-5 border-t border-white/5 flex items-center justify-between gap-4">
+          {/* `flex-col` below `sm:`: the sentence and the escape hatch are
+              ~230px and ~70px, and side by side inside a 400px card minus its
+              padding they leave the sentence about 250px — it wrapped to three
+              lines beside a one-line button. */}
+          <div className="mt-6 pt-5 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <p className="font-sans text-[11px] text-slate-500 flex items-start gap-2 leading-relaxed">
               <ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-px" />
               If you forget it, an administrator can reset it for you.
             </p>
             <button
               onClick={handleSignOut}
-              className="shrink-0 flex items-center gap-1.5 font-sans text-[11px] text-slate-400 hover:text-white transition-colors"
+              className="shrink-0 self-start sm:self-auto flex items-center gap-1.5 font-sans text-[11px] text-slate-400 hover:text-white transition-colors rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-fixed-dim"
             >
               <LogOut className="w-3.5 h-3.5" />
               Not you?
             </button>
           </div>
-        </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 
