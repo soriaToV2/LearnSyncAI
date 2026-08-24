@@ -656,9 +656,19 @@ export default function FlashcardStudyView({
               </div>
             </div>
 
-            {/* Back face */}
+            {/* Back face.
+
+                ⚠️ SAME FIX AS THE DECK-GRID CARD, DIFFERENT SHAPE OF THE SAME
+                BUG. This was `bg-gradient-to-br from-surface-container-lowest
+                to-primary-fixed-dim/5`: opaque at the top-left corner and 95%
+                TRANSPARENT at the bottom-right, so the answer card faded into
+                the page across its own diagonal. Now the surface is an opaque
+                `background-color` and the cyan is a `background-image` over it,
+                which keeps the original look and stops the card disappearing.
+                Keep the gradient's direction — the tint deepening toward the
+                bottom-right is what distinguishes this face from the front. */}
             <div
-              className="absolute inset-0 rounded-3xl border border-primary-fixed-dim/20 bg-gradient-to-br from-surface-container-lowest to-primary-fixed-dim/5 flex flex-col shadow-2xl shadow-primary-fixed-dim/5 overflow-hidden"
+              className="absolute inset-0 rounded-3xl border border-primary-fixed-dim/20 bg-surface-container-lowest bg-gradient-to-br from-primary-fixed-dim/[0.02] to-primary-fixed-dim/[0.08] flex flex-col shadow-2xl shadow-primary-fixed-dim/5 overflow-hidden"
               style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
             >
               <div className="flex items-baseline justify-between gap-3 px-6 pt-5 shrink-0">

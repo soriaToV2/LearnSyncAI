@@ -705,8 +705,23 @@ export default function FlashcardsTab({
                           <RefreshCw className="w-3 h-3" /> Click to Flip
                         </span>
                       </div>
-                      {/* Back */}
-                      <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-primary-fixed-dim/5 flex flex-col shadow-[0_0_30px] shadow-primary-fixed-dim/10 overflow-hidden">
+                      {/* Back.
+
+                          ⚠️ THE OPAQUE SURFACE IS THE BASE AND THE CYAN IS A WASH
+                          OVER IT. This face was `bg-primary-fixed-dim/5` and
+                          nothing else — a 5% tint, meaning 95% TRANSPARENT — so
+                          flipping a card revealed the page behind it rather than
+                          the back of the card. It went unnoticed on the dark
+                          theme, where a faint cyan wash over a near-black page
+                          still reads as a dark card; in light mode the card
+                          vanished under its own cyan text.
+
+                          `background-color` and `background-image` compose, so
+                          the opaque surface sits beneath the gradient and the
+                          tint survives unchanged. Do not collapse this back to a
+                          single `bg-<colour>/<opacity>` — an opacity modifier on
+                          the only background is what caused this. */}
+                      <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-surface-container bg-gradient-to-br from-primary-fixed-dim/[0.08] to-primary-fixed-dim/[0.02] flex flex-col shadow-[0_0_30px] shadow-primary-fixed-dim/10 overflow-hidden">
                         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col">
                           <p className="my-auto font-sans text-sm text-primary-fixed-dim font-medium text-center leading-relaxed">{card.back}</p>
                         </div>
