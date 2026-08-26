@@ -143,6 +143,64 @@ export const ChangeEmailSchema = z.object({
 });
 export type ChangeEmailInput = z.infer<typeof ChangeEmailSchema>;
 
+/**
+ * A six-digit emailed code. Supabase issues these for both `recovery` and
+ * `email_change`, and its own default length is 6.
+ *
+ * `.trim()` because the overwhelmingly common way to enter one is to copy it out
+ * of a mail client, which brings a trailing space with it about as often as not.
+ * Rejecting that would produce "invalid code" for a code the user read correctly.
+ */
+const OtpCodeField = z
+  .string()
+  .trim()
+  .regex(/^\d{6}$/, 'Enter the 6-digit code from your email');
+
+/**
+ * Step 2 of the email change: the address is re-sent by the client rather than
+ * held server-side between the two calls.
+ *
+ * The user typed it moments ago, so echoing it back discloses nothing they do not
+ * already have, and it saves a table whose only job would be to remember one
+ * string for fifteen minutes. Supabase is the authority either way — the code was
+ * minted against a specific address and `verifyOtp` fails if this does not match.
+ */
+export const ConfirmEmailChangeSchema = z
+  .object({
+    new_email: z.string().trim().toLowerCase().email(),
+    code: OtpCodeField,
+  })
+  .strict();
+export type ConfirmEmailChangeInput = z.infer<typeof ConfirmEmailChangeSchema>;
+
+/**
+ * `POST /api/auth/forgot-password` — UNAUTHENTICATED.
+ *
+ * A username and nothing else. It deliberately does NOT take an email address:
+ * asking for one would let a stranger test whether a given address belongs to a
+ * given child, and the route resolves the address server-side for the same reason
+ * `POST /login` does.
+ */
+export const ForgotPasswordSchema = z.object({ username: UsernameField }).strict();
+export type ForgotPasswordInput = z.infer<typeof ForgotPasswordSchema>;
+
+/**
+ * `POST /api/auth/reset-password` — UNAUTHENTICATED.
+ *
+ * `PasswordField` is reused here, which makes this the FOURTH path that sets a
+ * password (first-login activation, self-service change, admin reset, and now
+ * recovery). One rule, one message, four routes — a recovery flow that accepted a
+ * weaker password than the change form would be the obvious way around the rule.
+ */
+export const ResetPasswordSchema = z
+  .object({
+    username: UsernameField,
+    code: OtpCodeField,
+    new_password: PasswordField,
+  })
+  .strict();
+export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
+
 // ── Admin — account administration ────────────────────────
 
 /**
@@ -282,8 +340,10 @@ export type SetAccountStatusInput = z.infer<typeof SetAccountStatusSchema>;
  * An admin reset takes NO current password — the admin is not the account holder
  * and could not know it. `requireRole('admin')` is the authorisation.
  *
- * ⚠️ This is the only password-recovery path that exists in the product. There is
- * no working SMTP, so the "Forgot password?" link cannot be made to work; see
+ * ⚠️ This is the password-recovery path that ALWAYS works, and for most accounts
+ * it is still the only one. `POST /api/auth/forgot-password` covers accounts with
+ * a deliverable address on file; CSV import leaves the column optional, so an
+ * imported student carries a `@pca.invalid` placeholder and reaches nothing. See
  * `POST /api/auth/change-email` for the same constraint.
  */
 export const ResetAccountPasswordSchema = z

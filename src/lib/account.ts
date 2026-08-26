@@ -41,15 +41,65 @@ export const accountApi = {
     return res.data.other_sessions_revoked;
   },
 
-  /** Applies immediately. Does NOT change how the user signs in. */
+  /**
+   * STEP 1 of 2 — mails a 6-digit code to the NEW address and applies nothing.
+   *
+   * ⚠️ IT USED TO APPLY IMMEDIATELY. That made it possible to set an address you
+   * did not own, which is an account-takeover route now that a reset code can be
+   * mailed to it. The address only moves once `confirmEmailChange` redeems the
+   * code. Does NOT change how the user signs in either way — that is the username.
+   */
   async changeEmail(current_password: string, new_email: string): Promise<string> {
-    const res = await api.post<{ email: string }>('/auth/change-email', {
+    const res = await api.post<{ pending_email: string }>('/auth/change-email', {
       current_password,
       new_email,
+    });
+    return res.data.pending_email;
+  },
+
+  /** STEP 2 of 2 — redeems the code. Returns the address now on the account. */
+  async confirmEmailChange(new_email: string, code: string): Promise<string> {
+    const res = await api.post<{ email: string }>('/auth/change-email/confirm', {
+      new_email,
+      code,
     });
     return res.data.email;
   },
 };
+
+/**
+ * The two UNAUTHENTICATED recovery calls, separate from `accountApi` because they
+ * run with no session at all — `api.ts` simply attaches no JWT.
+ *
+ * ⚠️ `requestPasswordReset` CANNOT FAIL IN A WAY THE UI MAY REPORT. The server
+ * answers 200 identically for an unknown username, a disabled account, an account
+ * with no deliverable address and a successful send, because these usernames
+ * belong to identifiable minors at one named school. Do not add a branch here
+ * that infers which happened — there is nothing in the response to infer from,
+ * and inventing one would undo the property on the client.
+ */
+export const recoveryApi = {
+  async requestPasswordReset(username: string): Promise<void> {
+    await api.post('/auth/forgot-password', { username });
+  },
+
+  async resetPassword(username: string, code: string, new_password: string): Promise<void> {
+    await api.post('/auth/reset-password', { username, code, new_password });
+  },
+};
+
+/** `null` when valid, otherwise the reason. Mirrors `OtpCodeField` on the server. */
+export function codeProblem(value: string): string | null {
+  const v = value.trim();
+  if (v.length === 0) return null; // untouched field: say nothing yet
+  if (!/^\d{6}$/.test(v)) return 'Enter the 6-digit code from your email.';
+  return null;
+}
+
+/** Whether this code would be accepted. Empty is invalid; `codeProblem` stays quiet on it. */
+export function isCodeValid(value: string): boolean {
+  return /^\d{6}$/.test(value.trim());
+}
 
 /**
  * Mirrors `profiles_username_format` in schema.sql and `UsernameField` in

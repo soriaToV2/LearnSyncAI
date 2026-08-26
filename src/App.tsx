@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/auth/Login';
 import SetPassword from './pages/auth/SetPassword';
+import ForgotPassword from './pages/auth/ForgotPassword';
 
 // Student
 import StudentLayout from './components/layout/StudentLayout';
@@ -63,6 +64,14 @@ export default function App() {
           It brings its own `AuthProvider`, exactly as the three layouts do.
         */}
         <Route path="/set-password" element={<SetPassword />} />
+        {/*
+          ⚠️ OUTSIDE EVERY LAYOUT, for the same reason as `/set-password` above and
+          one more: whoever opens this cannot sign in, so a shell whose
+          `RequireRole` bounces signed-out visitors to `/login` would make the page
+          unreachable by exactly the people it is for. It mounts no `AuthProvider`
+          at all — there is no session to read.
+        */}
+        <Route path="/forgot-password" element={<ForgotPassword />} />
 
         {/* Student Routes */}
         <Route element={<StudentLayout />}>

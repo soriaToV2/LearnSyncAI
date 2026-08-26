@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff} from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 import type { Session } from '@supabase/supabase-js';
@@ -28,7 +28,6 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [showResetHint, setShowResetHint] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
@@ -151,39 +150,26 @@ export default function Login() {
         />
 
         {/*
-          ⚠️ A PLACEHOLDER FOR THE REAL RESET FLOW — KEEP IT. There is no SMTP on
-          this project yet (`register` passes `email_confirm: true` precisely
-          because none exists), so a reset mail cannot be sent today; the mail
-          flow is planned and this is where it lands. When it does, swap the
-          `onClick` for a route and delete the hint below.
+          ⚠️ IT IS A `<Link>` NOW BECAUSE THERE IS SOMEWHERE TO GO. This was a
+          `<button>` toggling an inline "ask your administrator" hint, and before
+          that an `<a href="#">` that scrolled the page to the top — a placeholder
+          held open for the mail flow. `/forgot-password` is that flow.
 
-          ⚠️ IT IS A `<button>`, NOT `<a href="#">`, WHICH IS WHAT IT USED TO BE.
-          An empty-fragment href scrolls the page to the top on click and is
-          announced as a link to nowhere; a button with no destination yet is
-          simply a control. Do not "fix" it back into an anchor before there is
-          somewhere for it to go.
-
-          Until then it answers the question truthfully rather than doing
-          nothing: an administrator is the ONLY password-recovery path in the
-          product (`POST /api/admin/accounts/:userId/password`).
+          ⚠️ IT DOES NOT PROMISE A RESET WILL WORK, and must not start to. Only an
+          account with a deliverable address can recover itself; everyone else
+          still needs an administrator (`POST /api/admin/accounts/:userId/password`),
+          which is what the old hint said. That fallback is now stated on the
+          second screen of `/forgot-password`, where it can be phrased without
+          revealing whether this particular username has an address on file.
         */}
         <div className="flex justify-end -mt-0.5">
-          <button
-            type="button"
-            onClick={() => setShowResetHint((prev) => !prev)}
-            aria-expanded={showResetHint}
+          <Link
+            to="/forgot-password"
             className="font-sans text-xs font-semibold text-primary-fixed-dim hover:text-white transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-fixed-dim"
           >
             Forgot password?
-          </button>
+          </Link>
         </div>
-
-        {showResetHint && (
-          <p className="font-sans text-xs text-slate-400 bg-white/[0.03] border border-white/10 rounded-xl px-3.5 py-2.5 leading-relaxed fade-in">
-            Ask your school administrator to set a new password for you. They can reset it from the
-            Accounts page.
-          </p>
-        )}
 
         <button
           type="submit"
@@ -196,8 +182,8 @@ export default function Login() {
 
       {/*
         ⚠️ ONE LINE, AND IT REPLACES THREE CONTROLS THAT COULD NOT WORK.
-        (Forgot password is NOT one of them — it is kept above, as a placeholder
-        for the mail flow that is coming.)
+        (Forgot password is NOT one of them — it is a real link above now, to the
+        mail flow this comment used to describe as "coming".)
 
         "Remember for 30 days" — an unbound checkbox with nothing to bind it to:
         `supabase-js` persists the session to localStorage regardless, so it

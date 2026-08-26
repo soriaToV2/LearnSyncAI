@@ -74,6 +74,18 @@ export interface AuthUser {
    * would present a fabricated address as the user's own.
    */
   email_is_placeholder: boolean;
+  /**
+   * ⚠️ WHETHER A PASSWORD-RESET CODE COULD ACTUALLY ARRIVE. Deliberately WIDER
+   * than `email_is_placeholder`: that flag tests only the `@pca.invalid` suffix,
+   * so it is FALSE for `admin` and `educ1`, whose `auth.users.email` still holds
+   * those literal words from before migration 0021 split username from email.
+   *
+   * Two consumers, and both must use this rather than the flag above:
+   * `EmailRecoveryBanner` (shown when false — "add an address so you can reset
+   * your own password"), and every screen that PRINTS the address, since a bare
+   * word is no more a real contact than a placeholder is.
+   */
+  email_can_receive: boolean;
   last_sign_in_at: string | null;
 }
 

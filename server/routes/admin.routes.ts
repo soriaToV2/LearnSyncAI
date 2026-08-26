@@ -15,7 +15,7 @@ import {
   type CreateAccountInput,
 } from '../types/api';
 import { suggestUsername } from '../lib/usernameSuggest';
-import { isPlaceholderEmail, placeholderEmailFor } from '../lib/placeholderEmail';
+import { canReceiveMail, isPlaceholderEmail, placeholderEmailFor } from '../lib/placeholderEmail';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -500,6 +500,14 @@ router.get('/accounts/:userId', async (req: Request, res: Response): Promise<voi
       email: authUser?.user?.email ?? null,
       /** True when the address is a `.invalid` placeholder — the client shows "None". */
       email_is_placeholder: isPlaceholderEmail(authUser?.user?.email),
+      /**
+       * ⚠️ WIDER, AND IT IS THIS ONE THE UI PRINTS BY. The flag above is false for
+       * `admin` and `educ1`, whose addresses are bare words left behind by
+       * migration 0021 — so keying the display off it showed an administrator the
+       * word `admin` as their own contact address. It also decides whether this
+       * account could recover its own password by email.
+       */
+      email_can_receive: canReceiveMail(authUser?.user?.email),
       last_sign_in_at: authUser?.user?.last_sign_in_at ?? null,
     },
   });
@@ -851,11 +859,21 @@ router.post('/accounts/:userId/status', async (req: Request, res: Response): Pro
 /**
  * POST /api/admin/accounts/:userId/password
  *
- * ⚠️ THIS IS THE ONLY PASSWORD-RECOVERY PATH THAT EXISTS IN THE PRODUCT.
- * There is no working SMTP, the addresses in `auth.users` are undeliverable
- * placeholders, and the "Forgot password?" link on the sign-in page is an inert
- * `href="#"` for exactly that reason. Without this route, a student who forgets
- * their password is locked out permanently.
+ * ⚠️ THIS IS THE PASSWORD-RECOVERY PATH THAT ALWAYS WORKS — TIER 2 OF TWO, AND
+ * THE ONE THAT NEVER FAILS TO BE AVAILABLE.
+ *
+ * `POST /api/auth/forgot-password` now covers accounts that have a deliverable
+ * address on file, but that is opt-in and most accounts do not: CSV import leaves
+ * the email column optional and generates a `@pca.invalid` placeholder, and the
+ * accounts predating migration 0021 hold bare words (`admin`, `educ1`). For every
+ * one of those, this route is still the only way back in — so it must never be
+ * removed on the grounds that self-service reset exists.
+ *
+ * ⚠️ IT RE-ARMS `must_change_password`; THE SELF-SERVICE RESET CLEARS IT. The rule
+ * is who has seen the password. An admin choosing one has seen it — and after a
+ * bulk import so has everyone who saw the credentials table — so the holder must
+ * replace it. A student who set their own through a mailed code has not exposed
+ * it to anybody, so the gate is already satisfied.
  *
  * It takes no current password: the admin is not the account holder and cannot
  * know it. `requireRole('admin')` is the authorisation — which is precisely why

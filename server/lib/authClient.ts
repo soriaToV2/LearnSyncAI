@@ -34,6 +34,55 @@ function ephemeralClient() {
 }
 
 /**
+ * Proves the password AND returns a client holding the resulting session, for the
+ * operations that must run as the user rather than as the service role.
+ *
+ * ⚠️ AN `Authorization` HEADER IS NOT A SESSION, AND THAT COST A ROUND OF
+ * DEBUGGING. The first version of this built a client with
+ * `global.headers.Authorization = Bearer <jwt>` and called `updateUser()` on it.
+ * That fails with **"Auth session missing!"**: `updateUser` does not read the
+ * header, it calls `_useSession()` and reads the session off the client instance.
+ * Measured against this project — header-only `ERROR: Auth session missing!`,
+ * same-client-after-sign-in `OK`, explicit `setSession()` `OK`.
+ *
+ * Signing in is what puts the session there, and this route already had to sign
+ * in to verify the current password — so reusing that client is both the fix and
+ * one fewer round trip than verifying and then acting separately.
+ *
+ * ⚠️ `updateUser({ email })` IS THE WHOLE POINT. `admin.updateUserById({ email })`
+ * applies an address outright with no confirmation, which is the behaviour being
+ * replaced; the user-scoped call mails a code to the new address and applies
+ * nothing until `verifyOtp` redeems it.
+ *
+ * Returns null on ANY sign-in failure, with the same no-distinguishing rule as
+ * `signInWithPassword` above.
+ *
+ * Built per call, for the reason at the top of this file — with
+ * `persistSession: false` supabase-js keeps the session in an in-memory adapter,
+ * so it lives and dies with this client and never leaks into another request.
+ */
+export async function sessionClientForPassword(email: string, password: string) {
+  const client = ephemeralClient();
+  const { data, error } = await client.auth.signInWithPassword({ email, password });
+  if (error || !data.session) return null;
+  return client;
+}
+
+/**
+ * A throwaway client with NO session at all, for the unauthenticated recovery
+ * routes.
+ *
+ * `resetPasswordForEmail()` and `verifyOtp({ type: 'recovery' })` are called by
+ * someone who by definition cannot sign in, so there is no token to carry. It is
+ * a distinct export rather than an exported `ephemeralClient` because the two
+ * read differently at a call site: this one is anonymous ON PURPOSE, and that is
+ * worth stating where it is used.
+ */
+export function ephemeralAnonClient() {
+  return ephemeralClient();
+}
+
+/**
  * Signs in with an email and password.
  *
  * Returns the session on success and `null` on ANY failure — wrong password,

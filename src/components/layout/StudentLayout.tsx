@@ -6,6 +6,7 @@ import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } f
 import { signOut } from '../../lib/signOut';
 import { BadgeProvider } from '../../context/BadgeContext';
 import RequireRole from '../common/RequireRole';
+import EmailRecoveryBanner from '../common/EmailRecoveryBanner';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-sidebar-collapsed';
 
@@ -375,6 +376,9 @@ function StudentLayoutInner() {
         className={`flex-1 flex flex-col min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden transition-[margin] duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'
           }`}
       >
+        {/* Above the keyed div so it does not replay its entrance animation on
+            every navigation — it is one standing notice, not a new alert per page. */}
+        <EmailRecoveryBanner accent={theme.accent} />
         <div key={location.pathname} className="flex-1 flex flex-col animate-page-fade">
           <Outlet />
         </div>
