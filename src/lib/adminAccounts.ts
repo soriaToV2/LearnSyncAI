@@ -61,6 +61,12 @@ export interface AdminAccountDetail extends AdminAccount {
    * rather than printing it — a placeholder must never read as a real contact.
    */
   email_is_placeholder: boolean;
+  /**
+   * Whether a reset code could actually arrive here. WIDER than the flag above:
+   * that one only catches `@pca.invalid`, while this also rejects the bare words
+   * (`admin`, `educ1`) migration 0021 left in `auth.users.email`. Print by this.
+   */
+  email_can_receive: boolean;
   last_sign_in_at: string | null;
 }
 
@@ -231,8 +237,13 @@ export const adminApi = {
   },
 
   /**
-   * ⚠️ The only password-recovery path in the product — there is no working SMTP,
-   * so "Forgot password?" cannot be made to work.
+   * ⚠️ The password-recovery path that always works. `/forgot-password` handles
+   * accounts with a deliverable address; this one handles everybody else, which
+   * after a CSV import is most of them (`@pca.invalid` placeholders reach nothing).
+   *
+   * ⚠️ IT RE-ARMS `must_change_password`, unlike a self-service reset, which
+   * clears it. The rule is who has seen the password: an admin choosing one has,
+   * so the holder must replace it before the account is usable.
    *
    * It DOES sign the account out everywhere: measured, Supabase rejects both the
    * existing access token and its refresh token. That depends on `authenticate`
@@ -308,6 +319,6 @@ export function accountSubtitle(account: AdminAccount): string {
  * would be the same mistake with better intentions.
  */
 export function contactEmail(detail: AdminAccountDetail): string {
-  if (!detail.email || detail.email_is_placeholder) return 'None set';
+  if (!detail.email || !detail.email_can_receive) return 'None set';
   return detail.email;
 }

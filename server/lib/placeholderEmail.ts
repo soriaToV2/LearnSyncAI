@@ -22,6 +22,8 @@
  * where `auth.users.email` held `student`, `educ1` and `admin`.
  */
 
+import { z } from 'zod';
+
 const PLACEHOLDER_EMAIL_DOMAIN = 'pca.invalid';
 
 /** `<username>@pca.invalid`. */
@@ -41,4 +43,31 @@ export function placeholderEmailFor(username: string): string {
  */
 export function isPlaceholderEmail(email: string | null | undefined): boolean {
   return !!email && email.toLowerCase().endsWith(`@${PLACEHOLDER_EMAIL_DOMAIN}`);
+}
+
+/**
+ * Whether mail sent to this address could actually arrive.
+ *
+ * ⚠️ IT IS DELIBERATELY WIDER THAN `isPlaceholderEmail()`, AND CONFLATING THE
+ * TWO WOULD SILENTLY EXCLUDE THE ACCOUNT THAT MOST NEEDS THIS. That function
+ * tests one thing: the `@pca.invalid` suffix. But migration 0021 untangled
+ * usernames that had been squatting in `auth.users.email`, and it did not rewrite
+ * the values already there — so `educ1` and `admin` still hold those literal
+ * words today, with no `@` at all. `isPlaceholderEmail('admin')` is `false`,
+ * because `admin` is not a placeholder; it is simply not an address.
+ *
+ * Password recovery keys off THIS predicate, never the placeholder flag. Keying
+ * it off the narrower one would leave the administrator — the single account
+ * whose lockout has no recovery path above it — unable to receive a reset code
+ * and never shown the banner telling them so.
+ *
+ * Three ways to fail, one answer: NULL (no address), a placeholder (generated,
+ * undeliverable by RFC 2606), or anything Zod does not accept as an email shape
+ * (the bare words above). Nothing here proves the mailbox EXISTS or belongs to
+ * the user — only a delivered code does that, which is what the confirmation
+ * step on `POST /auth/change-email` is for.
+ */
+export function canReceiveMail(email: string | null | undefined): boolean {
+  if (!email || isPlaceholderEmail(email)) return false;
+  return z.string().email().safeParse(email).success;
 }

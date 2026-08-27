@@ -3,6 +3,8 @@ import { AtSign, KeyRound, UserPen } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import {
   accountApi,
+  codeProblem,
+  isCodeValid,
   isPasswordValid,
   passwordProblem,
   PASSWORD_HINT,
@@ -148,40 +150,98 @@ function DetailsForm({ accent }: { accent: string }) {
 
 // ── 2. email ────────────────────────────────────────────────────────────────
 
+/**
+ * ⚠️ TWO STEPS, BECAUSE AN UNPROVEN ADDRESS IS AN ACCOUNT-TAKEOVER ROUTE. This
+ * form used to apply the change in one call. Now step 1 mails a 6-digit code to
+ * the address the user typed and step 2 redeems it — so an address only lands on
+ * the account once someone has read mail sent to it.
+ *
+ * The pending address is held in component state and re-sent on confirm rather
+ * than remembered server-side. The user typed it moments ago, so showing it back
+ * discloses nothing, and Supabase is the authority regardless: the code was
+ * minted against that address and will not redeem against another.
+ */
 function EmailForm({ accent }: { accent: string }) {
   const { user, refresh } = useAuth();
   const [newEmail, setNewEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  /** Set once a code has been sent — this is what swaps the form to step 2. */
+  const [pending, setPending] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>(null);
   const latch = useSubmitLatch();
 
-  const canSave = newEmail.trim().length > 3 && password.length > 0 && !busy && !!user;
+  const canSend = newEmail.trim().length > 3 && password.length > 0 && !busy && !!user;
+  const canConfirm = isCodeValid(code) && !busy && !!pending;
 
-  const submit = async (e: React.FormEvent) => {
+  /** Step 1 — prove the current password, then ask Supabase to mail the code. */
+  const requestCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSave || !latch.take()) return;
+    if (!canSend || !latch.take()) return;
     setBusy(true);
     setStatus(null);
     try {
-      await accountApi.changeEmail(password, newEmail.trim().toLowerCase());
-      await refresh();
-      setNewEmail('');
+      const address = await accountApi.changeEmail(password, newEmail.trim().toLowerCase());
+      setPending(address);
+      /*
+       * The password is cleared as soon as it has done its job — step 2 does not
+       * re-check it, and leaving it in a live input on a shared school computer
+       * is exactly the situation the re-check exists to defend against.
+       */
       setPassword('');
-      setStatus({ kind: 'ok', text: 'Email updated. You still sign in with your username.' });
+      setStatus({ kind: 'ok', text: `Code sent to ${address}. It expires in 15 minutes.` });
     } catch (err) {
-      setStatus({ kind: 'error', text: messageOf(err, 'Could not change your email.') });
+      setStatus({ kind: 'error', text: messageOf(err, 'Could not send the code.') });
     } finally {
       setBusy(false);
       latch.release();
     }
   };
 
+  /** Step 2 — redeem it. Supabase applies the change as part of this. */
+  const confirmCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canConfirm || !pending || !latch.take()) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      await accountApi.confirmEmailChange(pending, code.trim());
+      /*
+       * `refresh()` re-reads `GET /auth/me`, which is what clears
+       * `EmailRecoveryBanner` — it gates on `email_can_receive`, and that only
+       * turns true once the address actually lands on the account.
+       */
+      await refresh();
+      setPending(null);
+      setNewEmail('');
+      setCode('');
+      setStatus({ kind: 'ok', text: 'Email updated. You still sign in with your username.' });
+    } catch (err) {
+      /*
+       * The code field is cleared but `pending` is kept, so a mistyped code
+       * leaves the user on step 2 with the address intact rather than sending
+       * them back to re-enter their password for a code that is still valid.
+       */
+      setCode('');
+      setStatus({ kind: 'error', text: messageOf(err, 'Could not confirm that code.') });
+    } finally {
+      setBusy(false);
+      latch.release();
+    }
+  };
+
+  const startOver = () => {
+    setPending(null);
+    setCode('');
+    setStatus(null);
+  };
+
   return (
     <Section
       icon={AtSign}
       title="Email address"
-      description="Where the school can reach you. Changing it does not change how you sign in."
+      description="Where the school can reach you, and where a password-reset code would be sent. Changing it does not change how you sign in."
     >
       {/* `bg-white/5` for the same reason as `ProfileCard`'s fact tiles — the
           `Section` behind this is `bg-white/[0.02]`, so at the same value the
@@ -191,43 +251,86 @@ function EmailForm({ accent }: { accent: string }) {
           Current
         </p>
         {/*
-          ⚠️ NEVER PRINT A PLACEHOLDER ADDRESS. A bulk-created account carries
+          ⚠️ NEVER PRINT AN ADDRESS THAT IS NOT ONE. A bulk-created account carries
           `<username>@pca.invalid` on `auth.users`, and showing it here would
           present a fabricated address to the student as though it were theirs —
           the same mistake as the invented `liza.mendoza@pca.edu.ph`, with better
           intentions. The admin account page has always checked this; this page
           did not, and showed it.
+
+          ⚠️ IT TESTS `email_can_receive`, NOT `email_is_placeholder`, AND THE
+          DIFFERENCE WAS A LIVE BUG. The placeholder flag only catches the
+          `@pca.invalid` suffix, so it is false for `admin` and `educ1` — whose
+          addresses are the bare words migration 0021 left behind. This form
+          printed `admin` to the administrator as their own contact address.
         */}
         <p className="font-sans text-sm text-slate-200 break-all">
-          {user && user.email && !user.email_is_placeholder ? user.email : 'None set'}
+          {user && user.email_can_receive ? user.email : 'None set'}
         </p>
       </div>
 
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <Field
-          label="New email"
-          type="email"
-          value={newEmail}
-          onChange={(e) => setNewEmail(e.target.value)}
-          autoComplete="email"
-          placeholder="you@example.com"
-          disabled={!user}
-        />
-        <Field
-          label="Current password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
-          disabled={!user}
-          hint="Confirms it is really you."
-        />
+      {pending === null ? (
+        <form onSubmit={requestCode} className="flex flex-col gap-4">
+          <Field
+            label="New email"
+            type="email"
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            autoComplete="email"
+            placeholder="you@example.com"
+            disabled={!user}
+          />
+          <Field
+            label="Current password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            disabled={!user}
+            hint="Confirms it is really you."
+          />
 
-        <div className="flex items-center gap-4 flex-wrap">
-          <SaveButton accent={accent} disabled={!canSave} busy={busy} label="Update email" />
-          <StatusLine status={status} />
-        </div>
-      </form>
+          <div className="flex items-center gap-4 flex-wrap">
+            <SaveButton accent={accent} disabled={!canSend} busy={busy} label="Send code" />
+            <StatusLine status={status} />
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={confirmCode} className="flex flex-col gap-4">
+          <p className="font-sans text-xs leading-relaxed text-slate-400">
+            Enter the 6-digit code sent to{' '}
+            <span className="font-semibold text-slate-200 break-all">{pending}</span>. Check your
+            spam folder if it has not arrived.
+          </p>
+
+          <Field
+            label="Code"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            maxLength={6}
+            /* `one-time-code` is what lets a phone offer the code from the
+               notification rather than making the user switch apps to read it. */
+            autoComplete="one-time-code"
+            inputMode="numeric"
+            spellCheck={false}
+            placeholder="123456"
+            hint={codeProblem(code) ?? undefined}
+          />
+
+          <div className="flex items-center gap-4 flex-wrap">
+            <SaveButton accent={accent} disabled={!canConfirm} busy={busy} label="Confirm" />
+            <button
+              type="button"
+              onClick={startOver}
+              disabled={busy}
+              className="font-sans text-xs font-semibold text-slate-400 transition-colors hover:text-white disabled:opacity-50"
+            >
+              Use a different address
+            </button>
+            <StatusLine status={status} />
+          </div>
+        </form>
+      )}
     </Section>
   );
 }

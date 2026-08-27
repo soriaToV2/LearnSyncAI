@@ -67,12 +67,12 @@ export const COURSE_DATABASE: Record<string, CourseGameData> = {
       { term: 'Acetylcholine', definition: 'The primary neurotransmitter active at the neuromuscular junction.' }
     ],
     trivia: [
-      { question: 'What is the main cell body of a neuron called?', options: ['Soma', 'Axon', 'Dendrite', 'Synapse'], correct: 'Soma' },
-      { question: 'Which structure acts as the protective cover and insulator for neuron axons?', options: ['Myelin Sheath', 'Synaptic Cleft', 'Soma', 'Dendrite'], correct: 'Myelin Sheath' },
+      { question: 'What is the main cell body of a neuron called?', options: ['Axon', 'Soma', 'Dendrite', 'Synapse'], correct: 'Soma' },
+      { question: 'Which structure acts as the protective cover and insulator for neuron axons?', options: ['Synaptic Cleft', 'Soma', 'Dendrite', 'Myelin Sheath'], correct: 'Myelin Sheath' },
       { question: 'Which ion is primarily responsible for triggering neurotransmitter vesicle release?', options: ['Calcium (Ca2+)', 'Sodium (Na+)', 'Potassium (K+)', 'Chloride (Cl-)'], correct: 'Calcium (Ca2+)' },
-      { question: 'What is the typical resting membrane potential of a neuron?', options: ['+30 mV', '-55 mV', '0 mV', '-70 mV'], correct: '-70 mV' },
-      { question: 'Which protein complex mediates the docking and fusion of synaptic vesicles to the presynaptic membrane?', options: ['SNARE complex', 'Sodium-Potassium ATPase', 'Myosin complex', 'G-protein receptor'], correct: 'SNARE complex' },
-      { question: 'Which brain structure acts as the primary sensory relay station, routing inputs to the cortex?', options: ['Thalamus', 'Hypothalamus', 'Corpus Callosum', 'Hippocampus'], correct: 'Thalamus' }
+      { question: 'What is the typical resting membrane potential of a neuron?', options: ['+30 mV', '-55 mV', '-70 mV', '0 mV'], correct: '-70 mV' },
+      { question: 'Which protein complex mediates the docking and fusion of synaptic vesicles to the presynaptic membrane?', options: ['Sodium-Potassium ATPase', 'Myosin complex', 'G-protein receptor', 'SNARE complex'], correct: 'SNARE complex' },
+      { question: 'Which brain structure acts as the primary sensory relay station, routing inputs to the cortex?', options: ['Hypothalamus', 'Thalamus', 'Corpus Callosum', 'Hippocampus'], correct: 'Thalamus' }
     ],
     crossword: [
       { r: 0, c: 0, correctLetter: 'S', label: '1' },
@@ -102,12 +102,12 @@ export const COURSE_DATABASE: Record<string, CourseGameData> = {
       { term: 'Benzene', definition: 'An aromatic hydrocarbon with a ring structure of six carbon atoms.' }
     ],
     trivia: [
-      { question: 'Which element is the fundamental backbone of all organic molecules?', options: ['Carbon', 'Oxygen', 'Nitrogen', 'Hydrogen'], correct: 'Carbon' },
+      { question: 'Which element is the fundamental backbone of all organic molecules?', options: ['Oxygen', 'Nitrogen', 'Carbon', 'Hydrogen'], correct: 'Carbon' },
       { question: 'What type of bond involves the sharing of electron pairs between atoms?', options: ['Covalent', 'Ionic', 'Hydrogen', 'Metallic'], correct: 'Covalent' },
-      { question: 'What compounds have the same chemical formula but different structural arrangements?', options: ['Isomers', 'Isotopes', 'Allotropes', 'Monomers'], correct: 'Isomers' },
-      { question: 'Which functional group is characterized by a carbon double-bonded to oxygen (-C=O)?', options: ['Carbonyl', 'Hydroxyl', 'Carboxyl', 'Amino'], correct: 'Carbonyl' },
+      { question: 'What compounds have the same chemical formula but different structural arrangements?', options: ['Isotopes', 'Allotropes', 'Monomers', 'Isomers'], correct: 'Isomers' },
+      { question: 'Which functional group is characterized by a carbon double-bonded to oxygen (-C=O)?', options: ['Hydroxyl', 'Carbonyl', 'Carboxyl', 'Amino'], correct: 'Carbonyl' },
       { question: 'What is the name of the reaction that converts an ester into an alcohol and a carboxylic acid salt?', options: ['Saponification', 'Esterification', 'Hydration', 'Polymerization'], correct: 'Saponification' },
-      { question: 'Which molecular orbital theory explains the extra stability of benzene?', options: ['Resonance/Delocalization', 'Hybridization', 'Van der Waals forces', 'Ionic interaction'], correct: 'Resonance/Delocalization' }
+      { question: 'Which molecular orbital theory explains the extra stability of benzene?', options: ['Hybridization', 'Van der Waals forces', 'Ionic interaction', 'Resonance/Delocalization'], correct: 'Resonance/Delocalization' }
     ],
     crossword: [
       { r: 0, c: 0, correctLetter: 'B', label: '1' },
@@ -137,11 +137,11 @@ export const COURSE_DATABASE: Record<string, CourseGameData> = {
       { term: 'Kinetic Energy', definition: 'The energy that an object possesses due to its motion.' }
     ],
     trivia: [
-      { question: 'What is the standard unit of force in the SI system?', options: ['Newton', 'Joule', 'Watt', 'Pascal'], correct: 'Newton' },
-      { question: 'Which law states that for every action, there is an equal and opposite reaction?', options: ['Newton\'s Third Law', 'Newton\'s First Law', 'Ohm\'s Law', 'Faraday\'s Law'], correct: 'Newton\'s Third Law' },
-      { question: 'What thermodynamic variable measures the degree of disorder or randomness in a system?', options: ['Entropy', 'Enthalpy', 'Temperature', 'Pressure'], correct: 'Entropy' },
+      { question: 'What is the standard unit of force in the SI system?', options: ['Joule', 'Watt', 'Pascal', 'Newton'], correct: 'Newton' },
+      { question: 'Which law states that for every action, there is an equal and opposite reaction?', options: ['Newton\'s First Law', 'Newton\'s Third Law', 'Ohm\'s Law', 'Faraday\'s Law'], correct: 'Newton\'s Third Law' },
+      { question: 'What thermodynamic variable measures the degree of disorder or randomness in a system?', options: ['Enthalpy', 'Temperature', 'Entropy', 'Pressure'], correct: 'Entropy' },
       { question: 'What is the rate of change of velocity over time called?', options: ['Acceleration', 'Momentum', 'Friction', 'Torque'], correct: 'Acceleration' },
-      { question: 'Which constant represents the speed of light in a vacuum?', options: ['c', 'G', 'h', 'k'], correct: 'c' },
+      { question: 'Which constant represents the speed of light in a vacuum?', options: ['G', 'h', 'c', 'k'], correct: 'c' },
       { question: 'What principle states that it is impossible to simultaneously measure both position and momentum of a particle?', options: ['Heisenberg Uncertainty Principle', 'Pauli Exclusion Principle', 'Schrodinger Theorem', 'Bragg\'s Law'], correct: 'Heisenberg Uncertainty Principle' }
     ],
     crossword: [
@@ -173,11 +173,11 @@ export const COURSE_DATABASE: Record<string, CourseGameData> = {
     ],
     trivia: [
       { question: 'Which programming language defines the structural blueprint of a web page?', options: ['HTML', 'CSS', 'JavaScript', 'SQL'], correct: 'HTML' },
-      { question: 'What does CSS stand for?', options: ['Cascading Style Sheets', 'Complex Style Syntax', 'Creative Style Sheets', 'Computer State System'], correct: 'Cascading Style Sheets' },
-      { question: 'Which hook is used to handle side effects in functional React components?', options: ['useEffect', 'useState', 'useContext', 'useReducer'], correct: 'useEffect' },
-      { question: 'What JavaScript keyword is used to declare a variable scoped to the block?', options: ['let', 'var', 'global', 'def'], correct: 'let' },
-      { question: 'What is the terminology for execution context containing variables referenced by inner functions?', options: ['Closure', 'Event Loop', 'Prototype Chain', 'Call Stack'], correct: 'Closure' },
-      { question: 'Which mechanism prevents layout shifting by reserving dimensions during rendering?', options: ['Aspect Ratio sizing', 'Flex basis auto', 'Lazy loading without bounds', 'Repaint triggers'], correct: 'Aspect Ratio sizing' }
+      { question: 'What does CSS stand for?', options: ['Complex Style Syntax', 'Creative Style Sheets', 'Cascading Style Sheets', 'Computer State System'], correct: 'Cascading Style Sheets' },
+      { question: 'Which hook is used to handle side effects in functional React components?', options: ['useState', 'useEffect', 'useContext', 'useReducer'], correct: 'useEffect' },
+      { question: 'What JavaScript keyword is used to declare a variable scoped to the block?', options: ['var', 'global', 'def', 'let'], correct: 'let' },
+      { question: 'What is the terminology for execution context containing variables referenced by inner functions?', options: ['Event Loop', 'Closure', 'Prototype Chain', 'Call Stack'], correct: 'Closure' },
+      { question: 'Which mechanism prevents layout shifting by reserving dimensions during rendering?', options: ['Flex basis auto', 'Lazy loading without bounds', 'Aspect Ratio sizing', 'Repaint triggers'], correct: 'Aspect Ratio sizing' }
     ],
     crossword: [
       { r: 0, c: 0, correctLetter: 'H', label: '1' },

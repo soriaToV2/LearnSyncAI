@@ -280,6 +280,60 @@ ${conceptListOf(concepts)}`;
   return terms;
 }
 
+/** Four options per trivia question — the shape TRIVIA_SCHEMA and the client both assume. */
+const OPTIONS_PER_QUESTION = 4;
+
+/**
+ * One answer position per question, as an even multiset shuffled end-to-end.
+ *
+ * Balanced rather than independently random: with plain per-question randomness
+ * and 10 questions, roughly 1 game in 13 still lands five or more answers on A,
+ * which a student who has just been told this was fixed reads as unfixed. An
+ * even multiset gives every position 2 or 3 of the 10, always.
+ *
+ * Shuffled end-to-end, never dealt one-of-each per block of four — that would
+ * let a student who tracked three questions know the fourth by elimination.
+ *
+ * The random `offset` matters because 10 does not divide by 4: two positions get
+ * the extra slot, and starting at 0 every time would hand that surplus to A and
+ * B in every game — a smaller version of the bug this fixes.
+ *
+ * Math.random(), NOT the seededShuffle/hash idiom in testGeneration.ts. The two
+ * modules want opposite things: a test must be reproducible, whereas a game must
+ * not be, or "Play Again" rebuilds a byte-identical one (see gameDifficulty.ts,
+ * which uses Math.random() for exactly that reason).
+ */
+function balancedSlots(n: number): number[] {
+  const offset = Math.floor(Math.random() * OPTIONS_PER_QUESTION);
+  const slots = Array.from({ length: n }, (_, i) => (i + offset) % OPTIONS_PER_QUESTION);
+  for (let i = slots.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [slots[i], slots[j]] = [slots[j], slots[i]];
+  }
+  return slots;
+}
+
+/**
+ * Re-places each question's correct answer, discarding the model's ordering.
+ *
+ * Exported for the balance check in scripts/, not because anything else calls it.
+ *
+ * The answer is spliced out BY INDEX, never filtered out by value: nothing
+ * validates that the four options are distinct, so filter(o => o !== correct)
+ * would drop both copies of a duplicated answer and leave three options. The
+ * caller's filter already guarantees options.length === 4 and
+ * options.includes(correct), so splice-then-splice always yields exactly four.
+ */
+export function placeAnswers(items: GeneratedTrivia[]): GeneratedTrivia[] {
+  const slots = balancedSlots(items.length);
+  return items.map((q, i) => {
+    const options = [...q.options];
+    options.splice(options.indexOf(q.correct), 1);
+    options.splice(slots[i], 0, q.correct);
+    return { ...q, options };
+  });
+}
+
 /**
  * Generates multiple-choice trivia questions for the Timed Trivia game.
  */
@@ -314,6 +368,7 @@ Rules for EACH question:
 - "question": ${rules.question}
 - "options": EXACTLY 4 distinct answer choices. They ${rules.options}
 - "correct": MUST be copied verbatim from one of the 4 options.
+- The correct answer must not stand out by SHAPE — match its length and level of detail to the other three, so it cannot be picked out without reading them.
 - Questions must be self-contained (do not say "according to the text").
 - NEVER state a relationship a definition does not support. If a concept's definition does not say what it causes, prevents or costs, do not ask — and never answer — as though it did. A wrong fact taught confidently is worse than an easy question.
 - ${ORDERING_RULE}
@@ -354,8 +409,12 @@ ${conceptListOf(concepts)}`;
   if (trivia.length === 0) {
     throw new Error('The game writer did not return any valid trivia questions.');
   }
-  logGame('timed_trivia', tier, trivia.length, elapsedMs);
-  return trivia;
+  // The model writes the correct option first ~69% of the time (measured over
+  // the 130 questions stored before this landed). Its ordering is discarded
+  // here — see placeAnswers().
+  const placed = placeAnswers(trivia);
+  logGame('timed_trivia', tier, placed.length, elapsedMs);
+  return placed;
 }
 
 /**

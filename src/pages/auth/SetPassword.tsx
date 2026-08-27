@@ -155,7 +155,7 @@ function SetPasswordInner() {
                 sameAsCurrent
                   ? 'Choose something different from the one you were given.'
                   : (passwordError ??
-                    `${PASSWORD_HINT}. Pick something you will remember — there is no email reset.`)
+                    `${PASSWORD_HINT}. Pick something you will remember.`)
               }
             />
 
@@ -191,7 +191,8 @@ function SetPasswordInner() {
           <div className="mt-6 pt-5 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <p className="font-sans text-[11px] text-slate-500 flex items-start gap-2 leading-relaxed">
               <ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-px" />
-              If you forget it, an administrator can reset it for you.
+              If you forget it, an administrator can reset it for you — or add an email address
+              on your profile to reset it yourself.
             </p>
             <button
               onClick={handleSignOut}
