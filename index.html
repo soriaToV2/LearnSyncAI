@@ -5,6 +5,36 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LearnSyncAI</title>
+
+  <!--
+    ⚠️ THERE WAS NO FAVICON AT ALL BEFORE THIS. With no `rel="icon"` and no
+    `public/` directory, every browser requested `/favicon.ico`, got a 404, and
+    fell back to its generic blank-page glyph — in every tab, every bookmark and
+    every history entry.
+
+    SVG rather than ICO, because the source of truth is a vector the app already
+    draws (`src/components/common/Logo.tsx`) and an SVG stays sharp at 16, 32 and
+    on a high-DPI tab strip from one file. The trade is Safari before 16.4, which
+    ignores SVG icons and falls back to `/favicon.ico` — still a 404 there, so
+    those users see what everyone saw until now. Adding a raster fallback needs
+    an image tool this repo does not have; if you want full coverage, export
+    `public/favicon.svg` to a 32×32 `.ico` and add a second `<link>` BELOW this
+    one (browsers that understand both take the last they support).
+  -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+  <meta name="description"
+    content="LearnSyncAI — an AI-powered personalized learning companion for Junior High School students at Pasig Christian Academy, combining spaced repetition, free recall, the Feynman technique and adaptive testing with Bayesian Knowledge Tracing." />
+
+  <!--
+    Tints the browser chrome on Android Chrome. Pinned to the DARK page
+    background deliberately: the light/dark choice in this app is a per-portal
+    setting in `localStorage`, not an OS preference, so a `prefers-color-scheme`
+    variant here would disagree with the app for anyone whose two settings differ
+    — and dark is what an un-configured account gets (`themeForMode` defaults to
+    `DARK_THEME`). Matches `--page-bg` on the default theme.
+  -->
+  <meta name="theme-color" content="#020617" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link

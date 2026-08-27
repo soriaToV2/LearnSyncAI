@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    The LearnSyncAI favicon.
+
+    ⚠️ THIS IS A HAND-KEPT COPY OF `src/components/common/Logo.tsx`. A favicon is
+    rendered by the browser OUTSIDE the document, so it can inherit nothing — not
+    `currentColor`, not a CSS custom property, not the theme. The colours below
+    are therefore literals, and they are the ONE place in the product where the
+    accent is allowed to be hard-coded. If the geometry ever changes, change it
+    in both files.
+
+    Two differences from the component, both deliberate and both about size:
+      · A filled tile behind the mark. A bare stroke on a transparent ground
+        disappears against a light browser tab bar; the tile guarantees contrast
+        on light and dark chrome alike, and matches the tinted tile `BrandMark`
+        already draws around the same glyph on the auth pages.
+      · A heavier stroke. At the 16px a tab actually renders, the component's
+        2 units on a 24 grid comes out near a single hairline.
+  -->
+  <rect width="32" height="32" rx="7" fill="#060e20"/>
+  <g transform="translate(4 4)" fill="none" stroke="#00daf3" stroke-width="2.6"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12.5 3H21" opacity="0.55"/>
+    <path d="M3 20.5C5.5 13 9.5 9 19.5 7.5"/>
+    <circle cx="19.5" cy="7.5" r="2" fill="#00daf3" stroke="none"/>
+  </g>
+</svg>

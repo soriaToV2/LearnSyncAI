@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Layers, Gamepad2, BrainCircuit, LogOut, UserCircle, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Home, Layers, Gamepad2, LogOut, UserCircle, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import Logo from '../common/Logo';
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } from '../../context/AuthContext';
 import { signOut } from '../../lib/signOut';
@@ -247,7 +248,7 @@ function StudentLayoutInner() {
               boxShadow: `0 0 10px ${theme.glow}`,
             }}
           >
-            <BrainCircuit style={{ color: theme.accent }} className="w-5 h-5" />
+            <Logo className="w-5 h-5" style={{ color: theme.accent }} />
           </div>
           <span className="text-lg font-bold tracking-tighter font-display" style={{ color: theme.accent }}>
             LearnSyncAI
@@ -281,7 +282,7 @@ function StudentLayoutInner() {
                 borderColor: `${theme.accent}40`,
               }}
             >
-              <BrainCircuit style={{ color: theme.accent }} className="w-5 h-5" />
+              <Logo className="w-5 h-5" style={{ color: theme.accent }} />
             </div>
             <div>
               <h1 className="text-lg font-bold tracking-tighter font-display" style={{ color: theme.accent }}>
@@ -331,7 +332,7 @@ function StudentLayoutInner() {
               boxShadow: `0 0 15px ${theme.glow}`,
             }}
           >
-            <BrainCircuit style={{ color: theme.accent }} className="w-6 h-6" />
+            <Logo className="w-6 h-6" style={{ color: theme.accent }} />
           </div>
           {!isCollapsed && (
             <div className="min-w-0">
