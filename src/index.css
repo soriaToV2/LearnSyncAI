@@ -203,8 +203,39 @@
   --color-surface-container-lowest: #ffffff;
   --color-surface-container-low: #f8fafc;
   --color-surface-container: #f1f5f9;
-  /* Base container (e.g. inputs/buttons) stands out beautifully on white cards */
-  --color-surface-container-high: #f8fafc;
+  /*
+   * ⚠️ #ffffff, NOT #f8fafc — AND THE OLD VALUE WAS A DATA ERROR, NOT A CHOICE.
+   *
+   * It was byte-identical to `--color-surface-container-low` two lines above,
+   * and lighter than `--color-surface-container` between them, so the light
+   * ramp was not merely compressed but out of order.
+   *
+   * The visible symptom was reported as "a transparent dropdown": every
+   * `Dropdown` menu paints `bg-surface-container-high`, which resolved to
+   * #f8fafc against a `--page-bg` of #eef2f6 — about 10/255 per channel, with a
+   * 10%-alpha border. Opaque, but so close to the page behind it that it read
+   * as see-through. Dark mode was never affected (#222a3d on #020617 is an
+   * obvious step), which is why it survived this long.
+   *
+   * ALL SEVENTEEN CONSUMERS OF THIS TOKEN ARE RAISED SURFACES — the three
+   * dropdown menus, the flashcard faces, the test session and results panels,
+   * the assessment runner. Every one of them wants to sit visibly above the
+   * page, so the fix belongs on the token rather than on any one of them.
+   *
+   * ⚠️ IT IS DELIBERATELY LIGHTER THAN `--color-surface-container`, WHICH
+   * INVERTS MATERIAL 3's LIGHT-SCHEME ORDERING. In M3 a higher container level
+   * goes DARKER against a white page; this app inherited the token from its
+   * dark palette, where "high" means "more elevated" means lighter, and uses it
+   * that way at all seventeen call sites. Following M3 here would push every
+   * menu and card darker than the page they float on. The mismatch is in the
+   * name, not the value — do not "correct" it back without changing the call
+   * sites too.
+   *
+   * White leaves no headroom above it, so separation now comes from the border
+   * and shadow each consumer already carries. That is how light-theme elevation
+   * works everywhere else.
+   */
+  --color-surface-container-high: #ffffff;
   /* Higher containers are clean bright off-white */
   --color-surface-container-highest: #cbd5e1;
   --color-surface-variant: #e8edf4;
