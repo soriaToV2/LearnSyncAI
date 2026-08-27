@@ -1102,6 +1102,32 @@
 }
 
 /*
+ * The open menu of `Dropdown`, `SingleSelectDropdown` and `MultiSelectDropdown`.
+ *
+ * ⚠️ A DEDICATED CLASS RATHER THAN `bg-surface-container-high`, BECAUSE THIS
+ * SURFACE MUST NOT BE ALLOWED TO FAIL. It floats over live page content — the
+ * grade-access hint, the tab bar, a list of concepts — so anything less than a
+ * fully opaque fill makes two layers of text overlap and neither readable. The
+ * utility class resolved correctly on inspection, but it depends on a custom
+ * property resolving at the element; `var(…, #222a3d)` cannot.
+ *
+ * ⚠️ `backdrop-blur-md` WAS REMOVED FROM ALL THREE MENUS AND MUST NOT COME BACK.
+ * It was copied from `.glass-card`, where it belongs — that surface is
+ * DELIBERATELY 40% alpha, so there is something behind it worth blurring. On an
+ * opaque panel a backdrop filter blurs a backdrop nobody can see, costs a
+ * compositing layer per open menu, and creates a stacking context on an element
+ * that is already juggling `z-[100]`, `overflow-hidden` and a rounded clip.
+ *
+ * `ring-1 ring-black ring-opacity-5` went with it: `ring-opacity-*` is Tailwind
+ * v3 syntax that generates nothing in v4, so the ring was rendering at FULL
+ * black opacity rather than the 5% intended, doubling the border.
+ */
+.dropdown-panel {
+  background-color: var(--color-surface-container-high, #222a3d);
+  border-color: color-mix(in oklab, var(--color-white) 10%, transparent);
+}
+
+/*
  * The entrance for a TAB PANEL, as distinct from a page.
  *
  * `pageFadeIn` is opacity-only, which is right for a whole page arriving after a
@@ -1158,6 +1184,24 @@
  * has no `@types/react`, so its props are enforced exactly and `key` is not
  * among them — the same constraint `AdaptiveTestTab` works around with a keyed
  * `Fragment`.
+ */
+/*
+ * ⚠️ NEVER PUT THIS CLASS — OR `animate-tab-in` — ON AN ELEMENT THAT CONTAINS AN
+ * ABSOLUTELY POSITIONED OVERLAY. Both keyframes animate `transform` and
+ * `opacity`, and either property forms a STACKING CONTEXT on the element
+ * carrying it. Any `z-index` inside is then scoped to that context, so an
+ * overlay meant to float above the page cannot rise past the animated element's
+ * own place in the stack.
+ *
+ * Measured on the educator grade-access editor: `animate-swap-in` on a
+ * `Dropdown` root trapped the menu's `z-[100]`, and every later sibling — the
+ * hint paragraph, the tab bar, the entire concept list — painted over the open
+ * menu. It was reported, three times, as "a transparent dropdown", because an
+ * opaque panel underneath text-on-a-see-through-background is indistinguishable
+ * from a see-through panel.
+ *
+ * Animate something INSIDE the overlay's positioning ancestor, or animate a
+ * wrapper that is not that ancestor.
  */
 @keyframes swapIn {
   from {

@@ -531,7 +531,7 @@ function QuestionNav({
 // ─────────────────────────────────────────────────────────────────────────────
 
 const INPUT =
-  'w-full bg-surface-container/60 border border-white/10 rounded-xl px-4 py-3 text-white font-sans text-base outline-none focus:border-primary-fixed-dim transition-colors placeholder:text-slate-600';
+  'w-full bg-surface-container-high border border-white/10 rounded-xl px-4 py-3 text-white font-sans text-base outline-none focus:border-primary-fixed-dim transition-colors placeholder:text-slate-600';
 
 function SingleQuestion({
   question,

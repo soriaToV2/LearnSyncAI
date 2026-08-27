@@ -61,7 +61,7 @@ export default function SingleSelectDropdown({
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="inline-flex w-56 items-center justify-between gap-x-2 rounded-xl bg-surface-container/60 border border-white/10 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-surface-container/85 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40 transition-all active:scale-98"
+          className="inline-flex w-56 items-center justify-between gap-x-2 rounded-xl bg-surface-container-high border border-white/10 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-surface-container-highest focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40 transition-all active:scale-98"
           aria-expanded={isOpen}
           aria-haspopup="listbox"
         >
@@ -85,7 +85,7 @@ export default function SingleSelectDropdown({
         //
         // w-full rather than a repeated w-56 so the panel tracks the button if
         // its width is ever changed.
-        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden fade-in duration-150 backdrop-blur-md z-[100]">
+        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 dropdown-panel shadow-2xl focus:outline-none overflow-hidden fade-in z-[100]">
           {/* `scrollbar-none` removed, NOT swapped for `no-scrollbar`. Verified
               against the built CSS: it generated zero rules, so the panel has
               always shown its scrollbar — and for a scrolling option list that

@@ -425,7 +425,7 @@ export default function MaterialDetail() {
                   ? 'Make this available to students again'
                   : 'Hide from students’ study spaces. Concepts and mastery are kept.'
               }
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface-container/60 border border-white/10 text-slate-300 font-sans text-xs font-semibold hover:bg-surface-container/85 hover:text-white transition-all disabled:opacity-50 whitespace-nowrap ${FOCUS}`}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface-container-high border border-white/10 text-slate-300 font-sans text-xs font-semibold hover:bg-surface-container-highest hover:text-white transition-all disabled:opacity-50 whitespace-nowrap ${FOCUS}`}
             >
               {savingMeta
                 ? <Spinner className="w-3.5 h-3.5" />
@@ -506,12 +506,39 @@ export default function MaterialDetail() {
               types, so React genuinely remounts.
             */}
             <div className="flex-1 min-w-0">
+              {/*
+                ⚠️ NO ENTRANCE ANIMATION ON THIS ONE, AND THE REASON IS NOT
+                TASTE. It had `animate-swap-in`, and that made the OPEN MENU
+                appear transparent — page content showed straight through it.
+
+                `swapIn` animates `transform` and `opacity` on the element it is
+                applied to, which here is the `Dropdown` ROOT. An element with a
+                transform or a non-1 opacity forms a STACKING CONTEXT, and the
+                menu's `z-[100]` is then scoped inside it. Since the root itself
+                has `z-index: auto`, everything later in the document — the hint
+                paragraph below, the tab bar, the whole concept list — painted
+                OVER the menu. The panel was opaque the entire time; it was
+                simply underneath, which is indistinguishable from transparent
+                when the thing on top is text on a see-through background.
+
+                ⚠️ THE RULE, WHICH APPLIES TO `animate-tab-in` EQUALLY: never
+                put either class on an element that contains an absolutely
+                positioned overlay — a dropdown, a popover, a tooltip. Animate
+                something inside it, or animate a wrapper that is not the
+                overlay's positioning ancestor. Every other `animate-swap-in` in
+                this file wraps plain content (a paragraph, a button row, the
+                concept form) and is safe.
+
+                Nothing is lost here: the dropdown already replaces the grade
+                chips instantly, and the Cancel/Save pair beside it still
+                animates in.
+              */}
               {isEditingGrades ? (
                 <Dropdown
                   value={gradeDraft}
                   onChange={setGradeDraft}
                   options={ALL_GRADE_LEVELS.map((g) => ({ value: String(g), label: `Grade ${g}` }))}
-                  className="w-full sm:w-44 animate-swap-in"
+                  className="w-full sm:w-44"
                 />
               ) : (
                 <GradeChips grades={gradeValues} />
@@ -638,7 +665,7 @@ export default function MaterialDetail() {
                       onChange={(e) => setConceptSearch(e.target.value)}
                       placeholder="Search concepts..."
                       aria-label="Search concepts"
-                      className="w-full bg-surface-container/60 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-white text-xs font-medium placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40"
+                      className="w-full bg-surface-container-high border border-white/10 rounded-xl pl-9 pr-3 py-2 text-white text-xs font-medium placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40"
                     />
                   </div>
                 )}

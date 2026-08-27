@@ -206,7 +206,7 @@ export default function EducatorAssessmentTab({
                     ? 'Students have already answered these questions. Changing them now would make the before-and-after scores meaningless.'
                     : 'Write a fresh set of questions'
                 }
-                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container/60 border border-white/10 text-slate-300 font-sans text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:border-white/25 transition-colors"
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high border border-white/10 text-slate-300 font-sans text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:border-white/25 transition-colors"
               >
                 {busy === 'generate' ? (
                   <Spinner className="w-3.5 h-3.5" />

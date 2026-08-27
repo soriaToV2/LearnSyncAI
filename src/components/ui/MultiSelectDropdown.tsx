@@ -80,7 +80,7 @@ export default function MultiSelectDropdown({
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="inline-flex w-56 items-center justify-between gap-x-2 rounded-xl bg-surface-container/60 border border-white/10 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-surface-container/85 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40 transition-all active:scale-98"
+          className="inline-flex w-56 items-center justify-between gap-x-2 rounded-xl bg-surface-container-high border border-white/10 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-surface-container-highest focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40 transition-all active:scale-98"
           aria-expanded="true"
           aria-haspopup="true"
         >
@@ -98,7 +98,7 @@ export default function MultiSelectDropdown({
         // made the panel overhang its own left edge by 32px, and wherever the
         // control sat flush against a container edge that overhang was clipped,
         // cutting the first characters off every option label.
-        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden fade-in duration-150 backdrop-blur-md z-[100]">
+        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 dropdown-panel shadow-2xl focus:outline-none overflow-hidden fade-in z-[100]">
           <div className="py-1 max-h-68 overflow-y-auto scrollbar-none" role="none">
             {/* Select All toggle */}
             {options.length > 0 && (

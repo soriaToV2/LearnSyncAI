@@ -199,7 +199,7 @@ export default function AccountsList() {
               placeholder="Search name or username..."
               aria-label="Search accounts by name or username"
               spellCheck={false}
-              className="w-full bg-surface-container/60 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-white text-xs font-semibold placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40"
+              className="w-full bg-surface-container-high border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-white text-xs font-semibold placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40"
             />
           </div>
 

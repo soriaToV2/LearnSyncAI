@@ -42,13 +42,34 @@ export default function Dropdown({ value, onChange, options, className = '', ico
     setIsOpen(false);
   };
 
+  /*
+   * ⚠️ THE TRIGGER IS OPAQUE. It was the container tone at 60% alpha over
+   * whatever it happened to be sitting on — and that was reported as "a
+   * transparent dropdown" on the educator grade-access editor.
+   *
+   * The arithmetic, in light mode: the grade panel behind it renders about
+   * #eaeef2, and #f1f5f9 at 60% over that lands about #eef1f5 — a difference of
+   * roughly FOUR values per channel, with only a 10%-alpha border to say a
+   * control was there at all. `index.css` carries a light-theme correction for
+   * plain `.bg-surface-container` and none for the alpha variant, so nothing
+   * caught it.
+   *
+   * `surface-container-high` is the right token rather than a hand-picked
+   * colour: it is the app's "raised above the surface" step, it is what the
+   * MENU below already uses, and it is legible in both palettes — #222a3d on a
+   * near-black page, #ffffff on a near-white one.
+   *
+   * The same swap was applied to every form control that shared the old value
+   * (the two other dropdowns, four search inputs, a test-session field), so a
+   * search box does not sit beside a dropdown looking like a different material.
+   */
   return (
     <div className={`relative inline-block text-left font-sans ${className}`} ref={containerRef}>
       <div className="relative">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className={`inline-flex w-full items-center justify-between gap-x-2 rounded-xl bg-surface-container/60 border border-white/10 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-surface-container/85 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40 transition-all active:scale-98 ${icon ? 'pl-9' : ''}`}
+          className={`inline-flex w-full items-center justify-between gap-x-2 rounded-xl bg-surface-container-high border border-white/10 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-surface-container-highest focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40 transition-all active:scale-98 ${icon ? 'pl-9' : ''}`}
           aria-expanded={isOpen}
           aria-haspopup="listbox"
         >
@@ -62,7 +83,7 @@ export default function Dropdown({ value, onChange, options, className = '', ico
       </div>
 
       {isOpen && (
-        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 bg-surface-container-high shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden fade-in duration-150 backdrop-blur-md z-[100]">
+        <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 dropdown-panel shadow-2xl focus:outline-none overflow-hidden fade-in z-[100]">
           {/* Dead class dropped — see the twin note in SingleSelectDropdown. It
               generated no CSS, so the scrollbar has always shown, and on a
               scrolling option list that is the only cue more options exist. */}

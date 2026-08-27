@@ -246,7 +246,7 @@ export default function MaterialsLibrary() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search materials..."
-              className="w-full bg-surface-container/60 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-white text-xs font-semibold placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40"
+              className="w-full bg-surface-container-high border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-white text-xs font-semibold placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/40"
             />
           </div>
 
@@ -274,7 +274,7 @@ export default function MaterialsLibrary() {
               className={`flex items-center justify-center lg:justify-start gap-2 w-full lg:w-auto px-4 py-2.5 rounded-xl border font-sans text-xs font-semibold transition-all whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] ${
                 showArchived
                   ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/30 text-primary-fixed-dim'
-                  : 'bg-surface-container/60 border-white/10 text-slate-300 hover:bg-surface-container/85'
+                  : 'bg-surface-container-high border-white/10 text-slate-300 hover:bg-surface-container-highest'
               }`}
             >
               <Archive className="w-3.5 h-3.5 shrink-0" />
