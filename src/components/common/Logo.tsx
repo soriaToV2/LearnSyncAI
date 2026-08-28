@@ -20,6 +20,15 @@ import type { CSSProperties } from 'react';
  *      does not touch it. Drawn at 40% so it reads as a limit rather than as a
  *      second stroke of equal weight.
  *
+ * ⚠️ THE GEOMETRY IS EXACT, AND A HAND-DRAWN VERSION WAS TRIED AND REVERTED.
+ * It carried deliberate irregularities — an off-level ceiling, overshot ends, a
+ * two-segment curve with a visible join, a rotated ellipse for the dot — to make
+ * the mark read as crafted rather than generated. It was dropped on 2026-08-28.
+ * If the idea comes back, note what made it hard: every classic hand-drawn
+ * device (varying stroke weight, textured edges, grain) is invisible below about
+ * 32px, so the wobble has to live in the path itself, and at 20px a wobble large
+ * enough to notice is also large enough to look like a mistake.
+ *
  * ⚠️ IT IS BUILT ON LUCIDE'S GRID ON PURPOSE — 24×24 viewBox, 2px stroke, round
  * caps and joins, `currentColor`. This glyph sits directly above nav items that
  * are all Lucide icons at that exact weight, and it replaces `BrainCircuit` in

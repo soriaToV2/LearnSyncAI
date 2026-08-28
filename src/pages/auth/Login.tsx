@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff} from 'lucide-react';
+import { Eye, EyeOff, Lock } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
-import { api } from '../../lib/api';
+import { api, type ApiRequestError } from '../../lib/api';
 import { AuthShell, AuthField, BrandMark } from './authKit';
 
 /**
@@ -29,6 +29,11 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  /* Tracked separately from `error` so the banner can change SHAPE, not just
+     wording. A deactivated account is not a typo, and dressing it in the same
+     red "!" as a wrong password invites the student to retype a password that
+     was never the problem — which is exactly what they did before this. */
+  const [isDisabledAccount, setIsDisabledAccount] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -36,6 +41,7 @@ export default function Login() {
     e.preventDefault();
     setIsLoading(true);
     setError('');
+    setIsDisabledAccount(false);
 
     try {
       const { data } = await api.post<{
@@ -79,8 +85,19 @@ export default function Login() {
         { replace: true }
       );
     } catch (err: unknown) {
-      // Already display-ready and deliberately generic — the route returns one
-      // message for every failure so it cannot be used to test which usernames exist.
+      /*
+       * Messages arrive display-ready and are deliberately generic — the route
+       * returns one sentence for every failure so it cannot be used to test
+       * which usernames exist.
+       *
+       * ⚠️ THE ONE EXCEPTION IS `ACCOUNT_DISABLED`, and the server only sends it
+       * AFTER the password has been verified, so it is not an oracle. It is
+       * branched on the CODE, never on the message text: that text is user-facing
+       * copy someone will reword, and a string match would fail silently the
+       * first time they did.
+       */
+      const code = (err as ApiRequestError | undefined)?.code;
+      setIsDisabledAccount(code === 'ACCOUNT_DISABLED');
       setError(err instanceof Error ? err.message : 'Incorrect username or password');
       setIsLoading(false);
     }
@@ -103,16 +120,42 @@ export default function Login() {
       </div>
 
       <form className="flex flex-col gap-3" onSubmit={handleLogin}>
+        {/*
+          ⚠️ TWO SHAPES, NOT TWO COLOURS OF THE SAME SHAPE.
+
+          A wrong password is something the person can fix by trying again, so it
+          keeps the red alert. A deactivated account is a STATE, not a mistake —
+          nothing they type will change it — so it drops the "!" for a lock, goes
+          amber, and adds the one line that actually helps: who can undo it.
+          Presented identically to a typo, students retype the password until they
+          lock themselves out of trying.
+
+          Both are `role="alert"`, so either way a screen reader announces the
+          change without the field losing focus.
+        */}
         {error && (
-          <div
-            role="alert"
-            className="bg-rose-500/10 border border-rose-500/20 text-rose-300 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in"
-          >
-            <span className="shrink-0 w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center font-bold text-xs mt-px">
-              !
-            </span>
-            <p>{error}</p>
-          </div>
+          isDisabledAccount ? (
+            <div
+              role="alert"
+              className="bg-amber-500/10 border border-amber-500/25 text-amber-200 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in"
+            >
+              <Lock className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+              <div className="min-w-0">
+                <p className="font-semibold">Account deactivated</p>
+                <p className="text-amber-200/80 text-xs mt-1 leading-relaxed">{error}</p>
+              </div>
+            </div>
+          ) : (
+            <div
+              role="alert"
+              className="bg-rose-500/10 border border-rose-500/20 text-rose-300 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in"
+            >
+              <span className="shrink-0 w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center font-bold text-xs mt-px">
+                !
+              </span>
+              <p>{error}</p>
+            </div>
+          )
         )}
 
         <AuthField
