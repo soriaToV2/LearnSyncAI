@@ -88,6 +88,30 @@ const UNIQUE_VIOLATION = '23505';
 const LOGIN_FAILED = 'Incorrect username or password';
 
 /**
+ * The ONE failure this route is allowed to describe, and the reason it is not a
+ * hole in the rule above.
+ *
+ * ⚠️ IT IS RETURNED ONLY AFTER `signInWithPassword` HAS SUCCEEDED. That is the
+ * whole safety argument: the caller has proved they own the account, so telling
+ * them their own account is disabled reveals nothing to a guesser. Answering
+ * before the password check — which is what this route used to do, folding
+ * `status !== 'active'` into the same branch as an unknown username — would make
+ * the endpoint an oracle for which usernames exist, and this platform's
+ * usernames belong to identifiable minors at one named school.
+ *
+ * It is the same argument, at the same point in the flow, that already permits
+ * `must_change_password` to be disclosed below.
+ *
+ * ⚠️ THE SESSION IS DISCARDED, NOT RETURNED. Supabase knows nothing about our
+ * `profiles.status` column, so it happily mints a session for an account we
+ * consider disabled; that session must never reach the browser. `requireRole`
+ * and `private.auth_role()` would both refuse it anyway — this is the outer
+ * layer of that defence, not the only one.
+ */
+const ACCOUNT_DISABLED =
+  'This account has been deactivated. Ask your school administrator to restore it.';
+
+/**
  * POST /api/auth/register
  *
  * Called immediately after Supabase Auth signup on the frontend.
@@ -192,7 +216,15 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     .eq('username', username)
     .maybeSingle();
 
-  if (!profile || profile.status !== 'active') {
+  /*
+   * ⚠️ ONLY `!profile` HERE. The `status !== 'active'` test used to share this
+   * branch, which meant a disabled account and a username that does not exist
+   * were answered identically — correct for secrecy, but it left a disabled
+   * student staring at "Incorrect username or password" and retyping a password
+   * that was never the problem. The status check now runs after the password is
+   * verified; see `ACCOUNT_DISABLED`.
+   */
+  if (!profile) {
     res.status(401).json({ error: 'Unauthorized', message: LOGIN_FAILED });
     return;
   }
@@ -210,6 +242,22 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
   if (!session) {
     res.status(401).json({ error: 'Unauthorized', message: LOGIN_FAILED });
+    return;
+  }
+
+  /*
+   * Password proven — from here it is safe to be specific.
+   *
+   * `session` is deliberately dropped on the floor rather than returned. See the
+   * `ACCOUNT_DISABLED` note: Supabase does not know about `profiles.status`, so
+   * the session it just minted is valid as far as it is concerned.
+   */
+  if (profile.status !== 'active') {
+    res.status(403).json({
+      error: 'Forbidden',
+      code: 'ACCOUNT_DISABLED',
+      message: ACCOUNT_DISABLED,
+    });
     return;
   }
 

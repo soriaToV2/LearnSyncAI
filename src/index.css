@@ -370,10 +370,34 @@
   box-shadow: 0 15px 30px -5px rgba(15, 23, 42, 0.06), 0 8px 12px -6px rgba(15, 23, 42, 0.04) !important;
 }
 
-/* Hover effects for nested cards */
-[data-theme="white"] .bg-white\/\[0\.01\]:not(.shadow-xl):not(.shadow-2xl):hover,
-[data-theme="white"] .bg-white\/\[0\.02\]:not(.shadow-xl):not(.shadow-2xl):hover,
-[data-theme="white"] .bg-white\/5:not(.shadow-xl):not(.shadow-2xl):hover {
+/*
+ * Hover effects for nested cards.
+ *
+ * ⚠️ SCOPED TO THINGS THAT ARE ACTUALLY INTERACTIVE. This used to match ANY
+ * element carrying `bg-white/[0.01]`, `bg-white/[0.02]` or `bg-white/5`, which
+ * are plain static background utilities used on hundreds of chips, wells,
+ * panels and read-only boxes. The result was that in light mode a great many
+ * elements that are not clickable and never asked for a hover state went
+ * slate-200 grey the moment a cursor crossed them — reported as "a greyed ugly
+ * hover on boxes". The clearest case is `ProfileCard`'s four fact boxes (Role,
+ * Grade level, Member since, Last signed in): static `<div>`s displaying text,
+ * which lit up as though they could be opened.
+ *
+ * `:is(a, button, [role="button"], [tabindex])` is the narrowest test that still
+ * covers everything genuinely clickable here — `<Link>` renders an `<a>`, and
+ * the card-shaped controls are `<button>`s. Anything that is a `<div onClick>`
+ * declares its own `hover:bg-*` class in the markup and is corrected by the
+ * `.hover\:bg-white\/5:hover` / `.hover\:bg-white\/10:hover` rules below, which
+ * is where a hover SHOULD come from: the element asking for one.
+ *
+ * ⚠️ DO NOT WIDEN THIS BACK TO A BARE CLASS SELECTOR. A stylesheet cannot tell
+ * a button from a label by its background colour, and guessing wrong is
+ * invisible in dark mode — where the rule does not apply at all — so it will not
+ * be caught until someone opens the light theme.
+ */
+[data-theme="white"] :is(a, button, [role="button"], [tabindex]).bg-white\/\[0\.01\]:not(.shadow-xl):not(.shadow-2xl):hover,
+[data-theme="white"] :is(a, button, [role="button"], [tabindex]).bg-white\/\[0\.02\]:not(.shadow-xl):not(.shadow-2xl):hover,
+[data-theme="white"] :is(a, button, [role="button"], [tabindex]).bg-white\/5:not(.shadow-xl):not(.shadow-2xl):hover {
   background-color: #e2e8f0 !important;
   /* Darken slightly on hover */
   border-color: #cbd5e1 !important;
@@ -761,10 +785,13 @@
   box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.04) !important;
 }
 
-/* Hover effects for nested cards */
-:root[data-theme="white"] .bg-white\/\[0\.01\]:not(.shadow-xl):not(.shadow-2xl):hover,
-:root[data-theme="white"] .bg-white\/\[0\.02\]:not(.shadow-xl):not(.shadow-2xl):hover,
-:root[data-theme="white"] .bg-white\/5:not(.shadow-xl):not(.shadow-2xl):hover {
+/* Hover effects for nested cards. Interactive-only — see the twin block above,
+   which carries the full reasoning. This `:root`-prefixed copy exists because
+   the whole white-theme sheet is duplicated at higher specificity; keep the two
+   selectors identical or the higher-specificity one silently wins. */
+:root[data-theme="white"] :is(a, button, [role="button"], [tabindex]).bg-white\/\[0\.01\]:not(.shadow-xl):not(.shadow-2xl):hover,
+:root[data-theme="white"] :is(a, button, [role="button"], [tabindex]).bg-white\/\[0\.02\]:not(.shadow-xl):not(.shadow-2xl):hover,
+:root[data-theme="white"] :is(a, button, [role="button"], [tabindex]).bg-white\/5:not(.shadow-xl):not(.shadow-2xl):hover {
   background-color: #e2e8f0 !important;
   /* Darken slightly on hover */
   border-color: #cbd5e1 !important;

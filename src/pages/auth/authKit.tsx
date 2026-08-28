@@ -77,7 +77,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
 /** The accented brand tile, centred above the heading. */
 export function BrandMark() {
   return (
-    <div className="w-12 h-12 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center shadow-[0_0_30px_rgba(0,218,243,0.2)]">
+    <div className="w-12 h-12 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center">
       <Logo className="w-6 h-6 text-primary-fixed-dim" />
     </div>
   );

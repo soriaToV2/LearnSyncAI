@@ -247,7 +247,6 @@ function StudentLayoutInner() {
             style={{
               backgroundColor: `${theme.accent}20`,
               borderColor: `${theme.accent}40`,
-              boxShadow: `0 0 10px ${theme.glow}`,
             }}
           >
             <Logo className="w-5 h-5" style={{ color: theme.accent }} />
@@ -331,7 +330,6 @@ function StudentLayoutInner() {
             style={{
               backgroundColor: `${theme.accent}20`,
               borderColor: `${theme.accent}40`,
-              boxShadow: `0 0 15px ${theme.glow}`,
             }}
           >
             <Logo className="w-6 h-6" style={{ color: theme.accent }} />

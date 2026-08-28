@@ -14,6 +14,29 @@ export interface ApiError {
   error: string;
   message: string;
   details?: unknown;
+  /**
+   * A stable machine-readable reason, set by the few routes that have more than
+   * one meaningful failure. Optional by design: `message` remains the thing
+   * every caller renders, and no caller is required to know a code exists.
+   */
+  code?: string;
+}
+
+/**
+ * The `Error` this module throws, with the response's status and `code` attached.
+ *
+ * ⚠️ THIS EXISTS SO CALLERS BRANCH ON A CODE INSTEAD OF MATCHING THE MESSAGE
+ * STRING. `POST /auth/login` is the first route with two distinct failures worth
+ * telling apart — a wrong password and a deactivated account — and the message
+ * for each is user-facing copy that will be reworded. Anything keyed to that
+ * wording breaks silently the first time someone improves a sentence.
+ *
+ * Purely additive: it is still an `Error`, `message` is unchanged, and every
+ * existing call site that reads `err.message` keeps working untouched.
+ */
+export interface ApiRequestError extends Error {
+  status: number;
+  code?: string;
 }
 
 // ─────────────────────────────────────────────
@@ -60,7 +83,12 @@ export async function apiFetch<T = unknown>(
 
   if (!response.ok) {
     const apiError = json as ApiError;
-    throw new Error(apiError.message ?? apiError.error ?? 'An unknown API error occurred');
+    const err = new Error(
+      apiError.message ?? apiError.error ?? 'An unknown API error occurred'
+    ) as ApiRequestError;
+    err.status = response.status;
+    err.code = apiError.code;
+    throw err;
   }
 
   return json as ApiResponse<T>;
