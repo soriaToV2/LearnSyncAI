@@ -115,8 +115,26 @@ export default function Login() {
             lockup, with the larger gap below separating the brand from the
             greeting. */}
         <p className="font-display text-lg font-bold text-white tracking-tight mt-3">LearnSyncAI</p>
-        <p className="font-sans text-xs text-slate-500 mt-6">Please enter your details</p>
-        <h1 className="font-display text-3xl font-bold text-white mt-1">Welcome back</h1>
+        {/*
+          ⚠️ THE GREETING LEADS AND THE SUPPORTING LINE FOLLOWS. It used to be
+          the other way round — "Please enter your details" sat ABOVE "Welcome
+          back" as an eyebrow, so the page issued an instruction before it said
+          hello. An eyebrow line works when it gives context; it does not work
+          when it gives an order.
+
+          The line also has to EARN its place, because two labelled fields sit
+          directly beneath it already saying "type your username and password".
+          "Please enter your details" said only that, in more words and in the
+          language of a form rather than a school. What it says now answers the
+          one question this screen genuinely raises: sign-in is by USERNAME, not
+          email — unusual enough that the field was mislabelled "Email or
+          Username" until migration 0021 — and there is no self-registration, so
+          "your school" is also the honest answer to where it came from.
+        */}
+        <h1 className="font-display text-3xl font-bold text-white mt-6">Welcome back</h1>
+        <p className="font-sans text-sm text-slate-400 mt-2">
+          Sign in with your school username.
+        </p>
       </div>
 
       <form className="flex flex-col gap-3" onSubmit={handleLogin}>
