@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { subjectName } from '../../data/mockEducator';
+import { useSubjectName } from '../../context/SubjectsContext';
 
 /**
  * A stable colour per subject code, so the same subject always reads the same
@@ -27,6 +27,7 @@ interface SubjectBadgeProps {
 }
 
 export default function SubjectBadge({ code, full = false, className = '' }: SubjectBadgeProps) {
+  const subjectNameOf = useSubjectName();
   const color = SUBJECT_COLOR[code] ?? FALLBACK;
 
   /*
@@ -39,11 +40,11 @@ export default function SubjectBadge({ code, full = false, className = '' }: Sub
    */
   return (
     <span
-      title={subjectName(code)}
+      title={subjectNameOf(code)}
       className={`tone-chip inline-flex items-center px-2 py-0.5 rounded-md border font-sans text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${className}`}
       style={{ '--tone': color } as CSSProperties}
     >
-      {full ? subjectName(code) : code}
+      {full ? subjectNameOf(code) : code}
     </span>
   );
 }

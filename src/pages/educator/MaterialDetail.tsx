@@ -16,9 +16,10 @@ import ClassPerformance from './components/ClassPerformance';
 import EducatorAssessmentTab from './components/EducatorAssessmentTab';
 import {
   ALL_GRADE_LEVELS,
-  subjectName, formatFileSize, formatDate,
+  formatFileSize, formatDate,
   type EducatorMaterial,
 } from '../../data/mockEducator';
+import { useSubjectName } from '../../context/SubjectsContext';
 import { api } from '../../lib/api';
 
 type MaterialRow = EducatorMaterial & { concept_count: number };
@@ -72,6 +73,7 @@ function parsePages(input: string): number[] | null {
 const pagesToInput = (pages: number[] | null): string => (pages ?? []).join(', ');
 
 export default function MaterialDetail() {
+  const subjectNameOf = useSubjectName();
   const { materialId } = useParams<{ materialId: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -336,7 +338,7 @@ export default function MaterialDetail() {
   const tint = SUBJECT_COLOR[material.subject] ?? '#94a3b8';
 
   const facts: Array<[string, string]> = [
-    ['Subject', subjectName(material.subject)],
+    ['Subject', subjectNameOf(material.subject)],
     ['Pages', material.page_count ? String(material.page_count) : '—'],
     ['Size', formatFileSize(material.file_size_bytes)],
     ['Type', material.is_scanned ? 'Scanned PDF' : 'Text PDF'],

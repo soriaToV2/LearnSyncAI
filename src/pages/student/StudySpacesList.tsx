@@ -3,7 +3,7 @@ import { Layers, Plus, Folder, Clock, Pencil, Trash2, ArrowRight } from 'lucide-
 import Spinner from '../../components/ui/Spinner';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { SUBJECTS, subjectName } from '../../data/mockEducator';
+import { useSubjects, useSubjectName } from '../../context/SubjectsContext';
 import SubjectBadge, { SUBJECT_COLOR } from '../../components/educator/SubjectBadge';
 
 import Modal from '../../components/ui/Modal';
@@ -35,23 +35,44 @@ const ACCENT_FALLBACK = '#94a3b8';
 
 const accentFor = (subject: string) => SUBJECT_COLOR[subject] ?? ACCENT_FALLBACK;
 
-/**
- * The subject choices, led by an empty-valued placeholder.
- *
- * That leading row is not decoration — `Dropdown` falls back to its FIRST option
- * whenever `value` matches nothing, so without it the control would sit on
- * Filipino from the moment it opened and a student could create a space for the
- * wrong subject without ever touching the field. The subject is immutable after
- * creation, so that mistake is unrecoverable. Same reasoning, and the same shape,
- * as `gradeOptions` in the educator's `UploadMaterialModal`.
- */
-const SUBJECT_OPTIONS = [
-  { value: '', label: 'Choose a subject…' },
-  ...SUBJECTS.map((s) => ({ value: s.code, label: s.name })),
-];
 
 export default function StudySpacesList() {
   const navigate = useNavigate();
+
+  /*
+   * The catalogue comes from `public.subjects` via `SubjectsProvider`, not from a
+   * constant. It used to be a hand-kept copy of the seeded rows, which meant
+   * deleting a subject in Supabase left it on offer here indefinitely.
+   */
+  const { subjects, error: subjectsError } = useSubjects();
+  const subjectNameOf = useSubjectName();
+
+  /*
+   * The subject choices, led by an empty-valued placeholder.
+   *
+   * That leading row is not decoration — `Dropdown` falls back to its FIRST
+   * option whenever `value` matches nothing, so without it the control would sit
+   * on the first subject from the moment it opened and a student could create a
+   * space for the wrong one without ever touching the field. The subject is
+   * immutable after creation, so that mistake is unrecoverable. Same reasoning,
+   * and the same shape, as `gradeOptions` in the educator's
+   * `UploadMaterialModal`.
+   *
+   * It also carries the loading and failure states: with no options the
+   * placeholder is all there is, and a bare "Choose a subject…" that can never be
+   * satisfied reads as a broken form rather than as a request that did not land.
+   */
+  const subjectOptions = [
+    {
+      value: '',
+      label: subjectsError
+        ? 'Subjects unavailable'
+        : subjects.length
+          ? 'Choose a subject…'
+          : 'Loading subjects…',
+    },
+    ...subjects.map((s) => ({ value: s.code, label: s.name })),
+  ];
 
   const [spaces, setSpaces] = useState<StudySpaceData[]>([]);
 
@@ -351,7 +372,7 @@ export default function StudySpacesList() {
                     </h2>
 
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 font-sans">
-                      <span className="truncate">{subjectName(space.subject)}</span>
+                      <span className="truncate">{subjectNameOf(space.subject)}</span>
                       <span aria-hidden="true">•</span>
                       <span className="flex items-center gap-1 shrink-0">
                         <Clock className="w-3.5 h-3.5" /> {getRelativeTime(space.created_at)}
@@ -415,13 +436,20 @@ export default function StudySpacesList() {
               <Dropdown
                 value={newSpaceSubject}
                 onChange={setNewSpaceSubject}
-                options={SUBJECT_OPTIONS}
+                options={subjectOptions}
                 className="w-full"
               />
-              <p className="mt-1.5 font-sans text-[11px] text-slate-500 leading-relaxed">
-                Your space will open with the materials your teachers published for this subject at
-                your grade level. The subject can't be changed later.
-              </p>
+              {subjectsError ? (
+                <p className="mt-1.5 font-sans text-[11px] text-red-400 leading-relaxed">
+                  The subject list couldn't be loaded, so a space can't be created right now. Check
+                  your connection and reopen this page.
+                </p>
+              ) : (
+                <p className="mt-1.5 font-sans text-[11px] text-slate-500 leading-relaxed">
+                  Your space will open with the materials your teachers published for this subject at
+                  your grade level. The subject can't be changed later.
+                </p>
+              )}
             </div>
 
             {createError && (

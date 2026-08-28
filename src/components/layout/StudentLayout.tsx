@@ -4,6 +4,7 @@ import { Home, Layers, Gamepad2, LogOut, UserCircle, Menu, X, ChevronLeft, Chevr
 import Logo from '../common/Logo';
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } from '../../context/AuthContext';
+import { SubjectsProvider } from '../../context/SubjectsContext';
 import { signOut } from '../../lib/signOut';
 import { BadgeProvider } from '../../context/BadgeContext';
 import RequireRole from '../common/RequireRole';
@@ -419,7 +420,15 @@ export default function StudentLayout() {
             wrong-role visitor, who would get a 401/403 for nothing.
           */}
           <BadgeProvider>
-            <StudentLayoutInner />
+            {/*
+              Reference data, not identity, so it is its own provider rather than
+              a field on `AuthContext`. Sits inside `RequireRole` for the same
+              reason `BadgeProvider` does — `GET /api/subjects` is
+              `requireRole`-gated.
+            */}
+            <SubjectsProvider>
+              <StudentLayoutInner />
+            </SubjectsProvider>
           </BadgeProvider>
         </RequireRole>
       </StudentThemeProvider>

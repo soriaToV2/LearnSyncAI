@@ -23,11 +23,20 @@
    whose lookup silently never matched: mock rows keyed on `'mat-sci-1'`
    read against real UUIDs, so only the empty state ever rendered.
 
-   WHAT REMAINS IS REAL. `SUBJECTS` mirrors the nine rows seeded into
-   public.subjects (the server re-validates the code on upload, so drift
-   is a readable 400 rather than a crash), `ALL_GRADE_LEVELS` is the JHS
-   range the `materials_grade_levels_valid` CHECK allows, and the rest are
-   display formatters. Nothing here is a stand-in for data.
+   `SUBJECTS` AND `subjectName()` ARE GONE — they were the last thing here
+   that copied the database instead of reading it. `SUBJECTS` mirrored the
+   rows seeded into public.subjects by hand, and the copy drifted the first
+   time anyone edited the table: Christian Living was deleted in Supabase
+   and both subject pickers went on offering it, because nothing on the
+   client had ever read the table. The comment that used to sit here said
+   the server "re-validates the code on upload, so drift is a readable 400
+   rather than a crash" — which described the symptom rather than
+   preventing it. Both now come from `src/context/SubjectsContext.tsx`,
+   backed by `GET /api/subjects`.
+
+   WHAT REMAINS IS REAL. `ALL_GRADE_LEVELS` is the JHS range the
+   `materials_grade_levels_valid` CHECK allows, and the rest are display
+   formatters. Nothing here is a stand-in for data.
 
    The file is due a rename to something like `src/data/reference.ts`;
    that is nine mechanical import edits and deliberately not bundled with
@@ -36,12 +45,6 @@
 
 /** Mirrors the `parsed_status` enum in schema.sql, and `ParsedStatus` in server/types/database.ts. */
 export type ParsedStatus = 'pending' | 'processing' | 'completed' | 'failed';
-
-export interface Subject {
-  code: string;
-  name: string;
-  sort_order: number;
-}
 
 /** Every JHS grade level. A material is published to exactly ONE of them. */
 export const ALL_GRADE_LEVELS = [7, 8, 9, 10];
@@ -69,27 +72,6 @@ export interface EducatorMaterial {
   is_archived: boolean;
   created_at: string;
   updated_at: string;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Reference data
-// ─────────────────────────────────────────────────────────────
-
-/** The nine rows seeded into public.subjects. */
-export const SUBJECTS: Subject[] = [
-  { code: 'FIL', name: 'Filipino', sort_order: 1 },
-  { code: 'ENG', name: 'English', sort_order: 2 },
-  { code: 'MATH', name: 'Mathematics', sort_order: 3 },
-  { code: 'SCI', name: 'Science', sort_order: 4 },
-  { code: 'AP', name: 'Araling Panlipunan', sort_order: 5 },
-  { code: 'ESP', name: 'Edukasyon sa Pagpapakatao', sort_order: 6 },
-  { code: 'TLE', name: 'Technology and Livelihood Education', sort_order: 7 },
-  { code: 'MAPEH', name: 'Music, Arts, Physical Education and Health', sort_order: 8 },
-  { code: 'CL', name: 'Christian Living', sort_order: 9 },
-];
-
-export function subjectName(code: string): string {
-  return SUBJECTS.find((s) => s.code === code)?.name ?? code;
 }
 
 // ─────────────────────────────────────────────────────────────

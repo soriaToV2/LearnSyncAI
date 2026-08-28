@@ -12,7 +12,7 @@ import { api } from '../../lib/api';
 import { isDue } from '../../lib/reviewSchedule';
 import DueBadge from '../../components/ui/DueBadge';
 import { SUBJECT_COLOR } from '../../components/educator/SubjectBadge';
-import { subjectName } from '../../data/mockEducator';
+import { useSubjectName } from '../../context/SubjectsContext';
 // PRE/POST GATE — temporary research instrument (migration 0024). Delete this
 // import, the two tabs it mounts, the lock state and the banner to remove it.
 import StudentAssessmentTab from './studySpaceTabs/StudentAssessmentTab';
@@ -37,6 +37,7 @@ interface FlashcardSet {
 }
 
 export default function StudySpace() {
+  const subjectNameOf = useSubjectName();
   const { spaceId } = useParams();
   const [activeTab, setActiveTab] = useState<'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources' | 'analytics' | 'pre-test' | 'post-test'>('flashcards');
   const [isMobileTabMenuOpen, setIsMobileTabMenuOpen] = useState(false);
@@ -251,7 +252,7 @@ export default function StudySpace() {
                     borderColor: `${subjectAccent}33`,
                   }}
                 >
-                  {subjectName(currentSpace.subject)}
+                  {subjectNameOf(currentSpace.subject)}
                 </span>
               )}
             </div>

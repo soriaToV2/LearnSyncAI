@@ -25,6 +25,7 @@ import chatRoutes from './routes/chat.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import educatorRoutes from './routes/educator.routes';
 import adminRoutes from './routes/admin.routes';
+import subjectRoutes from './routes/subjects.routes';
 // PRE/POST GATE — temporary research instrument, removed after the school study.
 import assessmentRoutes from './routes/assessments.routes';
 import { loadBktParameters } from './lib/bkt';
@@ -113,6 +114,14 @@ app.use('/api/games', gamesRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/educator', educatorRoutes);
+/*
+ * `/api/subjects` is the `public.subjects` catalogue, read-only, for the two
+ * portals that render a subject. It exists because both pickers used to map over
+ * a hand-kept copy of the seeded rows and went on offering a subject after it was
+ * deleted from the table. Students and educators only — the admin portal renders
+ * no subject, and the catalogue is edited from the Supabase dashboard.
+ */
+app.use('/api/subjects', subjectRoutes);
 /*
  * PRE/POST GATE — TEMPORARY. `/api/assessments` serves the paper's RQ4 (p. 55)
  * and is removed after the school study. It is the one router that serves BOTH

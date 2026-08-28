@@ -1,10 +1,11 @@
-import { useState, useRef, FormEvent, DragEvent } from 'react';
+import { useState, useEffect, useRef, FormEvent, DragEvent } from 'react';
 import { UploadCloud, FileText, X, AlertCircle, Info} from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import Modal from '../../../components/ui/Modal';
 import Dropdown from '../../../components/ui/Dropdown';
 import SubjectBadge from '../../../components/educator/SubjectBadge';
-import { SUBJECTS, formatFileSize, ALL_GRADE_LEVELS } from '../../../data/mockEducator';
+import { formatFileSize, ALL_GRADE_LEVELS } from '../../../data/mockEducator';
+import { useSubjects } from '../../../context/SubjectsContext';
 import { api } from '../../../lib/api';
 
 /** Documented platform limit (Scope & Limitations): plain-text PDF, ≤ 20 MB. */
@@ -34,18 +35,46 @@ interface UploadMaterialModalProps {
 }
 
 export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: UploadMaterialModalProps) {
-  // The full catalogue: an educator is not pre-assigned to any subject.
-  const subjects = SUBJECTS;
+  /*
+   * The full catalogue: an educator is not pre-assigned to any subject.
+   *
+   * Read from `public.subjects` through `SubjectsProvider`, not from a constant.
+   * It used to be a hand-kept copy of the seeded rows, so a subject deleted in
+   * Supabase stayed on offer here until someone edited the code.
+   */
+  const { subjects, error: subjectsError } = useSubjects();
 
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [subject, setSubject] = useState(subjects[0]?.code ?? '');
+  const [subject, setSubject] = useState('');
   const [grade, setGrade] = useState<string>(NO_GRADE);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /*
+   * Preserve the old behaviour of opening on the first subject, now that the list
+   * arrives asynchronously and cannot seed `useState`.
+   *
+   * ⚠️ ONLY WHILE THE FIELD IS STILL EMPTY. Without that guard a slow response
+   * would overwrite a subject the educator had already chosen, filing the upload
+   * somewhere they did not pick — and `materials.subject` is what every student's
+   * space membership is derived from.
+   */
+  useEffect(() => {
+    if (!subject && subjects.length) setSubject(subjects[0].code);
+  }, [subjects, subject]);
+
+  /*
+   * A leading placeholder only while there is nothing to choose. Once loaded the
+   * options are the catalogue alone and `subject` already matches one of them, so
+   * `Dropdown`'s first-option fallback never has to stand in for a real value.
+   */
+  const subjectOptions = subjects.length
+    ? subjects.map((s) => ({ label: s.name, value: s.code }))
+    : [{ label: subjectsError ? 'Subjects unavailable' : 'Loading subjects…', value: '' }];
 
   /** Grade access is the educator's own decision, so all four JHS grades are offered. */
   const gradeOptions = [
@@ -57,7 +86,8 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     setFile(null);
     setTitle('');
     setDescription('');
-    setSubject(subjects[0]?.code ?? '');
+    // Left empty; the effect above refills it from the catalogue.
+    setSubject('');
     setGrade(NO_GRADE);
     setError(null);
     setIsUploading(false);
@@ -226,9 +256,20 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
             <Dropdown
               value={subject}
               onChange={setSubject}
-              options={subjects.map((s) => ({ label: s.name, value: s.code }))}
+              options={subjectOptions}
               className="w-full"
             />
+            {/*
+              Stated rather than left to an empty dropdown. Submit is already
+              disabled without a subject, and a control that offers nothing with
+              no explanation reads as a form the educator is failing to fill in.
+            */}
+            {subjectsError && (
+              <p className="mt-1.5 font-sans text-[11px] text-red-400 leading-relaxed">
+                The subject list couldn't be loaded, so this material can't be uploaded yet. Check
+                your connection and reopen this page.
+              </p>
+            )}
           </div>
           <div>
             <label className="block font-sans text-sm font-medium text-slate-300 mb-1.5">Grade Level</label>
@@ -264,7 +305,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
           </button>
           <button
             type="submit"
-            disabled={!file || !title.trim() || grade === NO_GRADE || isUploading}
+            disabled={!file || !title.trim() || !subject || grade === NO_GRADE || isUploading}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isUploading ? (

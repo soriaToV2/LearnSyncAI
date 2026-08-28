@@ -7,6 +7,7 @@ import {
 import Logo from '../common/Logo';
 import { useEducatorTheme, EducatorThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, fullName, initials, subtitleFor } from '../../context/AuthContext';
+import { SubjectsProvider } from '../../context/SubjectsContext';
 import { signOut } from '../../lib/signOut';
 import RequireRole from '../common/RequireRole';
 import EmailRecoveryBanner from '../common/EmailRecoveryBanner';
@@ -349,7 +350,16 @@ export default function EducatorLayout() {
         {/* See the matching note in `StudentLayout` — the first-login gate is why
             this guard is no longer optional. */}
         <RequireRole allow={['educator']}>
-          <EducatorLayoutInner />
+          {/*
+            Reference data, not identity, so it is its own provider rather than a
+            field on `AuthContext`. INSIDE `RequireRole` for the same reason as
+            the guard above: `GET /api/subjects` is `requireRole`-gated, so a
+            signed-out, un-activated or wrong-role visitor would collect a 401/403
+            for nothing.
+          */}
+          <SubjectsProvider>
+            <EducatorLayoutInner />
+          </SubjectsProvider>
         </RequireRole>
       </EducatorThemeProvider>
     </AuthProvider>

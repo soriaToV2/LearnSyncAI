@@ -9,7 +9,7 @@ import { supabase } from '../../../lib/supabase';
 import Markdown from '../../../components/ui/Markdown';
 import PdfViewer from '../../../components/ui/PdfViewer';
 import SubjectBadge from '../../../components/educator/SubjectBadge';
-import { subjectName } from '../../../data/mockEducator';
+import { useSubjectName } from '../../../context/SubjectsContext';
 import { useBadges } from '../../../context/BadgeContext';
 
 /**
@@ -127,6 +127,8 @@ export default function ResourcesTab({
   lockedIds,
   onLocksChanged,
 }: ResourcesTabProps) {
+  const subjectNameOf = useSubjectName();
+
   // ─── Materials state ───────────────────────────────────────
   const [materials, setMaterials] = useState<SpaceMaterial[]>([]);
   const [subject, setSubject] = useState<string>('');
@@ -414,7 +416,7 @@ export default function ResourcesTab({
     e.target.style.height = `${Math.min(e.target.scrollHeight, 150)}px`;
   };
 
-  const subjectLabel = subject ? subjectName(subject) : 'course';
+  const subjectLabel = subject ? subjectNameOf(subject) : 'course';
 
   return (
     /*

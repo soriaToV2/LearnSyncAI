@@ -15,10 +15,11 @@ import ParseStatusPill from '../../components/educator/ParseStatusPill';
 import { assessmentOverview, assessmentState, type AssessmentOverviewRow, type AssessmentState } from '../../lib/assessments';
 import UploadMaterialModal from './components/UploadMaterialModal';
 import {
-  SUBJECTS, ALL_GRADE_LEVELS,
+  ALL_GRADE_LEVELS,
   formatFileSize, formatRelativeTime,
   type EducatorMaterial, type ParsedStatus,
 } from '../../data/mockEducator';
+import { useSubjects } from '../../context/SubjectsContext';
 import { api } from '../../lib/api';
 
 /** A material row as returned by GET /api/materials — the DB row plus a joined count. */
@@ -78,6 +79,7 @@ const CARD_ACTION_DANGER = `${CARD_ACTION} bg-rose-500/5 border-rose-500/10 text
 
 export default function MaterialsLibrary() {
   const navigate = useNavigate();
+  const { subjects } = useSubjects();
 
   const [materials, setMaterials] = useState<MaterialRow[]>([]);
   // PRE/POST GATE — temporary. Keyed by material id; empty when the read fails.
@@ -124,10 +126,14 @@ export default function MaterialsLibrary() {
     return () => clearInterval(id);
   }, [hasInFlight, load]);
 
-  // The full catalogue and every JHS grade — neither is restricted per educator.
+  /*
+   * The full catalogue and every JHS grade — neither is restricted per educator.
+   * Subjects come from `public.subjects`; while that request is in flight the
+   * filter offers "All subjects" alone, which is the correct default anyway.
+   */
   const subjectOptions = [
     { label: 'All subjects', value: 'all' },
-    ...SUBJECTS.map((s) => ({ label: s.name, value: s.code })),
+    ...subjects.map((s) => ({ label: s.name, value: s.code })),
   ];
 
   const gradeOptions = [

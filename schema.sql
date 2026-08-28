@@ -210,8 +210,13 @@ CREATE TABLE subjects (
 COMMENT ON TABLE subjects IS
     'Controlled list of JHS subjects. Referenced by materials.subject so free text cannot fragment dashboard grouping into Science / science / Sci.';
 
--- DepEd Junior High School core subjects plus Christian Living, which Pasig
--- Christian Academy teaches. Adjust to match the school's actual offering.
+-- DepEd Junior High School core subjects. Adjust to match the school's actual
+-- offering: this is a seed, not a fixed list, and both portals read the table at
+-- runtime through `GET /api/subjects`, so editing it here or in the Supabase
+-- dashboard is all that is needed — no client code names a subject.
+--
+-- Christian Living ('CL') was seeded here originally and was removed from the
+-- live database on 2026-08-28. It is dropped from the seed so a rebuild matches.
 INSERT INTO subjects (code, name, sort_order) VALUES
     ('FIL',   'Filipino',                                   1),
     ('ENG',   'English',                                    2),
@@ -220,8 +225,7 @@ INSERT INTO subjects (code, name, sort_order) VALUES
     ('AP',    'Araling Panlipunan',                         5),
     ('ESP',   'Edukasyon sa Pagpapakatao',                  6),
     ('TLE',   'Technology and Livelihood Education',        7),
-    ('MAPEH', 'Music, Arts, Physical Education and Health',  8),
-    ('CL',    'Christian Living',                           9);
+    ('MAPEH', 'Music, Arts, Physical Education and Health',  8);
 
 -- Declared here rather than inline in section 4, since study_spaces is created
 -- before this table exists.
