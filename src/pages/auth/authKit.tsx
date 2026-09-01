@@ -1,6 +1,11 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useLayoutEffect } from 'react';
 import Logo from '../../components/common/Logo';
-import { ACTIVE_THEME, applyThemeToElement } from '../../context/ThemeContext';
+import {
+  applyThemeToElement,
+  DARK_THEME,
+  themeForMode,
+  type ColorMode,
+} from '../../context/ThemeContext';
 
 /**
  * The shell and the field for the auth pages.
@@ -15,24 +20,52 @@ import { ACTIVE_THEME, applyThemeToElement } from '../../context/ThemeContext';
  * The rule for anything added here: a sign-in screen has one job. If a line does
  * not help someone sign in, it does not belong on it.
  *
- * ⚠️ THESE PAGES ARE PINNED TO `ACTIVE_THEME` AND ARE NOT PART OF THE LIGHT/DARK
- * TOGGLE. The preference is stored per portal and read by that portal's own
- * provider; nobody is signed in here, so there is no portal to read it from.
- * They always render the dark palette — which is why the hard-coded cyan glow on
- * the brand mark is correct here rather than the theme-literal bug it resembles
- * elsewhere in the app.
+ * ⚠️ THE PALETTE IS FIXED PER PAGE AND IS STILL NOT THE LIGHT/DARK TOGGLE. That
+ * preference is stored per portal and read by that portal's own provider; nobody
+ * is signed in here, so there is no portal to read it from. `mode` is the page
+ * AUTHOR's choice, baked in at the call site — not the visitor's, and there is
+ * deliberately no control for it on these screens.
  *
- * `SetPassword` still hand-builds its own shell and can adopt this unchanged.
+ * It defaults to `'dark'`, so `ForgotPassword` and `SetPassword` are untouched.
+ * `Login` passes `'light'`.
+ *
+ * ⚠️ MOST OF LIGHT MODE IS THE STYLESHEET, NOT THIS FILE. `applyThemeToElement`
+ * puts `data-theme="white"` on `documentElement`, which switches on ~296 rules in
+ * `index.css` — they remap the whole `--color-slate-*` ramp and already correct
+ * `input.text-white`, `.border-white/5|10|20`, `p.text-white`, `h1..h6.text-white`
+ * and `.hover:text-white`. So a page going light needs to fix only what those
+ * rules cannot see: arbitrary-value utilities like the card shadow below, and
+ * tinted semantic colours such as the alert banners in `Login`.
+ *
+ * ⚠️ THE CLEANUP IS NOT OPTIONAL, AND IT IS A LAYOUT EFFECT FOR A REASON. The
+ * attribute is set on `<html>`, which OUTLIVES this component — and the portal
+ * layouts apply their own theme in a passive `useEffect`, which runs after the
+ * browser has painted. Without the restore, signing in from the light Login page
+ * paints one frame of the dashboard on a white palette before the portal
+ * corrects it. A layout effect's cleanup runs before that paint; a passive one
+ * would not. Restoring DARK rather than the visitor's preference is deliberate:
+ * it is exactly the state these pages used to leave behind, so the portal's own
+ * first frame is unchanged from before this feature.
  */
 
-export function AuthShell({ children }: { children: React.ReactNode }) {
+export function AuthShell({
+  children,
+  mode = 'dark',
+}: {
+  children: React.ReactNode;
+  /** The page author's fixed choice, not the visitor's. See the header. */
+  mode?: ColorMode;
+}) {
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (wrapperRef.current) {
-      applyThemeToElement(ACTIVE_THEME, wrapperRef.current);
+      applyThemeToElement(themeForMode(mode), wrapperRef.current);
     }
-  }, []);
+    return () => {
+      applyThemeToElement(DARK_THEME, document.documentElement);
+    };
+  }, [mode]);
 
   return (
     <div
@@ -66,7 +99,18 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <main className="flex-grow flex items-center justify-center p-4 sm:p-6 relative z-10">
-        <div className="w-full max-w-[400px] bg-surface-container-lowest/70 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-[0_0_60px_rgba(0,0,0,0.5)] p-7 sm:p-9">
+        {/* ⚠️ THE SHADOW IS THE ONE PIECE OF CARD CHROME THE STYLESHEET CANNOT
+            REACH. `border-white/10` has a `[data-theme="white"]` rule; an
+            arbitrary-value utility does not, and a 60px black bloom that reads as
+            depth on `#020617` reads as grime on `#eef2f6`. Light gets a normal
+            downward elevation shadow instead of a glow in all directions. */}
+        <div
+          className={`w-full max-w-[400px] bg-surface-container-lowest/70 backdrop-blur-2xl rounded-3xl border border-white/10 p-7 sm:p-9 ${
+            mode === 'light'
+              ? 'shadow-[0_20px_50px_-12px_rgba(15,23,42,0.18)]'
+              : 'shadow-[0_0_60px_rgba(0,0,0,0.5)]'
+          }`}
+        >
           {children}
         </div>
       </main>

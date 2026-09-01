@@ -104,7 +104,11 @@ export default function Login() {
   };
 
   return (
-    <AuthShell>
+    /* ⚠️ LIGHT MODE IS THIS PAGE'S CHOICE, NOT A VISITOR PREFERENCE, and it stops
+       here — `ForgotPassword` and `SetPassword` share this shell and still default
+       to dark, so both links out of this page cross a palette boundary. Flip their
+       `mode` too if that seam is unwanted; the shell takes the same prop. */
+    <AuthShell mode="light">
       <div className="flex flex-col items-center text-center mb-7">
         <BrandMark />
         {/* The wordmark is a `<p>`, not a heading — the page keeps ONE `<h1>`,
@@ -155,18 +159,18 @@ export default function Login() {
           isDisabledAccount ? (
             <div
               role="alert"
-              className="bg-amber-500/10 border border-amber-500/25 text-amber-200 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in"
+              className="bg-amber-500/10 border border-amber-500/30 text-amber-800 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in"
             >
-              <Lock className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+              <Lock className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
               <div className="min-w-0">
                 <p className="font-semibold">Account deactivated</p>
-                <p className="text-amber-200/80 text-xs mt-1 leading-relaxed">{error}</p>
+                <p className="text-amber-700 text-xs mt-1 leading-relaxed">{error}</p>
               </div>
             </div>
           ) : (
             <div
               role="alert"
-              className="bg-rose-500/10 border border-rose-500/20 text-rose-300 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in"
+              className="bg-rose-500/10 border border-rose-500/30 text-rose-700 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in"
             >
               <span className="shrink-0 w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center font-bold text-xs mt-px">
                 !

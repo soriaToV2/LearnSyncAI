@@ -1515,13 +1515,20 @@
   margin-top: -65vmax;
   margin-left: -65vmax;
   border-radius: 9999px;
-  /* ⚠️ LITERAL COLOURS, NOT `var(--theme-accent)`, AND ON PURPOSE. The auth
-     pages are pinned to `ACTIVE_THEME` — nobody is signed in, so there is no
-     portal preference to read — which makes cyan and emerald the correct fixed
-     answer here. Writing it as a token would also be a trap: the build resolves
-     `color-mix()` against `:root` at compile time and bakes the cyan in
-     regardless, so the source would imply a theme-awareness the output does not
-     have. */
+  /* ⚠️ LITERAL COLOURS, NOT `var(--theme-accent)`, AND ON PURPOSE. Writing it as
+     a token is a trap: the build resolves `color-mix()` against `:root` at
+     compile time and bakes the cyan in regardless, so the source would imply a
+     theme-awareness the output does not have.
+
+     These are the brand's cyan and emerald rather than either palette's accent,
+     and they are correct on BOTH auth backgrounds — `Login` now passes
+     `mode="light"` to `AuthShell` while the other two auth pages stay dark, so
+     the old "the auth pages are pinned to ACTIVE_THEME" reasoning no longer
+     holds. At these alphas the conic gradient composites to a visible pale tint
+     either way (cyan at 0.2 over `#eef2f6` lands around `rgb(197,236,244)`).
+
+     `.auth-vignette` below needs no such care — it is `var(--page-bg)`, so it
+     follows whichever palette the page applied. */
   background: conic-gradient(
     from 0deg,
     transparent 0deg,
