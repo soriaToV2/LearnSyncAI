@@ -104,11 +104,13 @@ export default function Login() {
   };
 
   return (
-    /* ⚠️ LIGHT MODE IS THIS PAGE'S CHOICE, NOT A VISITOR PREFERENCE, and it stops
-       here — `ForgotPassword` and `SetPassword` share this shell and still default
-       to dark, so both links out of this page cross a palette boundary. Flip their
-       `mode` too if that seam is unwanted; the shell takes the same prop. */
-    <AuthShell mode="light">
+    /* ⚠️ THE ONLY AUTH PAGE THAT DRAWS THE LIGHT/DARK TOGGLE. Everybody passes
+       through sign-in and it is the only auth page reached cold; the other two
+       are mid-flow and both link back here. The palette itself is still
+       `AuthShell`'s, applied on all three from one stored key — this prop draws
+       the control, it does not pin a mode. Do not reintroduce a per-page `mode`;
+       see the shell's header. */
+    <AuthShell showModeToggle>
       <div className="flex flex-col items-center text-center mb-7">
         <BrandMark />
         {/* The wordmark is a `<p>`, not a heading — the page keeps ONE `<h1>`,

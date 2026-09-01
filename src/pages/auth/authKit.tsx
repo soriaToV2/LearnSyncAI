@@ -1,11 +1,7 @@
 import React, { useRef, useState, useEffect, useLayoutEffect } from 'react';
+import { Moon, Sun } from 'lucide-react';
 import Logo from '../../components/common/Logo';
-import {
-  applyThemeToElement,
-  DARK_THEME,
-  themeForMode,
-  type ColorMode,
-} from '../../context/ThemeContext';
+import { applyThemeToElement, DARK_THEME, useColorMode } from '../../context/ThemeContext';
 
 /**
  * The shell and the field for the auth pages.
@@ -20,14 +16,30 @@ import {
  * The rule for anything added here: a sign-in screen has one job. If a line does
  * not help someone sign in, it does not belong on it.
  *
- * ⚠️ THE PALETTE IS FIXED PER PAGE AND IS STILL NOT THE LIGHT/DARK TOGGLE. That
- * preference is stored per portal and read by that portal's own provider; nobody
- * is signed in here, so there is no portal to read it from. `mode` is the page
- * AUTHOR's choice, baked in at the call site — not the visitor's, and there is
- * deliberately no control for it on these screens.
+ * ══ THE PALETTE IS THE VISITOR'S, AND THE SHELL OWNS IT ══
+ * The choice persists under `learnsyncai_auth_mode` — its own key, deliberately
+ * not one of the three portal keys: nobody is signed in here, so there is no
+ * portal whose preference this could be, and writing into a portal's key would
+ * silently change a signed-in experience from the sign-out screen.
  *
- * It defaults to `'dark'`, so `ForgotPassword` and `SetPassword` are untouched.
- * `Login` passes `'light'`.
+ * ⚠️ THE DEFAULT IS LIGHT, WHICH IS THE OPPOSITE OF EVERY PORTAL'S. Deliberate:
+ * these are the school's front door. A stored value always wins over it, so
+ * someone who picks dark keeps dark.
+ *
+ * ⚠️ ONLY `Login` RENDERS THE TOGGLE (`showModeToggle`), BUT ALL THREE PAGES
+ * READ THE STORED CHOICE. That split is the whole design and it is easy to
+ * half-implement: gating the READ as well would leave `/forgot-password` bright
+ * white for someone who had just chosen dark one screen earlier. Sign-in is the
+ * page everybody passes through and the only one they arrive at cold, so it is
+ * where the control belongs; the other two are mid-flow and reachable only from
+ * it. Both link back to `/login`, so the setting is never more than one click
+ * away — check that stays true before adding an auth page that does not.
+ *
+ * ⚠️ THERE IS STILL NO `mode` PROP, AND REINSTATING ONE WOULD BE A BUG. A page
+ * cannot pin a palette the visitor can change one click later; the two would
+ * fight on the next render, and the toggle would appear not to work on whichever
+ * page did the pinning. `showModeToggle` decides whether the CONTROL is drawn,
+ * never what the palette is.
  *
  * ⚠️ MOST OF LIGHT MODE IS THE STYLESHEET, NOT THIS FILE. `applyThemeToElement`
  * puts `data-theme="white"` on `documentElement`, which switches on ~296 rules in
@@ -48,24 +60,37 @@ import {
  * first frame is unchanged from before this feature.
  */
 
+/**
+ * Its own key, alongside the three portal keys rather than inside one.
+ *
+ * ⚠️ DO NOT POINT THIS AT A PORTAL KEY. Sharing one would let the sign-in screen
+ * rewrite a signed-in student's saved preference — and it could only ever pick
+ * one portal's, so it would be wrong for the other two roles.
+ */
+const AUTH_MODE_KEY = 'learnsyncai_auth_mode';
+
 export function AuthShell({
   children,
-  mode = 'dark',
+  showModeToggle = false,
 }: {
   children: React.ReactNode;
-  /** The page author's fixed choice, not the visitor's. See the header. */
-  mode?: ColorMode;
+  /**
+   * Draw the light/dark control. `Login` only — see the header. It does NOT
+   * affect which palette this page renders, only whether it can be changed here.
+   */
+  showModeToggle?: boolean;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const { theme, mode, setMode } = useColorMode(AUTH_MODE_KEY, 'light');
 
   useLayoutEffect(() => {
     if (wrapperRef.current) {
-      applyThemeToElement(themeForMode(mode), wrapperRef.current);
+      applyThemeToElement(theme, wrapperRef.current);
     }
     return () => {
       applyThemeToElement(DARK_THEME, document.documentElement);
     };
-  }, [mode]);
+  }, [theme]);
 
   return (
     <div
@@ -114,6 +139,40 @@ export function AuthShell({
           {children}
         </div>
       </main>
+
+      {/* Rendered on `/login` alone. The pages that omit it still follow the
+          stored choice — see the header for why gating the read too would be the
+          bug this split exists to avoid.
+
+          ⚠️ `fixed`, SO IT MUST SIT OUTSIDE `<main>` AND CARRY ITS OWN z-index.
+          The aurora layer above is `fixed inset-0 z-0` and would otherwise paint
+          over it. `overflow-hidden` on the root does not clip this — only
+          transform/filter/contain create a containing block for a fixed child,
+          and the root has none.
+
+          The chrome is written in classes the light stylesheet already knows:
+          `bg-white/5`, `border-white/10`, `text-slate-400` and `hover:text-white`
+          each have a `[data-theme="white"]` rule, so the button re-colours itself
+          in both palettes with nothing conditional here. */}
+      {showModeToggle && (
+      <button
+        type="button"
+        onClick={() => setMode(mode === 'light' ? 'dark' : 'light')}
+        /* Names the DESTINATION, not the current state — it is a control, and
+            "Dark mode" alone leaves a screen-reader user guessing whether that is
+            what they have or what they would get. */
+        aria-label={mode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+        title={mode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+        className="fixed top-5 right-5 z-20 w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-fixed-dim"
+      >
+        {/* The icon shows what you would GET, matching the label. */}
+        {mode === 'light' ? (
+          <Moon className="w-4 h-4" aria-hidden="true" />
+        ) : (
+          <Sun className="w-4 h-4" aria-hidden="true" />
+        )}
+      </button>
+      )}
     </div>
   );
 }

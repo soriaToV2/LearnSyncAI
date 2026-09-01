@@ -108,10 +108,7 @@ export default function ForgotPassword() {
   const passwordError = passwordProblem(password);
 
   return (
-    /* Light to match `/login`, which links here — the two are one flow and a
-       palette change between them reads as a different application. `mode` is the
-       page author's choice, not a visitor preference; see `AuthShell`. */
-    <AuthShell mode="light">
+    <AuthShell>
       <div className="flex flex-col items-center text-center mb-7">
         <BrandMark />
         <p className="font-display text-lg font-bold text-white tracking-tight mt-3">LearnSyncAI</p>

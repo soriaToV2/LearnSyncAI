@@ -180,11 +180,13 @@ export const themeForMode = (mode: ColorMode) => (mode === 'light' ? LIGHT_THEME
  * policies, which is exactly the deployment this is going to. A student whose
  * browser refuses storage gets the default theme, not a blank screen.
  */
-function readMode(key: string): ColorMode {
+function readMode(key: string, fallback: ColorMode): ColorMode {
   try {
-    return localStorage.getItem(key) === 'light' ? 'light' : 'dark';
+    const stored = localStorage.getItem(key);
+    if (stored === 'light' || stored === 'dark') return stored;
+    return fallback;
   } catch {
-    return 'dark';
+    return fallback;
   }
 }
 
@@ -264,9 +266,23 @@ interface ThemeContextValue {
  * The state is seeded from storage in the initialiser rather than in an effect.
  * An effect runs AFTER the first paint, so a student who chose light mode would
  * see the dark theme flash on every page load.
+ *
+ * ⚠️ EXPORTED, BUT IT IS STATE — NOT A SUBSCRIPTION. Two components calling this
+ * with the same key get two independent copies that will not see each other's
+ * writes until a remount. That is why the portals wrap it in a provider, and why
+ * `AuthShell` may call it directly: it is the single owner of the auth palette,
+ * and each auth page mounts exactly one.
+ *
+ * `fallback` is what applies when storage holds nothing — the auth pages default
+ * light while the portals default dark, so it cannot be a constant. A stored
+ * value always wins, including a stored `'dark'`, which is the whole point of
+ * reading the string rather than testing it for `'light'`.
  */
-function useColorMode(storageKey: string): ThemeContextValue {
-  const [mode, setModeState] = useState<ColorMode>(() => readMode(storageKey));
+export function useColorMode(
+  storageKey: string,
+  fallback: ColorMode = 'dark'
+): ThemeContextValue {
+  const [mode, setModeState] = useState<ColorMode>(() => readMode(storageKey, fallback));
 
   const setMode = useCallback(
     (next: ColorMode) => {

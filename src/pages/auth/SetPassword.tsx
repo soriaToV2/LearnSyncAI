@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound, LogOut, ShieldCheck } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
-import { ACTIVE_THEME, inkOn } from '../../context/ThemeContext';
 import { AuthShell, BrandMark } from './authKit';
 import { AuthProvider, useAuth, displayName } from '../../context/AuthContext';
 import { accountApi, isPasswordValid, passwordProblem, PASSWORD_HINT } from '../../lib/account';
@@ -108,8 +107,9 @@ function SetPasswordInner() {
     ever reaches after signing in, arriving directly from Login — so the two
     screens sitting one click apart looked like two different products.
 
-    `wrapperRef` and the theme effect are gone with it; `AuthShell` pins
-    `ACTIVE_THEME` itself.
+    `wrapperRef` and the theme effect are gone with it; `AuthShell` owns the
+    palette. The visitor picks it on `/login`, which is the only auth page
+    carrying the toggle; this page follows the stored choice.
   */
   return (
     <AuthShell>
@@ -169,12 +169,22 @@ function SetPasswordInner() {
               hint={mismatch ? 'These do not match.' : undefined}
             />
 
+            {/* ⚠️ THE ACCENT COMES FROM THE TOKENS, NOT FROM A JS CONSTANT. This
+                was an inline `backgroundColor: ACTIVE_THEME.accent` with
+                `inkOn()` for the ink — correct while every auth page was pinned
+                dark, and wrong the moment the shell gained a toggle: it painted
+                the dark palette's bright cyan onto a light page, next to a
+                heading and links already using the light accent. The same
+                `bg-primary-fixed-dim text-on-primary-fixed` pair `Login`'s submit
+                button uses follows whichever palette is applied, and `inkOn()`
+                exists precisely so nobody has to hardcode the ink. */}
             <button
               type="submit"
               disabled={!canSave}
-              style={canSave ? { backgroundColor: ACTIVE_THEME.accent, color: inkOn(ACTIVE_THEME.accent) } : undefined}
               className={`mt-1 w-full py-3 rounded-xl font-display text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
-                canSave ? 'hover:brightness-110' : 'bg-white/5 text-slate-500 cursor-not-allowed'
+                canSave
+                  ? 'bg-primary-fixed-dim text-on-primary-fixed hover:brightness-110'
+                  : 'bg-white/5 text-slate-500 cursor-not-allowed'
               }`}
             >
               {busy && <Spinner className="w-4 h-4" />}
