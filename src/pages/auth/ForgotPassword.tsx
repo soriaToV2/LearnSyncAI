@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Eye, EyeOff, MailCheck } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
-import { AuthShell, AuthField, BrandMark } from './authKit';
+import { AuthShell, AuthField, AuthCodeInput, BrandMark } from './authKit';
 import {
   recoveryApi,
   isCodeValid,
@@ -108,7 +108,10 @@ export default function ForgotPassword() {
   const passwordError = passwordProblem(password);
 
   return (
-    <AuthShell>
+    /* Light to match `/login`, which links here — the two are one flow and a
+       palette change between them reads as a different application. `mode` is the
+       page author's choice, not a visitor preference; see `AuthShell`. */
+    <AuthShell mode="light">
       <div className="flex flex-col items-center text-center mb-7">
         <BrandMark />
         <p className="font-display text-lg font-bold text-white tracking-tight mt-3">LearnSyncAI</p>
@@ -124,7 +127,7 @@ export default function ForgotPassword() {
       {error && (
         <div
           role="alert"
-          className="bg-rose-500/10 border border-rose-500/20 text-rose-300 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in mb-3"
+          className="bg-rose-500/10 border border-rose-500/30 text-rose-700 px-4 py-3 rounded-xl font-sans text-sm flex items-start gap-2.5 fade-in mb-3"
         >
           <span className="shrink-0 w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center font-bold text-xs mt-px">
             !
@@ -168,7 +171,12 @@ export default function ForgotPassword() {
             response from stranding anyone: a student whose account has no address
             would otherwise sit here waiting for mail that is never coming.
           */}
-          <div className="flex items-start gap-2.5 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3 mb-1">
+          {/* ⚠️ `bg-white/5`, NOT `bg-white/[0.03]`. Only the former has a
+              `[data-theme="white"]` rule (it lands on `#f1f5f9` with a matching
+              border); the arbitrary-value form has none, so on this page's white
+              card it rendered as white-on-white and the box vanished. The two are
+              visually indistinguishable in dark mode. */}
+          <div className="flex items-start gap-2.5 rounded-xl border border-white/10 bg-white/5 px-3.5 py-3 mb-1">
             <MailCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary-fixed-dim" aria-hidden="true" />
             <div className="font-sans text-xs leading-relaxed text-slate-400">
               <p>
@@ -183,17 +191,12 @@ export default function ForgotPassword() {
             </div>
           </div>
 
-          <AuthField
-            id="code"
-            label="6-digit code"
-            type="text"
-            value={code}
-            onChange={setCode}
-            /* `one-time-code` lets a phone offer the code straight from the
-               notification instead of making the user switch apps to read it. */
-            autoComplete="one-time-code"
-            inputProps={{ inputMode: 'numeric', maxLength: 6, spellCheck: false }}
-          />
+          {/* Six boxes rather than one field: the length is known, the value is
+              copied out of an email rather than composed, and a phone can fill it
+              from the notification. `AuthCodeInput` keeps `one-time-code` on its
+              first box and handles paste and autofill — see its header for why it
+              carries no `maxLength`. */}
+          <AuthCodeInput id="code" label="6-digit code" value={code} onChange={setCode} />
 
           <AuthField
             id="new-password"
@@ -229,7 +232,7 @@ export default function ForgotPassword() {
               places a password is chosen about what is acceptable. */}
           <p
             className={`font-sans text-xs leading-relaxed ${
-              mismatch || passwordError ? 'text-amber-300' : 'text-slate-500'
+              mismatch || passwordError ? 'text-amber-700' : 'text-slate-500'
             }`}
           >
             {mismatch ? 'These do not match.' : (passwordError ?? PASSWORD_HINT)}

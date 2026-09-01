@@ -1,4 +1,4 @@
-import React, { useRef, useLayoutEffect } from 'react';
+import React, { useRef, useState, useEffect, useLayoutEffect } from 'react';
 import Logo from '../../components/common/Logo';
 import {
   applyThemeToElement,
@@ -189,6 +189,171 @@ export function AuthField({
         {label}
       </label>
       {trailing}
+    </div>
+  );
+}
+
+
+/** Digits in a recovery code. Mirrors `codeProblem()`'s `/^\d{6}$/` in `src/lib/account.ts`. */
+const CODE_LENGTH = 6;
+
+const padCode = (value: string) =>
+  Array.from({ length: CODE_LENGTH }, (_, i) => value[i] ?? '');
+
+/**
+ * Six single-digit boxes for a mailed recovery code.
+ *
+ * ══ WHY NOT `AuthField` ══
+ * A code is not prose: it has a known length, it is copied out of an email
+ * rather than composed, and it is the one field on these pages a phone can fill
+ * from a notification. Boxes show how many digits are expected before the user
+ * starts, and show progress while they type — a single box does neither.
+ *
+ * ══ ⚠️ THE PARENT'S STRING CANNOT HOLD A GAP, WHICH IS WHY THE BOXES KEEP THEIR
+ * OWN ARRAY ══
+ * `['1', '', '3', '', '', '']` joins to `"13"`, so driving the boxes straight
+ * off the joined value would make clearing a MIDDLE digit shift every later one
+ * left — the code silently rearranges itself under the cursor. The array is the
+ * display truth; the parent only ever needs the concatenation, which is
+ * meaningful exactly when all six are present. The effect syncs downward so a
+ * parent-side clear (`setCode('')` after a rejected code) still empties them.
+ *
+ * ══ ⚠️ NO `maxLength`, AND THAT IS DELIBERATE ══
+ * It looks like the obvious guard and it breaks the two ways a code actually
+ * arrives: a browser truncates a PASTE to `maxLength`, so six digits pasted into
+ * the first box become one, and iOS one-time-code AUTOFILL delivers the whole
+ * code into a single field. `write()` distributes any multi-character value
+ * across the boxes instead, so typing, pasting and autofill all take one path.
+ * Focus selects the box's content, so typing over a filled digit replaces it.
+ */
+export function AuthCodeInput({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const boxes = useRef<(HTMLInputElement | null)[]>([]);
+  const [chars, setChars] = useState<string[]>(() => padCode(value));
+  const previous = useRef(value);
+
+  /* Parent-driven changes win. The only one in practice is the clear after a
+     rejected code, so this also refocuses the first box — the user has to retype
+     and should not have to aim. */
+  useEffect(() => {
+    if (value !== chars.join('')) setChars(padCode(value));
+    if (previous.current.length > 0 && value.length === 0) boxes.current[0]?.focus();
+    previous.current = value;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const focusBox = (index: number) => {
+    const box = boxes.current[Math.max(0, Math.min(CODE_LENGTH - 1, index))];
+    box?.focus();
+    box?.select();
+  };
+
+  const commit = (next: string[]) => {
+    setChars(next);
+    onChange(next.join(''));
+  };
+
+  /** The one writer. `raw` may be one typed digit, a pasted code, or an autofill. */
+  const write = (index: number, raw: string) => {
+    const incoming = raw.replace(/\D/g, '');
+    const next = chars.slice();
+
+    if (incoming.length === 0) {
+      next[index] = '';
+      commit(next);
+      return;
+    }
+
+    for (let i = 0; i < incoming.length && index + i < CODE_LENGTH; i += 1) {
+      next[index + i] = incoming[i];
+    }
+    commit(next);
+    focusBox(index + incoming.length);
+  };
+
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      const next = chars.slice();
+      // An empty box steps back and clears the one before it, which is what a
+      // single Backspace press means to someone fixing a typo at the end.
+      if (next[index] === '' && index > 0) {
+        next[index - 1] = '';
+        commit(next);
+        focusBox(index - 1);
+      } else {
+        next[index] = '';
+        commit(next);
+      }
+      return;
+    }
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      focusBox(index - 1);
+    }
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      focusBox(index + 1);
+    }
+  };
+
+  /* Paste always fills from the FIRST box, wherever the cursor is. Someone
+     pasting is pasting the whole code, not editing one digit of it. */
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text').replace(/\D/g, '');
+    if (text.length === 0) return;
+    e.preventDefault();
+    write(0, text);
+  };
+
+  return (
+    <div>
+      <label
+        htmlFor={`${id}-1`}
+        className="block font-sans text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2"
+      >
+        {label}
+      </label>
+
+      {/* Six inputs are six tab stops and six screen-reader announcements, so the
+          group carries the field's name and each box says which digit it is. */}
+      <div role="group" aria-label={label} className="grid grid-cols-6 gap-2">
+        {chars.map((char, index) => (
+          <input
+            key={index}
+            ref={(el) => {
+              boxes.current[index] = el;
+            }}
+            id={`${id}-${index + 1}`}
+            type="text"
+            inputMode="numeric"
+            /* On the first box only. Repeating it invites a browser to offer the
+               same code six times. */
+            autoComplete={index === 0 ? 'one-time-code' : 'off'}
+            spellCheck={false}
+            aria-label={`${label}, digit ${index + 1} of ${CODE_LENGTH}`}
+            value={char}
+            onChange={(e) => write(index, e.target.value)}
+            onKeyDown={(e) => handleKeyDown(index, e)}
+            onPaste={handlePaste}
+            onFocus={(e) => e.target.select()}
+            /* `text-white` is not just a colour here: `[data-theme="white"]`
+               keys its `input.text-white` rule off it, which is what gives these
+               boxes a readable ink and background in light mode. Same reason
+               `AuthField` carries it. */
+            className="w-full h-14 text-center bg-white/[0.03] border border-white/10 rounded-xl text-white font-display text-xl font-bold outline-none transition-colors focus:border-primary-fixed-dim/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-fixed-dim/25"
+          />
+        ))}
+      </div>
     </div>
   );
 }
