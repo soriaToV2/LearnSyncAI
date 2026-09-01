@@ -28,7 +28,8 @@ import {
   TIER_TONE,
 } from '../../lib/mastery';
 import { scorePercent } from '../../lib/testMode';
-import { badgeStyle } from '../../lib/badges';
+import { badgeStyle, badgeTotals } from '../../lib/badges';
+import BadgeGalleryModal from '../../components/student/BadgeGalleryModal';
 import {
   dashboardApi,
   type ActivityItem,
@@ -193,7 +194,7 @@ export default function StudentDashboard() {
                 <StreakCard g={data.gamification} />
                 <DueCard total={data.flashcards_due} spaces={m!.by_space} />
                 {data.resume_test && <ResumeCard test={data.resume_test} />}
-                <BadgesCard badges={data.gamification.badges} />
+                <BadgesCard g={data.gamification} />
                 <RecentCard items={data.recent} />
               </div>
             </div>
@@ -557,41 +558,106 @@ function StreakCard({ g }: { g: GamificationBlock }) {
 }
 
 /**
- * Earned badges. Nothing is rendered until the student holds one.
+ * Earned badges, plus a way in to the full catalogue.
  *
- * Earned only — there is deliberately no greyed-out rail of unearned badges.
- * It would need the criteria text beside each, and on a two-week study a wall of
- * locked tiles reads as a list of things you failed to do. `badgeStyle()` never
- * throws on an unknown name, so the server can award a new badge before this
- * client knows how to label it.
+ * ══ THE CARD ITSELF STAYS EARNED-ONLY ══
+ * No greyed-out rail: it is on screen every visit, and on a two-week study a wall
+ * of locked tiles reads as a list of things you failed to do. `BadgeGalleryModal`
+ * is where the unearned ones live, because opening it is the student ASKING what
+ * is left — see the header of `src/lib/badges.ts`.
+ *
+ * ══ IT NO LONGER RETURNS NULL WHEN EMPTY ══
+ * It used to, which meant a brand-new account — the common case in week one —
+ * rendered no badges section at all and so had nothing to click. Discovering that
+ * badges exist was left to earning one by accident.
+ *
+ * ══ THE NUDGE IS ONE ROW, AND ONLY ONCE IT HAS MOVED ══
+ * The closest unearned badge with real progress behind it. Gated on `current > 0`
+ * deliberately: "5 of 7 days" is the motivating half, whereas an untouched
+ * "0 / 100" is precisely the accusation the earned-only rule exists to avoid.
+ *
+ * `badgeStyle()` never throws on an unknown name, so the server can award a new
+ * badge before this client knows how to label it.
  */
-function BadgesCard({ badges }: { badges: GamificationBlock['badges'] }) {
-  if (badges.length === 0) return null;
+function BadgesCard({ g }: { g: GamificationBlock }) {
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const badges = g.badges;
+  const totals = badgeTotals(badges);
+
+  // Closest to done, and only if it has actually started. `badge_progress` holds
+  // unearned countable badges only, so nothing here can already be held.
+  const nextUp = [...g.badge_progress]
+    .filter((p) => p.current > 0)
+    .sort((a, b) => b.current / b.target - a.current / a.target)[0];
+  const nextStyle = nextUp ? badgeStyle(nextUp.name) : null;
 
   return (
     <div className={`${PANEL} p-5`}>
       <div className="flex items-center gap-2">
         <IconChip icon={Trophy} className="bg-amber-400/10 text-amber-400" />
         <h2 className={SECTION}>Badges</h2>
-        <span className="font-sans text-xs text-slate-500 tabular-nums ml-auto">{badges.length}</span>
+        <span className="font-sans text-xs text-slate-500 tabular-nums ml-auto">
+          {totals.held} / {totals.total}
+        </span>
       </div>
 
-      <ul className="flex flex-wrap gap-2 mt-4">
-        {badges.map((badge) => {
-          const style = badgeStyle(badge.name);
-          const Icon = style.icon;
-          return (
-            <li
-              key={badge.name}
-              title={`${style.label} — earned ${relativeTime(badge.awarded_at)}`}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${style.bg} ${style.ring}`}
-            >
-              <Icon className={`w-3.5 h-3.5 shrink-0 ${style.color}`} />
-              <span className="font-sans text-xs font-semibold text-slate-200">{style.label}</span>
-            </li>
-          );
-        })}
-      </ul>
+      {badges.length === 0 ? (
+        <p className="font-sans text-sm text-slate-400 mt-4">
+          No badges yet. Studying anything at all earns your first one.
+        </p>
+      ) : (
+        <ul className="flex flex-wrap gap-2 mt-4">
+          {badges.map((badge) => {
+            const style = badgeStyle(badge.name);
+            const Icon = style.icon;
+            return (
+              <li
+                key={badge.name}
+                title={`${style.label} — earned ${relativeTime(badge.awarded_at)}`}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${style.bg} ${style.ring}`}
+              >
+                <Icon className={`w-3.5 h-3.5 shrink-0 ${style.color}`} />
+                <span className="font-sans text-xs font-semibold text-slate-200">{style.label}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {nextUp && nextStyle && (
+        <div className="mt-4 pt-4 border-t border-white/5">
+          <div className="flex items-center gap-2">
+            <nextStyle.icon className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+            <span className="font-sans text-xs font-semibold text-slate-400">
+              Next: {nextStyle.label}
+            </span>
+            <span className="font-sans text-xs text-slate-500 tabular-nums ml-auto">
+              {nextUp.current} / {nextUp.target}
+            </span>
+          </div>
+          <MeterBar
+            value={nextUp.current / nextUp.target}
+            tone="neutral"
+            label={`Progress toward ${nextStyle.label}`}
+            className="mt-2"
+          />
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setGalleryOpen(true)}
+        className="font-sans text-xs font-semibold text-primary-fixed-dim hover:underline mt-4"
+      >
+        See all badges
+      </button>
+
+      <BadgeGalleryModal
+        isOpen={galleryOpen}
+        onClose={() => setGalleryOpen(false)}
+        earned={badges}
+        progress={g.badge_progress}
+      />
     </div>
   );
 }

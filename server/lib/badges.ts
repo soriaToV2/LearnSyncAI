@@ -204,6 +204,31 @@ interface Evidence {
   flashcardCount: number | null;
 }
 
+/**
+ * Every badge whose rule is "reach N", with the counter it reads.
+ *
+ * ══ ONE HOME PER THRESHOLD ══
+ * Read by BOTH `satisfied()`, which decides whether a badge is earned, and
+ * `badgeProgress()`, which tells a student how far off they are. These were
+ * separate before the badge gallery existed, and a second copy of `100` or
+ * `[1, 10, 25]` is exactly the drift that would let a progress bar read "99/100"
+ * beside a badge the evaluator had already awarded.
+ *
+ * A badge absent from this table has no partial state — `first_*` is a single
+ * act, and `perfect_test`/`flawless_game` are outcomes of one session. The
+ * gallery shows those as criteria text with no bar, which is why membership
+ * here is what decides whether a bar is drawn at all.
+ */
+const COUNTABLE: Record<string, { target: number; of: (e: Evidence) => number | null }> = {
+  streak_3: { target: STREAK_THRESHOLDS[0], of: (e) => e.longestStreak },
+  streak_5: { target: STREAK_THRESHOLDS[1], of: (e) => e.longestStreak },
+  streak_7: { target: STREAK_THRESHOLDS[2], of: (e) => e.longestStreak },
+  mastery_1: { target: MASTERY_THRESHOLDS[0], of: (e) => e.masteredCount },
+  mastery_10: { target: MASTERY_THRESHOLDS[1], of: (e) => e.masteredCount },
+  mastery_25: { target: MASTERY_THRESHOLDS[2], of: (e) => e.masteredCount },
+  cards_100: { target: CENTURY_AT, of: (e) => e.flashcardCount },
+};
+
 export interface EvaluateInput {
   studentId: string;
   type: ActivityType;
@@ -372,14 +397,12 @@ async function gatherEvidence(studentId: string, candidates: readonly BadgeDef[]
 
 /** The rule for one badge. Anything it cannot verify is false, never assumed. */
 function satisfied(badge: BadgeDef, evidence: Evidence, outcome: EvaluateInput['outcome']): boolean {
-  switch (badge.name) {
-    case 'streak_3':
-      return (evidence.longestStreak ?? 0) >= STREAK_THRESHOLDS[0];
-    case 'streak_5':
-      return (evidence.longestStreak ?? 0) >= STREAK_THRESHOLDS[1];
-    case 'streak_7':
-      return (evidence.longestStreak ?? 0) >= STREAK_THRESHOLDS[2];
+  // Every "reach N" rule — streaks, mastery counts and cards_100 — lives in one
+  // table so the threshold checked here is the threshold the gallery draws.
+  const countable = COUNTABLE[badge.name];
+  if (countable) return (countable.of(evidence) ?? 0) >= countable.target;
 
+  switch (badge.name) {
     // The activity itself is the evidence — it was just written, and the badge
     // is not yet held, so this IS the first one.
     case 'first_flashcard':
@@ -389,13 +412,6 @@ function satisfied(badge: BadgeDef, evidence: Evidence, outcome: EvaluateInput['
     case 'first_game':
       return true;
 
-    case 'mastery_1':
-      return (evidence.masteredCount ?? 0) >= MASTERY_THRESHOLDS[0];
-    case 'mastery_10':
-      return (evidence.masteredCount ?? 0) >= MASTERY_THRESHOLDS[1];
-    case 'mastery_25':
-      return (evidence.masteredCount ?? 0) >= MASTERY_THRESHOLDS[2];
-
     // Strict equality on a server-computed ratio. `>= 1` would be identical
     // today, but both are bounded at 1 by construction and a value above it is
     // a bug that should not quietly award a trophy.
@@ -404,10 +420,62 @@ function satisfied(badge: BadgeDef, evidence: Evidence, outcome: EvaluateInput['
     case 'flawless_game':
       return outcome?.accuracy === 1;
 
-    case 'cards_100':
-      return (evidence.flashcardCount ?? 0) >= CENTURY_AT;
-
     default:
       return false;
+  }
+}
+
+/** How far a student is from one unearned badge. Countable rules only. */
+export interface BadgeProgress {
+  name: string;
+  /** Clamped to `target` — a locked badge must never read "12 / 10". */
+  current: number;
+  target: number;
+}
+
+/**
+ * Progress toward every COUNTABLE badge the student does not yet hold, for the
+ * dashboard's badge gallery.
+ *
+ * ══ IT READS THE EVALUATOR'S SOURCES, NOT THE DASHBOARD'S ══
+ * `gatherEvidence()` unchanged, so the number a student is shown is the number
+ * the rule reads. That matters most for mastery: this counts EVERY `bkt_mastery`
+ * row at or above 0.85, including concepts on materials since archived or
+ * unlinked, whereas the dashboard's own "Concepts mastered" stat counts only
+ * currently-visible ones. Feeding the gallery the visible figure would show
+ * "8 / 10" beside a badge the rule already considers satisfied at 12.
+ *
+ * ══ SAME EARLY EXIT AS THE EVALUATOR ══
+ * Once a student holds all seven countable badges this issues ZERO queries, so
+ * an established account pays nothing for the feature on every dashboard load.
+ *
+ * ══ NEVER THROWS ══
+ * Same contract as `evaluateBadges()`. A missing progress bar must never cost a
+ * student their dashboard.
+ */
+export async function badgeProgress(
+  studentId: string,
+  held: ReadonlySet<string>
+): Promise<BadgeProgress[]> {
+  const candidates = BADGES.filter((b) => !held.has(b.name) && b.name in COUNTABLE);
+  if (candidates.length === 0) return [];
+
+  try {
+    const evidence = await gatherEvidence(studentId, candidates);
+
+    return candidates.map((badge) => {
+      const rule = COUNTABLE[badge.name];
+      return {
+        name: badge.name,
+        current: Math.min(rule.of(evidence) ?? 0, rule.target),
+        target: rule.target,
+      };
+    });
+  } catch (err) {
+    console.error(
+      `[Badges] progress read threw for student=${studentId}:`,
+      err instanceof Error ? err.message : err
+    );
+    return [];
   }
 }

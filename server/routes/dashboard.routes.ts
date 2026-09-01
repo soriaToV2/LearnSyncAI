@@ -10,6 +10,7 @@ import {
   type ConceptMasteryRow,
 } from '../lib/testDifficulty';
 import type { DifficultyTier } from '../lib/testAllocation';
+import { badgeProgress } from '../lib/badges';
 
 /**
  * The student dashboard — the one GLOBAL read in the student API.
@@ -90,6 +91,17 @@ interface GamificationBlock {
   /** Asia/Manila calendar date, not a timestamp. Null until the first activity. */
   last_active_on: string | null;
   badges: { name: string; awarded_at: string }[];
+  /**
+   * Distance to every UNEARNED badge whose rule is a countable threshold. Empty
+   * once the student holds all of them, and empty for the rules that have no
+   * partial state at all (`first_*`, `perfect_test`, `flawless_game`).
+   *
+   * ⚠️ `mastery_*` here will NOT agree with `mastery.concepts_mastered` below
+   * whenever a mastered concept sits on an archived or unlinked material. That is
+   * correct, not drift: this figure comes from the badge rule's own source, so
+   * the bar a student sees is the count the evaluator checks.
+   */
+  badge_progress: { name: string; current: number; target: number }[];
 }
 
 const EMPTY_GAMIFICATION: GamificationBlock = {
@@ -97,6 +109,7 @@ const EMPTY_GAMIFICATION: GamificationBlock = {
   longest_streak: 0,
   last_active_on: null,
   badges: [],
+  badge_progress: [],
 };
 
 interface CurvePoint {
@@ -290,14 +303,26 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
         .order('awarded_at', { ascending: false }),
     ]);
 
+    const badges = (badgeRows ?? []).map((b) => ({
+      name: b.badge_name as string,
+      awarded_at: b.awarded_at as string,
+    }));
+
+    /*
+     * Sequential rather than batched above, because it needs the held set to know
+     * which counters to read at all — and that is what keeps it free: an account
+     * holding all seven countable badges issues zero queries here.
+     *
+     * It sits ABOVE both early returns for the same reason the badge read does. A
+     * student whose educator archived every material still holds their badges,
+     * and showing their progress toward the rest is exactly as true then.
+     */
     const gamification: GamificationBlock = {
       day_streak: Number(gamificationRow?.day_streak ?? 0),
       longest_streak: Number(gamificationRow?.longest_streak ?? 0),
       last_active_on: (gamificationRow?.last_active_on as string | null) ?? null,
-      badges: (badgeRows ?? []).map((b) => ({
-        name: b.badge_name as string,
-        awarded_at: b.awarded_at as string,
-      })),
+      badges,
+      badge_progress: await badgeProgress(studentId, new Set(badges.map((b) => b.name))),
     };
 
     const spaces = (spaceRows ?? []) as { id: string; title: string; subject: string }[];

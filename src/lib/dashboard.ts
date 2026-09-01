@@ -107,6 +107,26 @@ export interface EarnedBadge {
 }
 
 /**
+ * Distance to one badge the student has NOT yet earned.
+ *
+ * Only countable rules appear — streaks, mastery counts and `cards_100`. The
+ * rest have no partial state (`first_*` is a single act, `perfect_test` and
+ * `flawless_game` are outcomes of one session), so the gallery draws a bar iff a
+ * row exists here rather than deciding for itself.
+ *
+ * ⚠️ The `mastery_*` rows will NOT agree with `mastery.concepts_mastered` when a
+ * mastered concept sits on an archived or unlinked material. Correct, not drift:
+ * this comes from the badge rule's own source, so the bar shows the count the
+ * evaluator actually checks. Never substitute the dashboard's figure.
+ */
+export interface BadgeProgressRow {
+  name: string;
+  /** Already clamped server-side, so it never exceeds `target`. */
+  current: number;
+  target: number;
+}
+
+/**
  * Streaks and badges. Mirrors `GamificationBlock` in `dashboard.routes.ts`.
  *
  * `total_study_hours` is deliberately absent from BOTH sides. It is written, but
@@ -120,8 +140,10 @@ export interface GamificationBlock {
   longest_streak: number;
   /** Asia/Manila calendar date, not a timestamp. Null until the first activity. */
   last_active_on: string | null;
-  /** Earned only. The catalogue is never shipped — see `src/lib/badges.ts`. */
+  /** Earned only. The catalogue itself is client-side — see `src/lib/badges.ts`. */
   badges: EarnedBadge[];
+  /** Unearned countable badges only. Empty once they are all held. */
+  badge_progress: BadgeProgressRow[];
 }
 
 export interface DashboardData {
