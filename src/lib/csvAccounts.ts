@@ -215,6 +215,24 @@ export function toCsv(header: readonly string[], rows: string[][]): string {
 }
 
 /**
+ * Hand a CSV string to the browser as a file — blob → object URL → click →
+ * revoke.
+ *
+ * Lives beside `toCsv()` because it is the other half of the same job and had
+ * been written out by hand at every call site. Note this works only on a page the
+ * user is on: a published Artifact's sandbox blocks script-driven downloads.
+ */
+export function downloadCsvFile(content: string, filename: string): void {
+  const blob = new Blob([content], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
  * Header + rows tab-separated, for the clipboard. That is what a spreadsheet
  * expects on paste, and it sidesteps quoting entirely — no cell here can contain
  * a tab, since names come from a CSV that was itself split on commas.

@@ -217,10 +217,10 @@
    * as see-through. Dark mode was never affected (#222a3d on #020617 is an
    * obvious step), which is why it survived this long.
    *
-   * ALL SEVENTEEN CONSUMERS OF THIS TOKEN ARE RAISED SURFACES — the three
-   * dropdown menus, the flashcard faces, the test session and results panels,
-   * the assessment runner. Every one of them wants to sit visibly above the
-   * page, so the fix belongs on the token rather than on any one of them.
+   * EVERY CONSUMER OF THIS TOKEN IS A RAISED SURFACE — the three dropdown
+   * menus, the flashcard faces, the test session and results panels. Every one
+   * of them wants to sit visibly above the page, so the fix belongs on the
+   * token rather than on any one of them.
    *
    * ⚠️ IT IS DELIBERATELY LIGHTER THAN `--color-surface-container`, WHICH
    * INVERTS MATERIAL 3's LIGHT-SCHEME ORDERING. In M3 a higher container level
@@ -1810,8 +1810,8 @@
 
    Everything above this line is the original `[data-theme="white"]` work.
    It covered the app as it stood, but the app kept growing: the block was
-   last touched 2026-08-20 and the pre/post-test instrument, the games
-   calibration UI and the whole responsive pass landed after it. This
+   last touched 2026-08-20 and the games calibration UI and the whole
+   responsive pass landed after it. This
    section closes the measured gaps rather than editing ~500 lines of
    working, hand-tuned overrides in two places.
 
@@ -2092,8 +2092,8 @@
    ===================================================================
 
    ⚠️ THESE PILLS WERE UNREADABLE IN LIGHT MODE, AND THE CAUSE WAS THE
-   MECHANISM, NOT THE PALETTE. `SubjectBadge`, `ParseStatusPill` and the
-   pre/post `AssessmentPill` each wrote three INLINE styles from one hex —
+   MECHANISM, NOT THE PALETTE. `SubjectBadge` and `ParseStatusPill` each
+   wrote three INLINE styles from one hex —
    the text colour, the same hex at 10% for the fill, and at 20% for the
    border. An inline style beats every stylesheet rule short of
    `!important` on a property that is not inherited, so the large
@@ -2107,8 +2107,8 @@
      cyan   #22d3ee  1.9:1      rose    #fb7185  2.9:1
      violet #a78bfa  2.9:1
 
-   — every one of them under the 4.5:1 floor, on the labels that say
-   whether a lesson finished processing and whether its pre-test is open.
+   — every one of them under the 4.5:1 floor, on the labels that say a
+   material's subject and whether it finished processing.
 
    THE FIX IS TO STOP PASSING A COLOUR AND START PASSING A VARIABLE. Each
    component now sets only `--tone` and wears `.tone-chip`; the three

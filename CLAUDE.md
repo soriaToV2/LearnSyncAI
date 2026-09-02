@@ -694,7 +694,7 @@ unrelated meanings under one name in one module is the hazard.
 
 **Before this existed the admin could not use the application at all.** `Login.tsx` sent `role === 'admin'` to `/educator/dashboard`, where `requireRole('educator')` 403s every data call. Three promises elsewhere in the app also had no implementation: "Only an administrator can change this" on the student Profile page (`grade_level`), "an admin fixes" a NULL username, and password recovery — there is **no SMTP**, so `POST /accounts/:userId/password` is the *only* password-recovery path in the product and the "Forgot password?" link stays inert.
 
-**⚠️ THERE IS NO DELETE ROUTE AND NO DELETE CONTROL. Do not add one casually.** Fourteen tables CASCADE from `profiles` — `study_spaces`, `bkt_mastery`, `bkt_update_logs`, `practice_tests`, `practice_telemetry`, `cognitive_logs`, `chatbot_logs`, `spaced_repetition_logs`, `gamification_profiles`, `game_content`, `game_sessions`, `user_badges`, `activity_logs`, and `assessment_attempts` (migration 0024, temporary) — so deleting one student destroys their entire measured history, which for a 50-student study is the research data. `schema.sql` states the intended idiom on the column: *"Set to disabled by an admin to revoke access without deleting."* Disable is already honoured by `requireRole`, `POST /api/auth/login`, `private.auth_role()` and `rosterForGrades()`, and is fully reversible. Deletion is also the one operation the schema fights — `materials.educator_id` is `ON DELETE RESTRICT`, the only non-CASCADE FK, so deleting a publishing educator fails as an opaque Supabase Auth error.
+**⚠️ THERE IS NO DELETE ROUTE AND NO DELETE CONTROL. Do not add one casually.** Thirteen tables CASCADE from `profiles` — `study_spaces`, `bkt_mastery`, `bkt_update_logs`, `practice_tests`, `practice_telemetry`, `cognitive_logs`, `chatbot_logs`, `spaced_repetition_logs`, `gamification_profiles`, `game_content`, `game_sessions`, `user_badges`, and `activity_logs` — so deleting one student destroys their entire measured history, which for a 50-student study is the research data. `schema.sql` states the intended idiom on the column: *"Set to disabled by an admin to revoke access without deleting."* Disable is already honoured by `requireRole`, `POST /api/auth/login`, `private.auth_role()` and `rosterForGrades()`, and is fully reversible. Deletion is also the one operation the schema fights — `materials.educator_id` is `ON DELETE RESTRICT`, the only non-CASCADE FK, so deleting a publishing educator fails as an opaque Supabase Auth error.
 
 **⚠️ `handle_new_user()` REPORTS SUCCESS FOR AN ACCOUNT THAT CANNOT SIGN IN**, which is why `createAccount()` in `admin.routes.ts` is a function rather than three lines. A malformed or taken username degrades to NULL, so the naive implementation says "Account created" and nobody can log in. The sequence is: pre-check `lower(username)` → **409**, nothing written → `auth.admin.createUser` with `user_metadata` (the trigger writes `profiles` *and* `gamification_profiles`) → **re-read the row and confirm the username stuck** → on NULL, one targeted UPDATE whose `23505` is authoritative → on collision, delete the auth user and 409. **Build the response from the re-read row, never the request body** — the body is what was asked for, the row is what happened. Verified: a case-differing duplicate 409s and leaves no orphan.
 
@@ -1008,195 +1008,95 @@ Everything a student reads after submitting — the verdict banner, the feedback
 
 **Both submit handlers hold a `useRef` latch, and it is not redundant with the button's `disabled`.** `disabled` and `canEvaluate` read React state, which does not re-render until the handler yields, so a double-click enters the handler twice with `isEvaluating` still `false` and fires two submissions. Observed: one Feynman answer graded **0.95 and then 0.90** three seconds apart from byte-identical input, because both requests ran their memo lookup before either had written its row — so both missed it, both spent model calls, and the same explanation earned two different marks. The latch is set synchronously before the first `await` and cleared in `finally`.
 
-## Pre-Test / Post-Test — ⚠️ TEMPORARY research instrument
+## Mastery-evidence export — the study's learning-progress measurement
 
-> **Full reference: `LearnSyncAI artifacts/PREPOST_TEST_IMPLEMENTATION.md`**, which carries the
-> removal checklist. Built 2026-08-21, migration `0024`.
->
-> **⚠️ THIS FEATURE IS REMOVED AFTER THE SCHOOL STUDY.** It exists to serve paper **RQ4 (p. 55)** —
-> the significance of the difference between a student's *standard pre-test* score and their
-> post-test score — which p. 103 names the **primary** evaluation instrument. Every design choice
-> below prefers mechanical removal over integration, and **every call site outside the feature's own
-> files carries a `PRE/POST GATE` marker comment so removal is a grep.**
+> **⚠️ THIS REPLACED THE PRE-TEST / POST-TEST INSTRUMENT, removed 2026-09-02.** That feature
+> (migration 0024, built 2026-08-21) served the paper's **RQ4 (p. 55)** — the pre-test/post-test
+> score difference — which p. 103 named the *primary* evaluation instrument. It was withdrawn on
+> advice: the actual student-usage window is **one week** (implementation runs 1–3 weeks — week 1
+> gathers materials and distributes accounts, week 2 is the usage, week 3 wraps up), and a pre/post
+> delta over one week is not attributable to the platform. Migration `0025` dropped
+> `material_assessments`, `assessment_attempts` and the `assessment_phase` enum; the seven feature
+> files, the nine `PRE/POST GATE` call sites and the material lock are all gone.
+> `LearnSyncAI artifacts/PREPOST_TEST_IMPLEMENTATION.md` survives as a historical record, marked
+> REMOVED. **Do not re-implement from it.**
 
-**One divergence from the paper, decided with the user.** p. 103/106 call the post-test
-*"personalized"* / *"tailored to their specific knowledge gaps"*. Built literally, each student sits a
-different paper and the pre/post difference stops measuring learning — a student asked only about
-their weak concepts sits a **harder** test than their own pre-test, so a lower post score could mean
-either more learning or a harder paper. **Everyone therefore sits the same test**, reworded. p. 103's
-own phrase *"system-generated **parallel** pre-tests"* is the correct term, and the post-test wording
-in the paper should be brought into line with it.
+**`GET /api/educator/materials/:materialId/mastery-evidence` is the replacement, and it is one route
+plus one button.** Educator-scoped, per material, read-only, no Zod (path parameter only, like the
+file's other three routes), 404 via `requireOwnedMaterial()`. The button lives in the class-summary
+header of `ClassPerformance.tsx` — **not a new tab**, because a third tab is exactly the surface the
+pre/post instrument occupied and that was deliberately removed. It fetches **lazily on click**: it
+reads the BKT audit trail, and a research export must not cost every educator that on every tab entry.
 
-**The item is the INVERSE of `writeChoice()` in `testGeneration.ts`, and that is the decision
-everything else follows from.** An adaptive-test MCQ names the term and offers four generated
-definitions; this one describes the concept without naming it and offers four **term names** — the
-concept's own `term` plus three others from the same material. Three things fall out, all of which the
-study depends on:
+**⚠️ THE PAIR, AND WHY IT IS THIS PAIR.** Over `S(student)` = this material's concepts that have a
+`bkt_mastery` row:
 
-- **The model never writes an option and never writes an answer.** Every option is an
-  educator-vetted `concepts.term` the server chose, so there is no hallucination surface on the answer
-  key at all.
-- **"Same answer, same difficulty" is structural.** Pre and post are the *same row*: same concept,
-  same `answer`, same four options. Only the sentence and the option order differ. Two separate
-  generations could drift apart on the answer; this cannot.
-- **Grading is a normalised string compare**, safe *only* because a term appears at most once per
-  material. Do **not** import `testGrading.ts`'s alias ladder — that exists for text a student typed,
-  and here they pick from four literal strings the server wrote.
+```
+start_mastery = mean over S of p_l_posterior of that concept's OLDEST bkt_update_logs row
+end_mastery   = mean over S of bkt_mastery.latent_mastery
+growth        = end − start
+```
 
-**ONE model call writes both forms** — per concept the model returns `pre_stem` and `post_stem`
-together, so the two wordings are provably about the same concept. `GEMINI_CONTENT_MODEL` at
-`ThinkingLevel.MINIMAL`, `maxOutputTokens: 8192` (20 items × 2 stems exceeds any single-format ceiling
-in `testGeneration.ts`). **One request per material**, against the adaptive test's five.
+Three obvious "before" values are **all exactly P(L₀) = 0.10** and therefore forbidden: `p_l_prior` of
+the oldest log row, EQ(4) at t = 0, and a backward reconstruction to the start of the window. All
+three are the model's initialisation, identical for every student, and printing one would print an
+assumption as a measurement. Both ends here are real evidence, and both are means over the **same
+set** — which is what makes `growth` a paired per-student difference rather than two populations
+compared. Unassessed concepts are excluded **by construction** (no mastery row ⇒ no log row ⇒ no key
+in either map), never filtered afterwards.
 
-**THERE IS NO DIFFICULTY TIER, BY DESIGN.** A "standard pre-test" must not adapt: nothing reads
-`bkt_mastery`, there is no `difficulty_tier` column, and no tier machinery is imported.
+**⚠️ `start_mastery` IS "AFTER THE FIRST OPPORTUNITY" AND MUST NEVER BE LABELLED "BASELINE",
+"PRE-TEST" OR "BEFORE STUDYING".** EQ(3) is applied to the student's first answer, so that answer's
+outcome is already inside the number (a first correct MCQ lands at 0.3271, a first wrong one at
+0.2174). A student assessed exactly once per concept therefore has `start == end` and `growth == 0` —
+correct, not a bug, which is why `opportunity_count` ships beside it. The rule is stated on
+`FirstObservation` in `testDifficulty.ts`, on the route, and on `EvidenceStudent` in
+`educatorAnalytics.ts`; it is the fact most likely to be misread later.
 
-**Validation replaces fallback, and that inversion is load-bearing.** `generateTestQuestions()` can
-fall back to a deterministic template for any skipped item; **there is no template that can invent a
-second, differently-worded stem.** An item is kept only if both stems are clean, neither names its own
-term, and `norm(pre) !== norm(post)` — the likeliest MINIMAL failure on a one-line definition is the
-model returning the **same sentence twice**, which ships silently and turns the post-test into a
-recognition exercise. A rejected concept is dropped and refilled from a spare pool requested in the
-same call; under 5 usable items the whole generation fails and writes nothing.
+**`classFirstObservations()` in `server/lib/testDifficulty.ts` is the only reader of
+`bkt_update_logs` outside the dashboard curve.** It chunks both id lists exactly as
+`classMasteryRows()` does, and additionally **pages each chunk pair** — PostgREST's default cap is
+1000 rows and one material can legitimately want 2,000 (50 students × 2 tests × 20 items).
+**Ascending order is load-bearing**: the row cap then drops only the NEWEST rows, which this reader
+does not need, because the "after" side is anchored to `bkt_mastery` and never to the log. (The same
+1000-row hazard exists unguarded in `classMasteryRows()` — 200 × 200 chunks, and 50 students × 57
+concepts is 2,850 rows. Verify and fix that in its own change.)
 
-**⚠️ DISTRACTORS COME FROM THE ANSWER'S DOCUMENT NEIGHBOURHOOD (±6), not the whole material.**
-Measured: drawing from the whole material produced *"This web application of a larger markup
-standard…"* offering `HTML · wind_gust_mph · XSL · dewpoint_c`, where two options are field names from
-the lesson's own worked example. They are real concept rows, so nothing was *wrong* — but a student
-eliminates both without knowing anything, turning a 4-option item into a 2-option one, which inflates
-the **pre**-test baseline toward 50% and shrinks the gain RQ4 measures. Same finding the Games section
-records: what works is neighbouring concepts. A candidate is also rejected when its `foldKey` is a
-substring/superstring of another option (`Injection` inside `SQL Injection` would give the item two
-defensible answers) or when the stem names it.
+**A mastery row with no surviving log row is dropped from BOTH sides** and counted in
+`concepts_without_trail`. Filling the start with P(L₀) would invent a measurement; dropping it only
+from the start would break the pairing and inflate `growth`. **`logWriteError` in `bkt.ts` stays
+non-fatal — do not promote it because this reader exists**, exactly as the dashboard curve's rule
+says.
 
-**This feature writes NOTHING that feeds the platform** — no `bkt_mastery`, `bkt_update_logs`,
-`practice_telemetry` or `activity_logs`. `bkt_source` stays a two-value enum and `activity_type` gains
-no value. **Consequence, stated rather than hidden: a pre-test does not extend a study streak.**
+**Never print P(L₀), three gates:** `start`/`end`/`growth`/`m_doc` are null when
+`assessed_concept_count === 0`; class figures use `meanOrNull()` over **started** students only. Gate
+on the counts, never on `=== 0.1`. Not-started students are **listed, not filtered** — "nineteen of
+twenty never opened this" is a finding, and a blank cell is the honest rendering of it. `growth` is
+`round4(round4(end) − round4(start))`, so a reviewer recomputing the column from the two beside it
+gets the same digits.
 
-### The lock
+**Ordering is the roster's, not weakest-first.** The partition-then-sort rule everywhere else in
+`educator.routes.ts` is for *ranked UI lists*; this is a table destined for a statistics package,
+where a stable name order is what joins against a class list — and keeping it sidesteps the
+null-in-a-numeric-comparator NaN hazard rather than defending against it.
 
-**One line: a material is locked for a student when its assessment's LATEST RELEASED PHASE has no
-completed attempt by them.** `gatePhaseOf()` in `server/lib/assessmentGate.ts`.
+**It stays archive-blind**, unlike `GET /overview`. `requireOwnedMaterial()` deliberately returns
+archived materials to their owner, and an educator archiving a lesson at the end of the study must
+still be able to export its evidence. `is_archived` ships so the file's provenance is visible.
 
-**⚠️ LATEST, NOT "ANY RELEASED PHASE WITH NO ATTEMPT".** The obvious reading locks a student out
-permanently: an educator releasing the post-test while some students still owe the pre-test would gate
-those students on `pre`, a phase the Post-Test tab no longer offers. The schema backs it from the
-other side (`material_assessments_release_order`), the release route refuses it with a sentence, and
-**un-releasing is the escape hatch** — it destroys no attempts, the same property archiving relies on.
+**Operational, not code:** a student moved to another grade or a disabled account drops out of
+`rosterFor()` and vanishes from the export, so **export before any account cleanup**. And re-uploading
+a material cascade-deletes its concepts → `bkt_mastery` → `bkt_update_logs`, destroying the evidence
+irrecoverably.
 
-**Nine server call sites, each one line below the existing access check — AFTER, never before.** That
-ordering is what makes archiving and re-grading self-healing: `accessibleMaterialIds()` has already
-dropped the material and answered, so the gate never has to know about `is_archived` or `grade_level`.
-Seven body-array sites beside `rejectInaccessibleMaterials()`, plus `requireUnlockedMaterial()` as a
-**second middleware** after `requireMaterialAccess()` on `GET /materials/:id/view` and `/:id/concepts`.
-`/:id/status` stays open.
+**`downloadCsvFile()` moved into `src/lib/csvAccounts.ts`**, beside `toCsv()`/`csvCell()`, which now
+owns the whole write-a-CSV-file job. Two call sites — `ImportAccountsModal` and this export. All
+writing goes through `csvCell()`: a surname like `Dela Cruz, Jr.` unquoted splits into two cells and
+shifts every number one column across, which is the measured failure that put it there.
 
-**⚠️ THE GATE IS STUDENT-ONLY, checked inside `lockedMaterials()` rather than at each guard.** Two of
-the nine sites are reachable by the uploading educator and by an admin, neither of whom can ever hold
-an attempt row — a role-blind rule would lock an educator out of their own PDF the moment they
-released its pre-test. The role read runs *after* the assessment lookup, so the common case (nothing
-released) still costs one query.
-
-**It FAILS OPEN**, unlike `accessibleMaterialIds()` which denies everything on error. Deliberate: that
-function guards data isolation between students, where the safe failure is refusal; this guards a
-research measurement, where a broken lookup silently locking fifty students out of the whole platform
-is far worse than a few contaminated baselines. Verified — with migration 0024 unapplied the app runs
-exactly as before.
-
-**The lock is FORWARD-LOOKING and does not revoke past work.** An in-progress adaptive test can be
-finished, a generated game replays, history still quotes the material. Not a gap: before the pre-test
-the student has never been able to open the material, so no such work exists; by the post-test they
-have studied it for weeks.
-
-**Client: `availableResources` is passed UNFILTERED, plus a `lockedIds: Set`.** Each tab filters only
-its **picker** — four one-line edits. Filtering the list itself was rejected twice over: `AnalyticsTab`
-treats an empty list as *"No lessons in this study space yet"*, and `materialLabel()`/`deckSummary()`
-use the same list to **title historical attempts**, which would lose their labels.
-
-**⚠️ THE LOCK MAP IS THE ONE PIECE OF `StudySpace` STATE `<main key={activeTab}>` DOES NOT REFRESH.**
-So every path that can change a lock calls `refreshLocks` explicitly — finishing a test, and
-`ResourcesTab`'s materials sync (which can pull in an already-locked material the parent never saw).
-Same idiom as `onRefresh` on `FlashcardsTab`. `GamesLanding` builds its own material list and so does
-its own lock lookup; without it a locked lesson is offered, ticked, and answered with an unactionable
-403.
-
-**`ResourcesTab` is the ONE place a locked material stays visible**, with a lock badge and the PDF and
-chatbot both disabled. A lesson that simply vanished from the library reads as the app losing the
-teacher's work.
-
-### Answer-key handling
-
-**`stripAssessmentKey(item, phase)` is the only function that serialises an item to a browser.** It is
-a *second* serialiser in a codebase whose rule is "`stripKey()` is the only one" — the rule is not
-broken, because `stripKey()` remains the sole serialiser for `StoredTestQuestion`. Both carry a
-cross-reference. Do not merge them and do not add a third.
-
-**⚠️ THE `phase` PARAMETER IS LOAD-BEARING TWICE.** Both wordings sit on one row, so a phase-blind
-serialiser shows a student **every post-test question while they sit the pre-test**; and the option
-order differs per phase by design, so emitting the wrong array lets a memorised position carry across.
-
-**⚠️ A COMPLETED PRE-TEST RETURNS A SCORE AND NO ITEMS AT ALL.** The obvious mirror of
-`GET /api/practice/:id/result` returns the full review on completion, and here that is the worst leak
-available: pre and post share every answer, so a student reading their pre-test result out of DevTools
-holds the post-test key three weeks early and their "learning gain" becomes a measure of who read a
-JSON response. The post-test returns the full review.
-
-**RLS is deliberately unlike `practice_tests`**, whose `FOR ALL USING (student_id = auth.uid())`
-already lets a student read their own `questions_payload` with the anon key. `material_assessments`
-has **no student policy at all** — it carries no `student_id`, so any grade-scoped policy would hand
-the key to every student in the grade before either test. `assessment_attempts` is **SELECT-only** for
-students, following the `activity_logs` precedent: `answers` and `score` *are* the measurement.
-
-### The rest
-
-- **`UNIQUE (assessment_id, student_id, phase)` — one attempt per phase, no retakes.** Which is
-  exactly why `POST /:assessmentId/attempts` **must be idempotent**: on a 409 a student who closed the
-  tab would hold an `in_progress` row they can never complete and a lesson locked forever.
-- **⚠️ THE POST-TEST REQUIRES A COMPLETED PRE-TEST, AND THE LOCK DOES NOT ENFORCE THAT.** Ordering the
-  instruments is a separate job from gating the material: the gate points at the LATEST released
-  phase, so once the post-test is out a student who never sat the pre-test is gated on `post` and
-  nothing stopped them starting it. **Observed on a real account.** A post score with no baseline is
-  not a weaker data point but an unusable one — RQ4 measures a difference and there is nothing to
-  subtract from — and the student has now seen the item set, so a later "pre"-test measures recall of
-  the post-test. **It cannot strand anyone, and the reason is the CHECK constraint, not the guard:**
-  `material_assessments_release_order` forbids post being released while pre is not, so the pre-test
-  is always available to satisfy it. Do not relax that constraint without revisiting this. The check
-  runs BEFORE the existing-attempt lookup, so an orphaned `in_progress` post row cannot be resumed
-  either.
-- **Generation is SYNCHRONOUS, and it is SLOW — measured 36.1s** for 20 items on a 30-concept
-  material, not the ~2–3s a single MINIMAL call suggests. Forty sentences is a lot of output and
-  output is the bottleneck. It stays synchronous because the cost is **bounded** — at most
-  `ASSESSMENT_MAX_ITEMS + SPARE` = 26 items however large the material, so 36s is near the ceiling
-  rather than the start of a curve — and because it is a once-per-material educator action, never on
-  a student's path. Async would buy a status column, a poll, and the defect `processMaterialAsync`
-  actually has: a restart mid-job strands the row on `processing` forever with nothing to reap it.
-  **The educator UI must keep saying "about half a minute"** — "a few seconds" was the estimate, and
-  an educator who thinks it has hung reloads and pays for a second generation.
-- **Regeneration is refused once any attempt exists**, server-side (409), not by a disabled button.
-- **20 items max**, `min(20, conceptCount)`, sampled at an **even stride over document order** so the
-  test covers the whole lesson. Minimum 5 concepts — four options plus a spare.
-- **The runner is a new self-contained component, NOT `TestSessionView`**, which is 879 lines across
-  five formats and calls `testApi` directly. A 20-item MCQ runner deletes in one file and cannot
-  regress Test Mode on the way out. **It is SHAPED like `TestSessionView` though** — same in-flow
-  root, header, per-question progress bar, question card, footer and `lg:` navigator rail.
-- **⚠️ THE RUNNER RENDERS IN FLOW. IT MUST NEVER BE `fixed inset-0`.** The first version was, and the
-  study-space header won the z-order fight: the runner's own header vanished and the question was
-  clipped at the top of the scroll box with no way to reach it. `TestSessionView` sits inside
-  `<main>` for exactly this reason, and the tab bar staying visible is correct anyway.
-- **The pre-test score ring is a FIXED NEUTRAL tone, never `scoreTone()`.** Test Mode colours by score
-  because there a score is an achievement; a pre-test score is a baseline taken before the student has
-  studied, so 4/20 is the expected result and painting it red tells them something untrue about
-  themselves. The post-test colours normally. Same reasoning as Free Recall's fixed tone.
-- **The educator item preview renders INLINE, never in a `Modal`** — 20 items × 2 stems is ~60 rows,
-  and `Modal` has no max-height inside an `items-center` wrapper. Do not give `Modal.tsx` one.
-- **The educator tab states VISIBILITY before it gives advice.** Generating and releasing are two
-  steps, and the gap is where the screen was misread: after a 36-second spinner an educator
-  reasonably assumes the test is live. It is not — nothing reaches a student and no lesson locks
-  until a phase is released, so the tab says which of those is true right now, above the advice.
-- **The educator tab carries one line of operational copy** that closes the only real hole in the
-  lock: a material is visible the moment it is uploaded, so releasing the pre-test ten minutes later
-  leaves ten minutes of contaminated baseline. Release first, or Archive while setting up.
-- **`GET /api/assessments/overview` accepts NOTHING** — no body, no query, no path parameter, so zero
-  IDOR surface and no Zod schema, the same bar `GET /api/dashboard` and `GET /api/educator/overview`
-  meet. It feeds the materials-library pill and is a separate read on purpose, so removal is deleting
-  one fetch rather than editing `GET /api/materials` back.
+**Deliberately not built:** no class-level before/after chart (the denominator moves as students
+start, so the line drops when a new student begins — the same reason the educator dashboard has no
+class mastery curve); no t-test, p-value or effect size in the app (the statistics belong in the
+stats package, not in a second unreviewable implementation); no date-range parameters (clipping the
+window makes "the first observation" ambiguous); no per-concept evidence CSV (the drill-downs already
+exist on screen); and **no new table and no snapshot job** — the audit trail already holds it.

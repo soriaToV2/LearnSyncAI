@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Users, ChevronDown, AlertTriangle, HelpCircle, BookOpen, TrendingDown
+  Users, ChevronDown, AlertTriangle, HelpCircle, BookOpen, TrendingDown, Download
 } from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import MeterBar from '../../../components/ui/MeterBar';
@@ -9,9 +9,11 @@ import { toneText } from '../../../components/ui/surfaces';
 import {
   educatorAnalyticsApi, classCaption, conceptCaption, STRUGGLING_BELOW,
   masteryPercent, masteryTier, relativeTime, TIER_TONE,
+  EVIDENCE_HEADER, evidenceRows,
   type DifficultyTier, type MaterialPerformance, type StudentMaterialDetail,
   type ConceptClassDetail,
 } from '../../../lib/educatorAnalytics';
+import { toCsv, downloadCsvFile } from '../../../lib/csvAccounts';
 
 /**
  * The Class Performance tab inside a material.
@@ -64,6 +66,9 @@ export default function ClassPerformance({ materialId }: { materialId: string })
   const [conceptLoading, setConceptLoading] = useState<string | null>(null);
   const [conceptError, setConceptError] = useState<string | null>(null);
 
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -76,6 +81,33 @@ export default function ClassPerformance({ materialId }: { materialId: string })
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
+  }, [materialId]);
+
+  /**
+   * The learning-progress export for the study — one row per student.
+   *
+   * Fetched HERE, on the click, rather than beside the summary on mount: it reads
+   * the BKT audit trail, and this tab's job is the screen. It is a once-per-study
+   * educator action, so paying for it on every tab entry would be the wrong trade.
+   *
+   * It stays enabled when nobody has started. A file showing an empty class is a
+   * legitimate artifact, and refusing to produce one would hide that finding.
+   */
+  const downloadEvidence = useCallback(async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const evidence = await educatorAnalyticsApi.evidence(materialId);
+      const today = new Date().toISOString().slice(0, 10);
+      downloadCsvFile(
+        toCsv(EVIDENCE_HEADER, evidenceRows(evidence)),
+        `learnsyncai-mastery-evidence-${today}.csv`
+      );
+    } catch {
+      setExportError('Could not build the export. Try again in a moment.');
+    } finally {
+      setExporting(false);
+    }
   }, [materialId]);
 
   const toggleStudent = useCallback(
@@ -203,7 +235,29 @@ export default function ClassPerformance({ materialId }: { materialId: string })
         <div className="flex items-center gap-2 mb-5">
           <Users className="w-4 h-4 text-slate-400" />
           <h2 className="font-display text-lg font-bold text-white">Class Performance</h2>
+
+          {/*
+            The study's evidence export. It sits here rather than in a tab of its
+            own because the numbers it contains are the ones already on this
+            screen, and because a research export does not deserve a permanent
+            third tab — that is the surface the pre/post instrument occupied and
+            that was deliberately removed.
+          */}
+          <button
+            onClick={downloadEvidence}
+            disabled={exporting}
+            className="ml-auto flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 font-sans text-xs text-slate-300 transition-colors hover:bg-white/5 disabled:opacity-50"
+          >
+            {exporting
+              ? <Spinner className="w-3.5 h-3.5 text-slate-400" />
+              : <Download className="w-3.5 h-3.5" />}
+            Export mastery evidence
+          </button>
         </div>
+
+        {exportError && (
+          <p className="font-sans text-xs text-rose-300 mb-4">{exportError}</p>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="md:col-span-2">

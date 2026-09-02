@@ -6,8 +6,6 @@ import { generateTermMatches, generateTrivia, generateCrosswordWords } from '../
 import { GeminiUnavailableError, studentFacingError } from '../lib/gemini';
 import { buildCrossword } from '../lib/crossword';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
-// PRE/POST GATE — temporary (migration 0024). Delete with the feature.
-import { rejectLockedMaterials } from '../lib/assessmentGate';
 import { requireOwnedSpace, spaceMaterialIds } from '../lib/spaceAccess';
 import { masterySnapshot, masteryTier } from '../lib/testDifficulty';
 import {
@@ -76,9 +74,6 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
   const space = await requireOwnedSpace(space_id, req, res);
   if (!space) return;
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
-  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
-  // before: that ordering is what lets archiving and re-grading answer first.
-  if (!(await rejectLockedMaterials(req, res, material_ids))) return;
 
   const inSpace = new Set(await spaceMaterialIds(space));
   if (!material_ids.every((id) => inSpace.has(id))) {

@@ -13,8 +13,6 @@ import {
   GEMINI_UTILITY_MODEL,
 } from '../lib/gemini';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
-// PRE/POST GATE — temporary (migration 0024). Delete with the feature.
-import { rejectLockedMaterials } from '../lib/assessmentGate';
 // The canonical term-matching convention, shared with extraction so a student
 // typing "SSDLC" resolves to the same concept the fold would have joined it to.
 import { foldKey, acronymOf } from '../lib/conceptExtraction';
@@ -455,9 +453,6 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
   const studentId = await requireOwnedSpace(space_id, req, res);
   if (!studentId) return;
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
-  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
-  // before: that ordering is what lets archiving and re-grading answer first.
-  if (!(await rejectLockedMaterials(req, res, material_ids))) return;
 
   try {
     // ── 1. Fetch all reference concepts for the selected materials ────────
@@ -1181,9 +1176,6 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
   const studentId = await requireOwnedSpace(space_id, req, res);
   if (!studentId) return;
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
-  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
-  // before: that ordering is what lets archiving and re-grading answer first.
-  if (!(await rejectLockedMaterials(req, res, material_ids))) return;
 
   try {
     // ── 1. Reject duplicate concept submissions up front ──────────────────

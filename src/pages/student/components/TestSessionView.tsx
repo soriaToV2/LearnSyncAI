@@ -361,8 +361,7 @@ export default function TestSessionView({
                 <><Spinner className="w-4 h-4" /> Checking…</>
               ) : (
                 /* "Previous" + "Finish & See Results" measures ~338px of the
-                   343px a 375px phone has, and overflows outright at 360px. Same
-                   shortening as `AssessmentRunner`'s submit. */
+                   343px a 375px phone has, and overflows outright at 360px. */
                 <>
                   <Flag className="w-4 h-4" />
                   <span className="sm:hidden">Finish</span>
@@ -392,10 +391,7 @@ export default function TestSessionView({
 
       {/* ── Navigator, desktop ──────────────────────────────────────────── */}
       {/*
-       * ⚠️ `9rem` IS A BOUND, NOT A MEASUREMENT, and `AssessmentRunner` carries
-       * the same literal. Deliberately NOT deduplicated into a shared constant:
-       * that runner is the temporary pre/post instrument and must delete in one
-       * file without reaching into Test Mode.
+       * ⚠️ `9rem` IS A BOUND, NOT A MEASUREMENT.
        *
        * The real constraint is the scrollport of `<main>` in `StudySpace`, which
        * is `100vh` minus the study-space header (~7rem: `pt-4`, a `pb-4` title

@@ -19,16 +19,6 @@ import { useBadges } from '../../../context/BadgeContext';
 interface FeynmanTabProps {
   availableResources: { id: string; title: string }[];
   spaceId: string;
-  /**
-   * PRE/POST GATE — temporary (migration 0024). Materials this student still owes
-   * a pre-test or post-test on.
-   *
-   * ⚠️ ONLY THE PICKER IS FILTERED. `availableResources` stays whole, because it
-   * is also how a HISTORICAL attempt gets its lesson title — filtering the list
-   * itself would blank the label on past attempts for a briefly-locked material.
-   * The server is the enforcement point either way.
-   */
-  lockedIds?: Set<string>;
 }
 
 /**
@@ -121,11 +111,9 @@ function overallVerdict(accuracy: number): Verdict {
   return 'incorrect';
 }
 
-export default function FeynmanTab({ availableResources, spaceId, lockedIds }: FeynmanTabProps) {
+export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabProps) {
   // Keyed on material id, not title — two materials may share a title.
-  const resourceOptions = availableResources
-    .filter(r => !lockedIds?.has(r.id))   // PRE/POST GATE
-    .map(r => ({ value: r.id, label: r.title }));
+  const resourceOptions = availableResources.map(r => ({ value: r.id, label: r.title }));
 
   const [viewMode, setViewMode] = useState<ViewMode>('study');
   /** Exactly one material. A submission is graded against one lesson. */

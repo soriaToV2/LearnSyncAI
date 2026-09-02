@@ -204,6 +204,130 @@ export function conceptCaption(c: ConceptPerformance): string | null {
   return parts.join(' · ');
 }
 
+/**
+ * One student's learning-progress row — the study's evidence, one material.
+ *
+ * ⚠️ `start_mastery` IS NOT A BASELINE. It is the mean mastery AFTER the student's
+ * first answer on each assessed concept, so that answer's outcome is already
+ * inside it. Never label a column, caption or chart derived from it "pre-test",
+ * "baseline" or "before studying". The one honest phrasing is "after the first
+ * opportunity". (The genuine before-value, P(L₀) = 0.10, is identical for every
+ * student and is an assumption, which is why it is not in this payload at all.)
+ *
+ * `start`, `end` and `growth` are all means over the SAME set — the concepts with
+ * a mastery row — which is what makes `growth` a paired difference. Their
+ * denominator is `assessed_concept_count`, and it must travel with them.
+ */
+export interface EvidenceStudent {
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  grade_level: number;
+  concept_count: number;
+  /** The denominator of the three figures below. **null figures mean not started.** */
+  assessed_concept_count: number;
+  /** Has mastery but no surviving audit row — excluded from start AND end. */
+  concepts_without_trail: number;
+  opportunity_count: number;
+  flashcard_observations: number;
+  test_observations: number;
+  start_mastery: number | null;
+  end_mastery: number | null;
+  growth: number | null;
+  /** EQ(4) over every concept — the number Class Performance prints. */
+  m_doc: number | null;
+  tier: DifficultyTier;
+  first_observed_at: string | null;
+  last_observed_at: string | null;
+}
+
+export interface MasteryEvidence {
+  material: {
+    id: string;
+    title: string;
+    subject: string;
+    grade_levels: number[];
+    concept_count: number;
+    is_archived: boolean;
+    parsed_status: string;
+  };
+  generated_at: string;
+  /** The audit-trail read hit its row cap. Figures are still anchored to bkt_mastery. */
+  truncated: boolean;
+  class: {
+    size: number;
+    started: number;
+    start_mastery: number | null;
+    end_mastery: number | null;
+    growth: number | null;
+    m_doc: number | null;
+  };
+  /** Roster order (by name), NOT weakest-first — this is a table, not a ranking. */
+  students: EvidenceStudent[];
+}
+
+/**
+ * The export's columns.
+ *
+ * `assessed_concepts` is not optional decoration: it is the denominator of
+ * `start_mastery`, `end_mastery` and `growth`, and those three cannot be
+ * interpreted without it. Names lead so a row can be checked against a class list
+ * — `profiles` has no email, and one must not be invented to fill a column.
+ */
+export const EVIDENCE_HEADER = [
+  'material_title',
+  'last_name',
+  'first_name',
+  'grade_level',
+  'concept_count',
+  'assessed_concepts',
+  'opportunities',
+  'flashcard_obs',
+  'test_obs',
+  'start_mastery',
+  'end_mastery',
+  'growth',
+  'm_doc',
+  'first_observed_at',
+  'last_observed_at',
+] as const;
+
+/**
+ * ⚠️ A BLANK CELL MEANS NOT STARTED. Never `0`, never `0.1` — a fabricated number
+ * is worse than an empty cell, and 0.10 is P(L₀), the assumption this whole file
+ * exists to keep off the screen.
+ *
+ * Unlike `credentialRows()`, not-started students are LISTED rather than filtered.
+ * "Nineteen of twenty never opened this" is a finding about the study, and a
+ * filtered file would hide it.
+ *
+ * Values are the server's 4dp numbers verbatim — no re-rounding and no ×100.
+ * `masteryPercent()` is for the screen; a second precision here would let the
+ * paper's numbers disagree with the ones the educator saw. Timestamps stay ISO
+ * 8601 UTC for the same reason a localised date is unparseable months later.
+ */
+export function evidenceRows(data: MasteryEvidence): string[][] {
+  const num = (v: number | null) => (v === null ? '' : String(v));
+
+  return data.students.map((s) => [
+    data.material.title,
+    s.last_name,
+    s.first_name,
+    String(s.grade_level),
+    String(s.concept_count),
+    String(s.assessed_concept_count),
+    String(s.opportunity_count),
+    String(s.flashcard_observations),
+    String(s.test_observations),
+    num(s.start_mastery),
+    num(s.end_mastery),
+    num(s.growth),
+    num(s.m_doc),
+    s.first_observed_at ?? '',
+    s.last_observed_at ?? '',
+  ]);
+}
+
 export const educatorAnalyticsApi = {
   /** Class summary, per-student rows and the per-concept breakdown, in one request. */
   async performance(materialId: string): Promise<MaterialPerformance> {
@@ -220,6 +344,19 @@ export const educatorAnalyticsApi = {
   async student(materialId: string, studentId: string): Promise<StudentMaterialDetail> {
     const res = await api.get<StudentMaterialDetail>(
       `/educator/materials/${materialId}/students/${studentId}/concepts`
+    );
+    return res.data;
+  },
+
+  /**
+   * The study's learning-progress evidence for one material.
+   *
+   * Fetched lazily, on the export click only — it reads the BKT audit trail, and
+   * a research export must not cost every educator that on every tab entry.
+   */
+  async evidence(materialId: string): Promise<MasteryEvidence> {
+    const res = await api.get<MasteryEvidence>(
+      `/educator/materials/${materialId}/mastery-evidence`
     );
     return res.data;
   },

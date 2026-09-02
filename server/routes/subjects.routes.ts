@@ -24,9 +24,9 @@ import { requireRole } from '../middleware/requireRole';
  *
  * ══ IT ACCEPTS NOTHING ══
  * No body, no query string, no path parameter — so it has no IDOR surface and
- * therefore no Zod schema, the same bar `GET /api/dashboard`,
- * `GET /api/educator/overview` and `GET /api/assessments/overview` meet. If a
- * parameter is ever added, `safeParse(req.query)` it.
+ * therefore no Zod schema, the same bar `GET /api/dashboard` and
+ * `GET /api/educator/overview` meet. If a parameter is ever added,
+ * `safeParse(req.query)` it.
  *
  * ══ READ-ONLY, PERMANENTLY ══
  * The catalogue is edited from the Supabase dashboard, which is what the

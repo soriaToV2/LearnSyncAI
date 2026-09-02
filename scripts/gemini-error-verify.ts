@@ -263,9 +263,6 @@ async function main(): Promise<void> {
   // `err.message`, several of them carrying a comment promising they did not, so
   // a comment is not evidence and neither is one passing route.
   //
-  // `assessments.routes.ts` is excluded on purpose: its generate route is
-  // `requireRole('educator')`, and an educator is the reader who can act on the
-  // quota metric. Same rule as `materials.parse_error`.
   console.log('');
   console.log('7. Static audit — no student route forwards err.message');
   {

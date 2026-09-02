@@ -231,6 +231,129 @@ export async function classMasteryRows(
 }
 
 /**
+ * The oldest surviving `bkt_update_logs` row for a (student, concept) pair, plus
+ * the trail's shape around it.
+ *
+ * `lastPosterior` exists ONLY for the integrity assert in
+ * `GET /materials/:id/mastery-evidence` — it must never be serialised. The
+ * authoritative current value is `bkt_mastery.latent_mastery`; the audit trail is
+ * allowed to lose rows (`logWriteError` in `bkt.ts` is non-fatal by design, and
+ * stays that way), so anything a reader anchors on must come from the mastery
+ * table, never from here.
+ */
+export interface FirstObservation {
+  /** `p_l_posterior` of the OLDEST row — mastery after the first opportunity. */
+  firstPosterior: number;
+  firstAt: string;
+  lastAt: string;
+  /** `p_l_posterior` of the newest row. Cross-check only — never shipped. */
+  lastPosterior: number;
+  rows: number;
+  bySource: { flashcard: number; adaptive_test: number };
+}
+
+/**
+ * Rows past this per chunk pair are dropped and `truncated` is set. Mirrors
+ * `CURVE_ROW_CAP` in `dashboard.routes.ts` — same job, same order of magnitude.
+ */
+const EVIDENCE_ROW_CAP = 5_000;
+
+/** PostgREST's own default `db.max_rows`; nothing in this project raises it. */
+const PAGE = 1_000;
+
+/**
+ * The FIRST logged observation per (student, concept), for THESE students over
+ * THESE concepts, keyed by `classKey()`.
+ *
+ * This is the "before" half of the mastery-evidence export, and the reason it
+ * reads the audit trail at all: `bkt_mastery` holds only the current value, so a
+ * per-student growth figure has nowhere else to come from.
+ *
+ * ⚠️ `firstPosterior` IS NOT A BASELINE AND MUST NEVER BE LABELLED AS ONE. It is
+ * EQ(3) applied to the student's FIRST answer, so that answer's outcome is already
+ * inside it (a first correct MCQ lands at 0.3271, a first wrong one at 0.2174).
+ * The honest phrasing is "after the first opportunity". What it is NOT is
+ * `p_l_prior`, which is P(L₀) = 0.10 for every student on every concept — the
+ * model's initialisation, not a measurement, and forbidden from any output.
+ *
+ * ⚠️ ASCENDING ORDER IS LOAD-BEARING. The cap then drops only the NEWEST rows,
+ * which this reader does not need — the "after" side is anchored to
+ * `bkt_mastery.latent_mastery`, never to the log. `buildCurve()` gets the same
+ * property from ordering the other way, because it is anchored at the other end.
+ *
+ * Both id lists are chunked exactly as `classMasteryRows()` chunks them, and each
+ * chunk pair is additionally PAGED: `.in()` goes into the query string, and one
+ * pair can legitimately want more rows than PostgREST returns by default (50
+ * students × 2 tests × 20 items is 2,000 rows for a single material).
+ */
+export async function classFirstObservations(
+  studentIds: string[],
+  conceptIds: string[]
+): Promise<{ rows: Map<string, FirstObservation>; truncated: boolean }> {
+  const rows = new Map<string, FirstObservation>();
+  let truncated = false;
+  if (studentIds.length === 0 || conceptIds.length === 0) return { rows, truncated };
+
+  for (let s = 0; s < studentIds.length; s += IN_CHUNK) {
+    const students = studentIds.slice(s, s + IN_CHUNK);
+
+    for (let c = 0; c < conceptIds.length; c += IN_CHUNK) {
+      const concepts = conceptIds.slice(c, c + IN_CHUNK);
+
+      for (let offset = 0; offset < EVIDENCE_ROW_CAP; offset += PAGE) {
+        const { data } = await supabaseAdmin
+          .from('bkt_update_logs')
+          .select('student_id, concept_id, p_l_posterior, source, created_at')
+          .in('student_id', students)
+          .in('concept_id', concepts)
+          .order('created_at', { ascending: true })
+          .range(offset, offset + PAGE - 1);
+
+        const page = data ?? [];
+        for (const row of page) {
+          // NUMERIC arrives as a string over PostgREST.
+          const posterior = Number(row.p_l_posterior);
+          if (!Number.isFinite(posterior)) continue;
+
+          const key = classKey(row.student_id as string, row.concept_id as string);
+          const at = row.created_at as string;
+          const source = row.source as 'flashcard' | 'adaptive_test';
+
+          const seen = rows.get(key);
+          if (!seen) {
+            rows.set(key, {
+              firstPosterior: posterior,
+              firstAt: at,
+              lastAt: at,
+              lastPosterior: posterior,
+              rows: 1,
+              bySource: {
+                flashcard: source === 'flashcard' ? 1 : 0,
+                adaptive_test: source === 'adaptive_test' ? 1 : 0,
+              },
+            });
+            continue;
+          }
+
+          // Ascending order means the first row seen for a key is the oldest, so
+          // only the trailing half moves.
+          seen.rows += 1;
+          seen.lastAt = at;
+          seen.lastPosterior = posterior;
+          if (source === 'flashcard') seen.bySource.flashcard += 1;
+          else seen.bySource.adaptive_test += 1;
+        }
+
+        if (page.length < PAGE) break;
+        if (offset + PAGE >= EVIDENCE_ROW_CAP) truncated = true;
+      }
+    }
+  }
+
+  return { rows, truncated };
+}
+
+/**
  * EQ(4), document mastery: the arithmetic mean of per-concept probabilities over
  * EVERY concept in the material, computed from values already in hand.
  *

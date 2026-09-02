@@ -11,8 +11,6 @@ import {
   SyncSpaceMaterialsSchema,
 } from '../types/api';
 import { publishedMaterialIds, rejectInaccessibleMaterials } from '../lib/materialAccess';
-// PRE/POST GATE — temporary (migration 0024). Delete with the feature.
-import { rejectLockedMaterials } from '../lib/assessmentGate';
 import { loadOwnedSpace, type SpaceOwner } from '../lib/spaceAccess';
 import { generateQuestionsForConcepts } from '../lib/questionGeneration';
 import { GeminiUnavailableError, studentFacingError } from '../lib/gemini';
@@ -639,9 +637,6 @@ router.post(
 
     // Grade level / archive rule first.
     if (!(await rejectInaccessibleMaterials(req, res, [material_id]))) return;
-    // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
-    // before: that ordering is what lets archiving and re-grading answer first.
-    if (!(await rejectLockedMaterials(req, res, [material_id]))) return;
 
     // Then space membership. Passing the grade check is not enough — the
     // material must also be one this space actually holds, or a student could

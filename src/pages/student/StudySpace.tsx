@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { ChevronLeft, Plus, BookOpen, Layers, Lock, Brain, Award, BrainCircuit, ChartColumn, ChevronDown, ClipboardList } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { ChevronLeft, Plus, BookOpen, Layers, Brain, Award, BrainCircuit, ChartColumn, ChevronDown } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 import { Link, useParams } from 'react-router-dom';
 import FlashcardsTab from './studySpaceTabs/FlashcardsTab';
@@ -13,10 +13,6 @@ import { isDue } from '../../lib/reviewSchedule';
 import DueBadge from '../../components/ui/DueBadge';
 import { SUBJECT_COLOR } from '../../components/educator/SubjectBadge';
 import { useSubjectName } from '../../context/SubjectsContext';
-// PRE/POST GATE — temporary research instrument (migration 0024). Delete this
-// import, the two tabs it mounts, the lock state and the banner to remove it.
-import StudentAssessmentTab from './studySpaceTabs/StudentAssessmentTab';
-import { assessmentApi, type AssessmentSummary } from '../../lib/assessments';
 
 interface Flashcard {
   id: string;
@@ -39,7 +35,7 @@ interface FlashcardSet {
 export default function StudySpace() {
   const subjectNameOf = useSubjectName();
   const { spaceId } = useParams();
-  const [activeTab, setActiveTab] = useState<'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources' | 'analytics' | 'pre-test' | 'post-test'>('flashcards');
+  const [activeTab, setActiveTab] = useState<'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources' | 'analytics'>('flashcards');
   const [isMobileTabMenuOpen, setIsMobileTabMenuOpen] = useState(false);
   const [courseConnected, setCourseConnected] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
@@ -67,63 +63,6 @@ export default function StudySpace() {
    * which is `fetchSpaceData`, so finishing a session drops the badge with no
    * extra wiring.
    */
-  /*
-   * PRE/POST GATE — TEMPORARY research instrument (migration 0024).
-   *
-   * The lock map is fetched HERE rather than per tab, because six different
-   * material pickers must agree about what is locked and a per-tab fetch would let
-   * them disagree. That makes it the one piece of state on this page that
-   * `<main key={activeTab}>` does not refresh on its own — so every path that can
-   * CHANGE a lock calls `refreshLocks` explicitly: finishing a test (the assessment
-   * tabs) and pulling in newly published materials (ResourcesTab). Same idiom as
-   * `onRefresh` on FlashcardsTab.
-   */
-  const [assessments, setAssessments] = useState<AssessmentSummary[]>([]);
-
-  const refreshLocks = useCallback(async () => {
-    if (!spaceId) return;
-    try {
-      setAssessments(await assessmentApi.forSpace(spaceId));
-    } catch {
-      // Failing open is deliberate and matches the server gate: a broken lookup
-      // must not lock a student out of their whole study space. The server is the
-      // enforcement point regardless — this only decides what the UI offers.
-      setAssessments([]);
-    }
-  }, [spaceId]);
-
-  useEffect(() => {
-    void refreshLocks();
-  }, [refreshLocks]);
-
-  /** Materials a released, unsat test is currently blocking. */
-  const lockedIds = useMemo(
-    () => new Set(assessments.filter((a) => a.locked_phase).map((a) => a.material_id)),
-    [assessments]
-  );
-
-  /** Tabs appear only once their phase is released, so the bar is six tabs before
-   *  the study starts and six again after it ends. */
-  const hasPre = assessments.some((a) => a.pre.released);
-  const hasPost = assessments.some((a) => a.post.released);
-
-  /*
-   * ⚠️ FILTERED ON `locked_phase` (is this material blocked?) BUT WORDED FROM
-   * `action_phase` (what must they do about it?). Those are different fields for a
-   * real reason: the lock points at the LATEST released phase, so a student who
-   * owes a pre-test while the post-test is also out is locked on 'post', and
-   * wording the banner from that told them to take the post-test — the one thing
-   * the server refuses until the pre-test is done.
-   */
-  const lockedNotice = useMemo(() => {
-    const blocked = assessments.filter((a) => a.locked_phase);
-    if (blocked.length === 0) return null;
-    return {
-      phase: blocked[0].action_phase ?? blocked[0].locked_phase!,
-      titles: blocked.map((a) => a.material_title),
-    };
-  }, [assessments]);
-
   const dueCount = useMemo(
     () => flashcardSets.flatMap(s => s.cards).filter(c => isDue(c.nextReviewAt)).length,
     [flashcardSets]
@@ -236,12 +175,9 @@ export default function StudySpace() {
                 <span className="truncate">{currentSpace ? currentSpace.title : 'Study Space'}</span>
               </h1>
               {/*
-                * No `Lock` icon here any more. It meant "the subject is fixed",
-                * but `Lock` ALSO means "this lesson is blocked by an unsat test"
-                * on this very screen (the amber banner below, and the pickers in
-                * every tab). One icon carrying two meanings on one page is worse
-                * than the pill carrying none — it is self-evidently a subject
-                * label, and nothing here offers to change it.
+                * No `Lock` icon here. It meant "the subject is fixed", which the
+                * pill says perfectly well on its own — it is self-evidently a
+                * subject label, and nothing on this screen offers to change it.
                 */}
               {currentSpace?.subject && (
                 <span
@@ -316,29 +252,6 @@ export default function StudySpace() {
               <ChartColumn className="w-4 h-4" />
               Analytics
             </button>
-            {/* PRE/POST GATE — temporary. Each tab renders only once its phase is
-                released, so the bar is six tabs before the study and six after it.
-                The badge counts lessons this phase is currently blocking. */}
-            {hasPre && (
-              <button
-                onClick={() => setActiveTab('pre-test')}
-                className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'pre-test' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
-              >
-                <ClipboardList className="w-4 h-4" />
-                Pre-Test
-                <DueBadge count={assessments.filter((a) => a.action_phase === 'pre').length} />
-              </button>
-            )}
-            {hasPost && (
-              <button
-                onClick={() => setActiveTab('post-test')}
-                className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'post-test' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
-              >
-                <ClipboardList className="w-4 h-4" />
-                Post-Test
-                <DueBadge count={assessments.filter((a) => a.action_phase === 'post').length} />
-              </button>
-            )}
           </div>
 
           {/* Mobile Tab Select Button & Dropdown */}
@@ -354,9 +267,6 @@ export default function StudySpace() {
                 {activeTab === 'adaptive-test' && <><BrainCircuit className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Test Mode</span></>}
                 {activeTab === 'resources' && <><BookOpen className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Learning Resources</span></>}
                 {activeTab === 'analytics' && <><ChartColumn className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Analytics</span></>}
-                {/* PRE/POST GATE — temporary. */}
-                {activeTab === 'pre-test' && <><ClipboardList className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Pre-Test</span></>}
-                {activeTab === 'post-test' && <><ClipboardList className="w-4 h-4 text-primary-fixed-dim shrink-0" /> <span className="truncate">Post-Test</span></>}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -382,9 +292,6 @@ export default function StudySpace() {
                   // tab — same destination, two names. Matched to the tab.
                   { id: 'resources', label: 'Learning Resources', icon: BookOpen },
                   { id: 'analytics', label: 'Analytics', icon: ChartColumn },
-                  // PRE/POST GATE — temporary. Absent until the phase is released.
-                  ...(hasPre ? [{ id: 'pre-test', label: 'Pre-Test', icon: ClipboardList }] : []),
-                  ...(hasPost ? [{ id: 'post-test', label: 'Post-Test', icon: ClipboardList }] : []),
                 ].map((item) => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
@@ -411,32 +318,6 @@ export default function StudySpace() {
           </div>
         </div>
       </header>
-
-      {/* PRE/POST GATE — temporary. Sits OUTSIDE <main>, so it stays on screen as
-          the student moves between tabs looking for the lesson that vanished from
-          their pickers. */}
-      {lockedNotice && activeTab !== 'pre-test' && activeTab !== 'post-test' && (
-        <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 pt-4">
-          <button
-            onClick={() => setActiveTab(lockedNotice.phase === 'pre' ? 'pre-test' : 'post-test')}
-            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] w-full text-left flex items-start gap-3 p-3.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] hover:bg-amber-500/10 transition-colors"
-          >
-            <Lock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <span className="min-w-0">
-              <span className="block font-display text-sm text-amber-200">
-                Take the {lockedNotice.phase === 'pre' ? 'pre-test' : 'post-test'} to unlock{' '}
-                {lockedNotice.titles.length === 1 ? lockedNotice.titles[0] : `${lockedNotice.titles.length} lessons`}
-              </span>
-              <span className="block font-sans text-xs text-amber-200/60 mt-0.5">
-                {lockedNotice.phase === 'pre'
-                  ? 'This checks what you already know, so it comes before you study the lesson.'
-                  : 'One last check now that you have studied.'}{' '}
-                Other lessons in this space are unaffected.
-              </span>
-            </span>
-          </button>
-        </div>
-      )}
 
       {/* Main Content */}
       {/*
@@ -465,31 +346,19 @@ export default function StudySpace() {
             setSelectedSetContent={setSelectedSetContent}
             onRefresh={fetchSpaceData}
             availableResources={availableResources}
-            lockedIds={lockedIds}
           />
         )}
 
         {activeTab === 'free-recall' && (
-          <FreeRecallTab availableResources={availableResources} spaceId={spaceId!} lockedIds={lockedIds} />
+          <FreeRecallTab availableResources={availableResources} spaceId={spaceId!} />
         )}
 
         {activeTab === 'feynman' && (
-          <FeynmanTab availableResources={availableResources} spaceId={spaceId!} lockedIds={lockedIds} />
+          <FeynmanTab availableResources={availableResources} spaceId={spaceId!} />
         )}
 
         {activeTab === 'adaptive-test' && (
-          <AdaptiveTestTab spaceId={spaceId!} availableResources={availableResources} lockedIds={lockedIds} />
-        )}
-
-        {/* PRE/POST GATE — temporary. One component, phase-flipped: the only real
-            difference between the two is what the SERVER will return afterwards
-            (a pre-test result carries no per-question review). */}
-        {activeTab === 'pre-test' && (
-          <StudentAssessmentTab spaceId={spaceId!} phase="pre" onLocksChanged={() => void refreshLocks()} />
-        )}
-
-        {activeTab === 'post-test' && (
-          <StudentAssessmentTab spaceId={spaceId!} phase="post" onLocksChanged={() => void refreshLocks()} />
+          <AdaptiveTestTab spaceId={spaceId!} availableResources={availableResources} />
         )}
 
         {/* Read-only. `<main key={activeTab}>` remounts this on every entry, so
@@ -497,9 +366,6 @@ export default function StudySpace() {
             and holds no cache. `flashcardSets` is deliberately not passed: it
             carries no review count, and `opportunity_count` in the mastery
             payload is the writer-of-record's own figure across both sources. */}
-        {/* PRE/POST GATE: deliberately gets NO `lockedIds`. It reads no material
-            content, and its empty state is "No lessons in this study space yet" —
-            which would be a lie to a student whose only lesson is briefly locked. */}
         {activeTab === 'analytics' && (
           <AnalyticsTab spaceId={spaceId!} availableResources={availableResources} />
         )}
@@ -511,12 +377,10 @@ export default function StudySpace() {
             selectedDoc={selectedDoc}
             handleConnectCourse={handleConnectCourse}
             setSelectedDoc={setSelectedDoc}
-            setActiveTab={setActiveTab as any}
+            setActiveTab={setActiveTab}
             setIsGenerating={setIsGenerating}
             setSelectedSetContent={setSelectedSetContent as any}
             setFlashcardSets={setFlashcardSets as any}
-            lockedIds={lockedIds}
-            onLocksChanged={() => void refreshLocks()}
           />
         )}
       </main>

@@ -11,9 +11,6 @@ import SubjectBadge, { SUBJECT_COLOR } from '../../components/educator/SubjectBa
 import GradeChips from '../../components/educator/GradeChips';
 import ParseStatusPill from '../../components/educator/ParseStatusPill';
 import ClassPerformance from './components/ClassPerformance';
-// PRE/POST GATE — temporary research instrument (migration 0024). Delete this
-// import, the 'assessment' Tab value, its tab-bar entry and its render branch.
-import EducatorAssessmentTab from './components/EducatorAssessmentTab';
 import {
   ALL_GRADE_LEVELS,
   formatFileSize, formatDate,
@@ -33,7 +30,7 @@ interface ConceptRow {
   created_at: string;
 }
 
-type Tab = 'concepts' | 'performance' | 'assessment';
+type Tab = 'concepts' | 'performance';
 type Draft = { term: string; definition: string; pages: string };
 const EMPTY_DRAFT: Draft = { term: '', definition: '', pages: '' };
 
@@ -103,11 +100,7 @@ export default function MaterialDetail() {
    * every toggle.
    */
   const [activeTab, setActiveTab] = useState<Tab>(
-    searchParams.get('tab') === 'performance'
-      ? 'performance'
-      : searchParams.get('tab') === 'assessment'
-        ? 'assessment'
-        : 'concepts'
+    searchParams.get('tab') === 'performance' ? 'performance' : 'concepts'
   );
 
   // Concept editing state
@@ -611,8 +604,6 @@ export default function MaterialDetail() {
             [
               ['concepts', 'Concepts', 'Concepts'],
               ['performance', 'Performance', 'Class Performance'],
-              // PRE/POST GATE — temporary.
-              ['assessment', 'Pre / Post', 'Pre / Post Test'],
             ] as const
           ).map(([id, shortLabel, longLabel]) => (
             <button
@@ -840,17 +831,6 @@ export default function MaterialDetail() {
         */}
         {activeTab === 'performance' && materialId && (
           <ClassPerformance materialId={materialId} />
-        )}
-
-        {/* PRE/POST GATE — temporary. Mount-to-fetch like the tab above, and
-            deliberately outside the 3s parse poll for the same reason. */}
-        {activeTab === 'assessment' && materialId && material && (
-          <EducatorAssessmentTab
-            materialId={materialId}
-            materialTitle={material.title}
-            conceptCount={concepts.length}
-            parsedStatus={material.parsed_status}
-          />
         )}
         </div>
       </div>

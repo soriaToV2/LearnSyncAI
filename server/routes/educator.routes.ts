@@ -64,6 +64,7 @@ import {
   type RosterStudent,
 } from '../lib/educatorScope';
 import {
+  classFirstObservations,
   classKey,
   classMasteryRows,
   documentMastery,
@@ -1007,6 +1008,229 @@ router.get(
         mastered_students: values.filter((m) => m >= MASTERED).length,
         struggling_students: values.filter((m) => m < STRUGGLING).length,
         students: [...assessed, ...untouched],
+      },
+    });
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/educator/materials/:materialId/mastery-evidence
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface EvidenceStudentDto {
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  grade_level: number;
+  /** The lesson's concept count — the same for every row. */
+  concept_count: number;
+  /** |S| — the DENOMINATOR of start/end/growth. Meaningless without it. */
+  assessed_concept_count: number;
+  /** Has a mastery row but no surviving log row. Normally 0. */
+  concepts_without_trail: number;
+  opportunity_count: number;
+  flashcard_observations: number;
+  test_observations: number;
+  /** Mean over S of the posterior AFTER THE FIRST OPPORTUNITY. Never a baseline. */
+  start_mastery: number | null;
+  /** Mean over the SAME S of current `latent_mastery`. */
+  end_mastery: number | null;
+  /** `end − start`, both rounded first so the column recomputes exactly. */
+  growth: number | null;
+  /** EQ(4) over EVERY concept — the number Class Performance prints. */
+  m_doc: number | null;
+  tier: DifficultyTier;
+  first_observed_at: string | null;
+  last_observed_at: string | null;
+}
+
+/**
+ * The study's learning-progress evidence, per student, for one material.
+ *
+ * ⚠️ THIS REPLACED THE PRE-TEST / POST-TEST INSTRUMENT and exists for the paper's
+ * RQ4. The pre/post design was withdrawn on advice: the student-usage window is
+ * one week, which is too short for a pre/post delta to be attributable to the
+ * platform. What the platform *does* have across that week is BKT mastery, so the
+ * evidence is a per-student paired difference over the concepts the student was
+ * actually assessed on.
+ *
+ * ══ THE BEFORE/AFTER PAIR, AND WHY IT IS THIS PAIR ══
+ * Three obvious candidates for "before" are all P(L₀) = 0.10 and therefore
+ * forbidden: `p_l_prior` of the oldest log row, EQ(4) at t = 0, and a backward
+ * reconstruction to the start of the window. All three are the model's
+ * initialisation, identical for every student, and printing one would be printing
+ * an assumption as a measurement.
+ *
+ * So:
+ *   S(student)    = this material's concepts that have a `bkt_mastery` row
+ *   start_mastery = mean over S of `p_l_posterior` of that concept's OLDEST log row
+ *   end_mastery   = mean over S of `bkt_mastery.latent_mastery`
+ *   growth        = end − start
+ *
+ * Both ends are real evidence, and both are means over the SAME SET — which is
+ * what makes `growth` a paired per-student difference rather than a comparison of
+ * two populations. Unassessed concepts are excluded BY CONSTRUCTION (no mastery
+ * row ⇒ no log row ⇒ no key in either map), not filtered afterwards.
+ *
+ * ⚠️ `start_mastery` IS "AFTER THE FIRST OPPORTUNITY", NEVER "BASELINE" OR
+ * "PRE-TEST". The first answer's outcome is already inside it. A student assessed
+ * exactly once per concept therefore has `start == end` and `growth == 0` — which
+ * is correct, not a bug, and is why `opportunity_count` ships beside it.
+ *
+ * ══ NEVER PRINT P(L₀) ══
+ * `start`/`end`/`growth`/`m_doc` are all null when `assessed_concept_count === 0`,
+ * and the class figures use `meanOrNull()` over STARTED students only. Gate on the
+ * counts, never on `=== 0.1`. Not-started students are still LISTED — "nineteen of
+ * twenty never opened this" is a finding, and filtering them would hide it.
+ *
+ * ══ ARCHIVE-BLIND, LIKE THE REST OF THIS DRILL-DOWN ══
+ * `requireOwnedMaterial()` deliberately returns archived materials to their owner,
+ * and an educator archiving a lesson at the end of the study must still be able to
+ * export its evidence. `GET /overview`'s live-only rule is about not averaging an
+ * out-of-hands lesson into "how are my classes doing", which this is not.
+ * `is_archived` ships so the file's provenance is visible.
+ *
+ * ══ ORDER IS THE ROSTER'S, NOT WEAKEST-FIRST ══
+ * The partition-then-sort rule everywhere else here is for RANKED UI lists. This
+ * is a table destined for a statistics package, where a stable name order is what
+ * a researcher can join against a class list — and keeping it sidesteps the
+ * null-in-a-numeric-comparator NaN hazard entirely rather than defending against
+ * it.
+ */
+router.get(
+  '/materials/:materialId/mastery-evidence',
+  async (req: Request, res: Response): Promise<void> => {
+    const material = await requireOwnedMaterial(req.params.materialId, req, res);
+    if (!material) return;
+
+    const [concepts, roster] = await Promise.all([
+      conceptsFor(material.id),
+      rosterFor(material),
+    ]);
+
+    const conceptIds = concepts.map((c) => c.id);
+    const studentIds = roster.map((s) => s.id);
+
+    const [mastery, observations] = await Promise.all([
+      classMasteryRows(studentIds, conceptIds),
+      classFirstObservations(studentIds, conceptIds),
+    ]);
+
+    /*
+     * Re-verifies the property the whole paper rests on, at zero extra query
+     * cost: the newest log row's posterior should equal the stored mastery. Same
+     * idiom as `warnOnLogGaps()` on the student dashboard — a console line for the
+     * operator, never a field in the response and never a row dropped.
+     */
+    let mismatches = 0;
+
+    const students: EvidenceStudentDto[] = roster.map((student) => {
+      const byConcept = new Map<string, number>();
+      const starts: number[] = [];
+      const ends: number[] = [];
+
+      let withoutTrail = 0;
+      let opportunities = 0;
+      let flashcardObs = 0;
+      let testObs = 0;
+      let firstAt: string | null = null;
+      let lastAt: string | null = null;
+
+      for (const conceptId of conceptIds) {
+        const key = classKey(student.id, conceptId);
+        const row = mastery.get(key);
+        if (!row) continue;
+
+        // EQ(4) is over every concept, so this map feeds `documentMastery()`
+        // whether or not the concept has a surviving audit trail.
+        byConcept.set(conceptId, row.mastery);
+        opportunities += row.opportunityCount;
+
+        const trail = observations.rows.get(key);
+        if (!trail) {
+          // A tolerated `logWriteError`. Drop it from BOTH sides — filling the
+          // start with P(L₀) would invent a measurement, and dropping it only
+          // from the start would break the pairing and inflate `growth`.
+          withoutTrail += 1;
+          continue;
+        }
+
+        starts.push(trail.firstPosterior);
+        ends.push(row.mastery);
+        flashcardObs += trail.bySource.flashcard;
+        testObs += trail.bySource.adaptive_test;
+        if (firstAt === null || trail.firstAt < firstAt) firstAt = trail.firstAt;
+        if (lastAt === null || trail.lastAt > lastAt) lastAt = trail.lastAt;
+        if (Math.abs(trail.lastPosterior - row.mastery) > 1e-9) mismatches += 1;
+      }
+
+      const mDoc = documentMastery(conceptIds, byConcept);
+      const start = meanOrNull(starts);
+      const end = meanOrNull(ends);
+
+      return {
+        student_id: student.id,
+        first_name: student.firstName,
+        last_name: student.lastName,
+        grade_level: student.gradeLevel,
+        concept_count: conceptIds.length,
+        assessed_concept_count: byConcept.size,
+        concepts_without_trail: withoutTrail,
+        opportunity_count: opportunities,
+        flashcard_observations: flashcardObs,
+        test_observations: testObs,
+        start_mastery: start,
+        end_mastery: end,
+        // Rounded operands, so a reviewer recomputing this column from the two
+        // beside it gets the same number to the last digit.
+        growth: start === null || end === null ? null : round4(end - start),
+        // null, not the 0.10 `documentMastery()` returns for an untouched lesson.
+        m_doc: byConcept.size === 0 ? null : mDoc,
+        tier: masteryTier(mDoc),
+        first_observed_at: firstAt,
+        last_observed_at: lastAt,
+      };
+    });
+
+    if (mismatches > 0) {
+      console.error(
+        `[mastery-evidence] ${mismatches} concept(s) on material ${material.id} have a newest ` +
+          `log posterior that disagrees with bkt_mastery.latent_mastery`
+      );
+    }
+
+    const started = students.filter((s) => s.m_doc !== null);
+    const classMean = meanOrNull(started.map((s) => s.m_doc as number));
+    const classStart = meanOrNull(
+      started.flatMap((s) => (s.start_mastery === null ? [] : [s.start_mastery]))
+    );
+    const classEnd = meanOrNull(
+      started.flatMap((s) => (s.end_mastery === null ? [] : [s.end_mastery]))
+    );
+
+    res.json({
+      data: {
+        material: {
+          id: material.id,
+          title: material.title,
+          subject: material.subject,
+          grade_levels: material.gradeLevels,
+          concept_count: conceptIds.length,
+          is_archived: material.isArchived,
+          parsed_status: material.parsedStatus,
+        },
+        generated_at: new Date().toISOString(),
+        truncated: observations.truncated,
+        class: {
+          size: roster.length,
+          started: started.length,
+          start_mastery: classStart,
+          end_mastery: classEnd,
+          growth:
+            classStart === null || classEnd === null ? null : round4(classEnd - classStart),
+          m_doc: classMean,
+        },
+        students,
       },
     });
   }

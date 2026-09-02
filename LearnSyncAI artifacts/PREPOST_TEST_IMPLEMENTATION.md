@@ -1,7 +1,31 @@
-# Pre-Test / Post-Test (As Built)
+# Pre-Test / Post-Test (As Built) — ⚠️ REMOVED
 
-> **⚠️ THIS IS A TEMPORARY RESEARCH INSTRUMENT.** It is removed after the school study.
-> §11 is the removal checklist. Built 2026-08-21; migration `20260821090024`.
+> # ⚠️ REMOVED 2026-09-02. HISTORICAL RECORD ONLY — DO NOT RE-IMPLEMENT FROM THIS DOCUMENT.
+>
+> Built 2026-08-21 (migration `20260821090024`), removed 2026-09-02 (migration
+> `20260902090025_drop_material_assessments`). None of the code, tables or routes described
+> below still exist: the seven feature files are deleted, the nine `PRE/POST GATE` call sites
+> are reverted, the material lock is gone, and `material_assessments`, `assessment_attempts`
+> and the `assessment_phase` enum are dropped.
+>
+> **Why.** This instrument served the paper's **RQ4 (p. 55)** — the pre-test/post-test score
+> difference, which p. 103 named the *primary* evaluation instrument. It was withdrawn on
+> advice: the actual student-usage window is **one week** (implementation runs 1–3 weeks — week
+> 1 gathers materials and distributes accounts, week 2 is the usage, week 3 wraps up), and a
+> pre/post delta over one week is not attributable to the platform.
+>
+> **What replaced it.** The BKT mastery the platform already tracks, exported per student from
+> `GET /api/educator/materials/:materialId/mastery-evidence`. See
+> [`MASTERY_EVIDENCE_EXPORT.md`](MASTERY_EVIDENCE_EXPORT.md) and the "Mastery-evidence export"
+> section of `CLAUDE.md`.
+>
+> **The data.** Five attempt rows existed at removal, all on developer test accounts, archived
+> to `prepost-attempts-archive-2026-09-02.csv` in this folder. No school-study data was ever
+> collected through this feature.
+>
+> Everything below is preserved unchanged, as the record of what was built and why.
+
+---
 
 **Scope.** This document covers the pre-test / post-test feature *only* — the educator-generated,
 per-material parallel test pair that serves the paper's RQ4, and the lock that makes a pre-test a

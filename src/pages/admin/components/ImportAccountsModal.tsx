@@ -12,6 +12,7 @@ import {
   CSV_TEMPLATE,
   EMAIL_SHAPE,
   credentialRows,
+  downloadCsvFile,
   parseAccountsCsv,
   toCsv,
   toTsv,
@@ -290,23 +291,13 @@ export default function ImportAccountsModal({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  /** Blob → object URL → click → revoke. Shared shape with `downloadTemplate()`. */
-  const download = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const downloadTemplate = () => download(CSV_TEMPLATE, 'learnsyncai-accounts-template.csv');
+  const downloadTemplate = () =>
+    downloadCsvFile(CSV_TEMPLATE, 'learnsyncai-accounts-template.csv');
 
   const downloadCredentials = () => {
     if (!results) return;
     const today = new Date().toISOString().slice(0, 10);
-    download(
+    downloadCsvFile(
       toCsv(CREDENTIAL_HEADER, credentialRows(results)),
       `learnsyncai-credentials-${today}.csv`
     );

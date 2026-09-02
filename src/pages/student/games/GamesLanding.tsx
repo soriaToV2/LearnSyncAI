@@ -30,8 +30,6 @@ import {
   type SpaceMastery,
 } from '../../../lib/mastery';
 import { toneText } from '../../../components/ui/surfaces';
-// PRE/POST GATE — temporary research instrument (migration 0024). Delete with it.
-import { assessmentApi } from '../../../lib/assessments';
 import { getCourseDisplayInfo } from './gamesData';
 import { SessionDetail } from './gameUi';
 
@@ -192,8 +190,6 @@ export default function GamesLanding() {
 
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialsLoading, setMaterialsLoading] = useState(false);
-  // PRE/POST GATE — temporary. Lessons withheld from the list above.
-  const [lockedCount, setLockedCount] = useState(0);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
   const [mastery, setMastery] = useState<SpaceMastery | null>(null);
 
@@ -269,24 +265,15 @@ export default function GamesLanding() {
     Promise.all([
       api.get<{ materials: Material[] }>(`/spaces/${selectedSpaceId}/materials`),
       masteryApi.space(selectedSpaceId).catch(() => null),
-      // PRE/POST GATE — temporary (migration 0024). This picker builds its own
-      // list rather than receiving StudySpace's, so it needs its own lock lookup:
-      // without it a locked lesson is offered, ticked, and answered with a 403 the
-      // student cannot act on. Failing to [] fails OPEN, matching the server gate.
-      assessmentApi.forSpace(selectedSpaceId).catch(() => []),
     ])
-      .then(([res, spaceMastery, assessments]) => {
+      .then(([res, spaceMastery]) => {
         if (cancelled) return;
-        const locked = new Set(
-          assessments.filter((a) => a.locked_phase).map((a) => a.material_id)
-        );
         const completed = (res.data?.materials ?? []).filter(
-          (m) => m.parsed_status === 'completed' && !locked.has(m.id)
+          (m) => m.parsed_status === 'completed'
         );
         setMaterials(completed);
         setSelectedMaterialIds([]);
         setMastery(spaceMastery);
-        setLockedCount(locked.size);
       })
       .catch((err: unknown) => {
         if (!cancelled) setGenError(err instanceof Error ? err.message : 'Failed to load materials');
@@ -655,11 +642,7 @@ export default function GamesLanding() {
               ) : materials.length === 0 ? (
                 <div className="flex items-center gap-1.5 text-xs text-slate-500 p-2 font-sans animate-tab-in">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>
-                  {lockedCount > 0
-                    ? 'Take the test for these lessons in your study space first.'
-                    : 'No processed materials in this space yet.'}
-                </span>
+                  <span>No processed materials in this space yet.</span>
                 </div>
               ) : (
                 /* `space-y-2.5` is repeated here because the rows are this

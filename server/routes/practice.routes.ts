@@ -3,8 +3,6 @@ import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
-// PRE/POST GATE — temporary (migration 0024). Delete with the feature.
-import { rejectLockedMaterials } from '../lib/assessmentGate';
 import { requireOwnedSpace, spaceMaterialIds, type SpaceOwner } from '../lib/spaceAccess';
 import { GeminiUnavailableError, studentFacingError } from '../lib/gemini';
 import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
@@ -584,9 +582,6 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   const space = await requireOwnedSpace(space_id, req, res);
   if (!space) return;
   if (!(await rejectInaccessibleMaterials(req, res, [material_id]))) return;
-  // PRE/POST GATE — temporary (migration 0024). Runs AFTER the access check, never
-  // before: that ordering is what lets archiving and re-grading answer first.
-  if (!(await rejectLockedMaterials(req, res, [material_id]))) return;
 
   if (!(await spaceMaterialIds(space)).includes(material_id)) {
     res.status(404).json({ error: 'Material not found in this study space' });

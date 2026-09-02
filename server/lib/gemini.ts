@@ -413,9 +413,8 @@ export async function verifyGeminiCredential(): Promise<void> {
  * never written for a child, so it gets the generic sentence. The real cause still
  * reaches the server log at each call site.
  *
- * The EDUCATOR half is deliberately unchanged: `materials.parse_error`, the Failed
- * pill and `POST /api/assessments/:id/generate` all keep `err.message`, because
- * that reader can act on it.
+ * The EDUCATOR half is deliberately unchanged: `materials.parse_error` and the
+ * Failed pill both keep `err.message`, because that reader can act on it.
  */
 export function studentFacingError(err: unknown): string {
   return err instanceof GeminiUnavailableError

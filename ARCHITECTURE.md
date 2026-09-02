@@ -168,7 +168,7 @@ Test Type Selection:
       * Fill in the Blank
       * True or False
 
-Pre-Test Generation:
+Adaptive Test Generation:
   - Student requests a practice test for a specific study space or uploaded material.
   - Backend queries bkt_mastery for the student's current latent_mastery (0.0–1.0) for the relevant concept_ids.
   - The adaptive test generation engine uses mastery thresholds to adjust LLM generation prompts:
@@ -399,28 +399,31 @@ Written Feedback:
   - Reproducibility is guaranteed by REUSE, not by temperature — and since Gemini 3 dropped the sampling parameters, reuse is the only mechanism left. findMemoisedAttempt() looks for an earlier attempt by the same student with the same text, the same materials AND the same concepts_fingerprint, and answers from it. Matching the fingerprint rather than the score means feedback is never reused after an educator changes the material underneath it, and it also means a resubmission costs zero API calls.
   - Failure is isolated. generateRecallFeedback() catches its own errors and returns null; the call sits outside the scoring try block and before the insert, so the row is still written with its score, verdict and missed list. The response carries feedback_unavailable: true and the tab shows a note instead of an error. Losing the feedback cannot cost the score.
   - When extraction finds nothing recognisable in the submission, a fixed in-code message is used rather than an AI call — there is nothing personal to say, and a canned message cannot fail.
-12. Pre-Test / Post-Test — TEMPORARY research instrument [IMPLEMENTED 2026-08-21]
-  - REMOVED AFTER THE SCHOOL STUDY. Full reference and removal checklist:
-    LearnSyncAI artifacts/PREPOST_TEST_IMPLEMENTATION.md. Migration 0024.
-  - Serves paper RQ4 (p. 55) — the difference between a student's standard pre-test score
-    and their post-test score — which p. 103 names the primary evaluation instrument.
-  - ONE PARALLEL PAIR PER MATERIAL, generated on an educator's explicit click, never on
-    upload. Up to 20 multiple-choice items, each holding BOTH wordings on one row: same
-    concept, same answer, same four options, different sentence and different option order.
-    Everyone sits the same paper, which is what makes the two scores comparable at all.
-  - THE MODEL WRITES ONLY THE SENTENCES. Options are four educator-vetted concepts.term
-    values chosen by the server from the answer's document neighbourhood, so there is no
-    hallucination surface on the answer key. One Gemini call per material.
-  - NO DIFFICULTY TIER. A "standard pre-test" must not adapt; nothing reads bkt_mastery.
-  - THE LOCK: a material is locked for a student while its assessment's LATEST released
-    phase has no completed attempt by them — no PDF, no chatbot, no flashcards, no games,
-    no Free Recall, no Feynman, no adaptive test. A pre-test is a baseline, so a student who
-    reads the lesson first has an inflated baseline and a shrunken measured gain. Enforced
-    server-side at nine call sites, each one line below the existing access check.
-  - IT WRITES NOTHING THAT FEEDS THE PLATFORM — no bkt_mastery, no bkt_update_logs, no
-    practice_telemetry, no activity_logs. bkt_source stays a two-value enum and activity_type
-    gains no value. Consequence, stated rather than hidden: a pre-test does not extend a
-    study streak.
-  - The educator downloads a CSV of pre score / post score / gain per student. That table is
-    the only place the study's primary measurement lives — export it before the tables are
-    dropped.
+12. Mastery-evidence export — the study's learning-progress measurement [IMPLEMENTED 2026-09-02]
+  - REPLACED THE PRE-TEST / POST-TEST INSTRUMENT, which was removed on 2026-09-02
+    (migrations 0024 built it, 0025 dropped it). Historical reference:
+    LearnSyncAI artifacts/PREPOST_TEST_IMPLEMENTATION.md, marked REMOVED.
+  - WHY IT CHANGED. The pre/post design served paper RQ4 (p. 55), but the actual
+    student-usage window is ONE WEEK (implementation runs 1-3 weeks: week 1 gathers
+    materials and distributes accounts, week 2 is the usage, week 3 wraps up). A
+    pre/post delta over one week is not attributable to the platform, so on advice the
+    evidence is now the BKT mastery the platform already tracks across that week.
+  - GET /api/educator/materials/:materialId/mastery-evidence — educator-scoped, per
+    material, read-only, no Zod (path parameter only). Returns one row per student in
+    the material's class, plus a class summary, and the client turns it into a CSV.
+  - THE PAIR, per student, over S = the concepts that have a bkt_mastery row:
+      start_mastery = mean over S of p_l_posterior of that concept's OLDEST log row
+      end_mastery   = mean over S of bkt_mastery.latent_mastery
+      growth        = end - start          (a paired difference, same denominator)
+    Both ends are real evidence and the sets are identical, which is what makes growth
+    a paired per-student figure rather than two populations compared.
+  - start_mastery IS "AFTER THE FIRST OPPORTUNITY", NEVER "BASELINE". The first
+    answer's outcome is already inside it. The three obvious "before" candidates -
+    p_l_prior of the oldest row, EQ(4) at t=0, and a backward reconstruction to the
+    window's start - are all exactly P(L0) = 0.10 for every student, which is the
+    model's initialisation and must never be printed as a measurement.
+  - IT WRITES NOTHING. Educators read mastery and never move it (paper p. 58);
+    nothing on this path imports server/lib/bkt.ts and bkt_source stays two-valued.
+  - Never print P(L0): start/end/growth/m_doc are null when assessed_concept_count is
+    0, and the class figures average STARTED students only. Not-started students are
+    still listed - "nineteen of twenty never opened this" is a finding.

@@ -1,0 +1,12 @@
+# Archived 2026-09-02, immediately before migration 0025 dropped material_assessments
+# and assessment_attempts. Every row below belongs to a DEVELOPER TEST ACCOUNT —
+# angelo.soria (the developer), "student" (Lowa Osa, the seeded demo account) and
+# louis (Louis Baruelo). No school-study data was ever collected through this
+# instrument, so nothing of research value was lost with the tables.
+# One assessment existed: "6. Information Security", 20 items, never released.
+material_title,username,first_name,last_name,grade_level,phase,status,score,correct_count,total,started_at,completed_at
+6. Information Security,angelo.soria,Angelo,Soria,9,pre,completed,0.4,8,20,2026-08-21T14:44:13Z,2026-08-21T14:59:00Z
+6. Information Security,angelo.soria,Angelo,Soria,9,post,completed,0.25,5,20,2026-08-21T22:31:25Z,2026-08-21T22:31:52Z
+6. Information Security,student,Lowa,Osa,9,post,in_progress,,,20,2026-08-21T22:53:36Z,
+6. Information Security,louis,Louis,Baruelo,9,pre,completed,0.15,3,20,2026-08-27T08:52:02Z,2026-08-27T08:52:47Z
+6. Information Security,louis,Louis,Baruelo,9,post,completed,0.2,4,20,2026-08-27T08:53:21Z,2026-08-27T08:54:04Z
