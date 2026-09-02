@@ -139,6 +139,12 @@ interface UpstreamError {
   retryAfterMs?: number;
   /** Exhausted quota metric, e.g. `…/generate_content_free_tier_requests`. */
   quotaMetric?: string;
+  /**
+   * The quota *rule* id, e.g. `GenerateRequestsPerMinutePerProjectPerModel-FreeTier`.
+   * Kept as its own field rather than folded into `quotaMetric`, because only this
+   * one names the WINDOW — see `isPerMinuteWindow`.
+   */
+  quotaId?: string;
   quotaLimit?: string;
 }
 
@@ -159,6 +165,7 @@ function parseUpstreamError(err: unknown): UpstreamError {
   let message = raw;
   let retryAfterMs: number | undefined;
   let quotaMetric: string | undefined;
+  let quotaId: string | undefined;
   let quotaLimit: string | undefined;
 
   try {
@@ -174,7 +181,8 @@ function parseUpstreamError(err: unknown): UpstreamError {
         }
         if (type.endsWith('QuotaFailure')) {
           const violation = detail.violations?.[0];
-          quotaMetric ??= violation?.quotaMetric ?? violation?.quotaId;
+          quotaMetric ??= violation?.quotaMetric;
+          quotaId ??= violation?.quotaId;
           quotaLimit ??= violation?.quotaValue;
         }
       }
@@ -187,10 +195,14 @@ function parseUpstreamError(err: unknown): UpstreamError {
     const m = /retry in ([\d.]+)\s*s/i.exec(message);
     return m ? Math.ceil(Number.parseFloat(m[1]) * 1000) : undefined;
   })();
-  quotaMetric ??= /Quota exceeded for metric:\s*(\S+?)[,\s]/i.exec(message)?.[1];
+  // Google writes this two ways: `Quota exceeded for metric: <name>` from
+  // generativelanguage, and `Quota exceeded for <name> with base model: …` from
+  // the aiplatform-backed paid tier. The `metric:` label is optional, and reading
+  // it as required is what let a per-minute refusal be graded as a spent day.
+  quotaMetric ??= /Quota exceeded for (?:metric:\s*)?(\S+?)[,\s]/i.exec(message)?.[1];
   quotaLimit ??= /\blimit:\s*(\d+)/i.exec(message)?.[1];
 
-  return { status, reason, message, retryAfterMs, quotaMetric, quotaLimit };
+  return { status, reason, message, retryAfterMs, quotaMetric, quotaId, quotaLimit };
 }
 
 type Failure = 'quota' | 'transient' | 'fatal';
@@ -204,11 +216,52 @@ type Failure = 'quota' | 'transient' | 'fatal';
  * sentence is simply untrue: the daily allowance is spent, and no amount of
  * retrying inside one upload will change that.
  */
+const PER_MINUTE = /per[_-]?min/i;
+
+/**
+ * Is this 429 a short burst limit, or a spent allowance?
+ *
+ * Only one of them recovers on its own, and Google states the window in three
+ * different places depending on which backend refused. NO SINGLE FIELD IS
+ * RELIABLE:
+ *
+ *   quotaId      `GenerateRequestsPerMinutePerProjectPerModel-FreeTier` — names it
+ *   quotaMetric  `…/generate_content_free_tier_requests` — names no window at all
+ *   message      `…/global_embed_content_requests_per_minute_per_base_model`
+ *
+ * Testing `quotaMetric` alone is what made a 60-second burst limit surface to a
+ * student as "the daily allowance is spent, come back tomorrow" — measured twice,
+ * on two different message shapes, the second on a PAID key with no daily
+ * embedding cap at all. It also cut the retry budget to `QUOTA_MAX_ATTEMPTS`,
+ * abandoning a request that a few more seconds of backoff would have cleared.
+ *
+ * `PER_MINUTE` is case-insensitive so it catches both `per_minute` in a metric
+ * path and camelCase `PerMinute` in a quota id.
+ */
+const isPerMinuteWindow = (e: UpstreamError): boolean =>
+  PER_MINUTE.test(e.quotaId ?? '') ||
+  PER_MINUTE.test(e.quotaMetric ?? '') ||
+  PER_MINUTE.test(e.message);
+
+/**
+ * Google sometimes reports CAPACITY as a 429 rather than a 503, with no quota
+ * metadata attached at all — measured on `gemini-3.7-flash`, which answered four
+ * of five requests with "This model is currently experiencing high demand"
+ * (CLAUDE.md records the run). Nothing about the account is exhausted there; the
+ * next attempt often succeeds.
+ *
+ * Without this the message falls through to `quota`, which cuts the retry budget
+ * to two and tells the student the service is finished for the day when it is
+ * merely busy. Matched on capacity words only — a spent-allowance body never
+ * contains them, so this cannot swallow a genuine quota refusal.
+ */
+const OVERLOADED = /overload|high demand|experiencing[^.]{0,20}demand/i;
+
 function classifyFailure(e: UpstreamError): Failure {
   if (e.status === 429 || e.reason === 'RESOURCE_EXHAUSTED') {
-    // Google names the window in the metric. A per-minute burst limit clears by
-    // itself; a per-day allowance does not.
-    return /per[_-]?min/i.test(e.quotaMetric ?? '') ? 'transient' : 'quota';
+    if (OVERLOADED.test(e.message)) return 'transient';
+    // A per-minute burst limit clears by itself; a per-day allowance does not.
+    return isPerMinuteWindow(e) ? 'transient' : 'quota';
   }
   if (e.status !== undefined) return TRANSIENT_STATUSES.has(e.status) ? 'transient' : 'fatal';
   // No status on the error object: fall back to sniffing the message.
@@ -219,15 +272,35 @@ export class GeminiUnavailableError extends Error {
   readonly status: number;
   /** The upstream failure this was derived from, for logging and diagnosis. */
   readonly upstream?: UpstreamError;
+  /**
+   * Text a STUDENT may read — deliberately NOT `message`.
+   *
+   * `message` is operator detail: the upstream body, the quota metric, the
+   * billing hint. It belongs in server logs, `materials.parse_error` and the
+   * educator's Failed pill, and every one of those readers can act on it.
+   *
+   * The two were one string until a student was shown Google's own
+   * `https://cloud.google.com/…` quota URL in the chat error bar, and until
+   * "enable billing on the Google Cloud project behind this API key" was offered
+   * as advice to a 13-year-old.
+   *
+   * ⚠️ NOTHING HERE MAY NAME a key, a project, billing, a quota, a metric, an
+   * HTTP status or a URL. Say what the student can do instead — and if the answer
+   * is "nothing", say who can.
+   */
+  readonly userMessage: string;
 
   constructor(
     message = 'The AI service is temporarily unavailable. Please try again in a moment.',
-    options: { status?: number; upstream?: UpstreamError } = {}
+    options: { status?: number; upstream?: UpstreamError; userMessage?: string } = {}
   ) {
     super(message);
     this.name = 'GeminiUnavailableError';
     this.status = options.status ?? 503;
     this.upstream = options.upstream;
+    this.userMessage =
+      options.userMessage ??
+      'The study assistant is temporarily unavailable. Please try again in a moment.';
   }
 }
 
@@ -237,23 +310,117 @@ export class GeminiUnavailableError extends Error {
  * retrying this upload will not help.
  */
 export class GeminiQuotaError extends GeminiUnavailableError {
-  constructor(message: string, upstream?: UpstreamError) {
-    super(message, { status: 429, upstream });
+  constructor(message: string, upstream?: UpstreamError, userMessage?: string) {
+    super(message, { status: 429, upstream, userMessage });
     this.name = 'GeminiQuotaError';
   }
 }
 
-/** Educator- and student-facing text. Lands verbatim in `materials.parse_error`. */
+/**
+ * OPERATOR text — server logs, `materials.parse_error`, the educator's Failed
+ * pill. Names the metric and the limit because the reader can act on them.
+ *
+ * ⚠️ Never send this to a student. `userMessage` below is their half; see
+ * `GeminiUnavailableError.userMessage` for why the two were split.
+ *
+ * It no longer claims "Free-tier … daily": the window is now known (`isPerMinuteWindow`)
+ * and the tier is not — this exact sentence was printed to a student on a paid key.
+ */
 function quotaMessage(e: UpstreamError): string {
-  const metric = e.quotaMetric?.split('/').pop();
+  const metric = (e.quotaMetric ?? e.quotaId)?.split('/').pop();
   const detail = metric
     ? ` (${metric}${e.quotaLimit ? `, limit ${e.quotaLimit}` : ''})`
     : '';
-  return (
-    `The Gemini API quota for this key is exhausted${detail}. ` +
-    'Free-tier quotas reset on a daily cycle — try again after the reset, or enable ' +
-    'billing on the Google Cloud project behind this API key.'
-  );
+
+  return isPerMinuteWindow(e)
+    ? `Gemini refused the request: the per-minute rate limit for this key was exceeded${detail}. ` +
+        'That window clears within a minute — it is a burst, not a spent allowance.'
+    : `The Gemini API quota for this key is exhausted${detail}. ` +
+        'Daily quotas reset on a 24-hour cycle — try again after the reset, or raise the ' +
+        'limit on the Google Cloud project behind this API key.';
+}
+
+/**
+ * STUDENT text for an upstream failure. See `GeminiUnavailableError.userMessage`.
+ *
+ * THREE outcomes, because they call for three different actions and collapsing
+ * them wastes the only sentence the student gets:
+ *
+ *   burst    cleared by the time they blink — wait seconds, try again
+ *   outage   Google is down or overloaded — wait a moment, try again
+ *   spent    retrying cannot work today — stop, and tell someone who can act
+ *
+ * It was two sentences until the three scenarios were traced end to end, and a
+ * 30-second overload was telling students to fetch their teacher.
+ *
+ * `classifyFailure` is consulted rather than re-derived, so the advice can never
+ * disagree with the retry behaviour the student just experienced.
+ */
+function userFacingMessage(e: UpstreamError): string {
+  if (classifyFailure(e) === 'quota') {
+    return 'The study assistant has reached its limit for today. Trying again ' +
+      'will not help right now — please tell your teacher.';
+  }
+  return isPerMinuteWindow(e)
+    ? 'The study assistant is busy right now. Wait a few seconds and try again.'
+    : 'The study assistant is having trouble right now. Please wait a moment and try again.';
+}
+
+/**
+ * Asks Google, at boot, whether `GEMINI_API_KEY` is actually usable.
+ *
+ * The check above only ever fired when the key was ABSENT, so a key that was
+ * present but unusable produced no signal at all until an educator uploaded a PDF
+ * and extraction 401'd several layers down — twenty minutes and one confusing
+ * `parse_error` later. That is precisely the failure class the BKT parameter
+ * warm-up in `server/index.ts` already exists to prevent, and a workflow that
+ * re-pastes this key by hand on every quota rotation earns the same treatment.
+ *
+ * `models.list()` and NOT `generateContent`: this is free metadata, so it cannot
+ * eat into the 20/day per-model free-tier bucket that one adaptive test already
+ * spends five of.
+ *
+ * ⚠️ A LIVE CALL, DELIBERATELY NOT A PREFIX OR LENGTH CHECK. Both `AIza…` (39
+ * char) and `AQ.…` (53 char) keys are valid and in rotation on this project — a
+ * shape check written against the older format would reject four working keys.
+ * Only Google can say whether a credential is good.
+ */
+export async function verifyGeminiCredential(): Promise<void> {
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not set.');
+
+  try {
+    await genai.models.list();
+  } catch (err) {
+    const e = parseUpstreamError(err);
+    throw new Error(
+      `HTTP ${e.status ?? '?'} ${e.reason ?? ''} — ${truncate(e.message, 200)}`.replace(/\s+/g, ' ')
+    );
+  }
+}
+
+/**
+ * What a STUDENT is told when an AI call fails. Every student-facing route that
+ * can surface a Gemini failure must send this and never `err.message`.
+ *
+ * ⚠️ `err.message` IS OPERATOR TEXT. It names the quota metric, the limit and the
+ * Google Cloud project, and for a failure classified `fatal` it is the raw SDK
+ * body — Google's `https://` documentation link included. Six routes forwarded it
+ * to the browser, where every student tab renders it verbatim: `api.ts` copies the
+ * response's `message` onto `err.message`, and each tab shows that in its error
+ * bar. Several of those routes carried a comment promising the opposite.
+ *
+ * Anything that is not a typed Gemini failure is a bug on our side whose text was
+ * never written for a child, so it gets the generic sentence. The real cause still
+ * reaches the server log at each call site.
+ *
+ * The EDUCATOR half is deliberately unchanged: `materials.parse_error`, the Failed
+ * pill and `POST /api/assessments/:id/generate` all keep `err.message`, because
+ * that reader can act on it.
+ */
+export function studentFacingError(err: unknown): string {
+  return err instanceof GeminiUnavailableError
+    ? err.userMessage
+    : 'The study assistant ran into a problem. Please try again in a moment.';
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -311,12 +478,16 @@ async function withRetry<T>(fn: () => Promise<T>, label: string, maxAttempts = 4
 
   switch (classifyFailure(lastParsed)) {
     case 'quota':
-      throw new GeminiQuotaError(quotaMessage(lastParsed), lastParsed);
+      throw new GeminiQuotaError(
+        quotaMessage(lastParsed),
+        lastParsed,
+        userFacingMessage(lastParsed)
+      );
     case 'transient':
       throw new GeminiUnavailableError(
         `The AI service is temporarily unavailable (HTTP ${lastParsed.status ?? '5xx'}). ` +
           'Please try again in a moment.',
-        { upstream: lastParsed }
+        { upstream: lastParsed, userMessage: userFacingMessage(lastParsed) }
       );
     default:
       throw lastError;

@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../lib/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { generateTermMatches, generateTrivia, generateCrosswordWords } from '../lib/gameContent';
-import { GeminiUnavailableError } from '../lib/gemini';
+import { GeminiUnavailableError, studentFacingError } from '../lib/gemini';
 import { buildCrossword } from '../lib/crossword';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 // PRE/POST GATE — temporary (migration 0024). Delete with the feature.
@@ -130,7 +130,11 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
     // cannot possibly work — the same split `failGeneration()` makes for adaptive
     // tests and the deck generator makes for flashcards.
     if (err instanceof GeminiUnavailableError) {
-      res.status(err.status).json({ error: 'Game content generation failed', message: err.message });
+      // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+      res.status(err.status).json({
+        error: 'Game content generation failed',
+        message: studentFacingError(err),
+      });
       return;
     }
 

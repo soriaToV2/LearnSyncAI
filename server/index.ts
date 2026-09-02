@@ -29,6 +29,7 @@ import subjectRoutes from './routes/subjects.routes';
 // PRE/POST GATE — temporary research instrument, removed after the school study.
 import assessmentRoutes from './routes/assessments.routes';
 import { loadBktParameters } from './lib/bkt';
+import { verifyGeminiCredential } from './lib/gemini';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -254,6 +255,23 @@ app.listen(PORT, () => {
       );
     })
     .catch((err) => console.error('[BKT] Parameter warm-up failed:', err));
+
+  // Same reasoning as the warm-up above, for the other piece of configuration
+  // that is invisible until it is needed: `gemini.ts` only warned when the key was
+  // MISSING, so a key that was present but unusable stayed silent until an
+  // educator uploaded a PDF and extraction 401'd. One free metadata call at boot
+  // turns that into a line an operator reads before anyone tries to use the app.
+  //
+  // Non-blocking, exactly like the warm-up: a slow or unreachable Google must
+  // never delay startup, and this check must never be able to take the API down.
+  void verifyGeminiCredential()
+    .then(() => console.log('   Gemini: credential OK\n'))
+    .catch((err) => {
+      console.error(`\n⛔ Gemini: credential REJECTED — ${err.message}`);
+      console.error('   Every AI feature will fail: extraction, flashcards, tests, games, chat.');
+      console.error('   Check GEMINI_API_KEY in .env (and in the Render dashboard for the');
+      console.error('   deployed app). The server is still running and still serving.\n');
+    });
 });
 
 export default app;

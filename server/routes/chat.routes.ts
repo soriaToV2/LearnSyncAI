@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 import { ThinkingLevel } from '@google/genai';
 import {
+  studentFacingError,
   generateEmbedding,
   streamContent,
   GeminiUnavailableError,
@@ -274,7 +275,11 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     }
   } catch (err: any) {
     console.error('[Chat] Context retrieval error:', err.message);
-    res.status(500).json({ error: 'Failed to retrieve context', message: err.message });
+    // Mirrors the streaming handler below: a typed Gemini failure keeps its own
+    // status, so a spent quota answers 429 rather than being flattened to 500.
+    // This branch hardcoded 500 and leaked `err.message` to the student.
+    const status = err instanceof GeminiUnavailableError ? err.status : 500;
+    res.status(status).json({ error: 'Failed to retrieve context', message: studentFacingError(err) });
     return;
   }
 
@@ -429,17 +434,26 @@ Guidelines:
   } catch (err: any) {
     console.error('[Chat] Streaming error:', err.message);
     if (!res.headersSent) {
-      // Nothing has reached the browser yet, so the true reason still can. A typed
-      // Gemini failure carries its own status and its own honest sentence: 429 when
-      // the key's daily allowance is spent, 503 for an outage. The client reads
-      // `message` off a non-OK response and shows it.
+      // Nothing has reached the browser yet, so a real status still can be sent. A
+      // typed Gemini failure carries its own: 429 when the allowance is spent, 503
+      // for an outage. The client reads `message` off a non-OK response and renders
+      // it to the student, so it gets `userMessage`, never `err.message`.
       const status = err instanceof GeminiUnavailableError ? err.status : 500;
-      res.status(status).json({ error: 'Streaming failed', message: err.message });
+      res.status(status).json({ error: 'Streaming failed', message: studentFacingError(err) });
     } else {
       // Mid-stream: the student is already reading a partial answer, so there is no
       // status left to send and no safe way to retry — a second attempt would
       // splice itself into the middle of a sentence.
-      res.write(`data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`);
+      // ⚠️ STUDENT COPY, NOT A STATUS. `ResourcesTab` throws on this field and
+      // renders the string in its error bar, so "Stream interrupted" was jargon
+      // with no action attached. Asking again is the only thing that works here —
+      // the answer cannot be resumed, and retrying server-side would splice a
+      // second attempt into the middle of a sentence.
+      res.write(
+        `data: ${JSON.stringify({
+          error: 'The answer stopped partway through. Please ask again.',
+        })}\n\n`
+      );
       res.end();
     }
   }

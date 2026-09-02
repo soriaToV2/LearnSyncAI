@@ -7,6 +7,7 @@ import { requireRole } from '../middleware/requireRole';
 import {
   generateEmbedding,
   generateJson,
+  studentFacingError,
   GeminiUnavailableError,
   GEMINI_GRADING_MODEL,
   GEMINI_UTILITY_MODEL,
@@ -908,10 +909,17 @@ Example output:
       // 429 when the key's quota is spent — rather than dumping Google's raw
       // error JSON into the student's face. A quota refusal must not read as a
       // retryable outage; retrying it just fails again.
-      res.status(err.status).json({ error: 'AI service unavailable', message: err.message });
+      // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+      res.status(err.status).json({ error: 'AI service unavailable', message: studentFacingError(err) });
       return;
     }
-    res.status(500).json({ error: 'Failed to process free recall submission', message: err.message });
+    res.status(500).json({
+      error: 'Failed to process free recall submission',
+      // Not a typed Gemini failure — a Supabase error, a vector-parse throw or a
+      // bug. `err.message` is then a Postgres string, and the student is the wrong
+      // reader for it; `console.error` above already has the real cause.
+      message: 'Your writing could not be checked just now. Please try again in a moment.',
+    });
   }
 });
 
@@ -1492,10 +1500,15 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
       // 429 when the key's quota is spent — rather than dumping Google's raw
       // error JSON into the student's face. A quota refusal must not read as a
       // retryable outage; retrying it just fails again.
-      res.status(err.status).json({ error: 'AI service unavailable', message: err.message });
+      // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+      res.status(err.status).json({ error: 'AI service unavailable', message: studentFacingError(err) });
       return;
     }
-    res.status(500).json({ error: 'Failed to evaluate Feynman submission', message: err.message });
+    res.status(500).json({
+      error: 'Failed to evaluate Feynman submission',
+      // See the Free Recall handler above — same reasoning, same wrong reader.
+      message: 'Your explanation could not be checked just now. Please try again in a moment.',
+    });
   }
 });
 

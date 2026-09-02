@@ -15,7 +15,7 @@ import { publishedMaterialIds, rejectInaccessibleMaterials } from '../lib/materi
 import { rejectLockedMaterials } from '../lib/assessmentGate';
 import { loadOwnedSpace, type SpaceOwner } from '../lib/spaceAccess';
 import { generateQuestionsForConcepts } from '../lib/questionGeneration';
-import { GeminiUnavailableError } from '../lib/gemini';
+import { GeminiUnavailableError, studentFacingError } from '../lib/gemini';
 import type { SpaceMaterial } from '../types/database';
 
 const router = Router();
@@ -731,7 +731,10 @@ router.post(
         if (err instanceof GeminiUnavailableError) {
           res.status(err.status).json({
             error: 'Question generation failed',
-            message: `${err.message} Nothing was added to this deck — you can add these cards as terms and definitions instead.`,
+            // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+            message:
+              `${studentFacingError(err)} Nothing was added to this deck — ` +
+              'you can add these cards as terms and definitions instead.',
           });
           return;
         }

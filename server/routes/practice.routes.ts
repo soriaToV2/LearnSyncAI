@@ -6,7 +6,7 @@ import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 // PRE/POST GATE — temporary (migration 0024). Delete with the feature.
 import { rejectLockedMaterials } from '../lib/assessmentGate';
 import { requireOwnedSpace, spaceMaterialIds, type SpaceOwner } from '../lib/spaceAccess';
-import { GeminiUnavailableError } from '../lib/gemini';
+import { GeminiUnavailableError, studentFacingError } from '../lib/gemini';
 import { allocateConcepts, type QuestionFormat } from '../lib/testAllocation';
 import { applyTestCompletion, bktProblems } from '../lib/bkt';
 import { logActivity } from '../lib/activity';
@@ -240,7 +240,11 @@ function failGeneration(res: Response, err: unknown): void {
     // parses Google's RetryInfo into `upstream.retryAfterMs`. Hence the /1000.
     const retryAfterMs = err.upstream?.retryAfterMs;
     if (retryAfterMs) res.setHeader('Retry-After', String(Math.ceil(retryAfterMs / 1000)));
-    res.status(err.status).json({ error: 'Question writer unavailable', message: err.message });
+    // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+    res.status(err.status).json({
+      error: 'Question writer unavailable',
+      message: studentFacingError(err),
+    });
     return;
   }
   const message = err instanceof Error ? err.message : 'Unknown generation error';

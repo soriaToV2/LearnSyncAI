@@ -109,9 +109,20 @@ function unavailableReason(material: SpaceMaterial): string | null {
   if (material.is_scanned) {
     return 'This is a scan of printed pages, so there is no text the study assistant can read. Ask your teacher for a text version.';
   }
-  return material.parse_error?.trim()
-    ? material.parse_error
-    : 'This document could not be prepared, so the study assistant cannot use it. Your teacher can re-upload it.';
+  /*
+   * ⚠️ `parse_error` IS DELIBERATELY NOT RENDERED HERE. It used to be, verbatim.
+   *
+   * That column holds operator detail — for a Gemini auth failure, the raw Google
+   * JSON body including its `https://` documentation link — and it was being read
+   * by a student, who can act on none of it. It is the same rule already stated in
+   * CLAUDE.md for the status vocabulary: this side says "Being prepared" / "Ready"
+   * / "Not available" rather than "Failed", because a technical cause tells a
+   * student something alarming they cannot do anything about.
+   *
+   * The educator keeps it, on `MaterialDetail` — they are the reader who can act,
+   * and they are the one named below.
+   */
+  return 'This document could not be prepared, so the study assistant cannot use it. Your teacher can re-upload it.';
 }
 
 export default function ResourcesTab({
@@ -404,7 +415,10 @@ export default function ResourcesTab({
           ? { ...m, content: '⚠️ Sorry, something went wrong. Please try again.', isStreaming: false }
           : m
       ));
-      setChatError(err.message ?? 'An error occurred');
+      // Every server path now sends student copy in `message` (studentFacingError()
+      // in gemini.ts), so this fallback only covers a network drop with no response
+      // body at all — where "An error occurred" told the student nothing to do.
+      setChatError(err.message ?? 'The study assistant could not be reached. Check your connection and try again.');
     } finally {
       setIsStreaming(false);
     }
