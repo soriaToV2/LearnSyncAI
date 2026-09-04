@@ -131,6 +131,8 @@ export interface FlashcardDeck {
   space_id: string | null;
   title: string;
   description: string | null;
+  /** Display only: true puts the definition on the first face. Migration 0027. */
+  answer_first: boolean;
   created_at: string;
 }
 

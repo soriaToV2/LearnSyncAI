@@ -372,12 +372,19 @@ $$;
 -- ============================================================================
 
 CREATE TABLE flashcard_decks (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    space_id    UUID NOT NULL REFERENCES study_spaces(id) ON DELETE CASCADE,
-    title       TEXT NOT NULL,
-    description TEXT,
-    created_at  TIMESTAMPTZ DEFAULT now()
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    space_id     UUID NOT NULL REFERENCES study_spaces(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    description  TEXT,
+    -- Migration 0027. A deck belongs to exactly one student, so this is a
+    -- per-student setting without a second table, and it is the right grain:
+    -- a question-format deck reads oddly reversed where a term deck reads well.
+    answer_first BOOLEAN NOT NULL DEFAULT false,
+    created_at   TIMESTAMPTZ DEFAULT now()
 );
+
+COMMENT ON COLUMN flashcard_decks.answer_first IS
+    'Display preference: true shows the definition (the answer) on the first face and the term/question on the reverse, in both the card grid and the study session. Written only by PUT /api/spaces/:id/decks/:deckId. Affects nothing but rendering -- no score, schedule or mastery path reads it.';
 
 CREATE INDEX idx_flashcard_decks_space ON flashcard_decks (space_id);
 

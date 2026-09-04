@@ -458,11 +458,20 @@ router.post('/:id/decks', requireRole('student'), async (req: Request, res: Resp
 
 /**
  * PUT /api/spaces/:id/decks/:deckId
- * Renames a deck or edits its description. Owner only.
+ * Renames a deck, edits its description, or sets which face it opens on.
+ * Owner only.
  *
- * Title and description are the only fields a student may set — the update is
- * built from the parsed schema, never spread from req.body, so an extra field
- * in the payload cannot reach the table.
+ * Those three are the only fields a student may set — the update is built key by
+ * key from the parsed schema, never spread from req.body, so an extra field in
+ * the payload cannot reach the table.
+ *
+ * ⚠️ IT IS A PARTIAL WRITE, AND THAT IS A FIX RATHER THAN A CONVENIENCE. It used
+ * to send `description: parsed.data.description ?? null` unconditionally, so any
+ * update that did not carry a description wiped it. Unnoticed while the rename
+ * modal was the only caller and always sent both fields; a real bug the moment
+ * the display toggle started sending `answer_first` on its own, because the next
+ * rename would have reset the student's choice. `UpdateDeckSchema` guarantees at
+ * least one key is present, so this can never build an empty update.
  */
 router.put('/:id/decks/:deckId', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = UpdateDeckSchema.safeParse(req.body);
@@ -477,12 +486,16 @@ router.put('/:id/decks/:deckId', requireRole('student'), async (req: Request, re
     return;
   }
 
+  // Absent means "leave it alone". For `description` an explicit null still
+  // means "clear it", which is why the test is against undefined and not falsy.
+  const patch: Record<string, unknown> = {};
+  if (parsed.data.title !== undefined) patch.title = parsed.data.title;
+  if (parsed.data.description !== undefined) patch.description = parsed.data.description;
+  if (parsed.data.answer_first !== undefined) patch.answer_first = parsed.data.answer_first;
+
   const { data, error } = await supabaseAdmin
     .from('flashcard_decks')
-    .update({
-      title: parsed.data.title,
-      description: parsed.data.description ?? null,
-    })
+    .update(patch)
     .eq('id', req.params.deckId)
     .eq('space_id', space.id)
     .select()

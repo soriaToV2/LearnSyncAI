@@ -35,6 +35,31 @@ interface FlashcardStudyViewProps {
    * but the UI says up front that most of them will not count.
    */
   isPractice?: boolean;
+  /**
+   * The deck's `answer_first` setting: show the definition first and ask for the
+   * term, rather than the other way round.
+   *
+   * ⚠️ IT IS A PROP RATHER THAN A SWAP DONE BY THE CALLER, AND THAT IS
+   * DELIBERATE. Exchanging `front` and `back` in the array handed to this
+   * component would be invisible here and wrong twice: the faces are labelled
+   * "Question" and "Answer" as literal strings, and `faceTypeClass()` runs a
+   * different size curve per side because a prompt is short and a definition is
+   * a passage. A silent string swap would label a definition "Question" and set
+   * it at term size. `front`/`back` therefore keep one meaning everywhere —
+   * front is always the term or generated question, back is always the
+   * educator's definition — and only rendering reacts to this flag.
+   */
+  answerFirst?: boolean;
+  /**
+   * What the `front` of these cards holds, named for the student: "Term" for a
+   * term-format deck, "Question" for one generated in question format. The back
+   * is always "Definition", so only this half varies.
+   *
+   * Passed in rather than derived here because the deck's format is a property
+   * of the whole deck, and this component only ever sees the cards of one
+   * session — which in a 'due' round can be a handful of them.
+   */
+  frontNoun?: string;
 }
 
 // ─── Spaced Repetition Config ─────────────────────────────────────────────────
@@ -109,16 +134,22 @@ const RATING_CONFIG: Record<EaseRating, {
  * every line starts at a different x-position — and the longest definitions run
  * to fifteen lines on a phone.
  *
- * The two faces need different curves, which is why `kind` exists rather than
- * one shared table. A back is a passage; a FRONT is a prompt — a term (23
- * characters on average, 96 at the longest) or a one-sentence generated
- * question. Running the front down the back's curve would shrink a perfectly
+ * The two kinds of content need different curves, which is why `kind` exists
+ * rather than one shared table. A definition is a PASSAGE; a term (23 characters
+ * on average, 96 at the longest) or a one-sentence generated question is a
+ * PROMPT. Running a prompt down the passage curve would shrink a perfectly
  * ordinary question to passage size in a card with room to spare.
+ *
+ * ⚠️ `kind` DESCRIBES THE TEXT, NOT WHICH FACE IT SITS ON. It was `'front' |
+ * 'back'`, which was the same thing right up until decks gained `answer_first`
+ * — with that on, the definition is the FIRST face, and keying the curve to
+ * position would blow a 162-character-median definition up to headline size.
+ * Call sites pass the nature of the string they are rendering.
  */
-function faceTypeClass(text: string, kind: 'front' | 'back'): string {
+function faceTypeClass(text: string, kind: 'prompt' | 'passage'): string {
   const len = text.length;
 
-  if (kind === 'front') {
+  if (kind === 'prompt') {
     if (len <= 260) return 'text-xl md:text-2xl leading-relaxed text-center';
     if (len <= 420) return 'text-lg md:text-xl leading-relaxed text-center';
     return 'text-base md:text-lg leading-relaxed text-left';
@@ -188,6 +219,8 @@ export default function FlashcardStudyView({
   deckTitle,
   onExit,
   isPractice = false,
+  answerFirst = false,
+  frontNoun = 'Term',
 }: FlashcardStudyViewProps) {
   const { celebrate } = useBadges();
 
@@ -235,9 +268,33 @@ export default function FlashcardStudyView({
   // the face hooks below can read it — a hook cannot run after an early return.
   const currentCard = studyCards[currentIndex];
 
+  /*
+   * Which string goes on which face, and what each one IS.
+   *
+   * `front`/`back` never change meaning — front is the term or generated
+   * question, back is the educator's definition. `answerFirst` only decides
+   * which of them the student meets first. The two `*Kind` values travel with
+   * the text so `faceTypeClass()` sizes a definition as a passage wherever it
+   * lands, and the labels swap with it so a definition is never called a
+   * "Question".
+   */
+  const promptText = answerFirst ? (currentCard?.back ?? '') : (currentCard?.front ?? '');
+  const answerText = answerFirst ? (currentCard?.front ?? '') : (currentCard?.back ?? '');
+  const promptKind = answerFirst ? 'passage' : 'prompt';
+  const answerKind = answerFirst ? 'prompt' : 'passage';
+  /*
+   * ⚠️ THE FACES ARE NAMED FOR WHAT THEY HOLD. They were the fixed strings
+   * "Question" and "Answer", which said nothing about which side was which once
+   * a deck could be reversed — and left the study view using different words
+   * from the toggle that set it ("Definition" there, "Answer" here).
+   */
+  const promptLabel = answerFirst ? 'Definition' : frontNoun;
+  const answerLabel = answerFirst ? frontNoun : 'Definition';
+
   // Each face fades its bottom edge while it still has text below the fold.
-  const [frontScrollRef, frontOverflows] = useMoreBelow(currentCard?.front ?? '');
-  const [backScrollRef, backOverflows] = useMoreBelow(currentCard?.back ?? '');
+  // Keyed on the text itself, so flipping the deck's sides re-measures for free.
+  const [frontScrollRef, frontOverflows] = useMoreBelow(promptText);
+  const [backScrollRef, backOverflows] = useMoreBelow(answerText);
 
   // ── Rating handler ──────────────────────────────────────────────────────────
 
@@ -617,7 +674,11 @@ export default function FlashcardStudyView({
           tabIndex={0}
           data-tour="fc-card"
           aria-pressed={isFlipped}
-          aria-label={isFlipped ? 'Answer shown. Press Space to hide.' : 'Question shown. Press Space to reveal the answer.'}
+          aria-label={
+            isFlipped
+              ? `${answerLabel} shown. Press Space to hide.`
+              : `${promptLabel} shown. Press Space to reveal the ${answerLabel.toLowerCase()}.`
+          }
           onClick={handleFlip}
           className={`relative w-full h-72 sm:h-80 md:h-[23rem] cursor-pointer select-none transition-all duration-350 rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-4 focus-visible:ring-offset-background
             ${slideDirection === 'right' ? 'translate-x-[130%] opacity-0 rotate-6' : ''}
@@ -639,7 +700,7 @@ export default function FlashcardStudyView({
             >
               <div className="flex items-baseline justify-between gap-3 px-6 pt-5 shrink-0">
                 <span className="font-sans text-[10px] uppercase tracking-widest text-slate-600 font-bold">
-                  Question
+                  {promptLabel}
                 </span>
                 {currentCard.source && (
                   <span className="font-sans text-[10px] text-slate-700 truncate min-w-0">
@@ -655,8 +716,12 @@ export default function FlashcardStudyView({
                 className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex flex-col"
                 style={frontOverflows ? FADE_MASK : undefined}
               >
-                <p className={`my-auto font-display text-on-surface ${faceTypeClass(currentCard.front, 'front')}`}>
-                  {currentCard.front}
+                {/* Font family and colour stay with the FACE, not the content:
+                    the first face is the "before you flip" face and should look
+                    like it whichever string it holds. Only size and alignment
+                    follow the text, via the kind above. */}
+                <p className={`my-auto font-display text-on-surface ${faceTypeClass(promptText, promptKind)}`}>
+                  {promptText}
                 </p>
               </div>
               <div className="shrink-0 pb-5 flex justify-center">
@@ -684,7 +749,7 @@ export default function FlashcardStudyView({
             >
               <div className="flex items-baseline justify-between gap-3 px-6 pt-5 shrink-0">
                 <span className="font-sans text-[10px] uppercase tracking-widest text-primary-fixed-dim/50 font-bold">
-                  Answer
+                  {answerLabel}
                 </span>
                 {currentCard.source && (
                   <span className="font-sans text-[10px] text-slate-700 truncate min-w-0">
@@ -708,8 +773,8 @@ export default function FlashcardStudyView({
                 className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex flex-col"
                 style={backOverflows ? FADE_MASK : undefined}
               >
-                <p className={`my-auto font-sans text-primary-fixed font-medium ${faceTypeClass(currentCard.back, 'back')}`}>
-                  {currentCard.back}
+                <p className={`my-auto font-sans text-primary-fixed font-medium ${faceTypeClass(answerText, answerKind)}`}>
+                  {answerText}
                 </p>
               </div>
               <div className="shrink-0 pb-5 flex justify-center items-center gap-2">

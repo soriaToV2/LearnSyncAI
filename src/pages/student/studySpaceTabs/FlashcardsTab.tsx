@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck } from 'lucide-react';
+import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck, Shuffle, Undo2 } from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import FlashcardStudyView from '../components/FlashcardStudyView';
 import Modal from '../../../components/ui/Modal';
@@ -9,6 +9,8 @@ import { api } from '../../../lib/api';
 // Shared with StudySpace, which counts due cards for the tab badge. One copy of
 // the rule on the client; the server stays authoritative.
 import { isDue } from '../../../lib/reviewSchedule';
+// Lifted out of TermMatchingGame when this grid needed one too.
+import { shuffle } from '../../../lib/shuffle';
 
 interface Flashcard {
   id: string;
@@ -18,6 +20,8 @@ interface Flashcard {
   sourceMaterialId?: string | null;
   /** When this card is next due. Past or null = due now. */
   nextReviewAt?: string | null;
+  /** The model wrote this card's front, so it is a question, not the term. */
+  isAiGenerated?: boolean;
 }
 
 /** "Tue 4 Aug" — short enough for a deck tile. */
@@ -43,6 +47,33 @@ interface FlashcardSet {
   description?: string;
   cardCount: number;
   cards: Flashcard[];
+  /** Show the definition first and ask for the term. Deck row, migration 0027. */
+  answerFirst: boolean;
+}
+
+/**
+ * Type size and alignment for a face in the DECK GRID, from how much text it
+ * holds — the small-card cousin of `faceTypeClass()` in `FlashcardStudyView`.
+ *
+ * ⚠️ IT EXISTS BECAUSE `answer_first` CHANGED WHAT A FACE CAN HOLD. The front
+ * was always a term (23 characters on average) and was fixed at `text-lg`;
+ * reversed, it holds a definition with a 162-character median that reaches 643,
+ * in a 256px-tall box. One size cannot serve both.
+ *
+ * ⚠️ DO NOT IMPORT `faceTypeClass` INSTEAD. Its bands are measured against the
+ * study card, which is `h-72` to `23rem` tall and twice as wide; its shortest
+ * band alone runs to 260 characters, which is most of a definition.
+ *
+ * Size and alignment only. Font family and colour belong to the face — the back
+ * stays cyan and `font-sans` whatever it holds — so they are not set here.
+ */
+function gridFaceClass(text: string): string {
+  const len = text.length;
+  if (len <= 120) return 'text-lg leading-snug text-center';
+  if (len <= 300) return 'text-base leading-snug text-center';
+  // Past roughly four lines, centring hurts: every line starts at a different
+  // x-position. Same reasoning as the study view's own curve.
+  return 'text-sm leading-relaxed text-left';
 }
 
 interface SpaceMaterial {
@@ -119,12 +150,95 @@ export default function FlashcardsTab({
     { material: SpaceMaterial; message: string; currentFormat: CardFormat } | null
   >(null);
 
+  /**
+   * How many times Shuffle has been pressed. 0 is the deck's own order, which
+   * the server returns by `created_at`.
+   *
+   * A counter rather than a stored array of ids: the order is derived, so
+   * nothing has to be reconciled when the card list changes underneath it.
+   * Deliberately NOT persisted — a saved random order is a contradiction, and
+   * the point of Shuffle is that pressing it twice gives two different runs.
+   */
+  const [shuffleNonce, setShuffleNonce] = useState(0);
+  /**
+   * Optimistic half of the answer-first toggle. Null means "no local opinion,
+   * use what the server sent". Reverted if the write fails.
+   */
+  const [answerFirstDraft, setAnswerFirstDraft] = useState<boolean | null>(null);
+
   const toggleFlip = (cardId: string) => {
     setFlippedCardId(prev => (prev === cardId ? null : cardId));
   };
 
   const selectedSet = flashcardSets.find(s => s.id === selectedSetContent) || null;
   const hasMaterials = availableResources.length > 0;
+
+  // Opening a different deck starts clean: its own saved side, its own order,
+  // and no card left showing its answer.
+  useEffect(() => {
+    setShuffleNonce(0);
+    setAnswerFirstDraft(null);
+    setFlippedCardId(null);
+  }, [selectedSetContent]);
+
+  const answerFirst = answerFirstDraft ?? selectedSet?.answerFirst ?? false;
+
+  /**
+   * What the open deck's cards hold on their `front`, named for the student.
+   * The back is the educator's definition in both formats, so only this half
+   * varies.
+   *
+   * ⚠️ IT IS NOT ALWAYS "TERM", WHICH IS WHY THIS IS DERIVED RATHER THAN A
+   * CONSTANT. Cards generated in `question` format have a model-written question
+   * on the front ("What does the term CYBERSECURITY refer to…?"), and labelling
+   * that "Term" would be plainly wrong on screen.
+   *
+   * `.some()` mirrors how the server derives `currentFormat` in
+   * `studyspaces.routes.ts` — a deck may gather several materials and so mix the
+   * two formats, and of the two words the broader one is the safer label.
+   */
+  const frontNoun = selectedSet?.cards.some(c => c.isAiGenerated) ? 'Question' : 'Term';
+
+  /**
+   * The deck's cards in the order they should be shown — in the grid and in the
+   * session that starts from it.
+   *
+   * ⚠️ THE DEPENDENCY IS `selectedSet?.cards`, AND ITS STABILITY IS THE WHOLE
+   * POINT. `selectedSet` is recomputed by `.find()` on every render, but
+   * `.cards` is the same array instance held in `StudySpace`'s state, so
+   * flipping a card does not reshuffle the grid underneath the student. It does
+   * reshuffle once `onRefresh()` replaces the array — that is, on returning from
+   * a session — which is a fresh visit rather than a surprise.
+   */
+  const orderedCards = useMemo(() => {
+    const cards = selectedSet?.cards ?? [];
+    return shuffleNonce === 0 ? cards : shuffle(cards);
+  }, [selectedSet?.cards, shuffleNonce]);
+
+  /**
+   * Persist which face the open deck opens on.
+   *
+   * Local first so the cards turn over instantly, then one narrow PUT. On
+   * failure it reverts and reports — `actionError` exists precisely so a write
+   * that failed is not left looking like it worked.
+   *
+   * It does NOT call `onRefresh()`: that refetches every deck AND every card in
+   * the space, one request per deck, which is far too much for a display switch.
+   * `answerFirstDraft` is what keeps the screen honest until the next real load.
+   */
+  const setAnswerFirst = async (next: boolean) => {
+    if (!selectedSet || next === answerFirst) return;
+    const previous = answerFirst;
+    setAnswerFirstDraft(next);
+    setActionError(null);
+    setFlippedCardId(null);
+    try {
+      await api.put(`/spaces/${spaceId}/decks/${selectedSet.id}`, { answer_first: next });
+    } catch (err: any) {
+      setAnswerFirstDraft(previous);
+      setActionError(err?.message || 'Could not save which side to show first.');
+    }
+  };
 
   const materialTitle = (id: string | null | undefined): string | null =>
     availableResources.find(m => m.id === id)?.title ?? null;
@@ -330,11 +444,20 @@ export default function FlashcardsTab({
   // the schedule mean anything. 'practice' opens with the whole deck; those
   // ratings are still sent, and the server schedules any that happen to be due.
   if (isStudying && selectedSet && selectedSet.cards.length > 0) {
-    const sessionCards = studyMode === 'due' ? dueCards(selectedSet) : selectedSet.cards;
+    // Built from `orderedCards`, so a shuffled grid opens a shuffled session.
+    // Starting from a deck TILE always gives the deck's own order, because
+    // changing decks resets the nonce — correct, since the student never saw a
+    // shuffled grid for that deck.
+    const sessionCards = studyMode === 'due'
+      ? orderedCards.filter(c => isDue(c.nextReviewAt))
+      : orderedCards;
     if (sessionCards.length > 0) {
       return (
         <div className="fade-in duration-300">
           <FlashcardStudyView
+            /* `front`/`back` are handed over unswapped on purpose — the view
+               takes `answerFirst` and does the swap at render, so it can move
+               the "Question"/"Answer" labels and the type curve with it. */
             cards={sessionCards.map(c => ({
               id: c.id,
               front: c.front,
@@ -343,6 +466,8 @@ export default function FlashcardsTab({
             }))}
             deckTitle={selectedSet.title}
             isPractice={studyMode === 'practice' && dueCards(selectedSet).length === 0}
+            answerFirst={answerFirst}
+            frontNoun={frontNoun}
             onExit={exitStudy}
           />
         </div>
@@ -632,12 +757,88 @@ export default function FlashcardsTab({
             </div>
           )}
 
+          {/*
+            View controls for the grid below.
+
+            ⚠️ NOT IN THE HEADER CLUSTER ABOVE. That row holds deck ACTIONS —
+            study, add cards, rename, delete — and already carries four buttons.
+            These change how the cards below are shown and belong next to them.
+
+            ⚠️ THE SIDES ARE NAMED FOR WHAT THEY HOLD, NOT "QUESTION"/"ANSWER".
+            Those two were the study view's existing face labels and read as
+            vague here — "Answer" never tells a student it means the definition.
+            The first side is `frontNoun`, which is "Term" for a term-format deck
+            and "Question" for one built in question format; the second is always
+            "Definition", because the back is the educator's definition verbatim
+            whichever format the deck was generated in.
+          */}
+          {selectedSet && selectedSet.cards.length > 0 && (
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="font-sans text-[10px] uppercase tracking-widest text-slate-500 font-bold shrink-0">
+                  Show in front
+                </span>
+                {/* A segmented pair, not one toggle. A single button whose label
+                    is its current state is ambiguous — nobody can tell whether
+                    it names what you have or what you would get. */}
+                <div
+                  role="group"
+                  aria-label="Which side of the card to show in front"
+                  className="flex items-center gap-1 p-1 rounded-xl bg-surface-container border border-white/10"
+                >
+                  {([false, true] as const).map(value => {
+                    const active = answerFirst === value;
+                    return (
+                      <button
+                        key={String(value)}
+                        onClick={() => setAnswerFirst(value)}
+                        aria-pressed={active}
+                        className={`px-3 py-1.5 rounded-lg font-sans text-[11px] uppercase tracking-widest font-bold transition-colors ${
+                          active
+                            ? 'bg-primary-fixed-dim text-on-primary-fixed'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        {value ? 'Definition' : frontNoun}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {shuffleNonce > 0 && (
+                  <button
+                    onClick={() => { setShuffleNonce(0); setFlippedCardId(null); }}
+                    className="px-3 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-sans text-[11px] uppercase tracking-widest font-bold flex items-center gap-1.5 transition-colors"
+                  >
+                    <Undo2 className="w-3.5 h-3.5" />
+                    Original order
+                  </button>
+                )}
+                <button
+                  onClick={() => { setShuffleNonce(n => n + 1); setFlippedCardId(null); }}
+                  disabled={selectedSet.cards.length < 2}
+                  className="px-4 py-2 rounded-xl bg-surface-container border border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white font-sans text-[11px] uppercase tracking-widest font-bold flex items-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-container disabled:hover:text-slate-300"
+                >
+                  <Shuffle className="w-3.5 h-3.5" />
+                  Shuffle
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Card grid — for reviewing what is in the deck. No controls on cards. */}
           {selectedSet && selectedSet.cards.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-              {selectedSet.cards.map((card) => {
+              {orderedCards.map((card) => {
                 const source = materialTitle(card.sourceMaterialId);
                 const flipped = flippedCardId === card.id;
+                /* `front`/`back` keep one meaning everywhere — front is the term
+                   or generated question, back is the educator's definition. Only
+                   which one the student meets first changes here. */
+                const prompt = answerFirst ? card.back : card.front;
+                const answer = answerFirst ? card.front : card.back;
                 return (
                   /* Focus, role and the key handler live on the OUTER box, not on
                      the rotating inner one: a focus ring on the flipping element
@@ -649,7 +850,7 @@ export default function FlashcardsTab({
                     role="button"
                     tabIndex={0}
                     aria-pressed={flipped}
-                    aria-label={`Flashcard: ${card.front}`}
+                    aria-label={`Flashcard: ${prompt}`}
                     onClick={() => toggleFlip(card.id)}
                     onKeyDown={e => {
                       if (e.key === 'Enter' || e.key === ' ') {
@@ -685,7 +886,11 @@ export default function FlashcardsTab({
                             and unreachable. An auto margin centres the same way
                             when it fits and clips nothing when it does not. */}
                         <div className="flex-1 overflow-y-auto px-5 py-3 flex flex-col">
-                          <p className="my-auto font-display text-lg text-on-surface text-center leading-snug">{card.front}</p>
+                          {/* Font family and colour belong to the FACE — this is
+                              the "before you flip" side and should read like it
+                              whichever string it holds. Only size and alignment
+                              follow the text, via `gridFaceClass`. */}
+                          <p className={`my-auto font-display text-on-surface ${gridFaceClass(prompt)}`}>{prompt}</p>
                         </div>
                         <span className="shrink-0 pb-4 text-[10px] uppercase tracking-widest text-slate-500 flex items-center justify-center gap-1 font-semibold">
                           <RefreshCw className="w-3 h-3" /> Click to Flip
@@ -709,7 +914,7 @@ export default function FlashcardsTab({
                           the only background is what caused this. */}
                       <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-surface-container bg-gradient-to-br from-primary-fixed-dim/[0.08] to-primary-fixed-dim/[0.02] flex flex-col shadow-[0_0_30px] shadow-primary-fixed-dim/10 overflow-hidden">
                         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col">
-                          <p className="my-auto font-sans text-sm text-primary-fixed-dim font-medium text-center leading-relaxed">{card.back}</p>
+                          <p className={`my-auto font-sans text-primary-fixed-dim font-medium ${gridFaceClass(answer)}`}>{answer}</p>
                         </div>
                       </div>
                     </div>

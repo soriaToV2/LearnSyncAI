@@ -11,6 +11,7 @@ import {
   useGameFlash,
 } from './gameUi';
 import { useGameAudio } from './gameAudio';
+import { shuffle } from '../../../lib/shuffle';
 
 interface CardItem {
   id: string;
@@ -18,15 +19,6 @@ interface CardItem {
   text: string;
   matchId: string;
 }
-
-const shuffle = <T,>(items: T[]): T[] => {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-};
 
 export default function TermMatchingGame() {
   const { data: targetData, resources, loading, error, calibration, regenerate, regenerating, recordSession } =

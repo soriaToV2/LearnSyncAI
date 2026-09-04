@@ -566,6 +566,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
       'Make a deck, then choose Add Cards and pick a lesson.',
       'Press Study on the deck, read the front, then flip it.',
       'Rate yourself honestly. Hard brings the card back tomorrow, Medium in three days, Easy in seven.',
+      'Open a deck and press Shuffle to mix up the order, so you learn the ideas and not the sequence.',
+      'In the same place, Show in front lets you swap the sides. Put the Definition in front and you have to remember the word instead, which is harder and worth doing once you know a deck well. Each deck remembers its own setting.',
     ],
   },
   {

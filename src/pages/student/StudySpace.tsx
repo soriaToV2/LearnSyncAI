@@ -44,6 +44,12 @@ interface Flashcard {
   sourceMaterialId?: string | null;
   /** When this card is next due. Past or null = due now. */
   nextReviewAt?: string | null;
+  /**
+   * The model wrote this card's front, i.e. it is a question rather than the
+   * term itself. Only ever true of the front — the back is the educator's
+   * definition in both formats.
+   */
+  isAiGenerated?: boolean;
 }
 
 interface FlashcardSet {
@@ -52,6 +58,12 @@ interface FlashcardSet {
   description?: string;
   cardCount: number;
   cards: Flashcard[];
+  /**
+   * Deck display preference: show the definition first and ask for the term.
+   * Stored on the deck row (migration 0027), so it follows the student to any
+   * computer. Rendering only — it moves no schedule and no mastery.
+   */
+  answerFirst: boolean;
 }
 
 export default function StudySpace() {
@@ -156,6 +168,8 @@ export default function StudySpace() {
             id: deck.id,
             title: deck.title,
             description: deck.description,
+            // `?? false` covers a deck row read before migration 0027 landed.
+            answerFirst: deck.answer_first ?? false,
             cardCount: cardsList.length,
             cards: cardsList.map((c: any) => ({
               id: c.id,
@@ -163,6 +177,7 @@ export default function StudySpace() {
               back: c.definition,
               sourceMaterialId: c.source_material_id ?? null,
               nextReviewAt: c.next_review_at ?? null,
+              isAiGenerated: c.is_ai_generated ?? false,
             })),
           };
         })

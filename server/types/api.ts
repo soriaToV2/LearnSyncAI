@@ -660,11 +660,37 @@ export const CreateDeckSchema = z.object({
 });
 export type CreateDeckInput = z.infer<typeof CreateDeckSchema>;
 
-/** Renaming and re-describing only. A deck has nothing else a student may set. */
-export const UpdateDeckSchema = z.object({
-  title: z.string().min(1).max(120),
-  description: z.string().max(500).optional().nullable(),
-});
+/**
+ * Renaming, re-describing, and which face a deck opens on. Nothing else — a
+ * student does not own the cards inside, so there is nothing else to set.
+ *
+ * ⚠️ EVERY FIELD IS OPTIONAL AND THE HANDLER WRITES ONLY THE KEYS IT RECEIVES.
+ * This was `title` required plus an unconditional `description ?? null`, so a
+ * title-only update silently blanked the description — harmless while the rename
+ * modal was the only caller and always sent both, and a live bug the moment a
+ * second caller existed. The display toggle is that second caller: it sends
+ * `answer_first` alone, and under the old shape a later rename would have reset
+ * it. Partial-write is the fix; `superRefine` is what keeps an empty body a 400
+ * rather than a no-op 200.
+ *
+ * `undefined` and `null` are deliberately different for `description`: absent
+ * means "leave it alone", explicit null means "clear it".
+ */
+export const UpdateDeckSchema = z
+  .object({
+    title: z.string().min(1).max(120).optional(),
+    description: z.string().max(500).optional().nullable(),
+    /** Display only. True shows the definition first — see migration 0027. */
+    answer_first: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.title === undefined && data.description === undefined && data.answer_first === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide at least one of title, description or answer_first',
+      });
+    }
+  });
 export type UpdateDeckInput = z.infer<typeof UpdateDeckSchema>;
 
 // ── AI Flashcard Generation ───────────────────────────────
