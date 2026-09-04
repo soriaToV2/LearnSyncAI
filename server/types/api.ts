@@ -1026,3 +1026,42 @@ export const ChatRequestSchema = z.object({
   mode: z.enum(['rag', 'full']).optional().default('rag'),
 });
 export type ChatRequestInput = z.infer<typeof ChatRequestSchema>;
+
+// ── Onboarding (student first-run) ────────────────────────
+
+/**
+ * ⚠️ MIRRORS `OnboardingKey` IN `src/lib/onboarding.ts`, WHICH IS THE CATALOGUE.
+ * Adding a step means editing both files, deliberately: an enum here rather than
+ * `z.string()` is what stops a stale or hand-rolled client writing junk keys into
+ * `onboarding_seen`, where nothing would ever read them and nothing would clean
+ * them up.
+ *
+ * The strings are identities, not labels. Renaming one re-shows that step to
+ * every student who had already dismissed it and orphans the row that recorded
+ * they had — the same rule `user_badges.badge_name` carries.
+ */
+export const OnboardingStepKeySchema = z.enum([
+  'tour_v1',
+  'tool_resources',
+  'tool_flashcards',
+  'tool_free_recall',
+  'tool_feynman',
+  'tool_adaptive_test',
+  'tool_analytics',
+  'tool_flashcards_study',
+  'tool_free_recall_result',
+  'tool_feynman_result',
+]);
+export type OnboardingStepKey = z.infer<typeof OnboardingStepKeySchema>;
+
+/**
+ * `.strict()` so an unknown key is a 400 rather than a silent drop, matching
+ * `UpdateProfileSchema`. There is no matching schema for `GET /api/onboarding`
+ * because it accepts nothing at all — no body, no query, no path parameter.
+ */
+export const MarkOnboardingSeenSchema = z
+  .object({
+    step_key: OnboardingStepKeySchema,
+  })
+  .strict();
+export type MarkOnboardingSeenInput = z.infer<typeof MarkOnboardingSeenSchema>;

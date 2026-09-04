@@ -13,6 +13,28 @@ import { isDue } from '../../lib/reviewSchedule';
 import DueBadge from '../../components/ui/DueBadge';
 import { SUBJECT_COLOR } from '../../components/educator/SubjectBadge';
 import { useSubjectName } from '../../context/SubjectsContext';
+import { useOnboarding } from '../../context/OnboardingContext';
+import type { ToolKey } from '../../lib/onboarding';
+
+type StudyTab = 'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources' | 'analytics';
+
+/**
+ * Which first-run walkthrough belongs to which tab.
+ *
+ * ⚠️ THE WALKTHROUGH REPLACED A DISMISSIBLE PANEL. The panel explained the tool
+ * in three sentences above the content; a spotlight that points at the actual
+ * controls says the same thing and shows where to press, so running both would
+ * interrupt twice on every tool. `ToolIntro.tsx` is gone; its copy lives on as
+ * step one of each walkthrough and as the Help page's section intro.
+ */
+const TAB_INTRO: Record<StudyTab, ToolKey> = {
+  resources: 'tool_resources',
+  flashcards: 'tool_flashcards',
+  'free-recall': 'tool_free_recall',
+  feynman: 'tool_feynman',
+  'adaptive-test': 'tool_adaptive_test',
+  analytics: 'tool_analytics',
+};
 
 interface Flashcard {
   id: string;
@@ -35,7 +57,8 @@ interface FlashcardSet {
 export default function StudySpace() {
   const subjectNameOf = useSubjectName();
   const { spaceId } = useParams();
-  const [activeTab, setActiveTab] = useState<'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources' | 'analytics'>('flashcards');
+  const [activeTab, setActiveTab] = useState<StudyTab>('flashcards');
+
   const [isMobileTabMenuOpen, setIsMobileTabMenuOpen] = useState(false);
   const [courseConnected, setCourseConnected] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
@@ -50,6 +73,29 @@ export default function StudySpace() {
   const [availableResources, setAvailableResources] = useState<
     { id: string; title: string; concept_count: number }[]
   >([]);
+
+  /*
+   * Offer this tab's walkthrough on entry. `startTour` is a no-op once the key
+   * is recorded, once another walkthrough is running, and until the seen-set has
+   * loaded — so firing it on every tab change is safe and needs no local flag.
+   *
+   * ⚠️ NOT WHILE THE SPACE IS STILL LOADING. This component returns a spinner
+   * until its fetch lands, so none of the tab's anchors are in the DOM yet. The
+   * walkthrough would open over "Loading study space…", find nothing, and burn
+   * through every step before the page had rendered a single control — which is
+   * exactly what it did.
+   *
+   * The extra delay after loading lets the tab's own render settle. It is not a
+   * guarantee, and does not need to be: `TourOverlay` hunts for a missing anchor
+   * briefly and then skips that step, which is also what handles a space with no
+   * lessons in it, where most of these anchors never appear at all.
+   */
+  const { startTour } = useOnboarding();
+  useEffect(() => {
+    if (isLoading) return;
+    const t = setTimeout(() => startTour(TAB_INTRO[activeTab]), 700);
+    return () => clearTimeout(t);
+  }, [activeTab, isLoading, startTour]);
 
   /**
    * Cards waiting for review across every deck in this space.

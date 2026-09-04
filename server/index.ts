@@ -26,6 +26,7 @@ import dashboardRoutes from './routes/dashboard.routes';
 import educatorRoutes from './routes/educator.routes';
 import adminRoutes from './routes/admin.routes';
 import subjectRoutes from './routes/subjects.routes';
+import onboardingRoutes from './routes/onboarding.routes';
 import { loadBktParameters } from './lib/bkt';
 import { verifyGeminiCredential } from './lib/gemini';
 
@@ -121,6 +122,16 @@ app.use('/api/educator', educatorRoutes);
  * no subject, and the catalogue is edited from the Supabase dashboard.
  */
 app.use('/api/subjects', subjectRoutes);
+/*
+ * `/api/onboarding` records which first-run steps a student has been shown — the
+ * guided tour and the panel on each study tool. Student-only; the other two
+ * portals have no onboarding.
+ *
+ * ⚠️ IT GATES NOTHING. No middleware reads it and no route refuses on it, unlike
+ * `profiles.must_change_password`. A failed read costs a student a repeated tour
+ * step, never their access, which is why both client call sites swallow errors.
+ */
+app.use('/api/onboarding', onboardingRoutes);
 /*
  * `/api/admin` is the third endpoint shape, and the narrowest in what it reads.
  * Per-space (`requireOwnedSpace`) is the student default; `/api/educator` is

@@ -762,6 +762,31 @@ COMMENT ON COLUMN user_badges.badge_name IS
 -- on every single activity idempotent and free of a read-then-write race.
 CREATE INDEX idx_user_badges_student ON user_badges (student_id);
 
+-- Onboarding progress. One row per first-run step a student has been shown --
+-- the guided tour, and the intro on each of the six study tools.
+--
+-- Shaped after user_badges above, and for the same reason: it is a SET of string
+-- keys held per student, and the composite PK is what makes the write
+-- INSERT ... ON CONFLICT DO NOTHING, idempotent with no read-then-write race.
+--
+-- ⚠️ IT GATES NOTHING. Unlike profiles.must_change_password, no middleware reads
+-- this and no route refuses on it, so a failed read costs a tour step and never
+-- an account's access. Nothing writes to activity_logs for onboarding either:
+-- that insert fires trigger_update_streak, which would award a study-streak day
+-- for reading a tour.
+CREATE TABLE onboarding_seen (
+    student_id UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    step_key   TEXT        NOT NULL,
+    seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (student_id, step_key)
+);
+
+COMMENT ON COLUMN onboarding_seen.step_key IS
+    'Stable identifier from the catalogue in src/lib/onboarding.ts, mirrored as a Zod enum in server/types/api.ts (e.g. tour_v1, tool_flashcards). The string IS the identity -- renaming one re-shows that step to every student who had already dismissed it. The version suffix (tour_v1) is how a genuinely rewritten tour gets re-shown on purpose.';
+
+-- No secondary index: the PK leads with student_id, so a lookup by student uses
+-- it as a prefix, and this table holds a handful of rows per student.
+
 -- ============================================================================
 -- 13. DASHBOARD VIEWS
 -- ============================================================================
@@ -1113,6 +1138,7 @@ ALTER TABLE gamification_profiles  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_sessions          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_content           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_badges            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE onboarding_seen        ENABLE ROW LEVEL SECURITY;
 
 -- ── profiles ────────────────────────────────────────────────────────────────
 
@@ -1251,6 +1277,13 @@ CREATE POLICY "Students read their own gamification profile"
 
 CREATE POLICY "Students read their own badges"
     ON user_badges FOR SELECT USING (student_id = auth.uid());
+
+-- SELECT only, and deliberately no INSERT policy -- the same call migration 0023
+-- made for activity_logs. Express writes with the service role, so an INSERT
+-- policy grants nothing the app needs and gives an anon key a way to suppress
+-- its own onboarding.
+CREATE POLICY "Students read their own onboarding progress"
+    ON onboarding_seen FOR SELECT USING (student_id = auth.uid());
 
 -- ── mastery: student reads own, educator reads their assigned grades ────────
 

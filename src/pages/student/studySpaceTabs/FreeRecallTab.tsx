@@ -8,8 +8,10 @@ import {
   CognitiveTabShell, VerdictBanner, FeedbackCard, Collapsible, AttemptsList,
   AttemptMaterial, materialLabel,
   type AttemptSummary, type Tone, type ViewMode,
+  NoMaterialsNotice,
 } from './cognitiveShared';
 import { useBadges } from '../../../context/BadgeContext';
+import { useOnboarding } from '../../../context/OnboardingContext';
 
 interface FreeRecallTabProps {
   availableResources: { id: string; title: string }[];
@@ -180,6 +182,23 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
   const { celebrate } = useBadges();
   const [resultLogId, setResultLogId] = useState<string | null>(null);
   const [historyLogId, setHistoryLogId] = useState<string | null>(null);
+
+  /*
+   * ⚠️ THE RESULT WALKTHROUGH IS DEFERRED TO HERE, AND IT HAS TO BE. The composer
+   * and the results panel are mutually exclusive siblings in one slot, so the
+   * walkthrough that taught the text box could not have gone on to point at the
+   * score — it did not exist yet, and by the time it does the text box is gone.
+   *
+   * That is not a compromise. The coverage percentage is the single most misread
+   * number in this app, and this explains it at the exact moment a student is
+   * staring at it wondering why it says 31%. `startTour` is a no-op once seen.
+   */
+  const { startTour } = useOnboarding();
+  useEffect(() => {
+    if (viewMode !== 'study' || !resultLogId) return;
+    const t = setTimeout(() => startTour('tool_free_recall_result'), 700);
+    return () => clearTimeout(t);
+  }, [viewMode, resultLogId, startTour]);
   const [showMissed, setShowMissed] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
 
@@ -373,6 +392,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
                   this for `scoreTone()` — its 80/60 cutoffs are absolute too.
                   The meaning lives on the progress line below, which compares
                   like with like. */}
+              <div data-tour="fr-score">
               <VerdictBanner
                 score={scorePercent}
                 scoreSuffix="%"
@@ -381,6 +401,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
                 description={progress.text}
                 descriptionTone={progress.tone}
               />
+              </div>
 
               {activeFeedback.written_feedback ? (
                 <div className="space-y-3">
@@ -425,6 +446,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
                 </div>
               )}
 
+              <div data-tour="fr-missed">
               <Collapsible
                 title="Ideas you didn't mention"
                 count={activeFeedback.missed_concepts.length}
@@ -447,6 +469,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
                   </div>
                 )}
               </Collapsible>
+              </div>
 
               <Collapsible
                 title="Your answer"
@@ -474,9 +497,12 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
     );
   };
 
-  const composer = (
+  // Guarded on there being any lesson at all: without this the material
+  // dropdown simply renders empty and the tab explains nothing. See
+  // `NoMaterialsNotice`.
+  const composer = availableResources.length === 0 ? <NoMaterialsNotice /> : (
             <div className="fade-in">
-              <div className="flex flex-col items-start gap-1.5 mb-4">
+              <div data-tour="fr-material" className="flex flex-col items-start gap-1.5 mb-4">
                 <span className={LABEL}>Material</span>
                 <SingleSelectDropdown
                   selectedValue={selectedMaterialId}
@@ -493,7 +519,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
                 </div>
               )}
 
-              <div className={`${CARD} p-5`}>
+              <div data-tour="fr-input" className={`${CARD} p-5`}>
                 <textarea
                   value={recallText}
                   onChange={(e) => setRecallText(e.target.value)}
@@ -513,6 +539,7 @@ export default function FreeRecallTab({ availableResources, spaceId }: FreeRecal
                   {recallText.split(/\s+/).filter(Boolean).length} words
                 </span>
                 <button
+                  data-tour="fr-submit"
                   onClick={handleEvaluate}
                   disabled={!recallText.trim() || isEvaluating || selectedMaterialIds.length === 0}
                   className="px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"

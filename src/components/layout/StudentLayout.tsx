@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Layers, Gamepad2, LogOut, UserCircle, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Home, Layers, Gamepad2, LogOut, UserCircle, LifeBuoy, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import Logo from '../common/Logo';
 import { useStudentTheme, StudentThemeProvider, applyThemeToElement } from '../../context/ThemeContext';
 import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } from '../../context/AuthContext';
 import { SubjectsProvider } from '../../context/SubjectsContext';
 import { signOut } from '../../lib/signOut';
 import { BadgeProvider } from '../../context/BadgeContext';
+import { OnboardingProvider } from '../../context/OnboardingContext';
 import RequireRole from '../common/RequireRole';
 import EmailRecoveryBanner from '../common/EmailRecoveryBanner';
 
@@ -107,8 +108,20 @@ function StudentLayoutInner() {
   const collapsedNavClass = (collapsed: boolean) =>
     collapsed ? 'justify-center px-0 gap-0' : '';
 
+  /*
+   * ⚠️ THE `data-tour` ATTRIBUTES ARE TOUR ANCHORS, NOT STYLING HOOKS.
+   * `TourOverlay` finds a step's target with `[data-tour="…"]`; a step whose
+   * anchor is absent is skipped rather than pointing at nothing, so removing one
+   * silently shortens the tour instead of breaking it. Renaming one has the same
+   * effect, so keep them in step with `TOUR_STEPS` in `src/lib/onboarding.ts`.
+   *
+   * ⚠️ THIS FUNCTION IS CALLED TWICE — once for the desktop sidebar and once for
+   * the mobile drawer — so every anchor below exists twice in the DOM at all
+   * times. `TourOverlay` resolves the first VISIBLE match (`offsetParent`), not
+   * the first in source order, which is why that matters.
+   */
   const renderNavLinks = (collapsed = false) => (
-    <div className="flex flex-col gap-2 font-display text-sm tracking-wide">
+    <div data-tour="nav" className="flex flex-col gap-2 font-display text-sm tracking-wide">
       <NavLink
         to="/student/dashboard"
         title="Dashboard"
@@ -126,6 +139,7 @@ function StudentLayoutInner() {
       <NavLink
         to="/student/spaces"
         title="Spaces"
+        data-tour="nav-spaces"
         className={({ isActive }) =>
           `${navBase} ${collapsedNavClass(collapsed)} ${(isActive || isSpaceActive) ? '' : inactiveClass}`
         }
@@ -141,6 +155,7 @@ function StudentLayoutInner() {
       <NavLink
         to="/student/games"
         title="Games"
+        data-tour="nav-games"
         className={({ isActive }) => `${navBase} ${collapsedNavClass(collapsed)} ${isActive ? '' : inactiveClass}`}
         style={({ isActive }) => (isActive ? activeStyle : {})}
       >
@@ -156,6 +171,26 @@ function StudentLayoutInner() {
       >
         <UserCircle className="w-5 h-5 shrink-0" />
         {!collapsed && 'Profile'}
+      </NavLink>
+
+      {/*
+        Help is a destination like the four above it, so it belongs in this list.
+        ⚠️ NOT IN THE FOOTER: that holds Logout and the identity card and nothing
+        else — one control that ends the session, above the account it ends.
+
+        `LifeBuoy` because the two obvious icons are taken elsewhere in this
+        portal: `BookOpen` is the Learning Resources tab, and `HelpCircle` is
+        both the Crossword game and the chat's "Quiz Me" action.
+      */}
+      <NavLink
+        to="/student/help"
+        title="How to use"
+        data-tour="nav-help"
+        className={({ isActive }) => `${navBase} ${collapsedNavClass(collapsed)} ${isActive ? '' : inactiveClass}`}
+        style={({ isActive }) => (isActive ? activeStyle : {})}
+      >
+        <LifeBuoy className="w-5 h-5 shrink-0" />
+        {!collapsed && 'How to use'}
       </NavLink>
     </div>
   );
@@ -425,7 +460,20 @@ export default function StudentLayout() {
               `requireRole`-gated.
             */}
             <SubjectsProvider>
-              <StudentLayoutInner />
+              {/*
+                Inside `RequireRole` for the same reason as the two above —
+                `GET /api/onboarding` is `requireRole('student')`-gated, so
+                mounting it any higher would 401 a signed-out visitor for
+                nothing. Innermost of the three because it is the only one that
+                reads the router: it starts the first-run tour on arrival at the
+                dashboard, and renders the overlay itself.
+
+                ⚠️ It gates NOTHING. A failed read here costs a student a
+                repeated tour step, never their access to the portal.
+              */}
+              <OnboardingProvider>
+                <StudentLayoutInner />
+              </OnboardingProvider>
             </SubjectsProvider>
           </BadgeProvider>
         </RequireRole>

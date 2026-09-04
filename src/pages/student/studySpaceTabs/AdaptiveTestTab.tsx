@@ -498,6 +498,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
         {/* `w-full` on mobile: the header stacks below `sm`, and at its natural
             width this sat left-aligned and orphaned under the subtitle. */}
         <button
+          data-tour="at-new-test"
           onClick={() => openSetup()}
           disabled={noMaterials}
           className="w-full sm:w-auto px-5 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 shrink-0"
@@ -519,7 +520,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
           tab is the mastery sentence on the setup screen, which is not a
           duplicate — it explains why the test about to be generated is the
           difficulty it is. */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3 mt-6">
+      <div data-tour="at-stats" className="grid grid-cols-3 gap-2.5 sm:gap-3 mt-6">
         <Stat icon={ClipboardList} label="Tests taken" value={String(completed.length)} />
         <Stat
           icon={TrendingUp}
@@ -530,7 +531,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
         <Stat icon={ListChecks} label="Items answered" value={String(itemsAnswered)} />
       </div>
 
-      <div className="mt-8">
+      <div data-tour="at-past-tests" className="mt-8">
         <h3 className={`${SECTION} mb-4`}>Past tests</h3>
 
         {isLoadingList ? (

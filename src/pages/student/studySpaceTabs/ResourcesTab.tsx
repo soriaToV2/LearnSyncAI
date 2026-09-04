@@ -437,7 +437,7 @@ export default function ResourcesTab({
         * genuinely long; the inner list keeps its own `overflow-y-auto`, so
         * scrolling behaviour is unchanged.
         */}
-      <aside className="w-full xl:w-[300px] shrink-0 flex flex-col gap-3 max-h-[40vh] xl:max-h-none xl:h-full bg-surface-container-lowest border border-white/5 rounded-2xl shadow-sm p-3">
+      <aside data-tour="res-list" className="w-full xl:w-[300px] shrink-0 flex flex-col gap-3 max-h-[40vh] xl:max-h-none xl:h-full bg-surface-container-lowest border border-white/5 rounded-2xl shadow-sm p-3">
         {/* Title + count */}
         <div className="flex items-center justify-between gap-2 px-1 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -601,6 +601,7 @@ export default function ResourcesTab({
 
       {/* ─── RIGHT: Document Viewer ──────────────────────────── */}
       <PdfViewer
+        anchor="res-viewer"
         url={viewerUrl}
         title={activeMaterial?.title}
         loading={viewerLoading}
@@ -750,6 +751,7 @@ export default function ResourcesTab({
       {/* ─── Chat toggle (FAB) ───────────────────────────────── */}
       {!isChatOpen && (
         <button
+          data-tour="res-chat-fab"
           onClick={() => setIsChatOpen(true)}
           aria-label="Open Study Assistant"
           className="absolute z-40 bottom-5 right-5 lg:bottom-6 lg:right-6 w-14 h-14 rounded-2xl bg-primary-fixed-dim text-on-primary-fixed flex items-center justify-center shadow-lg shadow-primary-fixed-dim/25 hover:brightness-110 active:scale-95 transition-all"

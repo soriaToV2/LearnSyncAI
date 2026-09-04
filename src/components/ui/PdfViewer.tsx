@@ -26,6 +26,14 @@ interface PdfViewerProps {
   error?: string | null;
   /** Retry handler for the error state. */
   onRetry?: () => void;
+  /**
+   * A `data-tour` value for the onboarding spotlight, placed on the root element.
+   *
+   * A prop rather than a stray JSX attribute because this is a component, not a
+   * DOM node — an unknown attribute would be a type error and would never reach
+   * the DOM. Optional, so no other caller has to know the tour exists.
+   */
+  anchor?: string;
 }
 
 /** Renders a single PDF page onto a canvas at the given scale (crisp on HiDPI). */
@@ -66,7 +74,7 @@ function PdfPage({ page, scale }: { page: PDFPageProxy; scale: number }) {
  * canvas styled to match the app, with its own toolbar (page navigation + zoom) —
  * so viewing feels native to LearnSyncAI rather than the browser's built-in PDF UI.
  */
-export default function PdfViewer({ url, title, loading, error, onRetry }: PdfViewerProps) {
+export default function PdfViewer({ url, title, loading, error, onRetry, anchor }: PdfViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
 
@@ -162,7 +170,10 @@ export default function PdfViewer({ url, title, loading, error, onRetry }: PdfVi
   const hasDoc = url && !showLoading && !showError && pages.length > 0;
 
   return (
-    <div className="flex-1 bg-surface-container-lowest border border-white/5 rounded-2xl flex flex-col overflow-hidden shadow-sm relative min-h-[50vh]">
+    <div
+      data-tour={anchor}
+      className="flex-1 bg-surface-container-lowest border border-white/5 rounded-2xl flex flex-col overflow-hidden shadow-sm relative min-h-[50vh]"
+    >
       {/* Header */}
       <div className="px-5 py-3 border-b border-white/5 bg-surface-container/20 flex items-center justify-between gap-3 backdrop-blur-md shrink-0">
         <div className="flex items-center gap-3 min-w-0">

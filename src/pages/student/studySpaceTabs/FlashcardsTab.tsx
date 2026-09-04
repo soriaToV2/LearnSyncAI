@@ -355,13 +355,14 @@ export default function FlashcardsTab({
       {/* ══ Deck list ══════════════════════════════════════════════════ */}
       {selectedSetContent === null ? (
         <div key="deck-list" className="fade-in duration-500">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          <div data-tour="fc-header" className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
               <h2 className="font-display text-2xl font-semibold text-white mb-1">Study Decks</h2>
               <p className="font-sans text-sm text-slate-400">Organize your lessons into decks</p>
             </div>
             {flashcardSets.length > 0 && (
-              <button
+                <button
+                data-tour="fc-new-deck"
                 onClick={() => { setIsCreateOpen(true); setActionError(null); }}
                 className="px-5 py-2.5 bg-surface-container border border-white/10 text-on-surface hover:bg-surface-container-high rounded-xl font-sans text-xs uppercase tracking-widest font-semibold flex items-center gap-2 transition-all shrink-0"
               >
@@ -387,6 +388,7 @@ export default function FlashcardsTab({
                     your teacher's materials.
                   </p>
                   <button
+                    data-tour="fc-new-deck"
                     onClick={() => { setIsCreateOpen(true); setActionError(null); }}
                     className="px-6 py-3 bg-primary-fixed-dim text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-lg shadow-primary-fixed-dim/20 hover:bg-primary-container transition-all flex items-center gap-2"
                   >
@@ -403,7 +405,7 @@ export default function FlashcardsTab({
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+            <div data-tour="fc-decks" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
               {flashcardSets.map(set => {
                 const isEmpty = set.cardCount === 0;
                 const due = dueCards(set).length;

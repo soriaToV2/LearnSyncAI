@@ -1733,7 +1733,52 @@
   animation: badgeGlow 1.1s ease-out 2 both;
 }
 
+
+/* ── First-run tour ──────────────────────────────────────────────────────────
+ *
+ * Two classes, and only the CARD animates. The overlay that wraps it must stay
+ * transform-free: a transform on an ancestor forms a stacking context and
+ * repositions `fixed` descendants, which is the measured bug recorded above the
+ * `animate-tab-in` rules.
+ *
+ * Both are in the reduced-motion block below. A spotlight gliding across the
+ * screen between steps is precisely the motion that block exists for. */
+@keyframes tourCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-tour-card {
+  animation: tourCardIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* The cut-out slides from one target to the next rather than jumping, which is
+   what makes the sequence read as one guide moving rather than six flashes. */
+.tour-spotlight {
+  transition:
+    top 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    left 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    height 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
+
+  /* The card still appears and still names the area; only the rise is dropped.
+     The spotlight still moves — it just arrives instead of travelling. */
+  .animate-tour-card {
+    animation: none !important;
+  }
+
+  .tour-spotlight {
+    transition: none !important;
+  }
   .animate-shake,
   .animate-pop,
   .animate-cell-pop,

@@ -132,7 +132,7 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
   return (
     <div className="fade-in duration-300 pb-10">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 min-w-0 border-b border-white/5 pb-5">
+      <div data-tour="an-header" className="flex items-center gap-3 min-w-0 border-b border-white/5 pb-5">
         <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center shrink-0">
           <ChartColumn className="w-5 h-5 text-primary-fixed-dim" />
         </div>
@@ -177,7 +177,7 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
               TIER_LABEL, so not shortenable here — does not fit that in
               `text-xl`. The third tile spans the row below rather than sitting as
               a half-width orphan. */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 mt-6">
+          <div data-tour="an-summary" className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 mt-6">
             <Stat
               icon={TrendingUp}
               label="Overall mastery"
@@ -268,7 +268,7 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
           )}
 
           {/* ── By lesson ────────────────────────────────────────────────── */}
-          <div className="mt-8">
+          <div data-tour="an-lessons" className="mt-8">
             <h3 className={`${SECTION} mb-4`}>By lesson</h3>
             <div className="space-y-3">
               {detail.by_material.map((m) => (

@@ -424,3 +424,32 @@ export function AttemptsList({
     </div>
   );
 }
+
+/**
+ * What both tabs show when the study space holds no lessons at all.
+ *
+ * ══ ⚠️ THIS FIXED A REAL HOLE, IT IS NOT DECORATION ══
+ * Both tabs built their material dropdown as a bare `availableResources.map(...)`
+ * with no zero-length branch, so a student who opened Free Recall or Feynman
+ * before their teacher had published anything got an EMPTY DROPDOWN and nothing
+ * else — no message, no explanation, and no hint that Learning Resources is
+ * where lessons arrive. Every other tab in the space already handled this;
+ * these two were the exceptions.
+ *
+ * The wording deliberately matches `FlashcardsTab`'s equivalent, so a student
+ * who hits the same wall in two tabs is told the same thing twice rather than
+ * two different things.
+ */
+export function NoMaterialsNotice() {
+  return (
+    <div className="flex flex-col items-center justify-center text-center text-slate-500 py-20 fade-in">
+      <BookOpen className="w-10 h-10 mb-4 opacity-20" />
+      <p className="font-sans text-sm text-slate-400 mb-1">
+        There are no lessons in this study space yet.
+      </p>
+      <p className="font-sans text-xs text-slate-600 max-w-md leading-relaxed">
+        Open the Learning Resources tab to see what your teacher has published.
+      </p>
+    </div>
+  );
+}

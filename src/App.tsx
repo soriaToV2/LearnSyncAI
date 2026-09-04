@@ -7,6 +7,7 @@ import ForgotPassword from './pages/auth/ForgotPassword';
 import StudentLayout from './components/layout/StudentLayout';
 import StudentDashboard from './pages/student/StudentDashboard';
 import Profile from './pages/student/Profile';
+import Help from './pages/student/Help';
 import StudySpacesList from './pages/student/StudySpacesList';
 import StudySpace from './pages/student/StudySpace';
 import GamesLayout from './pages/student/games/GamesLayout';
@@ -88,6 +89,12 @@ export default function App() {
             `GET /api/auth/me`.
           */}
           <Route path="/student/spaces" element={<StudySpacesList />} />
+          {/*
+            The reference half of the student onboarding, and the only place the
+            first-run tour can be replayed from. Student portal only — the
+            educator and admin portals have no onboarding.
+          */}
+          <Route path="/student/help" element={<Help />} />
           <Route path="/student/space/:spaceId" element={<StudySpace />} />
           <Route path="/student/games" element={<GamesLayout />}>
             <Route index element={<GamesLanding />} />

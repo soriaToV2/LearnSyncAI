@@ -3,6 +3,7 @@ import { RotateCcw, Trophy, ArrowLeft, Zap, Clock, AlertTriangle, Brain, Calenda
 import Spinner from '../../../components/ui/Spinner';
 import { api } from '../../../lib/api';
 import { useBadges } from '../../../context/BadgeContext';
+import { useOnboarding } from '../../../context/OnboardingContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -189,6 +190,15 @@ export default function FlashcardStudyView({
   isPractice = false,
 }: FlashcardStudyViewProps) {
   const { celebrate } = useBadges();
+
+  /* A study session replaces the whole tab body, so the Flashcards walkthrough
+     could not reach the card or the rating buttons. This runs on first entry to
+     a session instead, where both are on screen and mean something. */
+  const { startTour } = useOnboarding();
+  useEffect(() => {
+    const t = setTimeout(() => startTour('tool_flashcards_study'), 700);
+    return () => clearTimeout(t);
+  }, [startTour]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [sessionResults, setSessionResults] = useState<CardSession[]>([]);
@@ -605,6 +615,7 @@ export default function FlashcardStudyView({
         <div
           role="button"
           tabIndex={0}
+          data-tour="fc-card"
           aria-pressed={isFlipped}
           aria-label={isFlipped ? 'Answer shown. Press Space to hide.' : 'Question shown. Press Space to reveal the answer.'}
           onClick={handleFlip}
@@ -720,7 +731,7 @@ export default function FlashcardStudyView({
           {isFlipped ? 'Rate your recall' : 'Flip the card to rate it'}
         </p>
 
-        <div className={`grid grid-cols-3 gap-2 sm:gap-3 transition-opacity duration-300 ${isFlipped ? 'opacity-100' : 'opacity-40'}`}>
+        <div data-tour="fc-rating" className={`grid grid-cols-3 gap-2 sm:gap-3 transition-opacity duration-300 ${isFlipped ? 'opacity-100' : 'opacity-40'}`}>
           {ratingOrder.map((rating) => {
             const cfg = RATING_CONFIG[rating];
             const isSelected = selectedRating === rating;

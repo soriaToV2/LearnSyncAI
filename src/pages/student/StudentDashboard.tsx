@@ -30,6 +30,14 @@ import {
 import { scorePercent } from '../../lib/testMode';
 import { badgeStyle, badgeTotals } from '../../lib/badges';
 import BadgeGalleryModal from '../../components/student/BadgeGalleryModal';
+import { useTourDemo } from '../../context/OnboardingContext';
+import ExampleChip from '../../components/onboarding/ExampleChip';
+import {
+  DEMO_BADGE_NAMES,
+  DEMO_MASTERY,
+  DEMO_RECENT,
+  DEMO_STREAK_DAYS,
+} from '../../lib/onboarding';
 import {
   dashboardApi,
   type ActivityItem,
@@ -149,20 +157,54 @@ export default function StudentDashboard() {
           <div className="flex items-center justify-center py-24">
             <Spinner className="w-5 h-5 text-slate-500" />
           </div>
-        ) : !data || noSpaces ? (
+        ) : !data ? (
+          /*
+           * The ONLY branch that still short-circuits, and it is a fetch
+           * failure, not an empty account. The error banner above already says
+           * what went wrong; this stops the grid below dereferencing a null
+           * payload.
+           */
           <EmptyCard
-            title="No study spaces yet."
-            body="Create a study space and the lessons for your grade will be added to it automatically. Your progress shows up here as soon as you start."
-            cta={{ to: '/student/spaces', label: 'Create a study space' }}
-          />
-        ) : noMaterials ? (
-          <EmptyCard
-            title="No lessons in your spaces yet."
-            body="Your teacher has not published anything to your grade for these subjects yet. Once they do, it appears in your spaces and your progress starts tracking here."
-            cta={{ to: '/student/spaces', label: 'Open your spaces' }}
+            title="Your dashboard could not be loaded."
+            body="Check your connection and reload the page. Your progress is safe. This is only the view."
           />
         ) : (
           <div className="animate-tab-in">
+            {/*
+              ⚠️ THIS USED TO REPLACE THE ENTIRE DASHBOARD, AND THAT WAS THE BUG.
+              A brand-new student has no spaces, so a top-level ternary swapped
+              the whole body for one card — mastery, streak, badges and recent
+              activity were not hidden, they were never drawn. The student could
+              not see what the app was going to do for them, and there was
+              nothing for the first-run tour to point at.
+
+              The server was always right: `emptyDashboard()` ships a fully
+              shaped zero payload and deliberately passes REAL gamification
+              through it, because "an empty dashboard is about materials and
+              mastery, and says nothing about whether the student has a streak".
+              The client was throwing that away.
+
+              So the two states are a notice above a complete dashboard now. Each
+              card owns its own empty state, which five of them already did.
+            */}
+            {(noSpaces || noMaterials) && (
+              <div className="rounded-xl border border-primary-fixed-dim/25 bg-primary-fixed-dim/[0.07] px-4 py-3 mb-6 flex items-start gap-3">
+                <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-primary-fixed-dim" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-sans text-sm font-semibold text-white">
+                    {noSpaces
+                      ? 'Nothing here yet. Make your first study space.'
+                      : 'No lessons in your spaces yet.'}
+                  </p>
+                  <p className="mt-0.5 font-sans text-xs leading-relaxed text-slate-400">
+                    {noSpaces
+                      ? 'Everything below fills in as you study. Create a space and the lessons for your grade are added to it automatically.'
+                      : 'Your teacher has not published anything to your grade for these subjects yet. Once they do, it appears in your spaces and everything below starts tracking.'}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* ── Summary strip ────────────────────────────────────────────── */}
             <section className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
               <Stat icon={Layers} label="Study spaces" value={String(data.counts.spaces)} tone="text-primary-fixed-dim" />
@@ -170,29 +212,54 @@ export default function StudentDashboard() {
               <Stat
                 icon={Target}
                 label="Concepts assessed"
-                value={`${m!.concepts_assessed} / ${m!.concepts_total}`}
+                value={`${data.mastery.concepts_assessed} / ${data.mastery.concepts_total}`}
                 tone="text-slate-200"
               />
               <Stat
                 icon={Trophy}
                 label="Concepts mastered"
-                value={nothingAssessed ? '—' : String(m!.concepts_mastered)}
+                value={nothingAssessed ? '—' : String(data.mastery.concepts_mastered)}
                 tone={nothingAssessed ? 'text-white' : toneText.good}
               />
             </section>
+
+            {/*
+              ⚠️ THE ONE THING "3 / 47" DOES NOT SAY IS WHAT THE 47 IS.
+              Read cold it looks like a mark out of 47, so a new student reads
+              their first day as 3/47 = 6% and concludes they are failing. The
+              denominator is the size of the lesson, not a target, and the other
+              44 are simply questions nobody has asked yet.
+
+              Here rather than on the tiles: four captions on four small tiles is
+              noise, and this one sentence covers both of the tiles that need it.
+            */}
+            <p className="-mt-6 mb-8 font-sans text-xs leading-relaxed text-slate-600">
+              Assessed counts the concepts you have been asked about in a flashcard
+              or a test. It is not a score, and the rest are waiting, not wrong.
+            </p>
 
             <div className="grid grid-cols-12 gap-6">
               {/* ── Main column ────────────────────────────────────────────── */}
               <div className="col-span-12 lg:col-span-8 space-y-6">
                 <MasteryCard data={data} />
-                <FocusCard focus={data.focus} assessed={m!.concepts_assessed} total={m!.concepts_total} />
-                <SpacesCard spaces={m!.by_space} />
+                <FocusCard
+                  focus={data.focus}
+                  assessed={data.mastery.concepts_assessed}
+                  total={data.mastery.concepts_total}
+                />
+                <SpacesCard spaces={data.mastery.by_space} />
               </div>
 
               {/* ── Side column ────────────────────────────────────────────── */}
               <div className="col-span-12 lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-6">
                 <StreakCard g={data.gamification} />
-                <DueCard total={data.flashcards_due} spaces={m!.by_space} />
+                {/*
+                  DueCard still returns null when nothing is due, deliberately —
+                  a tile permanently announcing "0" is clutter on every
+                  established student's dashboard forever. It is the one section
+                  the first-run tour has no step for.
+                */}
+                <DueCard total={data.flashcards_due} spaces={data.mastery.by_space} />
                 {data.resume_test && <ResumeCard test={data.resume_test} />}
                 <BadgesCard g={data.gamification} />
                 <RecentCard items={data.recent} />
@@ -274,36 +341,50 @@ function EmptyCard({
  */
 function MasteryCard({ data }: { data: DashboardData }) {
   const m = data.mastery;
-  const nothingAssessed = m.concepts_assessed === 0;
+  const realNothingAssessed = m.concepts_assessed === 0;
   const updated = relativeTime(m.last_updated);
+
+  /*
+   * Example content, and ONLY while the tour is spotlighting this card with a
+   * step that asked for it. `&& realNothingAssessed` is the second guard: a
+   * student replaying the tour from Help who already has real mastery must keep
+   * seeing their own number, never have it overwritten by a sample.
+   */
+  const showDemo = useTourDemo('dash-mastery') && realNothingAssessed;
+  const nothingAssessed = showDemo ? false : realNothingAssessed;
+  const overall = showDemo ? DEMO_MASTERY.overall : m.overall;
+  const assessedCount = showDemo ? DEMO_MASTERY.concepts_assessed : m.concepts_assessed;
+  const totalCount = showDemo ? DEMO_MASTERY.concepts_total : m.concepts_total;
 
   // Tier from the ROUNDED value so the colour cannot contradict the number:
   // 0.849 prints "85%" but tiers as intermediate on the raw value.
-  const percent = m.overall === null ? 0 : masteryPercent(m.overall);
+  const percent = overall === null ? 0 : masteryPercent(overall);
   const tier = masteryTier(percent / 100);
   const tone = TIER_TONE[tier];
 
   return (
     <div
+      data-tour="dash-mastery"
       className={`${CARD} border border-white/10 shadow-[0_10px_25px_-8px_rgba(0,0,0,0.35),0_0_45px_-12px_var(--theme-glow)] p-5`}
     >
       <div className="flex items-center gap-2">
         <IconChip icon={ChartColumn} className="bg-primary-fixed-dim/10 text-primary-fixed-dim" />
         <h2 className={SECTION}>Overall mastery</h2>
+        {showDemo && <span className="ml-auto"><ExampleChip /></span>}
       </div>
 
       <div className="flex items-end justify-between gap-4 mt-4">
         <div className="min-w-0">
           <p className={`font-display text-4xl font-bold tabular-nums ${nothingAssessed ? 'text-white' : toneText[tone]}`}>
-            {nothingAssessed || m.overall === null ? '—' : `${percent}%`}
+            {nothingAssessed || overall === null ? '—' : `${percent}%`}
           </p>
           <p className={`font-sans text-xs font-semibold mt-1 ${nothingAssessed ? 'text-slate-500' : toneText[tone]}`}>
             {nothingAssessed ? 'Not measured yet' : TIER_LABEL[tier]}
           </p>
         </div>
         <p className="font-sans text-[11px] text-slate-600 text-right shrink-0">
-          {m.concepts_assessed} of {m.concepts_total} concepts
-          {m.total_attempts > 0 && (
+          {assessedCount} of {totalCount} concepts
+          {!showDemo && m.total_attempts > 0 && (
             <>
               <br />
               {m.total_attempts} attempt{m.total_attempts === 1 ? '' : 's'}
@@ -313,13 +394,18 @@ function MasteryCard({ data }: { data: DashboardData }) {
       </div>
 
       <MeterBar
-        value={nothingAssessed ? null : m.overall}
+        value={nothingAssessed ? null : overall}
         tone={tone}
         label="Overall mastery across all study spaces"
         className="mt-4"
       />
 
-      {nothingAssessed ? (
+      {showDemo ? (
+        <p className="font-sans text-xs text-slate-500 mt-4 leading-relaxed">
+          This is what it looks like once you have been studying. Your own number
+          starts at nothing and grows from there.
+        </p>
+      ) : nothingAssessed ? (
         <p className="font-sans text-xs text-slate-500 mt-4 leading-relaxed">
           Your mastery updates when you rate a flashcard or finish a test. Until then there is
           nothing to measure — your lessons are waiting, not scored at zero.
@@ -372,7 +458,13 @@ function FocusCard({
   assessed: number;
   total: number;
 }) {
-  if (assessed === 0) return null;
+  /*
+   * It used to `return null` here, which is half the reason a new student saw
+   * an empty page. It renders now — but the honesty guard below is replaced,
+   * not merely emptied: "ranked from the 0 concepts you have been tested on" is
+   * a sentence nobody should read.
+   */
+  const nothingAssessed = assessed === 0;
 
   return (
     <div className={`${PANEL} p-5`}>
@@ -383,11 +475,18 @@ function FocusCard({
       {/* The honesty guard, same wording as the Analytics tab. Without it a student
           wonders why a concept they know they are weak at is missing — the answer
           is always "it has not come up yet". */}
-      <p className="font-sans text-[11px] text-slate-600 mt-1.5">
-        Ranked from the {assessed} concept{assessed === 1 ? '' : 's'} you have been tested on.
-      </p>
+      {!nothingAssessed && (
+        <p className="font-sans text-[11px] text-slate-600 mt-1.5">
+          Ranked from the {assessed} concept{assessed === 1 ? '' : 's'} you have been tested on.
+        </p>
+      )}
 
-      {focus.length === 0 || focus[0].mastery >= 0.85 ? (
+      {nothingAssessed ? (
+        <p className="font-sans text-sm text-slate-400 mt-3 leading-relaxed">
+          Once you have answered a few flashcards or finished a test, the concepts
+          worth working on next are listed here, weakest first.
+        </p>
+      ) : focus.length === 0 || focus[0].mastery >= 0.85 ? (
         <p className="font-sans text-sm text-slate-300 mt-4">
           You are above 85% on everything you have been tested on.
           {assessed < total && (
@@ -439,22 +538,46 @@ function FocusRow({ concept }: { concept: FocusConcept }) {
   );
 }
 
+/**
+ * ⚠️ THIS CARD CARRIES THE "MAKE YOUR FIRST SPACE" CALL TO ACTION, and it is the
+ * right home for it — this is the section *about* study spaces, in the main
+ * column, where a student is already looking for them.
+ *
+ * It used to `return null` on an empty list, which was the other half of the
+ * empty-dashboard bug: the one control a brand-new student needs was the one
+ * thing not drawn.
+ */
 function SpacesCard({ spaces }: { spaces: SpaceMasteryRow[] }) {
-  if (spaces.length === 0) return null;
-
   return (
-    <div>
+    <div data-tour="dash-spaces">
       <div className="flex items-center gap-2 mb-4">
         <IconChip icon={Layers} className="bg-primary-fixed-dim/10 text-primary-fixed-dim" />
         <h2 className={SECTION}>Your study spaces</h2>
       </div>
-      <div className="space-y-2">
-        {spaces.map((s) => (
-          <Fragment key={s.space_id}>
-            <SpaceRow space={s} />
-          </Fragment>
-        ))}
-      </div>
+
+      {spaces.length === 0 ? (
+        <div className={`${PANEL} py-10 px-6 text-center`}>
+          <p className="font-sans text-sm text-slate-400 mb-1">You have no study spaces yet.</p>
+          <p className="font-sans text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+            One space per subject. It opens already holding the lessons your teacher
+            published for your grade.
+          </p>
+          <Link
+            to="/student/spaces"
+            className="inline-flex items-center gap-2 mt-5 px-5 py-2.5 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-container transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            Create your first space <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {spaces.map((s) => (
+            <Fragment key={s.space_id}>
+              <SpaceRow space={s} />
+            </Fragment>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -527,16 +650,20 @@ function SpaceRow({ space }: { space: SpaceMasteryRow }) {
  * the database — never a 48-hour clock, whatever ARCHITECTURE.md used to say.
  */
 function StreakCard({ g }: { g: GamificationBlock }) {
-  const days = g.day_streak;
+  // Example only while the tour is on this card AND the real streak is zero, so
+  // a replay from Help never overwrites a run the student actually has.
+  const showDemo = useTourDemo('dash-streak') && g.day_streak === 0;
+  const days = showDemo ? DEMO_STREAK_DAYS : g.day_streak;
 
   return (
-    <div className={`${PANEL} p-5`}>
+    <div data-tour="dash-streak" className={`${PANEL} p-5`}>
       <div className="flex items-center gap-2">
         <IconChip
           icon={Flame}
           className={days > 0 ? 'bg-orange-400/10 text-orange-400' : 'bg-white/5 text-slate-500'}
         />
         <h2 className={SECTION}>Study streak</h2>
+        {showDemo && <span className="ml-auto"><ExampleChip /></span>}
       </div>
 
       <p className="font-display text-3xl font-bold text-white tabular-nums mt-3">
@@ -547,11 +674,13 @@ function StreakCard({ g }: { g: GamificationBlock }) {
       </p>
 
       <p className="font-sans text-xs text-slate-500 mt-1">
-        {days === 0
-          ? 'Study anything today to start a streak.'
-          : g.longest_streak > days
-            ? `Best so far: ${g.longest_streak} days`
-            : 'This is your best run yet.'}
+        {showDemo
+          ? 'Yours starts at zero and grows by one each day you study.'
+          : days === 0
+            ? 'Study anything today to start a streak.'
+            : g.longest_streak > days
+              ? `Best so far: ${g.longest_streak} days`
+              : 'This is your best run yet.'}
       </p>
     </div>
   );
@@ -581,8 +710,19 @@ function StreakCard({ g }: { g: GamificationBlock }) {
  */
 function BadgesCard({ g }: { g: GamificationBlock }) {
   const [galleryOpen, setGalleryOpen] = useState(false);
-  const badges = g.badges;
-  const totals = badgeTotals(badges);
+
+  /*
+   * ⚠️ THE EXAMPLE BADGES ARE REAL CATALOGUE IDENTITIES, not invented ones. They
+   * go through `badgeStyle()` exactly as an earned badge does, so a student is
+   * shown three badges that genuinely exist and that they can genuinely earn.
+   * Guarded on holding none, so a replay never buries real badges under samples.
+   */
+  const showDemo = useTourDemo('dash-badges') && g.badges.length === 0;
+  const badges = showDemo
+    ? DEMO_BADGE_NAMES.map((name) => ({ name, awarded_at: new Date().toISOString() }))
+    : g.badges;
+  // Deliberately the REAL totals: a fake "3 / 14" is a claim about the student.
+  const totals = badgeTotals(g.badges);
 
   // Closest to done, and only if it has actually started. `badge_progress` holds
   // unearned countable badges only, so nothing here can already be held.
@@ -592,13 +732,17 @@ function BadgesCard({ g }: { g: GamificationBlock }) {
   const nextStyle = nextUp ? badgeStyle(nextUp.name) : null;
 
   return (
-    <div className={`${PANEL} p-5`}>
+    <div data-tour="dash-badges" className={`${PANEL} p-5`}>
       <div className="flex items-center gap-2">
         <IconChip icon={Trophy} className="bg-amber-400/10 text-amber-400" />
         <h2 className={SECTION}>Badges</h2>
-        <span className="font-sans text-xs text-slate-500 tabular-nums ml-auto">
-          {totals.held} / {totals.total}
-        </span>
+        {showDemo ? (
+          <span className="ml-auto"><ExampleChip /></span>
+        ) : (
+          <span className="font-sans text-xs text-slate-500 tabular-nums ml-auto">
+            {totals.held} / {totals.total}
+          </span>
+        )}
       </div>
 
       {badges.length === 0 ? (
@@ -613,7 +757,7 @@ function BadgesCard({ g }: { g: GamificationBlock }) {
             return (
               <li
                 key={badge.name}
-                title={`${style.label} — earned ${relativeTime(badge.awarded_at)}`}
+                title={showDemo ? style.label : `${style.label} — earned ${relativeTime(badge.awarded_at)}`}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${style.bg} ${style.ring}`}
               >
                 <Icon className={`w-3.5 h-3.5 shrink-0 ${style.color}`} />
@@ -720,13 +864,38 @@ function ResumeCard({ test }: { test: NonNullable<DashboardData['resume_test']> 
 }
 
 function RecentCard({ items }: { items: ActivityItem[] }) {
+  const showDemo = useTourDemo('dash-recent') && items.length === 0;
+
   return (
-    <div className={`${PANEL} p-5`}>
+    <div data-tour="dash-recent" className={`${PANEL} p-5`}>
       <div className="flex items-center gap-2">
         <IconChip icon={History} className="bg-white/5 text-slate-400" />
         <h2 className={SECTION}>Recent activity</h2>
+        {showDemo && <span className="ml-auto"><ExampleChip /></span>}
       </div>
-      {items.length === 0 ? (
+      {showDemo ? (
+        /*
+         * Rendered here rather than through `ActivityRow`: that component takes a
+         * real `ActivityItem`, whose ids and timestamps would have to be
+         * fabricated to satisfy it. Sentences are what a student reads anyway.
+         */
+        <div className="mt-4 space-y-3.5">
+          {DEMO_RECENT.map((row) => {
+            const Icon = FOCUS_ICON_BY_KIND[row.kind];
+            return (
+              <div key={row.text} className="flex items-start gap-3">
+                <div className="w-7 h-7 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center shrink-0 mt-0.5">
+                  <Icon className="w-3.5 h-3.5 text-slate-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-sans text-sm text-slate-300 leading-snug">{row.text}</p>
+                  <p className="font-sans text-[11px] text-slate-600 mt-0.5">{row.when}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : items.length === 0 ? (
         <p className="font-sans text-xs text-slate-600 mt-3 leading-relaxed">
           Nothing yet. Study a deck, take a test or play a game and it shows up here.
         </p>

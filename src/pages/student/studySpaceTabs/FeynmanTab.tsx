@@ -13,8 +13,10 @@ import {
   AttemptMaterial, materialLabel,
   scoreTone, toneText,
   type AttemptSummary, type ViewMode,
+  NoMaterialsNotice,
 } from './cognitiveShared';
 import { useBadges } from '../../../context/BadgeContext';
+import { useOnboarding } from '../../../context/OnboardingContext';
 
 interface FeynmanTabProps {
   availableResources: { id: string; title: string }[];
@@ -140,6 +142,16 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
   const { celebrate } = useBadges();
   const [resultLogId, setResultLogId] = useState<string | null>(null);
   const [historyLogId, setHistoryLogId] = useState<string | null>(null);
+
+  /* Deferred for the same reason as Free Recall's — see the note there. Here it
+     teaches that the two marks are independent axes rather than one score, which
+     is invisible from the numbers alone. */
+  const { startTour } = useOnboarding();
+  useEffect(() => {
+    if (viewMode !== 'study' || !resultLogId) return;
+    const t = setTimeout(() => startTour('tool_feynman_result'), 700);
+    return () => clearTimeout(t);
+  }, [viewMode, resultLogId, startTour]);
   const [showAnswer, setShowAnswer] = useState(false);
 
   const activeLogId = viewMode === 'study' ? resultLogId : historyLogId;
@@ -346,6 +358,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
               {/* Named before the score: the concepts graded below belong to
                   one lesson, and History can hold attempts across several. */}
               <AttemptMaterial label={materialLabel(activeLog.material_ids, availableResources)} />
+              <div data-tour="fey-scores">
               <VerdictBanner
                 score={activeFeedback.accuracy_score}
                 tone={scoreTone(activeFeedback.accuracy_score)}
@@ -353,6 +366,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
                 description={verdictDescription(activeFeedback.accuracy_score, activeFeedback.concepts.length)}
                 secondary={{ label: 'Simplicity', value: activeFeedback.simplicity_score }}
               />
+              </div>
 
               {activeFeedback.overall_feedback && (
                 <div className="space-y-3">
@@ -484,10 +498,13 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
             </div>
   );
 
-  const composer = (
+  // Guarded on there being any lesson at all: without this the material
+  // dropdown simply renders empty and the tab explains nothing. See
+  // `NoMaterialsNotice`.
+  const composer = availableResources.length === 0 ? <NoMaterialsNotice /> : (
             <div className="fade-in">
               <div className="flex flex-wrap items-end gap-x-6 gap-y-4 mb-6">
-                <div className="flex flex-col gap-1.5">
+                <div data-tour="fey-material" className="flex flex-col gap-1.5">
                   <span className={LABEL}>Material</span>
                   <SingleSelectDropdown
                     selectedValue={selectedMaterialId}
@@ -497,7 +514,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
                   />
                 </div>
 
-                <div className="flex flex-col gap-1.5">
+                <div data-tour="fey-concepts" className="flex flex-col gap-1.5">
                   <span className={`${LABEL} flex items-center gap-1.5`}>
                     Concepts {isFetchingConcepts && <Spinner className="w-3 h-3" />}
                   </span>
@@ -559,6 +576,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
                   )}
                 </span>
                 <button
+                  data-tour="fey-submit"
                   onClick={handleEvaluate}
                   disabled={!canEvaluate}
                   className="px-6 py-2.5 bg-primary-fixed-dim text-black hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-xl font-sans text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
