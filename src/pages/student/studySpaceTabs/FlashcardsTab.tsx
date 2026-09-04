@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck, Shuffle, Undo2 } from 'lucide-react';
+import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck, Shuffle, ArrowUpDown } from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import FlashcardStudyView from '../components/FlashcardStudyView';
 import Modal from '../../../components/ui/Modal';
+import Dropdown from '../../../components/ui/Dropdown';
 import DueBadge from '../../../components/ui/DueBadge';
 import { api } from '../../../lib/api';
 // Shared with StudySpace, which counts due cards for the tab badge. One copy of
 // the rule on the client; the server stays authoritative.
 import { isDue } from '../../../lib/reviewSchedule';
+import type { EaseRating } from '../../../lib/reviewSchedule';
 // Lifted out of TermMatchingGame when this grid needed one too.
 import { shuffle } from '../../../lib/shuffle';
 
@@ -22,7 +24,78 @@ interface Flashcard {
   nextReviewAt?: string | null;
   /** The model wrote this card's front, so it is a question, not the term. */
   isAiGenerated?: boolean;
+  /**
+   * The student's last self-rating, or null for a card never rated while due.
+   * See the fuller note on the same field in `StudySpace.tsx`: practice ratings
+   * do not write it, so null is common and must never be read as "easy".
+   */
+  easeRating?: EaseRating | null;
 }
+
+/**
+ * How the deck's cards are ordered on screen and in the session that starts
+ * from here.
+ *
+ * ⚠️ `shuffled` IS A VALUE HERE BUT NOT AN OPTION IN THE MENU. Shuffle and the
+ * sort both decide one thing — the order — so two pieces of state would let the
+ * UI claim "Hardest first" over a shuffled grid. The menu is for SORTING and
+ * the button is for scrambling; they are mutually exclusive, and choosing
+ * either clears the other.
+ *
+ * That leaves one hazard to handle at the call site: `Dropdown` falls back to
+ * its first option when `value` matches nothing, so passing `shuffled` straight
+ * to it would silently render "Default" over a shuffled grid. The trigger is
+ * therefore fed a mapped value, and the shuffled state is shown on the button
+ * instead, via `aria-pressed` and an active tone.
+ *
+ * A `due` option was tried and removed: `next_review_at` is set FROM the last
+ * rating (Hard 1 day, Medium 3, Easy 7), so on a deck reviewed in one sitting
+ * it reproduces "Hardest first" almost exactly. The two diverge only across
+ * ratings given on different days, which is not worth a near-duplicate entry.
+ */
+type OrderKey = 'deck' | 'hardest' | 'easiest' | 'shuffled';
+
+const ORDER_OPTIONS: Array<{ label: string; value: OrderKey }> = [
+  { label: 'Default', value: 'deck' },
+  { label: 'Hardest first', value: 'hardest' },
+  { label: 'Easiest first', value: 'easiest' },
+];
+
+/** Hard is the thing worth working on, so it sorts first. */
+const RATING_RANK: Record<EaseRating, number> = { hard: 0, medium: 1, easy: 2 };
+/**
+ * ⚠️ UNRATED SORTS LAST IN *BOTH* DIRECTIONS, which is why "Easiest first" is
+ * not a plain reverse of "Hardest first". Reversing the whole list would float
+ * every never-rated card to the top of a list labelled "Easiest", asserting
+ * something false about cards nobody has been tested on. The two orders differ
+ * only in the part their labels describe; the unknowns stay parked at the end.
+ *
+ * Same rule the Analytics tab and educator Class Performance already follow for
+ * unassessed concepts: partition first, never rank an unknown among the known.
+ */
+const UNRATED_RANK = 3;
+
+/** Sort position of one card under a rating order. Lower comes first. */
+function ratingRank(card: Flashcard, easiestFirst: boolean): number {
+  if (!card.easeRating) return UNRATED_RANK;
+  const rank = RATING_RANK[card.easeRating];
+  return easiestFirst ? 2 - rank : rank;
+}
+
+
+/**
+ * Tone for the rating chip on a card.
+ *
+ * ⚠️ THE PALETTE'S SOURCE OF TRUTH IS `RATING_CONFIG` IN
+ * `FlashcardStudyView.tsx` — the rating buttons are where a student learns that
+ * Hard is red — so keep these three in step with it. Three colour strings do
+ * not yet justify a shared module; lift them if a third consumer appears.
+ */
+const RATING_CHIP: Record<EaseRating, { label: string; className: string }> = {
+  hard: { label: 'Hard', className: 'text-red-400' },
+  medium: { label: 'Medium', className: 'text-amber-400' },
+  easy: { label: 'Easy', className: 'text-emerald-400' },
+};
 
 /** "Tue 4 Aug" — short enough for a deck tile. */
 function formatReviewDate(iso: string): string {
@@ -151,13 +224,17 @@ export default function FlashcardsTab({
   >(null);
 
   /**
-   * How many times Shuffle has been pressed. 0 is the deck's own order, which
-   * the server returns by `created_at`.
+   * How the cards below are ordered. One piece of state for one decision.
    *
-   * A counter rather than a stored array of ids: the order is derived, so
-   * nothing has to be reconciled when the card list changes underneath it.
-   * Deliberately NOT persisted — a saved random order is a contradiction, and
-   * the point of Shuffle is that pressing it twice gives two different runs.
+   * Deliberately NOT persisted, unlike `answer_first`: a saved sort is a deck
+   * that silently opens reordered weeks later with nothing on screen saying
+   * why. It resets when the student opens a different deck.
+   */
+  const [order, setOrder] = useState<OrderKey>('deck');
+  /**
+   * Bumped on every press of Shuffle so pressing it again re-rolls. A counter
+   * rather than a stored array of ids: the order is derived, so nothing has to
+   * be reconciled when the card list changes underneath it.
    */
   const [shuffleNonce, setShuffleNonce] = useState(0);
   /**
@@ -176,10 +253,24 @@ export default function FlashcardsTab({
   // Opening a different deck starts clean: its own saved side, its own order,
   // and no card left showing its answer.
   useEffect(() => {
+    setOrder('deck');
     setShuffleNonce(0);
     setAnswerFirstDraft(null);
     setFlippedCardId(null);
   }, [selectedSetContent]);
+
+  /**
+   * Change the order. Always clears the flip, because a card showing its answer
+   * that then jumps position is disorienting.
+   *
+   * Pressing Shuffle again re-rolls rather than being a no-op, which is why the
+   * nonce is bumped even when `shuffled` is already the current order.
+   */
+  const chooseOrder = (next: OrderKey) => {
+    setOrder(next);
+    if (next === 'shuffled') setShuffleNonce(n => n + 1);
+    setFlippedCardId(null);
+  };
 
   const answerFirst = answerFirstDraft ?? selectedSet?.answerFirst ?? false;
 
@@ -209,11 +300,32 @@ export default function FlashcardsTab({
    * flipping a card does not reshuffle the grid underneath the student. It does
    * reshuffle once `onRefresh()` replaces the array — that is, on returning from
    * a session — which is a fresh visit rather than a surprise.
+   *
+   * Every branch returns a NEW array; `selectedSet.cards` belongs to
+   * `StudySpace`'s state and must never be sorted in place.
+   *
+   * `Array.prototype.sort` is stable (guaranteed since ES2019), so ties keep
+   * deck order — three cards all rated Hard stay in the order they were
+   * generated rather than reshuffling themselves on every render.
    */
   const orderedCards = useMemo(() => {
     const cards = selectedSet?.cards ?? [];
-    return shuffleNonce === 0 ? cards : shuffle(cards);
-  }, [selectedSet?.cards, shuffleNonce]);
+    switch (order) {
+      case 'shuffled':
+        return shuffle(cards);
+      case 'hardest':
+        return [...cards].sort((a, b) => ratingRank(a, false) - ratingRank(b, false));
+      case 'easiest':
+        return [...cards].sort((a, b) => ratingRank(a, true) - ratingRank(b, true));
+      default:
+        return cards;
+    }
+    // `shuffleNonce` is in the deps so pressing Shuffle again re-rolls; it is
+    // otherwise unused here.
+  }, [selectedSet?.cards, order, shuffleNonce]);
+
+  /** How many cards in the open deck carry a rating at all. */
+  const ratedCount = (selectedSet?.cards ?? []).filter(c => c.easeRating).length;
 
   /**
    * Persist which face the open deck opens on.
@@ -771,6 +883,11 @@ export default function FlashcardsTab({
             and "Question" for one built in question format; the second is always
             "Definition", because the back is the educator's definition verbatim
             whichever format the deck was generated in.
+
+            The right-hand pair is ONE decision, not two. Shuffle and the sort
+            both set the order, so they share `order` — three separate controls
+            (Shuffle / Original order / Sort) could have contradicted each other
+            on screen. Choosing a sort clears the shuffle and vice versa.
           */}
           {selectedSet && selectedSet.cards.length > 0 && (
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -806,25 +923,55 @@ export default function FlashcardsTab({
                 </div>
               </div>
 
+              {/* The menu sorts, the button scrambles, and only one can be in
+                  effect. "Original order" used to be a third control here and is
+                  now the menu's `Default`. */}
               <div className="flex items-center gap-2">
-                {shuffleNonce > 0 && (
-                  <button
-                    onClick={() => { setShuffleNonce(0); setFlippedCardId(null); }}
-                    className="px-3 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-sans text-[11px] uppercase tracking-widest font-bold flex items-center gap-1.5 transition-colors"
-                  >
-                    <Undo2 className="w-3.5 h-3.5" />
-                    Original order
-                  </button>
-                )}
+                <Dropdown
+                  /* ⚠️ MAPPED, NOT PASSED THROUGH. `shuffled` is a real order but
+                     not an option, and `Dropdown` renders its first option for
+                     any value it does not recognise — so passing it raw would
+                     read "Default" over a shuffled grid. Shuffling genuinely is
+                     "no sort applied", and the button below is what shows it. */
+                  value={order === 'shuffled' ? 'deck' : order}
+                  onChange={v => chooseOrder(v as OrderKey)}
+                  options={ORDER_OPTIONS}
+                  icon={<ArrowUpDown className="w-3.5 h-3.5" />}
+                  className="w-44"
+                />
                 <button
-                  onClick={() => { setShuffleNonce(n => n + 1); setFlippedCardId(null); }}
+                  onClick={() => chooseOrder('shuffled')}
                   disabled={selectedSet.cards.length < 2}
-                  className="px-4 py-2 rounded-xl bg-surface-container border border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white font-sans text-[11px] uppercase tracking-widest font-bold flex items-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-container disabled:hover:text-slate-300"
+                  aria-pressed={order === 'shuffled'}
+                  aria-label="Shuffle the cards"
+                  className={`px-4 py-2.5 rounded-xl border font-sans text-[11px] uppercase tracking-widest font-bold flex items-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                    order === 'shuffled'
+                      ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim/30 text-primary-fixed-dim hover:bg-primary-fixed-dim/20'
+                      : 'bg-surface-container border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white'
+                  }`}
                 >
                   <Shuffle className="w-3.5 h-3.5" />
                   Shuffle
                 </button>
               </div>
+            </div>
+          )}
+
+          {/*
+            ⚠️ THE COMMON CASE, NOT AN EDGE CASE. `ease_rating` is written only
+            when a rating counted, so a deck nobody has reviewed while due has
+            no ratings at all — which is every new deck. Sorting it by rating
+            correctly changes nothing, and without this line the first thing a
+            student tries looks broken.
+          */}
+          {selectedSet && selectedSet.cards.length > 0 && ratedCount === 0 &&
+            (order === 'hardest' || order === 'easiest') && (
+            <div className="mb-5 flex items-start gap-3 px-4 py-3 rounded-xl bg-surface-container-lowest/60 border border-white/5">
+              <AlertCircle className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+              <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                Nothing in this deck has been rated yet, so the order has not changed. A card gets a
+                rating when you review it on the day it is due.
+              </p>
             </div>
           )}
 
@@ -874,10 +1021,25 @@ export default function FlashcardsTab({
                               legible text in the tab. `[10px]` stays correct for
                               the tracking-widest labels below. */}
                           <p className="font-sans text-[11px] text-slate-500 truncate min-w-0">{source ?? ''}</p>
-                          <span className={`font-sans text-[11px] shrink-0 ${
-                            isDue(card.nextReviewAt) ? 'text-primary-fixed-dim/80' : 'text-slate-600'
-                          }`}>
-                            {dueLabel(card.nextReviewAt)}
+                          <span className="shrink-0 flex items-baseline gap-1.5 font-sans text-[11px]">
+                            {/* Rated cards only. A card nobody has reviewed shows
+                                nothing at all — no "Unrated" pill, no neutral
+                                dot. Sorting by rating is invisible without this,
+                                but inventing a value for an untested card is the
+                                mistake the rule against it exists to prevent. */}
+                            {card.easeRating && (
+                              <>
+                                <span className={RATING_CHIP[card.easeRating].className}>
+                                  {RATING_CHIP[card.easeRating].label}
+                                </span>
+                                <span className="text-slate-700">·</span>
+                              </>
+                            )}
+                            <span className={
+                              isDue(card.nextReviewAt) ? 'text-primary-fixed-dim/80' : 'text-slate-600'
+                            }>
+                              {dueLabel(card.nextReviewAt)}
+                            </span>
                           </span>
                         </div>
                         {/* `my-auto` on the text, never `items-center` here — a

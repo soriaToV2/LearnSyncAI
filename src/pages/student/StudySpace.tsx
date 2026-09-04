@@ -10,6 +10,7 @@ import ResourcesTab from './studySpaceTabs/ResourcesTab';
 import AnalyticsTab from './studySpaceTabs/AnalyticsTab';
 import { api } from '../../lib/api';
 import { isDue } from '../../lib/reviewSchedule';
+import type { EaseRating } from '../../lib/reviewSchedule';
 import DueBadge from '../../components/ui/DueBadge';
 import { SUBJECT_COLOR } from '../../components/educator/SubjectBadge';
 import { useSubjectName } from '../../context/SubjectsContext';
@@ -50,6 +51,16 @@ interface Flashcard {
    * definition in both formats.
    */
   isAiGenerated?: boolean;
+  /**
+   * The student's last self-rating on this card, or null.
+   *
+   * ⚠️ IT RECORDS ONLY RATINGS THAT COUNTED. `POST /api/flashcards/rate` writes
+   * it inside the same compare-and-swap as `next_review_at`, so a practice
+   * rating on a card that was not due leaves it untouched. Null means "never
+   * rated while due", which is the state of most of a real deck — never treat
+   * it as easy.
+   */
+  easeRating?: EaseRating | null;
 }
 
 interface FlashcardSet {
@@ -178,6 +189,7 @@ export default function StudySpace() {
               sourceMaterialId: c.source_material_id ?? null,
               nextReviewAt: c.next_review_at ?? null,
               isAiGenerated: c.is_ai_generated ?? false,
+              easeRating: c.ease_rating ?? null,
             })),
           };
         })

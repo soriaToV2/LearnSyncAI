@@ -4,6 +4,7 @@ import Spinner from '../../../components/ui/Spinner';
 import { api } from '../../../lib/api';
 import { useBadges } from '../../../context/BadgeContext';
 import { useOnboarding } from '../../../context/OnboardingContext';
+import type { EaseRating } from '../../../lib/reviewSchedule';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,8 +15,6 @@ interface Flashcard {
   /** Material this card came from, shown as a quiet label. */
   source?: string;
 }
-
-type EaseRating = 'easy' | 'medium' | 'hard';
 
 interface CardSession {
   cardId: number | string;

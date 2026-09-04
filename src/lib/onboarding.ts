@@ -567,6 +567,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
       'Press Study on the deck, read the front, then flip it.',
       'Rate yourself honestly. Hard brings the card back tomorrow, Medium in three days, Easy in seven.',
       'Open a deck and press Shuffle to mix up the order, so you learn the ideas and not the sequence.',
+      'The menu beside it reorders the deck instead. Hardest first brings up the cards you found hard last time. A card only gets a rating when you review it on the day it is due, so a new deck has none yet and that order will not change anything.',
       'In the same place, Show in front lets you swap the sides. Put the Definition in front and you have to remember the word instead, which is harder and worth doing once you know a deck well. Each deck remembers its own setting.',
     ],
   },

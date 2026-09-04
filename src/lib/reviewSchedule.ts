@@ -25,3 +25,12 @@ export function isDue(nextReviewAt: string | null | undefined, now: number = Dat
   const due = new Date(nextReviewAt).getTime();
   return Number.isNaN(due) || due <= now;
 }
+
+/**
+ * A student's self-rating on a card, mirroring the same type in
+ * `server/lib/reviewSchedule.ts` and the `ease_rating` CHECK constraint.
+ *
+ * One definition on the client: `FlashcardStudyView` keyed `RATING_CONFIG` off
+ * its own private copy, and the deck grid needed the same union to sort by it.
+ */
+export type EaseRating = 'easy' | 'medium' | 'hard';
