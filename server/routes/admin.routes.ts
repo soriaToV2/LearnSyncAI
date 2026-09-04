@@ -8,6 +8,7 @@ import {
   UpdateAccountSchema,
   SetAccountStatusSchema,
   ResetAccountPasswordSchema,
+  SetAccountEmailSchema,
   ImportAccountsSchema,
   ImportPrecheckSchema,
   ListAccountsQuerySchema,
@@ -85,8 +86,8 @@ const PAGE_SIZE = 25;
 const USERNAME_CHECK_CHUNK = 200;
 
 /**
- * Paging for the one place that still sweeps `auth.users` — the email half of
- * `POST /import/precheck`, where addresses are not reachable any other way.
+ * Paging for `emailOwners()` below — the only thing that still sweeps
+ * `auth.users`, because addresses are not reachable any other way.
  * A school fits in a single page; the cap is a runaway guard, not a limit.
  */
 const AUTH_PAGE_SIZE = 1000;
@@ -610,42 +611,17 @@ router.post('/import/precheck', async (req: Request, res: Response): Promise<voi
     }
   }
 
-  /*
-   * ⚠️ ADDRESSES LIVE ON `auth.users`, WHICH IS NOT REACHABLE THROUGH POSTGREST —
-   * there is no `.from('users')` for it and no `getUserByEmail` in the admin SDK.
-   * Paging `listUsers()` and intersecting in memory is the only route available.
-   *
-   * `GET /overview` deliberately STOPPED doing this, and that is not a
-   * contradiction: it swept every page on every dashboard load to answer a
-   * question a plain column read answered better. Here the sweep is the only way
-   * to get the fact at all, and it runs once, on an explicit file upload.
-   *
-   * At 1000 per page a school is one request. The page cap is a runaway guard,
-   * not an expected limit.
-   */
-  const wantedEmails = new Set(parsed.data.emails);
-  const taken_emails: string[] = [];
-
-  if (wantedEmails.size > 0) {
-    for (let page = 1; page <= AUTH_MAX_PAGES; page++) {
-      const { data, error } = await supabaseAdmin.auth.admin.listUsers({
-        page,
-        perPage: AUTH_PAGE_SIZE,
-      });
-
-      if (error) {
-        res.status(500).json({ error: 'Auth error', message: error.message });
-        return;
-      }
-
-      const users = data?.users ?? [];
-      for (const user of users) {
-        const email = user.email?.toLowerCase();
-        if (email && wantedEmails.has(email)) taken_emails.push(email);
-      }
-      // A short page is the last page. Without this the loop always runs the cap.
-      if (users.length < AUTH_PAGE_SIZE) break;
-    }
+  // The sweep lives in `emailOwners()` — see there for why `auth.users` can only
+  // be reached this way. This caller wants the addresses, not who holds them.
+  let taken_emails: string[];
+  try {
+    taken_emails = [...(await emailOwners(new Set(parsed.data.emails))).keys()];
+  } catch (err) {
+    res.status(500).json({
+      error: 'Auth error',
+      message: err instanceof Error ? err.message : 'Could not check the addresses',
+    });
+    return;
   }
 
   res.json({ data: { taken_usernames, taken_emails } });
@@ -685,6 +661,47 @@ router.post('/accounts', async (req: Request, res: Response): Promise<void> => {
     message: 'Account created',
   });
 });
+
+/**
+ * Which of these addresses already belong to an account, and to whom.
+ *
+ * ⚠️ THE ONLY ROUTE TO THIS FACT. Addresses live on `auth.users`, which is not
+ * reachable through PostgREST — there is no `.from('users')` for it and no
+ * `getUserByEmail` in the admin SDK — so paging `listUsers()` and intersecting in
+ * memory is the whole available mechanism.
+ *
+ * `GET /overview` deliberately STOPPED doing this, and that is not a
+ * contradiction: it swept every page on every dashboard load to answer a question
+ * a plain column read answered better. Both callers here need a fact that has no
+ * other source, and each runs once, on an explicit admin action — a file upload,
+ * or classifying a failed email change.
+ *
+ * At 1000 per page a school is one request. The page cap is a runaway guard, not
+ * an expected limit. Throws on a sweep failure; both callers decide what that
+ * means for them.
+ */
+async function emailOwners(wanted: Set<string>): Promise<Map<string, string>> {
+  const owners = new Map<string, string>();
+  if (wanted.size === 0) return owners;
+
+  for (let page = 1; page <= AUTH_MAX_PAGES; page++) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+      page,
+      perPage: AUTH_PAGE_SIZE,
+    });
+    if (error) throw new Error(error.message);
+
+    const users = data?.users ?? [];
+    for (const user of users) {
+      const email = user.email?.toLowerCase();
+      if (email && wanted.has(email)) owners.set(email, user.id);
+    }
+    // A short page is the last page. Without this the loop always runs the cap.
+    if (users.length < AUTH_PAGE_SIZE) break;
+  }
+
+  return owners;
+}
 
 /**
  * PATCH /api/admin/accounts/:userId
@@ -953,6 +970,122 @@ router.post('/accounts/:userId/password', async (req: Request, res: Response): P
       must_change_password: !flagError,
     },
     message: 'Password reset',
+  });
+});
+
+/**
+ * POST /api/admin/accounts/:userId/email
+ *
+ * Replace an account's contact address. The fix for an address entered wrongly at
+ * creation, and the only way an imported student ever gets off the
+ * `<username>@pca.invalid` placeholder that `canReceiveMail()` rejects — without
+ * this, such an account can never reach Tier 1 password recovery at all, because
+ * `EmailRecoveryBanner` is the only other route to an address and it asks the
+ * holder, who cannot see that theirs is undeliverable.
+ *
+ * ⚠️ IT APPLIES IMMEDIATELY. `admin.updateUserById({ email })` is precisely the
+ * call `POST /api/auth/change-email` was rewritten to STOP using, so the contrast
+ * matters: that route is driven by whoever holds a live session, which on a shared
+ * school computer is not proof of anything, so it proves the destination with a
+ * mailed code. This route is driven by `requireRole('admin')`, and an admin can
+ * satisfy neither proof for somebody else — no password, no mailbox. It also grants
+ * them nothing new, since the same role already holds
+ * `POST /accounts/:userId/password`. See `SetAccountEmailSchema`.
+ *
+ * ⚠️ SERVICE-ROLE ADMIN API, SO THE "Secure email change" DASHBOARD SETTING DOES
+ * NOT APPLY. That setting governs the user-scoped `updateUser({ email })` the
+ * self-service route uses; this one mails nothing and needs no confirmation from
+ * either address. `email_confirm: true` for the same reason `createUser()` sets it
+ * above — no SMTP is configured, so an unconfirmed address could never be confirmed.
+ *
+ * It deliberately does NOT re-arm `must_change_password` and does NOT revoke
+ * sessions: an email is not a credential on this platform. Sign-in is unaffected —
+ * `POST /api/auth/login` re-resolves `username -> profiles.id -> getUserById` on
+ * every request, so the student keeps the username and password they already have.
+ * The `email` claim in an already-issued JWT goes stale until it refreshes; nothing
+ * authorises on it.
+ */
+router.post('/accounts/:userId/email', async (req: Request, res: Response): Promise<void> => {
+  const parsed = SetAccountEmailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
+    return;
+  }
+
+  const { data: account } = await supabaseAdmin
+    .from('profiles')
+    .select('id, username')
+    .eq('id', req.params.userId)
+    .maybeSingle();
+
+  if (!account) {
+    res.status(404).json({ error: 'Not found', message: 'No such account' });
+    return;
+  }
+
+  const { data: updated, error } = await supabaseAdmin.auth.admin.updateUserById(account.id, {
+    email: parsed.data.email,
+    email_confirm: true,
+  });
+
+  if (error) {
+    /*
+     * ⚠️ `updateUserById` REPORTS A DUPLICATE ADDRESS AS AN OPAQUE 500, AND THERE
+     * IS NOTHING IN IT TO PARSE. Measured against this project 2026-09-04: an
+     * `AuthRetryableFetchError` whose `message` is the literal two-character
+     * string `{}`, with no `code` and no body — quite unlike `createUser`, which
+     * says "already been registered" and is why `createAccount()` and
+     * `POST /api/auth/change-email` can both string-match their collisions.
+     * Copying that match here compiles, reads correctly, and silently reports
+     * every duplicate as a generic 400.
+     *
+     * So the collision is classified by ASKING who owns the address instead of by
+     * reading the answer. Only on the failure path — the happy path stays a single
+     * call and never sweeps.
+     */
+    let owner: string | undefined;
+    try {
+      owner = (await emailOwners(new Set([parsed.data.email]))).get(parsed.data.email);
+    } catch {
+      // Diagnosis, not the operation. A failed sweep must not change what is
+      // reported about a write that has already failed.
+    }
+
+    if (owner && owner !== account.id) {
+      res.status(409).json({
+        error: 'Email taken',
+        message: 'That email address already belongs to another account',
+      });
+      return;
+    }
+
+    /*
+     * A readable upstream complaint is about the address itself, so it is the
+     * admin's to see and act on. The opaque `{}` is not — it would render as
+     * literal braces on the account page.
+     */
+    const detail = (error.message ?? '').trim();
+    const readable = detail && detail !== '{}';
+    res.status(readable ? 400 : 500).json({
+      error: 'Could not change email',
+      message: readable ? detail : 'That email address could not be applied. Please try again.',
+    });
+    return;
+  }
+
+  // Read the address back off the updated user, not the request body — the same
+  // "row, not what was asked for" rule `createAccount()` follows.
+  const email = updated?.user?.email ?? parsed.data.email;
+
+  res.json({
+    data: {
+      id: account.id,
+      email,
+      email_is_placeholder: isPlaceholderEmail(email),
+      /** The one the UI prints by — see `lib/placeholderEmail.ts`. */
+      email_can_receive: canReceiveMail(email),
+    },
+    message: 'Email updated',
   });
 });
 

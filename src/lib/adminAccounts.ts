@@ -123,6 +123,14 @@ export interface CreatedAccount extends AdminAccount {
   password_was_generated: boolean;
 }
 
+/** What `POST /admin/accounts/:id/email` gives back — the address as stored, re-derived. */
+export interface AdminAccountEmail {
+  id: string;
+  email: string;
+  email_is_placeholder: boolean;
+  email_can_receive: boolean;
+}
+
 export interface AccountFilters {
   role?: AccountRole;
   grade?: number;
@@ -252,6 +260,27 @@ export const adminApi = {
    */
   async resetPassword(userId: string, newPassword: string): Promise<void> {
     await api.post(`/admin/accounts/${userId}/password`, { new_password: newPassword });
+  },
+
+  /**
+   * Replace an account's contact address. Its own call, not a field on
+   * `updateAccount()`: the address lives on `auth.users` and the profile row on
+   * `profiles`, so one request writing both could half-apply.
+   *
+   * ⚠️ IT APPLIES IMMEDIATELY — unlike the self-service `changeEmail()` in
+   * `src/lib/account.ts`, which mails a 6-digit code to the new address and applies
+   * nothing until `confirmEmailChange()` redeems it. An admin can prove neither the
+   * account (no password) nor the destination (no mailbox), and the addresses most
+   * in need of fixing are `@pca.invalid` placeholders that can never receive a code
+   * at all. Nothing verifies the address, so the form asks for confirmation before
+   * sending it.
+   *
+   * A 409 means the address already belongs to another account —
+   * `users_email_partial_key`, which is also why siblings cannot share one.
+   */
+  async setEmail(userId: string, email: string): Promise<AdminAccountEmail> {
+    const res = await api.post<AdminAccountEmail>(`/admin/accounts/${userId}/email`, { email });
+    return res.data;
   },
 
   async importAccounts(rows: NewAccount[]): Promise<{

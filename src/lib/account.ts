@@ -154,3 +154,29 @@ export function usernameProblem(value: string): string | null {
   if (!USERNAME_PATTERN.test(v)) return USERNAME_HINT;
   return null;
 }
+
+/**
+ * ⚠️ SHAPE ONLY, AND DELIBERATELY SO. Zod's `.email()` on the server is
+ * authoritative and re-validates every one of these; a browser-side email regex
+ * that disagrees with it is worse than none, because it rejects addresses the
+ * platform would have accepted and gives no way to find that out.
+ *
+ * Lives here, beside the password and username rules, for the reason stated on
+ * those: it is used by both places an admin types an address — the create modal
+ * and the account page's email form — and two copies would be two different
+ * messages for the same rejection.
+ */
+const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** `null` when valid, otherwise the reason. Empty says nothing: the field is untouched. */
+export function emailProblem(value: string): string | null {
+  const v = value.trim();
+  if (v.length === 0) return null;
+  if (!EMAIL_SHAPE.test(v)) return 'Enter a valid email address.';
+  return null;
+}
+
+/** Whether this value would be accepted. Empty is invalid; `emailProblem` stays quiet on it. */
+export function isEmailValid(value: string): boolean {
+  return EMAIL_SHAPE.test(value.trim());
+}

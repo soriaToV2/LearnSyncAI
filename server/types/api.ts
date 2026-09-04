@@ -352,6 +352,37 @@ export const ResetAccountPasswordSchema = z
 export type ResetAccountPasswordInput = z.infer<typeof ResetAccountPasswordSchema>;
 
 /**
+ * The admin's email writer, and the ONLY one — `UpdateAccountSchema` above has no
+ * `email` key and is `.strict()`, so a PATCH carrying one is a 400. Its own route
+ * because the address lives on `auth.users` while the profile row lives on
+ * `profiles`: a single handler writing both has no atomicity, and a saved surname
+ * followed by a rejected address is exactly the half-applied Save the three-form
+ * split on the account page exists to prevent.
+ *
+ * ⚠️ CONTACT INFORMATION, NEVER A CREDENTIAL. They sign in with `profiles.username`,
+ * which `POST /api/auth/login` resolves to an address server-side on every request
+ * — so changing this never changes how anybody signs in.
+ *
+ * ⚠️ IT APPLIES IMMEDIATELY, WITH NO CONFIRMATION, AND THAT IS CORRECT HERE. The
+ * self-service `POST /api/auth/change-email` mails a 6-digit code to the new
+ * address and applies nothing until it is redeemed, because a session left open on
+ * a shared school computer must not be enough to repoint an account. An admin can
+ * satisfy neither half of that proof — they cannot read a student's mailbox, and
+ * the addresses most in need of fixing are `@pca.invalid` placeholders that can
+ * never receive anything. Nor would the proof buy anything: `requireRole('admin')`
+ * already grants `POST /accounts/:userId/password`, so an unverified address hands
+ * an administrator no access they do not already hold.
+ *
+ * ⚠️ Supabase enforces a UNIQUE index on `auth.users.email`
+ * (`users_email_partial_key`), so two accounts can never share an address —
+ * siblings cannot both be given a parent's. The route maps that collision to a 409.
+ */
+export const SetAccountEmailSchema = z
+  .object({ email: z.string().trim().toLowerCase().email('Enter a valid email address') })
+  .strict();
+export type SetAccountEmailInput = z.infer<typeof SetAccountEmailSchema>;
+
+/**
  * One row of a bulk import.
  *
  * Identical to `CreateAccountSchema` except that **`username` is optional**: a

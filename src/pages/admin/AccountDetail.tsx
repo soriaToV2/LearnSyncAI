@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, AtSign, CalendarDays, Clock, GraduationCap, Hourglass, KeyRound, ShieldCheck, ShieldOff, User, UserPen, Check, Copy
+  ArrowLeft, AtSign, CalendarDays, Clock, Hourglass, KeyRound, ShieldCheck, ShieldOff, User, UserPen, Check, Copy
 } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 import { useAdminTheme, inkOn } from '../../context/ThemeContext';
@@ -10,6 +10,8 @@ import {
   Field, Section, SaveButton, StatusLine, messageOf, useSubmitLatch, type Status,
 } from '../../components/common/formKit';
 import {
+  emailProblem,
+  isEmailValid,
   isPasswordValid,
   passwordProblem,
   PASSWORD_HINT,
@@ -143,7 +145,7 @@ function DetailsForm({
     <Section
       icon={UserPen}
       title="Details"
-      description="Their name, how they sign in, and what they are on the platform."
+      description="Their name, how they sign in, what they are on the platform, and which grade of materials a student can open."
     >
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -238,6 +240,154 @@ function DetailsForm({
           <SaveButton accent={accent} disabled={!canSave} busy={busy} label="Save changes" />
           <StatusLine status={status} />
         </div>
+      </form>
+    </Section>
+  );
+}
+
+// -- email address -----------------------------------------------------------
+
+/**
+ * The fourth form, and the one that was missing: an admin could fix a wrong name,
+ * role, grade, password and status, but never a wrong address.
+ *
+ * THE ONLY WAY AN ACCOUNT EVER LEAVES A `@pca.invalid` PLACEHOLDER, AND SO THE
+ * ONLY WAY MOST ACCOUNTS REACH TIER 1 PASSWORD RECOVERY AT ALL. CSV import leaves
+ * the email column optional and generates one; the holder cannot fix that for
+ * themselves, because nothing tells a student their stored address is
+ * undeliverable, and `EmailRecoveryBanner` is the only other route to an address
+ * anywhere in the product.
+ *
+ * IT CONFIRMS BEFORE APPLYING, BECAUSE NOTHING VERIFIES THE ADDRESS. The route
+ * applies it outright: an admin can prove neither the account (no password) nor
+ * the destination (no mailbox), which is exactly the proof the self-service
+ * `POST /api/auth/change-email` demands and an administrator can never supply. A
+ * typo landing in a real stranger inbox would quietly send that child future
+ * reset codes, so the confirmation echoes the address back first.
+ *
+ * The confirmation renders IN PLACE, replacing the action row -- never a nested
+ * `Modal`, matching `StatusForm` below.
+ *
+ * A separate form rather than a field on Details, for the reason the others are
+ * separate: this one writes `auth.users` while Details writes `profiles`, so a
+ * shared Save could store a surname and reject an address in the same click.
+ */
+function EmailForm({
+  account,
+  accent,
+  onSaved,
+}: {
+  account: AdminAccountDetail;
+  accent: string;
+  onSaved: () => void;
+}) {
+  /* Seeded from the stored address only when it is real. A placeholder must never
+     be printed, so it seeds an empty field rather than `juan@pca.invalid`. */
+  const seed = account.email_can_receive ? (account.email ?? '') : '';
+  const [email, setEmail] = useState(seed);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<Status>(null);
+  const [confirming, setConfirming] = useState(false);
+  const latch = useSubmitLatch();
+
+  useEffect(() => {
+    setEmail(account.email_can_receive ? (account.email ?? '') : '');
+    setConfirming(false);
+  }, [account]);
+
+  const trimmed = email.trim().toLowerCase();
+  const emailError = emailProblem(email);
+  const canSave = isEmailValid(email) && trimmed !== seed.toLowerCase() && !busy;
+
+  // The first click only asks. `apply` is what sends it.
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSave) return;
+    setStatus(null);
+    setConfirming(true);
+  };
+
+  const apply = async () => {
+    if (!canSave || !latch.take()) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      await adminApi.setEmail(account.id, trimmed);
+      setConfirming(false);
+      // Refetches the account, which re-seeds this field through the effect above.
+      onSaved();
+      setStatus({ kind: 'ok', text: 'Email address updated.' });
+    } catch (err) {
+      setConfirming(false);
+      setStatus({ kind: 'error', text: messageOf(err, 'Could not change the email address.') });
+    } finally {
+      setBusy(false);
+      latch.release();
+    }
+  };
+
+  return (
+    <Section
+      icon={AtSign}
+      title="Email address"
+      description="Contact information only, never a credential - they always sign in with their username. It is where a password-reset code would be sent, so an account without one cannot reset its own password."
+    >
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+            Currently
+          </span>
+          {/* `contactEmail()` renders a placeholder as "None set" -- see
+              `lib/placeholderEmail.ts` on why one is never printed. */}
+          <span className="font-mono text-sm text-slate-200 break-all">{contactEmail(account)}</span>
+        </div>
+
+        <Field
+          label="New email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="name@example.com"
+          hint={
+            emailError ??
+            'Each account needs its own address. Two people cannot share one, so siblings cannot both be given a parent inbox.'
+          }
+        />
+
+        {confirming ? (
+          <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/20 p-4 flex flex-col gap-3 animate-swap-in">
+            <p className="font-sans text-sm text-amber-100 leading-relaxed">
+              Set this as the email address for {account.first_name} {account.last_name}?
+            </p>
+            <p className="font-mono text-sm text-white break-all">{trimmed}</p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={apply}
+                disabled={busy}
+                style={{ backgroundColor: accent, color: inkOn(accent) }}
+                className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl font-display text-xs font-bold hover:brightness-110 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 whitespace-nowrap ${FOCUS}`}
+              >
+                {busy && <Spinner className="w-3.5 h-3.5" />}
+                Yes, change it
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 hover:text-white font-display text-xs font-bold transition-colors whitespace-nowrap ${FOCUS}`}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-4 flex-wrap">
+            <SaveButton accent={accent} disabled={!canSave} busy={busy} label="Change email" />
+            <StatusLine status={status} />
+          </div>
+        )}
       </form>
     </Section>
   );
@@ -580,21 +730,6 @@ export default function AccountDetail() {
                     label: 'Role',
                     value: ROLE_LABEL[account.role],
                   },
-                  {
-                    icon: GraduationCap,
-                    label: 'Grade level',
-                    value: account.grade_level === null ? '—' : `Grade ${account.grade_level}`,
-                    note:
-                      account.role === 'student'
-                        ? 'Decides which materials this student can open.'
-                        : 'Educators choose grades per material at upload.',
-                  },
-                  {
-                    icon: AtSign,
-                    label: 'Email',
-                    value: contactEmail(account),
-                    note: 'Contact only — they sign in with their username.',
-                  },
                   { icon: CalendarDays, label: 'Created', value: formatWhen(account.created_at) },
                   {
                     icon: Clock,
@@ -621,6 +756,7 @@ export default function AccountDetail() {
             </section>
 
             <DetailsForm account={account} accent={theme.accent} isSelf={isSelf} onSaved={load} />
+            <EmailForm account={account} accent={theme.accent} onSaved={load} />
             <PasswordForm account={account} accent={theme.accent} />
             <StatusForm account={account} accent={theme.accent} isSelf={isSelf} onSaved={load} />
           </div>

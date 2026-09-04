@@ -4,7 +4,7 @@ import { Check, Copy, UserPlus, Wand2 } from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import Modal from '../../../components/ui/Modal';
 import { Field, SaveButton, StatusLine, messageOf, useSubmitLatch, type Status } from '../../../components/common/formKit';
-import { USERNAME_HINT, usernameProblem } from '../../../lib/account';
+import { emailProblem, USERNAME_HINT, usernameProblem } from '../../../lib/account';
 import { adminApi, type AssignableRole, type CreatedAccount } from '../../../lib/adminAccounts';
 
 /**
@@ -80,13 +80,11 @@ export default function CreateAccountModal({
    * this path. A class of fifty may legitimately be imported before anyone has
    * collected fifty addresses, which is the one case the placeholder still serves.
    *
-   * Shape-checked only — the server validates properly, and a browser-side email
-   * regex that disagrees with it is worse than none.
+   * Shape-checked only, and shared with the account page's email form via
+   * `emailProblem()` — the server validates properly, and two browser-side regexes
+   * disagreeing about the same address is worse than either alone.
    */
-  const emailError =
-    email.trim().length > 0 && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())
-      ? 'Enter a valid email address.'
-      : null;
+  const emailError = emailProblem(email);
 
   const canSave =
     first.trim().length > 0 &&
