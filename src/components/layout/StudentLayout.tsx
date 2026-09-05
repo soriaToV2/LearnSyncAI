@@ -7,7 +7,7 @@ import { AuthProvider, useAuth, displayName, fullName, initials, subtitleFor } f
 import { SubjectsProvider } from '../../context/SubjectsContext';
 import { signOut } from '../../lib/signOut';
 import { BadgeProvider } from '../../context/BadgeContext';
-import { OnboardingProvider } from '../../context/OnboardingContext';
+import { OnboardingProvider, useOnboarding } from '../../context/OnboardingContext';
 import RequireRole from '../common/RequireRole';
 import EmailRecoveryBanner from '../common/EmailRecoveryBanner';
 
@@ -53,7 +53,23 @@ function StudentLayoutInner() {
   );
   const { user } = useAuth();
   const { theme } = useStudentTheme();
+  const { navRequested } = useOnboarding();
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * The drawer is open when the student opened it, OR while the tour is on one
+   * of the four steps that explain these very buttons.
+   *
+   * ⚠️ DERIVED, NOT A `setIsMobileMenuOpen(true)` CALL. The student's own toggle
+   * stays entirely independent, so there is no previous value to restore and a
+   * tour that ends mid-step — Escape, a route change — cannot strand the drawer
+   * open. `TourOverlay` clears the request in an effect cleanup for that reason;
+   * this is the half that makes the clearing sufficient.
+   *
+   * On a desktop it changes nothing: this `<aside>` is `md:hidden`, so the tour
+   * finds the real sidebar and the request goes nowhere visible.
+   */
+  const drawerOpen = isMobileMenuOpen || navRequested;
 
   /*
    * `replace: true` is load-bearing: without it the browser Back button returns
@@ -296,7 +312,14 @@ function StudentLayoutInner() {
         </NavLink>
       </header>
 
-      {/* Mobile Drawer Backdrop */}
+      {/*
+        Mobile Drawer Backdrop.
+
+        ⚠️ GATED ON `isMobileMenuOpen`, NOT `drawerOpen`. When the tour opens the
+        drawer it paints its own dimming and blocks its own clicks from `z-[100]`,
+        so this would sit unreachable underneath it — a second scrim whose only
+        effect would be to darken the button the tour is trying to highlight.
+      */}
       {isMobileMenuOpen && (
         <div
           onClick={() => setIsMobileMenuOpen(false)}
@@ -306,7 +329,7 @@ function StudentLayoutInner() {
 
       {/* Mobile Navigation Drawer */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 w-72 bg-slate-950 border-r border-white/10 p-6 flex flex-col z-50 transition-transform duration-300 ease-in-out md:hidden ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+        className={`fixed top-0 bottom-0 left-0 w-72 bg-slate-950 border-r border-white/10 p-6 flex flex-col z-50 transition-transform duration-300 ease-in-out md:hidden ${drawerOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
       >
         <div className="flex items-center justify-between mb-8">

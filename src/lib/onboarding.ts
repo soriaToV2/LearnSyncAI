@@ -113,6 +113,22 @@ export interface TourStep {
    * whole design.
    */
   demo?: boolean;
+  /**
+   * Hold the mobile ☰ menu open while this step is showing.
+   *
+   * ⚠️ TRUE FOR EVERY STEP ANCHORED TO A SIDEBAR NAV ITEM, and for nothing else.
+   * On a phone those five links live in a drawer that is slid off screen, so the
+   * step has nothing to point at — and the skip rule above does NOT catch it,
+   * because the drawer hides by transform rather than by `display` (see
+   * `isReachable` in `TourOverlay.tsx`). Skipping them was the alternative and
+   * was rejected: it would leave a phone student never told the app has a menu,
+   * and would drop the Study Spaces explanation, which is the most useful thing
+   * the tour says.
+   *
+   * On a desktop it is a no-op — the drawer is `display: none` there and the
+   * anchor resolves to the visible sidebar copy either way.
+   */
+  needsNav?: boolean;
 }
 
 /**
@@ -141,7 +157,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     body:
       'These five buttons are the whole app. Nothing is hidden anywhere else.\n\n' +
       'Dashboard is this page. It shows your progress in every subject at once. Spaces is where you actually study. Games turns your lessons into three games. Profile is your account and password. How to use is this tour, written down.\n\n' +
-      'You will spend nearly all your time in Spaces.',
+      'You will spend nearly all your time in Spaces. On a phone these five live behind the ☰ button at the top left — tap it any time to get back here.',
+    needsNav: true,
   },
   {
     anchor: 'nav-spaces',
@@ -150,6 +167,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
       'A Study Space holds one subject. One for Science, one for Filipino, and so on.\n\n' +
       'You never put lessons in yourself. As soon as you make a space, the lessons your teacher shared for your grade are already inside it. Anything they share later shows up for you too.\n\n' +
       'Each space has six tools in it: the lesson to read, flashcards, two writing exercises, tests, and your progress.',
+    needsNav: true,
   },
   {
     anchor: 'dash-spaces',
@@ -201,6 +219,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
       'Three games made from the lessons in your own spaces: Term Matching, Crossword and Timed Trivia.\n\n' +
       'The questions come from your teacher’s lessons, not from the internet, so playing is real review. The app also sets how hard they are from what you already know, and picks more of the concepts you are weakest at.\n\n' +
       'Playing never changes your mastery number. Games are for practice, so you can try things without it counting against you.',
+    needsNav: true,
   },
   {
     anchor: 'nav-help',
@@ -209,6 +228,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
       'Everything in this tour is written down here, one section at a time, with short steps for each tool.\n\n' +
       'There is a button at the top to play this tour again whenever you want.\n\n' +
       'And if you are ever stuck on something the page does not explain, or you cannot get into your account, this page tells you who to ask.',
+    needsNav: true,
   },
 ];
 

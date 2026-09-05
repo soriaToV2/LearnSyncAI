@@ -32,6 +32,14 @@ import type { TourStep } from '../../lib/onboarding';
  * the DOM at all times. A plain `querySelector` would return whichever came
  * first in source order, which on a wide screen is the hidden drawer copy, and
  * the spotlight would land on a zero-sized rect in the corner.
+ *
+ * ══ ⚠️ AND ON A PHONE A STEP MAY ASK FOR THE MENU (`needsNav`) ══
+ * The four sidebar steps have no target on a phone, because the drawer holding
+ * them is slid off screen. Rather than skip them — which would leave a phone
+ * student never told the app HAS a menu, and would drop the Study Spaces
+ * explanation — such a step reports upward through `onNavChange` and the layout
+ * slides the drawer open for the duration. See `isReachable` below for the
+ * defect that made this look like it already worked.
  */
 
 /**
@@ -55,6 +63,18 @@ import type { TourStep } from '../../lib/onboarding';
 const SETTLE_MS = 700;
 const FAST_SKIP_MS = 150;
 
+/**
+ * The grace a `needsNav` step gets instead of `FAST_SKIP_MS`.
+ *
+ * ⚠️ 150ms IS SHORTER THAN THE DRAWER'S OWN ANIMATION, so without this every
+ * sidebar step on a phone would give up mid-slide and skip itself — turning the
+ * fix into the very outcome it replaced. `StudentLayout`'s drawer is
+ * `transition-transform duration-300`; this is that plus room for the request to
+ * round-trip through React. It is never consumed on a desktop, where the sidebar
+ * copy resolves on the first attempt.
+ */
+const NAV_GRACE_MS = 600;
+
 /** Breathing room between the spotlight and the card, and from the viewport. */
 const GAP = 12;
 const MARGIN = 16;
@@ -62,6 +82,22 @@ const CARD_WIDTH = 320;
 
 /** Padding around the highlighted element, so the ring is not flush to it. */
 const HALO = 6;
+
+/**
+ * How small the card may be squeezed rather than sit on top of its own target.
+ *
+ * ⚠️ THESE EXIST BECAUSE "IT FITS AT 320×natural, OR IT OVERLAPS" WAS TOO COARSE.
+ * The mobile ☰ drawer is a 288px full-height column, so a sidebar step leaves
+ * free space in exactly two shapes — a narrow strip to its right on a wide
+ * window, or a short band under the nav list on a phone — and the old search
+ * rejected both for being the wrong size, then fell through to the overlap
+ * fallback and covered the very buttons the step was explaining.
+ *
+ * Below these floors the card would be unreadable and the overlap really is the
+ * better answer, so the fallback stays.
+ */
+const MIN_CARD_WIDTH = 260;
+const MIN_CARD_HEIGHT = 220;
 
 interface Rect {
   top: number;
@@ -71,14 +107,66 @@ interface Rect {
 }
 
 /**
- * The first match that is actually rendered. `offsetParent` is null for anything
- * inside a `display: none` subtree, which is exactly how the mobile drawer and
- * the desktop sidebar hide from each other.
+ * Is any ancestor `position: fixed`? Walks `parentElement`, deliberately NOT
+ * `offsetParent`, which is itself null on a fixed element and would end the walk
+ * at the very node it is looking for.
  */
-function findAnchor(name: string): HTMLElement | null {
+function inFixedSubtree(el: HTMLElement): boolean {
+  let node: HTMLElement | null = el;
+  while (node && node !== document.body) {
+    if (getComputedStyle(node).position === 'fixed') return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+/**
+ * Is this element somewhere the student could actually look?
+ *
+ * ⚠️ `offsetParent` ALONE IS NOT ENOUGH, AND THE MOBILE DRAWER IS WHY. It is
+ * null only inside a `display: none` subtree — which is how the desktop sidebar
+ * and the mobile drawer hide from *each other*, and that half works. But the
+ * CLOSED drawer hides with `-translate-x-full`, so on a phone its nav links keep
+ * a layout box and `offsetParent` returns the fixed `<aside>`. Every sidebar
+ * step therefore "found" a rectangle at `left ≈ -264`: the ring painted off the
+ * left edge while its box-shadow still dimmed the whole screen, so four of the
+ * ten first-run steps read as a dark screen and a card about invisible buttons.
+ *
+ * A rect off the viewport is only a problem when SCROLLING CANNOT FIX IT, which
+ * is exactly the `position: fixed` case. Everything else keeps today's
+ * behaviour, because the `scrollIntoView` below can reach it — that is what
+ * stops this from rejecting a dashboard card below the fold.
+ */
+function isReachable(el: HTMLElement): boolean {
+  if (el.offsetParent === null) return false;
+  const r = el.getBoundingClientRect();
+  if (r.width === 0 || r.height === 0) return false;
+  const onScreen =
+    r.right > 0 && r.left < window.innerWidth && r.bottom > 0 && r.top < window.innerHeight;
+  // The expensive walk runs only on the rare off-screen branch.
+  return onScreen || !inFixedSubtree(el);
+}
+
+/**
+ * Fully on screen HORIZONTALLY. Used only for a `needsNav` step, and only the X
+ * axis because the drawer slides on it: every frame of the 300ms slide leaves
+ * the links partly off the left edge, so this is false throughout the animation
+ * and true the moment it settles. It saves a timer and, more importantly, saves
+ * duplicating Tailwind's `md` breakpoint into TypeScript to ask "are we on a
+ * phone?" — the desktop sidebar copy satisfies it immediately.
+ */
+function isSettledHorizontally(el: HTMLElement): boolean {
+  const r = el.getBoundingClientRect();
+  return r.left >= 0 && r.right <= window.innerWidth;
+}
+
+/** The first match that is actually rendered and actually reachable. */
+function findAnchor(name: string, settled = false): HTMLElement | null {
   const nodes = document.querySelectorAll<HTMLElement>(`[data-tour="${name}"]`);
   for (const node of nodes) {
-    if (node.offsetParent !== null) return node;
+    if (!isReachable(node)) continue;
+    if (settled && !isSettledHorizontally(node)) continue;
+    return node;
   }
   return null;
 }
@@ -112,9 +200,23 @@ interface TourOverlayProps {
    * example on screen for the rest of the tour.
    */
   onDemoChange: (anchor: string | null) => void;
+  /**
+   * Reports whether the current step needs the mobile ☰ menu held open.
+   *
+   * ⚠️ Same contract as `onDemoChange`, and for the same reason: it must be
+   * called with `false` on every step that does NOT set `needsNav`, not only on
+   * close, or the drawer would stay open for the rest of the tour.
+   */
+  onNavChange: (needed: boolean) => void;
 }
 
-export default function TourOverlay({ isOpen, steps, onClose, onDemoChange }: TourOverlayProps) {
+export default function TourOverlay({
+  isOpen,
+  steps,
+  onClose,
+  onDemoChange,
+  onNavChange,
+}: TourOverlayProps) {
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
   const [cardHeight, setCardHeight] = useState(190);
@@ -154,6 +256,29 @@ export default function TourOverlay({ isOpen, steps, onClose, onDemoChange }: To
   const goBack = useCallback(() => setIndex((i) => Math.max(0, i - 1)), []);
 
   /*
+   * Ask for the mobile ☰ menu on behalf of the current step.
+   *
+   * ⚠️ DECLARED BEFORE THE HUNT BELOW so the request is made in the same commit
+   * the hunt starts in — the drawer is already sliding by the time the second
+   * attempt runs. The hunt polls on a frame timer, so this ordering is a
+   * courtesy rather than a correctness requirement, but reversing it costs a
+   * frame on every sidebar step for nothing.
+   *
+   * ⚠️ THE CLEANUP IS LOAD-BEARING, exactly as it is for the example content
+   * below: it is what guarantees an overlay that unmounts mid-step — Escape, a
+   * route change, the tour finishing on the last sidebar step — cannot leave the
+   * drawer stranded open over the page.
+   */
+  useEffect(() => {
+    if (!isOpen || !step) {
+      onNavChange(false);
+      return;
+    }
+    onNavChange(step.needsNav === true);
+    return () => onNavChange(false);
+  }, [isOpen, step, onNavChange]);
+
+  /*
    * Acquire the current step's anchor, then hold on to it.
    *
    * The retry loop exists because the tour opens while the dashboard is still
@@ -188,12 +313,19 @@ export default function TourOverlay({ isOpen, steps, onClose, onDemoChange }: To
     let cancelled = false;
     let frame = 0;
     // Whichever is later: the tour's own settle window, or this step's grace.
-    const deadline = Math.max(openedAt.current + SETTLE_MS, Date.now() + FAST_SKIP_MS);
+    const grace = step.needsNav ? NAV_GRACE_MS : FAST_SKIP_MS;
+    const deadline = Math.max(openedAt.current + SETTLE_MS, Date.now() + grace);
 
     const attempt = () => {
       if (cancelled) return;
 
-      const el = findAnchor(step.anchor!);
+      /*
+       * A `needsNav` step additionally waits for its target to stop moving. The
+       * effect above has already asked for the drawer, which slides in over
+       * 300ms; measuring during that would leave the spotlight beside the button
+       * rather than on it.
+       */
+      const el = findAnchor(step.anchor!, step.needsNav === true);
       if (el) {
         targetRef.current = el;
         el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -337,7 +469,8 @@ export default function TourOverlay({ isOpen, steps, onClose, onDemoChange }: To
   // ── Card placement ────────────────────────────────────────────────────────
   const viewportW = window.innerWidth;
   const viewportH = window.innerHeight;
-  const cardW = Math.min(CARD_WIDTH, viewportW - MARGIN * 2);
+  let cardW = Math.min(CARD_WIDTH, viewportW - MARGIN * 2);
+  let cardMaxH = viewportH - MARGIN * 2;
 
   let cardTop: number;
   let cardLeft: number;
@@ -359,9 +492,17 @@ export default function TourOverlay({ isOpen, steps, onClose, onDemoChange }: To
      * options viable more often.
      */
     const belowTop = rect.top + rect.height + GAP;
-    const aboveTop = rect.top - cardHeight - GAP;
     const rightLeft = rect.left + rect.width + GAP;
-    const leftLeft = rect.left - cardW - GAP;
+
+    /*
+     * Free space on each side of the spotlight. Expressed this way rather than
+     * as four corner coordinates because the second pass below needs to know HOW
+     * MUCH room a side has, not merely whether the card fits in it.
+     */
+    const spaceBelow = viewportH - belowTop - MARGIN;
+    const spaceAbove = rect.top - GAP - MARGIN;
+    const spaceRight = viewportW - rightLeft - MARGIN;
+    const spaceLeft = rect.left - GAP - MARGIN;
 
     const clampX = (x: number) =>
       Math.min(Math.max(MARGIN, x), Math.max(MARGIN, viewportW - cardW - MARGIN));
@@ -371,24 +512,69 @@ export default function TourOverlay({ isOpen, steps, onClose, onDemoChange }: To
     const centredX = clampX(rect.left + rect.width / 2 - cardW / 2);
     const centredY = clampY(rect.top + rect.height / 2 - cardHeight / 2);
 
-    if (belowTop + cardHeight <= viewportH - MARGIN) {
+    /*
+     * ⚠️ TWO PASSES, AND THE SECOND ONE SHRINKS THE CARD RATHER THAN GIVING UP.
+     *
+     * Pass one is the original search and is unchanged: below, above, right,
+     * left, taking the first side the card fits in at its natural size. That is
+     * what every desktop step still takes, so nothing about them moves.
+     *
+     * Pass two exists for the mobile ☰ drawer, which is a 288px full-height
+     * column and therefore fails all four: too short underneath on a phone, too
+     * narrow beside it on a small window. Measured on a 676×832 window, the
+     * `nav` step had 292px free to the right of the drawer against a 320px card
+     * and 324px free below against a 640px one — so it fell through to the
+     * overlap fallback and covered the five buttons it was describing.
+     *
+     * ⚠️ RIGHT AND LEFT COME FIRST HERE, WHICH IS THE REVERSE OF PASS ONE. The
+     * thing being pointed at is a full-height column, so the free space is
+     * beside it, not under it — and a narrowed card reads better than a scrolled
+     * one, since only the second hides text behind a gesture.
+     *
+     * ⚠️ THE `cardMaxH` ASSIGNMENTS IN PASS ONE LOOK REDUNDANT AND ARE NOT. If
+     * only pass two capped the height, the cap would shrink the card, the
+     * smaller card would then satisfy pass one, pass one would restore the full
+     * cap, and it would grow again — a placement that oscillates every frame.
+     * Assigning the same cap in both passes makes the two branches produce
+     * identical output, so there is nothing to flip between. Where the card
+     * already fits, the cap is above its natural height and binds nothing.
+     */
+    if (spaceBelow >= cardHeight) {
       cardTop = belowTop;
       cardLeft = centredX;
-    } else if (aboveTop >= MARGIN) {
-      cardTop = aboveTop;
+      cardMaxH = spaceBelow;
+    } else if (spaceAbove >= cardHeight) {
+      cardTop = rect.top - GAP - cardHeight;
       cardLeft = centredX;
-    } else if (rightLeft + cardW <= viewportW - MARGIN) {
+      cardMaxH = spaceAbove;
+    } else if (spaceRight >= cardW) {
       cardLeft = rightLeft;
       cardTop = centredY;
-    } else if (leftLeft >= MARGIN) {
-      cardLeft = leftLeft;
+    } else if (spaceLeft >= cardW) {
+      cardLeft = rect.left - GAP - cardW;
       cardTop = centredY;
+    } else if (spaceRight >= MIN_CARD_WIDTH) {
+      cardW = spaceRight;
+      cardLeft = rightLeft;
+      cardTop = clampY(rect.top + rect.height / 2 - cardHeight / 2);
+    } else if (spaceLeft >= MIN_CARD_WIDTH) {
+      cardW = spaceLeft;
+      cardLeft = MARGIN;
+      cardTop = clampY(rect.top + rect.height / 2 - cardHeight / 2);
+    } else if (spaceBelow >= MIN_CARD_HEIGHT) {
+      cardTop = belowTop;
+      cardLeft = centredX;
+      cardMaxH = spaceBelow;
+    } else if (spaceAbove >= MIN_CARD_HEIGHT) {
+      cardTop = MARGIN;
+      cardLeft = centredX;
+      cardMaxH = spaceAbove;
     } else {
       /*
-       * Nothing fits anywhere — a small phone against a target that fills the
-       * screen. Sit under the target and let the clamp pull it back on screen;
-       * some overlap is unavoidable here, and covering the bottom of a target is
-       * far better than covering its middle.
+       * Nothing fits anywhere, even squeezed — a short landscape phone against a
+       * target that fills the screen. Sit under the target and let the clamp
+       * pull it back on screen; some overlap is unavoidable here, and covering
+       * the bottom of a target is far better than covering its middle.
        */
       cardTop = clampY(belowTop);
       cardLeft = centredX;
@@ -440,7 +626,12 @@ export default function TourOverlay({ isOpen, steps, onClose, onDemoChange }: To
         placement guard rather than styling. A card taller than the gap under its
         target has nowhere to go, which is how the explanation ended up sitting
         on top of the thing it was explaining. Capping it keeps the below/above
-        options viable, and the four-way placement above catches the rest.
+        options viable, and the placement search above catches the rest.
+
+        ⚠️ THE CAP IS `cardMaxH`, THE FREE SPACE ON THE SIDE THAT WAS CHOSEN —
+        not a flat fraction of the viewport. It was `viewportH - 32`, which is
+        the whole screen and therefore capped nothing; that is why a 640px card
+        could be handed to a 324px gap and end up over its own target.
 
         Same shape the modals in this codebase use for the same reason: the text
         is the scroll box, and the footer is its SIBLING so the buttons stay
@@ -456,7 +647,7 @@ export default function TourOverlay({ isOpen, steps, onClose, onDemoChange }: To
           top: cardTop,
           left: cardLeft,
           width: cardW,
-          maxHeight: `${viewportH - MARGIN * 2}px`,
+          maxHeight: `${cardMaxH}px`,
         }}
       >
         <button

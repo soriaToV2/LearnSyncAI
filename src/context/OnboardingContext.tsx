@@ -53,6 +53,14 @@ interface OnboardingValue {
    * null. Read it through `useTourDemo()` rather than directly.
    */
   activeDemo: string | null;
+  /**
+   * True while the tour is on a step that needs the mobile ☰ menu held open.
+   *
+   * ⚠️ READ ONLY BY `StudentLayout`, which ORs it into the drawer's open state
+   * rather than writing to its own `isMobileMenuOpen`. The four sidebar steps
+   * have no target on a phone otherwise — see `needsNav` in `onboarding.ts`.
+   */
+  navRequested: boolean;
 }
 
 /*
@@ -71,6 +79,7 @@ const OnboardingContext = createContext<OnboardingValue>({
   replayTour: () => {},
   startTour: () => {},
   activeDemo: null,
+  navRequested: false,
 });
 
 /** The only route the first-run tour starts itself on. */
@@ -101,6 +110,12 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
    * anywhere in the tree below, and the overlay is a sibling of them.
    */
   const [activeDemo, setActiveDemo] = useState<string | null>(null);
+  /*
+   * Whether the mobile ☰ menu must be held open for the current step. Owned here
+   * for the same reason `activeDemo` is: the thing that acts on it —
+   * `StudentLayout` — is an ancestor of the overlay, not a child of it.
+   */
+  const [navRequested, setNavRequested] = useState(false);
   /**
    * True between asking for a replay and arriving on the dashboard. The tour
    * cannot start until the route it describes is the one on screen.
@@ -273,11 +288,22 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     // strand fake badges on a real dashboard, which is the one outcome the whole
     // demo design exists to prevent.
     setActiveDemo(null);
+    // Same tick, same reason: a drawer left open over the page after the tour
+    // ends would read as the app having broken its own menu.
+    setNavRequested(false);
   }, [markSeen]);
 
   return (
     <OnboardingContext.Provider
-      value={{ isLoaded: seen !== null, hasSeen, markSeen, replayTour, startTour, activeDemo }}
+      value={{
+        isLoaded: seen !== null,
+        hasSeen,
+        markSeen,
+        replayTour,
+        startTour,
+        activeDemo,
+        navRequested,
+      }}
     >
       {children}
       {/* A sibling of `children`, exactly as `BadgeProvider` mounts its modal. */}
@@ -286,6 +312,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         steps={running ? TOURS[running] ?? [] : []}
         onClose={closeTour}
         onDemoChange={setActiveDemo}
+        onNavChange={setNavRequested}
       />
     </OnboardingContext.Provider>
   );
