@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, Plus, BookOpen, Layers, Brain, Award, BrainCircuit, ChartColumn, ChevronDown } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import FlashcardsTab from './studySpaceTabs/FlashcardsTab';
 import FreeRecallTab from './studySpaceTabs/FreeRecallTab';
 import FeynmanTab from './studySpaceTabs/FeynmanTab';
@@ -16,8 +16,8 @@ import { SUBJECT_COLOR } from '../../components/educator/SubjectBadge';
 import { useSubjectName } from '../../context/SubjectsContext';
 import { useOnboarding } from '../../context/OnboardingContext';
 import type { ToolKey } from '../../lib/onboarding';
-
-type StudyTab = 'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 'resources' | 'analytics';
+import { DEFAULT_STUDY_TAB, readStudyIntent } from '../../lib/studySpace';
+import type { StudyIntent, StudyTab } from '../../lib/studySpace';
 
 /**
  * Which first-run walkthrough belongs to which tab.
@@ -28,6 +28,28 @@ type StudyTab = 'flashcards' | 'free-recall' | 'feynman' | 'adaptive-test' | 're
  * interrupt twice on every tool. `ToolIntro.tsx` is gone; its copy lives on as
  * step one of each walkthrough and as the Help page's section intro.
  */
+/**
+ * The mobile tab menu.
+ *
+ * Typed on `StudyTab` so the ids cannot drift from the six desktop buttons — it
+ * previously mapped over an inline array and cast `item.id as any` at the click
+ * handler, which is the pattern `ANALYTICS_IMPLEMENTATION.md` §12.1 asked not be
+ * extended before a deep link could be built on it.
+ *
+ * Its order is deliberately not the desktop order: Resources leads there, and
+ * Flashcards leads here because it is the tab a space opens on.
+ */
+const MOBILE_TABS: { id: StudyTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'flashcards', label: 'Flashcards', icon: Layers },
+  { id: 'free-recall', label: 'Free Recall AI', icon: Brain },
+  { id: 'feynman', label: 'Feynman Technique', icon: Award },
+  { id: 'adaptive-test', label: 'Test Mode', icon: BrainCircuit },
+  // "Course Resources" here vs "Learning Resources" on the desktop tab — same
+  // destination, two names. Matched to the tab.
+  { id: 'resources', label: 'Learning Resources', icon: BookOpen },
+  { id: 'analytics', label: 'Analytics', icon: ChartColumn },
+];
+
 const TAB_INTRO: Record<StudyTab, ToolKey> = {
   resources: 'tool_resources',
   flashcards: 'tool_flashcards',
@@ -80,7 +102,49 @@ interface FlashcardSet {
 export default function StudySpace() {
   const subjectNameOf = useSubjectName();
   const { spaceId } = useParams();
-  const [activeTab, setActiveTab] = useState<StudyTab>('flashcards');
+  const [searchParams] = useSearchParams();
+
+  /*
+   * A recommendation's destination, arriving either in the URL (from the
+   * dashboard) or through `navigateWithin` (from a card inside this page).
+   *
+   * ⚠️ READ ONCE, AS THE INITIAL VALUE. The same rule `MaterialDetail.tsx`
+   * states for its own `?tab=`: the tab bar owns this state after mount, and
+   * mirroring it back into the URL would add a history entry per toggle.
+   *
+   * ⚠️ AND THEN CONSUMED, NEVER HELD. `<main key={activeTab}>` remounts every
+   * tab on entry, so a preselection kept as ordinary state would be re-applied
+   * every time the student came back to the tab — silently replacing a lesson or
+   * concept they had since picked by hand. Each tab calls
+   * `onPreselectConsumed()` once it has applied what it could, and clearing
+   * `pending` re-renders without remounting because `key` is `activeTab`, which
+   * has not changed.
+   */
+  const [seeded] = useState<StudyIntent | null>(() => readStudyIntent(searchParams));
+  const [pending, setPending] = useState<StudyIntent | null>(seeded);
+  const [activeTab, setActiveTab] = useState<StudyTab>(seeded?.tab ?? DEFAULT_STUDY_TAB);
+
+  const consumePreselect = React.useCallback(() => setPending(null), []);
+
+  /**
+   * Follow a recommendation rendered INSIDE this page.
+   *
+   * ⚠️ A CALLBACK RATHER THAN A `<Link>`, AND THAT IS NOT A STYLE PREFERENCE.
+   * `AnalyticsTab` and `TestResultsView` render inside this component, so a
+   * `<Link to={`/student/space/${spaceId}?tab=feynman`}>` from either is a
+   * SAME-ROUTE navigation: `location.search` changes, this component never
+   * unmounts, and `activeTab` was seeded once at mount — the URL would change
+   * and nothing else would happen. That failure reads as correct in review and
+   * is dead the moment a student presses it.
+   *
+   * Both setters are in one handler, so React 19 batches them and the target tab
+   * mounts exactly once with its preselection already in place.
+   */
+  const navigateWithin = React.useCallback((intent: StudyIntent) => {
+    setPending(intent);
+    setActiveTab(intent.tab);
+    setIsMobileTabMenuOpen(false);
+  }, []);
 
   const [isMobileTabMenuOpen, setIsMobileTabMenuOpen] = useState(false);
   const [courseConnected, setCourseConnected] = useState(false);
@@ -356,23 +420,14 @@ export default function StudySpace() {
 
             {isMobileTabMenuOpen && (
               <div className="absolute top-full left-0 right-0 mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl z-[60] py-2 fade-in duration-200">
-                {[
-                  { id: 'flashcards', label: 'Flashcards', icon: Layers },
-                  { id: 'free-recall', label: 'Free Recall AI', icon: Brain },
-                  { id: 'feynman', label: 'Feynman Technique', icon: Award },
-                  { id: 'adaptive-test', label: 'Test Mode', icon: BrainCircuit },
-                  // "Course Resources" here vs "Learning Resources" on the desktop
-                  // tab — same destination, two names. Matched to the tab.
-                  { id: 'resources', label: 'Learning Resources', icon: BookOpen },
-                  { id: 'analytics', label: 'Analytics', icon: ChartColumn },
-                ].map((item) => {
+                {MOBILE_TABS.map((item) => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
                   return (
                     <button
                       key={item.id}
                       onClick={() => {
-                        setActiveTab(item.id as any);
+                        setActiveTab(item.id);
                         setIsMobileTabMenuOpen(false);
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-3 text-left font-sans text-sm transition-colors ${isActive
@@ -422,16 +477,36 @@ export default function StudySpace() {
           />
         )}
 
+        {/* `preselect` is gated on the intent naming THIS tab, so a stale intent
+            for another tab can never be applied by whichever tab happens to
+            mount next. Each tab validates the ids against its own fetched list
+            and drops what it cannot resolve. */}
         {activeTab === 'free-recall' && (
-          <FreeRecallTab availableResources={availableResources} spaceId={spaceId!} />
+          <FreeRecallTab
+            availableResources={availableResources}
+            spaceId={spaceId!}
+            preselect={pending?.tab === 'free-recall' ? pending : null}
+            onPreselectConsumed={consumePreselect}
+          />
         )}
 
         {activeTab === 'feynman' && (
-          <FeynmanTab availableResources={availableResources} spaceId={spaceId!} />
+          <FeynmanTab
+            availableResources={availableResources}
+            spaceId={spaceId!}
+            preselect={pending?.tab === 'feynman' ? pending : null}
+            onPreselectConsumed={consumePreselect}
+          />
         )}
 
         {activeTab === 'adaptive-test' && (
-          <AdaptiveTestTab spaceId={spaceId!} availableResources={availableResources} />
+          <AdaptiveTestTab
+            spaceId={spaceId!}
+            availableResources={availableResources}
+            preselect={pending?.tab === 'adaptive-test' ? pending : null}
+            onPreselectConsumed={consumePreselect}
+            onNavigate={navigateWithin}
+          />
         )}
 
         {/* Read-only. `<main key={activeTab}>` remounts this on every entry, so
@@ -440,7 +515,11 @@ export default function StudySpace() {
             carries no review count, and `opportunity_count` in the mastery
             payload is the writer-of-record's own figure across both sources. */}
         {activeTab === 'analytics' && (
-          <AnalyticsTab spaceId={spaceId!} availableResources={availableResources} />
+          <AnalyticsTab
+            spaceId={spaceId!}
+            availableResources={availableResources}
+            onNavigate={navigateWithin}
+          />
         )}
 
         {activeTab === 'resources' && (
@@ -454,6 +533,8 @@ export default function StudySpace() {
             setIsGenerating={setIsGenerating}
             setSelectedSetContent={setSelectedSetContent as any}
             setFlashcardSets={setFlashcardSets as any}
+            preselect={pending?.tab === 'resources' ? pending : null}
+            onPreselectConsumed={consumePreselect}
           />
         )}
       </main>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import {
   Award, AlertCircle, CheckCircle2, MessageSquare, Lightbulb,
   XCircle, AlertTriangle, PenTool, History, ChevronLeft
@@ -17,10 +17,21 @@ import {
 } from './cognitiveShared';
 import { useBadges } from '../../../context/BadgeContext';
 import { useOnboarding } from '../../../context/OnboardingContext';
+import { masteryApi, masteryPercent } from '../../../lib/mastery';
+import type { ConceptMastery, MaterialMasteryDetail } from '../../../lib/mastery';
+import { byConceptPriority, byMaterialPriority } from '../../../lib/recommend';
+import type { StudyIntent } from '../../../lib/studySpace';
 
 interface FeynmanTabProps {
   availableResources: { id: string; title: string }[];
   spaceId: string;
+  /**
+   * A recommendation's destination. This is the ONE tool that can use
+   * `conceptId` — `FeynmanEvaluationSchema` takes `explanations[].concept_id`,
+   * so a concept is already the unit of work here.
+   */
+  preselect: StudyIntent | null;
+  onPreselectConsumed: () => void;
 }
 
 /**
@@ -113,10 +124,12 @@ function overallVerdict(accuracy: number): Verdict {
   return 'incorrect';
 }
 
-export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabProps) {
-  // Keyed on material id, not title — two materials may share a title.
-  const resourceOptions = availableResources.map(r => ({ value: r.id, label: r.title }));
-
+export default function FeynmanTab({
+  availableResources,
+  spaceId,
+  preselect,
+  onPreselectConsumed,
+}: FeynmanTabProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('study');
   /** Exactly one material. A submission is graded against one lesson. */
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
@@ -125,6 +138,121 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
   const [availableConcepts, setAvailableConcepts] = useState<Concept[]>([]);
   const [selectedConceptIds, setSelectedConceptIds] = useState<string[]>([]);
   const [isFetchingConcepts, setIsFetchingConcepts] = useState(false);
+  /**
+   * How many concepts a recommendation asked for that this lesson no longer
+   * carries. Zero means nothing was dropped.
+   *
+   * ⚠️ A COUNT RATHER THAN A BOOLEAN, because a recommendation now arrives with
+   * a LIST — the results screen hands over every concept the student missed — so
+   * a partial match is the normal case and "some of these are gone" is the thing
+   * worth saying. Reachable in ordinary use: re-uploading a material
+   * cascade-deletes its concepts.
+   *
+   * It is the one dropped deep-link parameter that gets a visible note. A
+   * missing MATERIAL leaves the picker in its own empty state, which explains
+   * itself; missing concepts leave nothing on screen at all.
+   */
+  const [preselectMissing, setPreselectMissing] = useState(0);
+
+  /**
+   * Mastery for every concept in the space, keyed by concept id, plus the
+   * per-lesson rows for the material picker.
+   *
+   * ⚠️ THIS TAB READ NO MASTERY AT ALL BEFORE THIS, AND PAPER p. 58 SAYS IT
+   * SHOULD. That page groups Feynman with the games as a consumer of "existing
+   * mastery estimates"; only the games actually were one, because
+   * `cognitive.routes.ts` contains neither the word `mastery` nor `bkt`.
+   * Ordering the pickers is what makes the claim true. It remains a READ — this
+   * tab still never writes `bkt_mastery`, which has exactly two writers and a
+   * two-value `bkt_source` enum to keep it that way.
+   *
+   * One request per mount, ~10.7 KB for 57 concepts, and deliberately not
+   * cached: `<main key={activeTab}>` remounts the tab on entry, which is what
+   * makes the numbers fresh on return from a test that just moved them.
+   *
+   * A failure is logged and swallowed. The picker then falls back to document
+   * order, which is exactly what it did before this existed — a concept list
+   * that refused to render because an analytics call failed would be the worse
+   * trade.
+   */
+  const [conceptMastery, setConceptMastery] = useState<Map<string, ConceptMastery>>(() => new Map());
+  const [materialMastery, setMaterialMastery] = useState<Map<string, MaterialMasteryDetail>>(
+    () => new Map()
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    masteryApi
+      .detail(spaceId)
+      .then((d) => {
+        if (cancelled) return;
+        setMaterialMastery(new Map(d.by_material.map((m) => [m.material_id, m])));
+        setConceptMastery(
+          new Map(d.by_material.flatMap((m) => m.concepts.map((c) => [c.concept_id, c] as const)))
+        );
+      })
+      .catch((err) => console.error('[Feynman] mastery load failed', err));
+    return () => { cancelled = true; };
+  }, [spaceId]);
+
+  /** Weakest lesson first, then never-started, then strongest. See `rankOf()`. */
+  const resourceOptions = useMemo(() => {
+    const rows = availableResources.map((r) => {
+      const m = materialMastery.get(r.id);
+      return {
+        id: r.id,
+        title: r.title,
+        m_doc: m?.m_doc ?? 0,
+        assessed_concept_count: m?.assessed_concept_count ?? 0,
+      };
+    });
+    rows.sort(byMaterialPriority);
+    // Keyed on material id, not title — two materials may share a title.
+    return rows.map((r) => ({
+      value: r.id,
+      label: r.title,
+      hint: r.assessed_concept_count > 0 ? `${masteryPercent(r.m_doc)}%` : 'not started',
+    }));
+  }, [availableResources, materialMastery]);
+
+  /**
+   * The concept picker, weakest-worth-explaining first.
+   *
+   * ⚠️ THIS IS THE FEATURE'S SHARPEST CONSUMER OF `rankOf()`, AND THE ONE MOST
+   * DANGEROUS TO "SIMPLIFY" INTO A PLAIN MASTERY SORT. BKT floors every assessed
+   * posterior at P(T) = 0.20 while an unassessed concept sits at P(L₀) = 0.10, so
+   * ascending raw mastery would open this list entirely on concepts nobody has
+   * ever asked the student about. On a 57-concept lesson with six assessed, all
+   * of the top rows would be `new`.
+   *
+   * `POST /materials/concepts/batch` returns document order (`created_at`) and
+   * carries no mastery, so the join happens here rather than on the server —
+   * that route's shape is unchanged and its single caller is still this tab.
+   *
+   * The `hint` is the whole reason the ordering is safe to show. A foundational
+   * concept sorts to the top, and the ladder says Feynman should NOT lead at
+   * that band — so the percentage beside each option is what lets the student
+   * tell "I am weak here" from "I have not met this yet". The picker is a
+   * picker; the recommender is the recommender. Do not reconcile them by
+   * changing this sort.
+   */
+  const conceptOptions = useMemo(() => {
+    const rows = availableConcepts.map((c) => {
+      const m = conceptMastery.get(c.id);
+      return {
+        id: c.id,
+        term: c.term,
+        mastery: m?.mastery ?? 0,
+        assessed: m?.assessed ?? false,
+      };
+    });
+    rows.sort(byConceptPriority);
+    return rows.map((c) => ({
+      value: c.id,
+      label: c.term,
+      hint: c.assessed ? `${masteryPercent(c.mastery)}%` : 'new',
+    }));
+  }, [availableConcepts, conceptMastery]);
 
   // Composer state — explanations are keyed by concept_id, which is what the API grades against.
   const [explanations, setExplanations] = useState<Record<string, string>>({});
@@ -132,6 +260,26 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
   // Guards against a double-click submitting twice; see handleEvaluate.
   const inFlightRef = useRef(false);
   const [evalError, setEvalError] = useState<string | null>(null);
+  /**
+   * The intent the concept fetch will act on, held out of that effect's deps.
+   *
+   * The fetch below is keyed on `selectedMaterialId` and must stay that way:
+   * reading the live prop inside it would put `preselect` in its dependency list
+   * and refetch every concept in the lesson the instant the intent is consumed.
+   *
+   * ⚠️ IT IS CLEARED THE MOMENT IT IS ACTED ON, and that is what keeps it from
+   * becoming a second, stale source of truth. Left set, it would re-select its
+   * concept the next time the student picked that same lesson by hand — the
+   * re-application bug that `StudySpace` clears `pending` to avoid, reintroduced
+   * one level down.
+   */
+  const preselectRef = useRef<StudyIntent | null>(preselect);
+
+  /* Declared before the two effects that read it, so it is current by the time
+     either runs. Never assigns null — clearing is the consumers' job. */
+  useEffect(() => {
+    if (preselect) preselectRef.current = preselect;
+  }, [preselect]);
 
   // Two separate selections, deliberately. `resultLogId` is the attempt you
   // just submitted and is shown inside Study, so submitting never moves you
@@ -190,6 +338,38 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
     fetchHistory();
   }, [spaceId]);
 
+  /*
+   * Open on the lesson a recommendation named.
+   *
+   * Validated against `availableResources`, not trusted: `SingleSelectDropdown`
+   * resolves its selection with `options.find(o => o.value === selectedValue)`,
+   * so an id the list does not carry would render the PLACEHOLDER while
+   * `selectedMaterialId` is set — the student would be explaining a lesson the
+   * picker is not showing.
+   *
+   * Sets `selectedMaterialId` only. The CONCEPT is applied below, inside the
+   * fetch it depends on.
+   */
+  useEffect(() => {
+    if (!preselect) return;
+    const canOpen =
+      preselect.materialId !== null &&
+      availableResources.some((r) => r.id === preselect.materialId);
+    if (canOpen) setSelectedMaterialId(preselect.materialId);
+
+    /*
+     * Hand the intent on to the concept fetch ONLY when there is a concept to
+     * look for and a lesson to look in. In every other case consume it here —
+     * an intent left un-consumed is one `StudySpace` still holds, so it would be
+     * re-applied the next time this tab remounts and would overwrite a lesson
+     * the student had since chosen by hand.
+     */
+    if (!canOpen || preselect.conceptIds.length === 0) {
+      preselectRef.current = null;
+      onPreselectConsumed();
+    }
+  }, [preselect, availableResources, onPreselectConsumed]);
+
   // Reload concepts whenever the material changes. Concept selections and the
   // explanations written against them belong to the old material, so both are
   // cleared — keeping them would submit ids that are not in the chosen lesson.
@@ -197,6 +377,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
     async function fetchConcepts() {
       setSelectedConceptIds([]);
       setExplanations({});
+      setPreselectMissing(0);
 
       if (!selectedMaterialId) {
         setAvailableConcepts([]);
@@ -208,7 +389,32 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
         const res = await api.post<Concept[]>('/materials/concepts/batch', {
           material_ids: [selectedMaterialId],
         });
-        setAvailableConcepts(res.data || []);
+        const concepts = res.data || [];
+        setAvailableConcepts(concepts);
+
+        /*
+         * ⚠️ THE PRESELECTED CONCEPT IS APPLIED HERE, INSIDE THIS EFFECT, AND
+         * NOT IN ONE OF ITS OWN. This effect clears `selectedConceptIds` on every
+         * material change, so a separate effect would race the clearing and lose
+         * whenever it ran first.
+         *
+         * Membership is checked rather than assumed for the same reason the
+         * material is: `selectedConcepts` resolves by `.find`, so an id this
+         * lesson does not carry renders ZERO textareas under a button reading
+         * "1 concept selected", and `handleEvaluate` would post an id the server
+         * rejects. Re-uploading a material cascade-deletes its concepts, so this
+         * is reachable in ordinary use — and unlike a missing material it leaves
+         * nothing on screen to explain itself, which is why it gets a note.
+         */
+        const wanted = preselectRef.current?.conceptIds ?? [];
+        if (wanted.length > 0 && preselectRef.current?.materialId === selectedMaterialId) {
+          const live = new Set(concepts.map((c) => c.id));
+          const found = wanted.filter((id) => live.has(id));
+          if (found.length > 0) setSelectedConceptIds(found);
+          setPreselectMissing(wanted.length - found.length);
+          preselectRef.current = null;
+          onPreselectConsumed();
+        }
       } catch (error) {
         console.error('[Feynman] Failed to fetch batch concepts', error);
       } finally {
@@ -217,7 +423,10 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
     }
 
     fetchConcepts();
-  }, [selectedMaterialId]);
+    // `preselectRef` is a mount-time snapshot and `onPreselectConsumed` is
+    // stable, so neither belongs in the dependency list — including the live
+    // prop would refetch every concept the moment the intent is consumed.
+  }, [selectedMaterialId, onPreselectConsumed]);
 
   const handleConceptChange = (newSelectedIds: string[]) => {
     setSelectedConceptIds(newSelectedIds);
@@ -230,15 +439,32 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
     .split(/\s+/)
     .filter(Boolean).length;
 
-  // Every selected concept needs a real explanation before we can submit.
-  const incompleteConcepts = selectedConcepts.filter(
-    c => (explanations[c.id] || '').trim().length < MIN_EXPLANATION_LENGTH
+  /**
+   * ⚠️ SUBMIT WHAT WAS WRITTEN, NOT EVERYTHING THAT WAS TICKED.
+   *
+   * This used to require EVERY selected concept to be filled before the button
+   * would enable, and posted all of them. That was tolerable while the student
+   * ticked the concepts themselves; it became a dead end the moment a
+   * recommendation could preselect a whole lesson's worth — the test results
+   * screen hands over every concept the student missed, so a 34-concept lesson
+   * left Evaluate permanently disabled unless they wrote 34 explanations or
+   * unticked 30 by hand.
+   *
+   * Server-legal with no change: `FeynmanEvaluationSchema.explanations` is
+   * `.min(1)` with no `.max()`. It also bounds a real failure — grading is one
+   * Gemini call at `maxOutputTokens: 16384` with roughly one result object per
+   * concept, and `generateJson()` throws outright on `finishReason: MAX_TOKENS`,
+   * so sending only what was typed keeps the payload to what the student did.
+   *
+   * The count is stated on the button and beside it, so a partial submission is
+   * never a surprise.
+   */
+  const readyConcepts = selectedConcepts.filter(
+    c => (explanations[c.id] || '').trim().length >= MIN_EXPLANATION_LENGTH
   );
+  const skippedCount = selectedConcepts.length - readyConcepts.length;
   const canEvaluate =
-    selectedMaterialIds.length > 0 &&
-    selectedConcepts.length > 0 &&
-    incompleteConcepts.length === 0 &&
-    !isEvaluating;
+    selectedMaterialIds.length > 0 && readyConcepts.length > 0 && !isEvaluating;
 
   const handleEvaluate = async () => {
     if (!canEvaluate) return;
@@ -266,7 +492,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
           space_id: spaceId,
           material_ids: selectedMaterialIds,
           audience: AUDIENCE,
-          explanations: selectedConcepts.map(c => ({
+          explanations: readyConcepts.map(c => ({
             concept_id: c.id,
             explanation: explanations[c.id].trim(),
           })),
@@ -275,7 +501,7 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
 
       const { log_id, created_at, ...feedback } = res.data;
 
-      const userInput = selectedConcepts
+      const userInput = readyConcepts
         .map(c => `Concept: ${c.term}\nExplanation: ${explanations[c.id].trim()}`)
         .join('\n\n');
 
@@ -521,12 +747,31 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
                   <MultiSelectDropdown
                     selectedValues={selectedConceptIds}
                     onChange={handleConceptChange}
-                    options={availableConcepts.map(c => ({ value: c.id, label: c.term }))}
+                    options={conceptOptions}
                     placeholder="Select concepts..."
                     itemNoun="concept"
                   />
                 </div>
               </div>
+
+              {/* The one line that makes the ordering readable. Without it the
+                  percentages look like scores rather than a running order, and
+                  "new" looks like a zero. */}
+              {availableConcepts.length > 0 && (
+                <p className="font-sans text-xs text-slate-500 -mt-3 mb-5">
+                  The ideas you are weakest on are listed first. “new” means you have not been asked
+                  about it yet.
+                </p>
+              )}
+
+              {preselectMissing > 0 && (
+                <p className="font-sans text-xs text-amber-400/80 -mt-3 mb-5">
+                  {preselectMissing === 1
+                    ? 'One idea is no longer in this lesson.'
+                    : `${preselectMissing} ideas are no longer in this lesson.`}{' '}
+                  Your teacher may have updated it — pick another above.
+                </p>
+              )}
 
               {selectedConcepts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center text-center text-slate-500 py-20">
@@ -567,11 +812,15 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
               )}
 
               <div className="py-4 mt-2 border-t border-white/5 flex flex-wrap items-center justify-between gap-4">
+                {/* A statement of fact, not a blocker. It used to read "N still
+                    need an explanation", which was a to-do list you could not
+                    dismiss; what matters now is what is about to be sent. */}
                 <span className="font-sans text-xs text-slate-500 font-medium">
                   {wordCount} words
-                  {selectedConcepts.length > 0 && incompleteConcepts.length > 0 && (
-                    <span className="text-amber-400/80 ml-3">
-                      {incompleteConcepts.length} concept{incompleteConcepts.length > 1 ? 's' : ''} still need{incompleteConcepts.length === 1 ? 's' : ''} an explanation
+                  {skippedCount > 0 && (
+                    <span className="text-slate-400 ml-3">
+                      Explaining {readyConcepts.length} of {selectedConcepts.length} — the rest are
+                      skipped
                     </span>
                   )}
                 </span>
@@ -583,6 +832,8 @@ export default function FeynmanTab({ availableResources, spaceId }: FeynmanTabPr
                 >
                   {isEvaluating ? (
                     <><Spinner className="w-4 h-4" /> Evaluating...</>
+                  ) : readyConcepts.length > 1 ? (
+                    `Evaluate ${readyConcepts.length} explanations`
                   ) : (
                     'Evaluate Explanation'
                   )}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { Brain, CheckCircle2, XCircle, AlertTriangle, PenTool, History, ChevronLeft } from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import SingleSelectDropdown from '../../../components/ui/SingleSelectDropdown';
@@ -12,10 +12,25 @@ import {
 } from './cognitiveShared';
 import { useBadges } from '../../../context/BadgeContext';
 import { useOnboarding } from '../../../context/OnboardingContext';
+import { masteryApi, masteryPercent } from '../../../lib/mastery';
+import type { MaterialMasteryDetail } from '../../../lib/mastery';
+import { byMaterialPriority } from '../../../lib/recommend';
+import type { StudyIntent } from '../../../lib/studySpace';
 
 interface FreeRecallTabProps {
   availableResources: { id: string; title: string }[];
   spaceId: string;
+  /**
+   * A recommendation's destination.
+   *
+   * ⚠️ `conceptId` IS DELIBERATELY IGNORED HERE. `FreeRecallSchema` caps a
+   * submission at exactly one MATERIAL and scores a coverage ratio over every
+   * concept in it, so there is nothing to narrow — a recommendation that names a
+   * concept lands on its lesson, which is the closest this tool can get. Feynman
+   * is the concept-addressable one.
+   */
+  preselect: StudyIntent | null;
+  onPreselectConsumed: () => void;
 }
 
 // The shape returned from GET /api/cognitive/history/:spaceId
@@ -158,13 +173,97 @@ function resultHeadline(f: ParsedFeedback, scorePercent: number): string {
   return `${f.covered_count} of ${f.total_concepts} ideas`;
 }
 
-export default function FreeRecallTab({ availableResources, spaceId }: FreeRecallTabProps) {
-  // Keyed on material id, not title — two materials may share a title.
-  const resourceOptions = availableResources.map(r => ({ value: r.id, label: r.title }));
-
+export default function FreeRecallTab({
+  availableResources,
+  spaceId,
+  preselect,
+  onPreselectConsumed,
+}: FreeRecallTabProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('study');
   /** Exactly one material. The coverage ratio is scored against one lesson. */
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
+
+  /**
+   * Per-lesson mastery, for ordering the picker and captioning each option.
+   *
+   * ⚠️ THE BUILD DID NOT READ MASTERY HERE AT ALL BEFORE THIS. Paper p. 58 groups
+   * Free Recall with the games as a consumer of "existing mastery estimates", and
+   * only the games actually were one — `cognitive.routes.ts` contains neither the
+   * word `mastery` nor `bkt`. Ordering the picker is what makes the claim true,
+   * and it stays a READ: this tab still never writes `bkt_mastery`, which has
+   * exactly two writers.
+   *
+   * Failure is silent and the tab keeps working in `availableResources` order —
+   * a lesson list that refuses to render because an analytics call failed would
+   * be a worse trade than an unsorted one.
+   */
+  const [masteryByMaterial, setMasteryByMaterial] = useState<Map<string, MaterialMasteryDetail>>(
+    () => new Map()
+  );
+
+  /*
+   * Open on the lesson a recommendation named.
+   *
+   * Validated against `availableResources` rather than trusted:
+   * `SingleSelectDropdown` resolves its selection with
+   * `options.find(o => o.value === selectedValue)`, so an id the list does not
+   * carry renders the PLACEHOLDER while `selectedMaterialId` is non-null and the
+   * Evaluate button is live — the student would submit against a lesson the
+   * picker is not showing, and the server would reject it. An educator can
+   * archive a material between the link being made and followed.
+   *
+   * Runs once on mount: the deps are the resource list, and `onPreselectConsumed`
+   * flips the prop to null so the guard cannot fire twice.
+   */
+  useEffect(() => {
+    if (!preselect) return;
+    if (preselect.materialId && availableResources.some((r) => r.id === preselect.materialId)) {
+      setSelectedMaterialId(preselect.materialId);
+    }
+    onPreselectConsumed();
+  }, [preselect, availableResources, onPreselectConsumed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    masteryApi
+      .detail(spaceId)
+      .then((d) => {
+        if (cancelled) return;
+        setMasteryByMaterial(new Map(d.by_material.map((m) => [m.material_id, m])));
+      })
+      .catch((err) => console.error('[FreeRecall] mastery load failed', err));
+    return () => { cancelled = true; };
+  }, [spaceId]);
+
+  /**
+   * Weakest lesson first, then never-started, then strongest.
+   *
+   * ⚠️ NOT PLAIN `m_doc` ASCENDING — see `rankOf()`. A lesson nobody has been
+   * asked about averages P(L₀) = 0.10, below every lesson the student is
+   * measurably struggling with, so raw ordering would put untouched lessons at
+   * the top of the list.
+   *
+   * A lesson with no mastery row at all (the payload skips materials with zero
+   * concepts) sorts as unstarted, which is what it is.
+   */
+  const resourceOptions = useMemo(() => {
+    const withMastery = availableResources.map((r) => {
+      const m = masteryByMaterial.get(r.id);
+      return {
+        id: r.id,
+        title: r.title,
+        m_doc: m?.m_doc ?? 0,
+        assessed_concept_count: m?.assessed_concept_count ?? 0,
+      };
+    });
+    withMastery.sort(byMaterialPriority);
+    // Keyed on material id, not title — two materials may share a title.
+    return withMastery.map((r) => ({
+      value: r.id,
+      label: r.title,
+      hint: r.assessed_concept_count > 0 ? `${masteryPercent(r.m_doc)}%` : 'not started',
+    }));
+  }, [availableResources, masteryByMaterial]);
 
   // Composer state
   const [recallText, setRecallText] = useState('');

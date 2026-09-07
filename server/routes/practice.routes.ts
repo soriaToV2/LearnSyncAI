@@ -392,6 +392,41 @@ router.get('/space/:spaceId/mastery', async (req: Request, res: Response): Promi
   });
 });
 
+/**
+ * What one submission did to the student's mastery — one row per concept the
+ * test asked about, in the order `applyTestCompletion()` applied them.
+ *
+ * ⚠️ IT RIDES ON `PUT /:id/complete` ONLY, AND ITS ABSENCE IS MEANINGFUL. It is
+ * present only on the request that actually flipped the status. The two
+ * idempotent replay paths return the stored grading with no `mastery_changes`
+ * at all, because they ran no BKT update and the before/after pair from the
+ * original run was never persisted — and reconstructing it from
+ * `bkt_update_logs` would make this route the audit trail's second UI reader,
+ * which is precisely what `logWriteError` staying non-fatal depends on nobody
+ * doing. A client must read "missing" as "no claim", never as "nothing moved".
+ *
+ * `[]` is a different statement: the update ran and moved nothing.
+ */
+interface MasteryChangeDto {
+  concept_id: string;
+  term: string;
+  /**
+   * P(L) before this test's observations.
+   *
+   * ⚠️ MEANINGLESS UNLESS `assessed_before`. When this test was the concept's
+   * first evidence it is exactly P(L₀) = 0.10, and rendering "10% → 33%" prints
+   * the engine's initialisation constant as a measurement.
+   */
+  before: number;
+  /** P(L) after, exactly as persisted to `bkt_mastery.latent_mastery`. */
+  after: number;
+  /** Items in THIS test that asked about the concept. */
+  observations: number;
+  /** Total attempts ever, after this test — flashcard ratings included. */
+  opportunity_count: number;
+  assessed_before: boolean;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/practice/space/:spaceId/mastery/concepts — the same, per concept
 // ─────────────────────────────────────────────────────────────────────────────
@@ -891,6 +926,8 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
    * fatal: a BKT failure must not cost a student the score they are waiting for,
    * the same rule that governs Free Recall's feedback call.
    */
+  let masteryChanges: MasteryChangeDto[] | undefined;
+
   try {
     const bkt = await applyTestCompletion({
       studentId: req.user!.id,
@@ -904,6 +941,29 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
     });
     for (const problem of bktProblems(bkt)) {
       console.error(`[BKT] test=${row.id} student=${req.user!.id}: ${problem}`);
+    }
+
+    /*
+     * Report the movement only when the state was actually persisted.
+     * `applyBktObservations()` already returns `updated: []` on a mastery write
+     * failure, so this cannot claim a change that was rolled back — the explicit
+     * check states the rule rather than inheriting it.
+     */
+    if (!bkt.masteryWriteError) {
+      // The term as of GENERATION, from the same `questions_payload` every other
+      // row on the results screen reads. Stale if an educator has renamed the
+      // concept since — deliberately, because a second source would let two
+      // blocks on one screen disagree about one concept's name.
+      const termByConcept = new Map(questions.map((q) => [q.concept_id, q.concept_term]));
+      masteryChanges = bkt.updated.map((u) => ({
+        concept_id: u.conceptId,
+        term: termByConcept.get(u.conceptId) ?? 'This concept',
+        before: u.priorBefore,
+        after: u.mastery,
+        observations: u.observations,
+        opportunity_count: u.opportunityCount,
+        assessed_before: u.assessedBefore,
+      }));
     }
   } catch (err) {
     console.error(
@@ -934,7 +994,16 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
     outcome: { score: result.score },
   });
 
-  res.json({ data: buildResult({ ...row, status: 'completed' }), message: 'Practice test submitted' });
+  /*
+   * `buildResult()` is untouched and stays untouched: it is pure, re-runnable
+   * and shared by four call sites including `GET /:id/result`, which grades a
+   * PAST test and has no before/after to report. `mastery_changes` is spread on
+   * at the one call site that earned it.
+   */
+  res.json({
+    data: { ...buildResult({ ...row, status: 'completed' }), mastery_changes: masteryChanges },
+    message: 'Practice test submitted',
+  });
 });
 
 export default router;

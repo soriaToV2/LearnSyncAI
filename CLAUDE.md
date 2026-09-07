@@ -454,6 +454,194 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 
 **Do not add a client cache.** `<main key={activeTab}>` remounts the tab on entry, so data is fresh by construction — including on return from Test Mode having just moved the number, which is exactly when a cache would be stale.
 
+## Study Recommendations — what the app DOES about a low number
+
+> Built 2026-09-07, after the capstone adviser asked what the platform does when BKT says a student
+> is at 30% on a topic. Until then: nothing visible. `bkt_mastery` had three readers — test
+> difficulty, game calibration, the Analytics tab — and none turned a number into an instruction.
+> **No migration, no new table, no new endpoint** — every input was already reaching the client.
+
+**`src/lib/recommend.ts` is the single home for the rule.** Four bands map to an ordered ladder of
+steps plus the sentences that go with them. Client-side because `masteryApi.detail(spaceId)` already
+returns every concept in a space with `mastery`/`assessed`/`source_pages`, and `GET /api/dashboard`
+already returns the weakest five.
+
+**Two ladders. `recommendConcept()` is about one idea; `recommendMaterial()` is about a lesson.**
+
+| Band | Concept ladder | Material ladder |
+|---|---|---|
+| `unassessed` | Flashcards | Flashcards |
+| `foundational` < 0.50 | **Read** → Flashcards → Feynman | **Read** → Flashcards → Free Recall → Feynman |
+| `intermediate` 0.50–0.85 | **Feynman** → Flashcards | **Free Recall** → Feynman → Flashcards |
+| `advanced` ≥ 0.85 | Test | Test |
+
+**⚠️ ONLY THE ADAPTIVE-TEST RESULTS SCREEN RENDERS A FULL LADDER.** `AnalyticsTab` (Focus rows, lesson
+lines) and the dashboard's `FocusRow` all read **`steps[0]` alone**, which is what made lengthening the
+material bands safe — verified before it was done. **Re-verify before adding a fifth step, because a
+new `steps[0]` WOULD change all three.** `free_recall` appears only in the material ladder: it is
+material-addressable (`.max(1)` material, scored over every concept in it), so a per-concept ladder
+has no slot for it.
+
+**⚠️ `Recommendation.honesty` IS DERIVED FROM THE STEPS (`honestyFor()`), NOT PICKED BY HAND.** It was
+five constants, and the very first ladder extension desynced them — material `foundational` gained a
+Free Recall step while its sentence still named only reading and explaining. Deriving it makes the
+sentence provably match the buttons above it, which is the property that matters given this line
+carries the feature's whole credibility.
+
+**⚠️ THE ORDER IS THE DECISION, NOT A DEFAULT.** Below 0.50 the lead is READ, not Feynman. Feynman
+works by finding holes in what you already partly know, so a student at 20% asked to explain a concept
+to a ten-year-old writes an empty box and is graded near zero. It is still offered — third — once
+there is something to explain. Do not "simplify" the bands into one Feynman-always rule.
+
+**⚠️ `Step.movesMastery` IS THE FEATURE'S CREDIBILITY, AND IT IS A FIELD RATHER THAN A COMMENT.**
+`bkt_mastery` has exactly two writers and paper p. 58 fixes it at two, so reading, explaining and
+recalling change nothing measurable. Without this, the app tells a student to do Feynman to fix their
+30%, they do, the number does not budge, and they stop believing every number on the screen. A `why`
+string on a false step must say what the activity *finds*, never what it *moves*. **The fix is never
+to let Feynman or Free Recall write mastery.**
+
+**`Recommendation.honesty` is rendered ONCE PER CARD, never per row.** Three focus rows and nine
+lesson lines would otherwise print the same sentence twelve times on one screen.
+
+**⚠️ NO GEMINI CALL, EVER, ANYWHERE IN THIS FEATURE.** Fixed sentences are instant, free, identical
+every time, and statable as one paragraph in the paper. A model call would be none of those, on a
+~20/day free-tier bucket one adaptive test already takes five of. It is a module-header rule so it is
+not "improved" later.
+
+**No threshold is declared in `recommend.ts`.** It imports `masteryTier()`. (`MASTERED_AT = 0.85` in
+`dashboard.routes.ts` is a pre-existing fourth copy and its own change.) `conceptBand()` **rounds
+before banding** — 0.849 prints "85%", so banding the raw value would print *"You are at 85% … you
+know part of it"*.
+
+**⚠️ `rankOf()` / `NEUTRAL_MASTERY = 0.5` IS THE EASIEST THING HERE TO GET BACKWARDS.** Client mirror
+of `gameDifficulty.ts`. BKT floors every assessed posterior at P(T) = 0.20 while an unassessed concept
+sits at P(L₀) = 0.10, so **plain mastery-ascending puts every never-asked concept above every concept
+the student is measurably failing** — on a 57-concept lesson with six assessed, the Feynman picker
+would open entirely on `new`. The ordering is **known-weak > unknown > known-strong**. It is
+deterministic, not `pickConceptsByMastery()`'s sampling: a list that reshuffled every render reads as
+broken. **This 0.5 is not the `intermediate` threshold** — they coincide numerically and mean
+different things. Used only by the two pickers where unassessed concepts are eligible; "Focus next"
+and the dashboard `focus` stay assessed-only, where it degenerates to plain ascending anyway.
+
+### Deep links — `src/lib/studySpace.ts`
+
+**`StudyTab` moved out of `StudySpace.tsx`** so `ResourcesTab` and `recommend.ts` can import it
+without a child importing from its own parent. `MOBILE_TABS` is typed, which removes the
+`item.id as any` that `ANALYTICS_IMPLEMENTATION.md` §12.1 asked not be built on.
+
+**⚠️ IN-ROUTE NAVIGATION IS A CALLBACK (`onNavigate`), NEVER A `<Link>`, AND THIS IS THE DEFECT MOST
+LIKELY TO SHIP UNNOTICED.** `AnalyticsTab` and `TestResultsView` render *inside* `StudySpace`, so a
+`<Link>` carrying `?tab=feynman` from either is a same-route navigation: `location.search` changes,
+`StudySpace` never unmounts, and `activeTab` was seeded once at mount — **the URL changes and nothing
+happens.** It reviews as correct and is dead at runtime. `studySpaceLink()` is for cross-route links
+only (the dashboard).
+
+**⚠️ A `StudyIntent` IS CONSUMED, NOT HELD.** `<main key={activeTab}>` remounts every tab on entry, so
+a preselection kept as state would be re-applied every time the student returned — silently replacing
+a lesson or concept they had since picked by hand. Each tab calls `onPreselectConsumed()` **whether or
+not the ids resolved**; an un-consumed intent is one `StudySpace` still holds.
+
+**Every tab validates the ids against its own fetched list, and that is correctness, not politeness.**
+`SingleSelectDropdown` resolves with `options.find(o => o.value === selectedValue)`, so an unknown id
+renders the **placeholder** while the state says something is selected and Submit is live. In Feynman
+an unknown concept renders **zero textareas** under a button reading "1 concept selected". Unknown
+`tab` → default, silently. Unknown `material` → dropped, the picker's empty state explains itself.
+Unknown `concept` ids → dropped **with one visible note naming how many**, because they are the
+specific thing the student pressed and a re-upload cascade-deletes concepts. A partial match is the
+normal case now that an intent carries a list.
+
+**Feynman applies its concept INSIDE the material effect** (`FeynmanTab.tsx`), after
+`setAvailableConcepts` — that effect clears `selectedConceptIds` on every material change, so a
+separate effect would race it and lose. `preselectRef` is held out of that effect's deps (reading the
+live prop would refetch every concept on consumption) and **is cleared the moment it is acted on**, or
+it becomes a stale second source that re-selects on the student's next manual pick of the same lesson.
+
+**Free Recall ignores `conceptIds` deliberately** — `FreeRecallSchema` caps at one material and
+scores coverage over all of its concepts, so there is nothing to narrow.
+
+**⚠️ `StudyIntent.conceptIds` IS A LIST, AND TWO ENCODING TRAPS COME WITH IT.** `[]` is truthy, so a
+truthiness check appends a bare `?concept=` to every link ever built — test the length. And the URL
+pair must match: `append` on the way out, **`getAll` on the way back**, since `params.get()` returns
+only the first value and would silently drop every concept but one. Only the dashboard builds a URL
+(one id, one row); the results screen navigates in-route, so its list travels in memory.
+
+**The `advanced` band links to the Test tab, never to a one-click generate.** One test is five
+`gemini-3.6-flash` calls against a bucket shared with extraction, Feynman grading, flashcard fronts
+and games. A recommender is a quota amplifier by construction; the one path it must not have is advice
+straight to five model calls.
+
+### `mastery_changes` on `PUT /api/practice/:id/complete`
+
+**The before/after pair already existed and was thrown away.** `applyTestCompletion()` returns
+`updated[]`; the route only logged its problems. It is now serialised — **no new query**.
+
+**⚠️ `BktUpdateOutcome.assessedBefore` IS WHAT STOPS THE RESULTS SCREEN PRINTING P(L₀) AS A SCORE.**
+A concept whose first evidence is this test has `priorBefore = 0.10`, and "10% → 33%" states the
+engine's initialisation constant as a measurement. The row reads **"Not measured before"** instead,
+which is the common case on a first test. Stated explicitly rather than derived from
+`opportunityCount - observations > 0`, which is exact only because rows are never pre-seeded — a
+different invariant.
+
+**⚠️ OPTIONAL, AND ITS ABSENCE IS MEANINGFUL.** Present only on the request that actually flipped the
+status. **Both idempotent replay paths stay untouched** — they ran no BKT update, and reconstructing
+the pair from `bkt_update_logs` would make this route the audit trail's second UI reader, which is
+exactly what `logWriteError` staying non-fatal depends on nobody doing. Missing means "no claim";
+`[]` means "ran and moved nothing". `buildResult()` is untouched — it is pure and shared by four
+call sites.
+
+**⚠️ THE MASTERY BLOCK AND THE ADVICE ARE GATED DIFFERENTLY, AND BUNDLING THEM WAS A BUG.**
+"Mastery updated" is gated on `justFinished`: it is a fact about ONE submission, and the only other
+copy of that pair is `bkt_update_logs`, which the UI must not become a second reader of. **"What to do
+next" is NOT gated** — it is advice about a lesson, and it is just as true (more useful, even) when a
+student reopens the test to review.
+
+**⚠️ THE ADVICE IS LESSON-SCOPED, AND THE REASON IS ARITHMETIC RATHER THAN TASTE.** It promoted the
+single weakest concept at first. But BKT's all-incorrect posterior depends only on the question's
+FORMAT (`GUESS_KEY_BY_FORMAT`, five P(G) values), so a test the student got wrong throughout yields at
+most **five distinct mastery values across every concept in it** — the comparator then fell through to
+`localeCompare` and promoted whichever term sorted first alphabetically. Reported from a real
+34-concept test where it picked "ADVANCED SYSTEM INTEGRATION" while listing 33 other problems directly
+above it. It now calls `recommendMaterial()` on `result.test.material_id`; `AdaptiveTestTab` supplies
+the `MaterialMasteryDetail` from the `SpaceMasteryDetail` it already holds, so there is no new fetch.
+
+**⚠️ IT RENDERS NOTHING WHILE THAT ROW IS STALE.** `refreshList()` is fired un-awaited on finishing,
+so for a beat the material row can still read `assessed_concept_count === 0` — which `materialBand()`
+correctly calls `unassessed`, producing *"Nothing in X has been measured yet"* immediately after a
+test measured it. The card requires `assessed_concept_count > 0`: arriving a moment late beats being
+briefly wrong. There is no `mastery_changes` override available here the way there is per concept,
+because this needs a document mean and `documentMastery()` on the server is the only place that may
+compute one.
+
+**The Feynman step carries EVERY missed concept** — `result.missed_concepts.map(c => c.concept_id)`,
+exactly the chips listed above it — and the button states the count, because ticking 34 concepts opens
+34 text boxes. On a test with nothing missed (reachable: a first all-correct test still leaves a
+lesson `foundational`) the label falls back to neutral wording and carries nothing, since "Explain
+what you missed" would be a lie.
+
+**⚠️ THAT IS ALSO WHY `FeynmanTab` SUBMITS `readyConcepts`, NOT `selectedConcepts`.** `canEvaluate`
+used to require every ticked concept to be filled, so preselecting a whole lesson left Evaluate
+**permanently disabled**. It now sends what was written and needs one, with the count on the button
+and beside it. Server-legal unchanged (`explanations` is `.min(1)`, no `.max()`), and it bounds a real
+failure — grading is one Gemini call at `maxOutputTokens: 16384` with ~one result object per concept,
+and `generateJson()` throws on `finishReason: MAX_TOKENS`.
+
+**⚠️ NO STEP IS ACCENTED. The first one used to be, and that was a progress marker for progress
+nothing tracks.** Nothing records whether a student actually read the lesson or wrote an explanation,
+so on a revisit the accent would still sit on step one however much they had done — the same class of
+mistake as showing "Mastery updated" on a past test. The ORDER is the recommendation, and the sentence
+above the buttons already says which comes first. Do not reintroduce an active state without a writer
+that observes it.
+
+**"1 of 1 wrong" was removed from the chips**, rendered now only when `asked > 1`.
+`allocateConcepts()` deals each concept to exactly one question and the dealing cursor never rewinds
+(`testGeneration.ts`), so `asked` is 1 on every chip of every test — a concept *is* reused across
+formats as a matching **decoy**, but a decoy emits no question and no telemetry row. Conditional
+rather than deleted: one comparison, and correct if the allocator ever changes.
+
+**The results screen keeps "Test Score" and "Mastery updated" as two clearly separate blocks.** They
+are different quantities and the old rule against conflating them still holds; what changed is that
+mastery now appears at all, in its own labelled section.
+
 ## Student Dashboard — the one global read
 
 **`GET /api/dashboard` is the ONLY global student endpoint, and it is the documented exception to the per-space rule** recorded in `server/index.ts`. Everything else a student reads is scoped to one owned space; a dashboard is by definition about all of them, and a client-side fan-out would cost 1 + N requests with each per-space mastery call being ~6 DB round trips on its own.
