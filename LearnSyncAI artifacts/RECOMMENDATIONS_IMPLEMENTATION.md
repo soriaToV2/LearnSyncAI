@@ -173,6 +173,65 @@ beside it would be a competing affordance for one action.
 
 ---
 
+## 3c · "Review its deck" — finishing the one step that was a dead end
+
+Reported on use: pressing **Review its deck** opened the Flashcards tab and did nothing else.
+
+**Cause: `FlashcardsTab` was the only intent target never handed `preselect`.** `TestResultsView`
+already fired `onNavigate({ tab: 'flashcards', materialId, conceptIds })` and `StudySpace` already set
+`pending` and switched tabs — the tab simply never received it, so `materialId` was silently dropped
+and `pending` was never consumed. The other four tabs all had the plumbing.
+
+**What it does now:** lands on the deck holding that lesson, floats the cards for the missed concepts
+to the top, marks them amber, and offers to drill just those. If no deck holds the lesson, it offers
+to build one in a click.
+
+**Almost all of it already existed.** `StudyIntent.conceptIds` carries the missed set (Feynman was its
+first consumer); `setSelectedSetContent` is already a prop, so the parent can land the tab on a deck;
+the material→deck lookup is a filter over cards already in memory. **No server change, no endpoint, no
+migration.**
+
+| Decision | Why |
+|---|---|
+| `concept_id` added to the client card mapping | The server always sent it (`select('*')`); the mapping dropped it, so nothing client-side could match a card to a concept. **Nullable** — `ON DELETE SET NULL` after a re-upload. |
+| `deckHolding()` picks most-cards-then-earliest | **More than one deck can hold the same material.** No material column on `flashcard_decks`, and the 409 guard is scoped to one `deck_id`. "The deck" is not a thing; a deterministic tiebreak beats a modal. |
+| Marked-first is a **partition**, not a fifth `OrderKey` | The file's rule is one piece of order state. A `'missed'` key would also hit the `Dropdown` hazard where an unrecognised value renders the first option. Partitioning composes with Hardest/Easiest via the stable sort. |
+| The marking carries its own `deckId` | Landing on a deck fires the reset effect that clears `order`/flip. Rather than sequencing two effects, the value states which deck it belongs to and is ignored elsewhere — so the reset needs no knowledge of it. |
+| `studyMode: 'marked'` | A card filter, not a new rule. Ratings are still posted; the server still decides `counted`. |
+| `isPractice` moved to the session's own cards | It asked whether anything *anywhere in the deck* was due — wrong for a filtered session, and it would have suppressed the "ratings won't count" banner. |
+| Auto-generate uses `format: 'term'` | No model in that path: instant and free. `'question'` is a Gemini call against a bucket one test already takes five of. |
+
+### ⚠️ The due-check tension — named, not papered over
+
+Flashcards move mastery **only for cards that are due**. `POST /flashcards/rate` returns early
+otherwise and writes no schedule, no `spaced_repetition_logs` row and **no BKT update**; the route
+header says *"Do not relax it."*
+
+So a student who cleared this deck yesterday, then missed five concepts in a test, can arrive here via
+a button carrying a **moves mastery** chip, drill all five, and change nothing.
+
+**Resolved by disclosure, not by loosening the rule:**
+
+- The banner states the split before they start — *"12 cards from your last test are marked below.
+  **8 are due** — reviewing those updates your mastery."*
+- The drill button reads **Review these N** when some are due, **Practice these N** when none are,
+  matching the existing deck-tile vocabulary.
+- Concepts the test flagged that this deck has no card for are counted in the same banner rather than
+  quietly showing fewer cards.
+
+### Verified offline — 13 assertions
+
+`deckHolding` (more-cards wins; only-holder; none → null; no decks → null; tie → earliest) and
+`markingFor` (exact matches; `missing` counts uncovered concepts; unmatched ids mark nothing; empty
+input marks nothing; **null `conceptId` matches nothing and counts as missing**), plus the partition
+preserving the chosen order inside each group.
+
+**Deliberately still inert: the "Concepts to revisit" chips.** They are the obvious second home for a
+multi-concept jump, but the step below already does it, and 34 clickable chips beside it would be a
+competing affordance for one action.
+
+---
+
 ## 4 · ⚠️ The credibility problem, and how it is solved structurally
 
 `bkt_mastery` has exactly two writers — `flashcards.routes.ts` (the `counted: true` branch) and

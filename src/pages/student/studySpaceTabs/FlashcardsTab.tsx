@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck, Shuffle, ArrowUpDown } from 'lucide-react';
+import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck, Shuffle, ArrowUpDown, Target } from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import FlashcardStudyView from '../components/FlashcardStudyView';
 import Modal from '../../../components/ui/Modal';
@@ -13,11 +13,19 @@ import { isDue } from '../../../lib/reviewSchedule';
 import type { EaseRating } from '../../../lib/reviewSchedule';
 // Lifted out of TermMatchingGame when this grid needed one too.
 import { shuffle } from '../../../lib/shuffle';
+import type { StudyIntent } from '../../../lib/studySpace';
 
 interface Flashcard {
   id: string;
   front: string;
   back: string;
+  /**
+   * The concept this card assesses — how a test result finds its card.
+   *
+   * ⚠️ NULLABLE. `flashcards.concept_id` is `ON DELETE SET NULL`, so a card
+   * whose concept a re-upload removed still works as a card and matches nothing.
+   */
+  conceptId?: string | null;
   /** The material this card was generated from. Drives "already in this deck". */
   sourceMaterialId?: string | null;
   /** When this card is next due. Past or null = due now. */
@@ -54,6 +62,9 @@ interface Flashcard {
  * ratings given on different days, which is not worth a near-duplicate entry.
  */
 type OrderKey = 'deck' | 'hardest' | 'easiest' | 'shuffled';
+
+/** Which cards a session opens with. See `studyMode`. */
+type StudyMode = 'due' | 'practice' | 'marked';
 
 const ORDER_OPTIONS: Array<{ label: string; value: OrderKey }> = [
   { label: 'Default', value: 'deck' },
@@ -179,6 +190,17 @@ interface FlashcardsTabProps {
   setSelectedSetContent: (id: string | null) => void;
   onRefresh: () => void;
   availableResources: SpaceMaterial[];
+  /**
+   * A recommendation's destination — in practice, "Review its deck" on the test
+   * results screen.
+   *
+   * `materialId` picks the deck; `conceptIds` are the concepts the student got
+   * wrong, which this tab MARKS rather than selects. This tab was the only
+   * intent target never handed one, so the button was a dead end: the tab opened
+   * on the plain deck list and the intent was silently dropped.
+   */
+  preselect: StudyIntent | null;
+  onPreselectConsumed: () => void;
 }
 
 export default function FlashcardsTab({
@@ -188,10 +210,20 @@ export default function FlashcardsTab({
   setSelectedSetContent,
   onRefresh,
   availableResources,
+  preselect,
+  onPreselectConsumed,
 }: FlashcardsTabProps) {
   const [isStudying, setIsStudying] = useState(false);
-  /** 'due' opens with only the cards that are due; 'practice' with all of them. */
-  const [studyMode, setStudyMode] = useState<'due' | 'practice'>('due');
+  /**
+   * 'due' opens with only the cards that are due; 'practice' with all of them;
+   * 'marked' with the ones a test result flagged.
+   *
+   * ⚠️ `'marked'` IS A CARD FILTER, NOT A NEW RULE. It changes which cards the
+   * session opens with and nothing else — every rating is still posted, and the
+   * server still decides whether it counts by the same due-check. There is no
+   * session id and no practice flag on the wire.
+   */
+  const [studyMode, setStudyMode] = useState<StudyMode>('due');
   const [flippedCardId, setFlippedCardId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -250,8 +282,37 @@ export default function FlashcardsTab({
   const selectedSet = flashcardSets.find(s => s.id === selectedSetContent) || null;
   const hasMaterials = availableResources.length > 0;
 
+  /**
+   * What a test result asked this tab to mark.
+   *
+   * ⚠️ IT CARRIES ITS OWN `deckId` AND IS READ THROUGH `marking` BELOW, WHICH IS
+   * WHAT AVOIDS THE ORDERING BUG. Landing on a deck changes
+   * `selectedSetContent`, which fires the reset effect below — so a marking set
+   * in the same tick as the deck would be wiped by it. Rather than sequencing
+   * two effects, the value simply states which deck it belongs to and is ignored
+   * everywhere else. The reset effect then needs no knowledge of it at all.
+   *
+   * Card ids rather than concept ids, so the grid and the session test
+   * membership directly. `missing` counts concepts the test flagged that this
+   * deck has no card for.
+   *
+   * ⚠️ VISIT-SCOPED ON PURPOSE. `<main key={activeTab}>` remounts this tab on
+   * entry, so the marking disappears when the student leaves — right, because it
+   * describes one test rather than a property of the deck. The deck selection
+   * lives in the parent and correctly outlives it.
+   */
+  const [markingState, setMarkingState] = useState<{
+    deckId: string;
+    materialId: string | null;
+    cardIds: Set<string>;
+    missing: number;
+  } | null>(null);
+
+  const marking = markingState?.deckId === selectedSetContent ? markingState : null;
+
   // Opening a different deck starts clean: its own saved side, its own order,
-  // and no card left showing its answer.
+  // and no card left showing its answer. The marking guards itself, so it is
+  // deliberately not in here.
   useEffect(() => {
     setOrder('deck');
     setShuffleNonce(0);
@@ -310,19 +371,48 @@ export default function FlashcardsTab({
    */
   const orderedCards = useMemo(() => {
     const cards = selectedSet?.cards ?? [];
-    switch (order) {
-      case 'shuffled':
-        return shuffle(cards);
-      case 'hardest':
-        return [...cards].sort((a, b) => ratingRank(a, false) - ratingRank(b, false));
-      case 'easiest':
-        return [...cards].sort((a, b) => ratingRank(a, true) - ratingRank(b, true));
-      default:
-        return cards;
-    }
+    const sorted = (() => {
+      switch (order) {
+        case 'shuffled':
+          return shuffle(cards);
+        case 'hardest':
+          return [...cards].sort((a, b) => ratingRank(a, false) - ratingRank(b, false));
+        case 'easiest':
+          return [...cards].sort((a, b) => ratingRank(a, true) - ratingRank(b, true));
+        default:
+          return cards;
+      }
+    })();
+
+    /*
+     * Marked cards float to the top.
+     *
+     * ⚠️ A PARTITION, NOT A FIFTH `OrderKey`. The header note above says shuffle
+     * and the sort both decide one thing — the order — so two pieces of state
+     * would let the dropdown claim "Hardest first" over a grid that is not. A
+     * `'missed'` order would inherit that, plus the `Dropdown` hazard where an
+     * unrecognised value silently renders the first option. Partitioning instead
+     * COMPOSES: "Hardest first" still holds inside each group.
+     *
+     * The sort is stable, so both groups keep whatever order was just chosen.
+     */
+    if (!marking || marking.cardIds.size === 0) return sorted;
+    const marked = sorted.filter(c => marking.cardIds.has(c.id));
+    const rest = sorted.filter(c => !marking.cardIds.has(c.id));
+    return [...marked, ...rest];
     // `shuffleNonce` is in the deps so pressing Shuffle again re-rolls; it is
     // otherwise unused here.
-  }, [selectedSet?.cards, order, shuffleNonce]);
+  }, [selectedSet?.cards, order, shuffleNonce, marking]);
+
+  /** The marked cards that are actually due — the ones a session would count. */
+  const markedDueCount = useMemo(
+    () =>
+      marking
+        ? (selectedSet?.cards ?? []).filter(c => marking.cardIds.has(c.id) && isDue(c.nextReviewAt))
+            .length
+        : 0,
+    [selectedSet?.cards, marking]
+  );
 
   /** How many cards in the open deck carry a rating at all. */
   const ratedCount = (selectedSet?.cards ?? []).filter(c => c.easeRating).length;
@@ -354,6 +444,160 @@ export default function FlashcardsTab({
 
   const materialTitle = (id: string | null | undefined): string | null =>
     availableResources.find(m => m.id === id)?.title ?? null;
+
+  // ── Following "Review its deck" from a test result ─────────────────────────
+
+  /**
+   * The intent as it stood at MOUNT.
+   *
+   * Held out of the resolving effect's deps: reading the live prop there would
+   * re-run it the moment the intent is consumed and the prop flips to null.
+   * Cleared as soon as it is acted on, so it cannot become a stale second source.
+   */
+  const preselectRef = React.useRef<StudyIntent | null>(preselect);
+  React.useEffect(() => {
+    if (preselect) preselectRef.current = preselect;
+  }, [preselect]);
+
+  /**
+   * A deck we just built, waiting for `onRefresh()` to deliver its cards, and
+   * the concepts to mark once they arrive.
+   *
+   * Parked in refs because the intent that carried them is consumed the instant
+   * it is acted on, and the cards do not exist yet at that point.
+   */
+  const pendingBuildRef = React.useRef<{ deckId: string; materialId: string } | null>(null);
+  const buildConceptsRef = React.useRef<string[]>([]);
+
+  /** The lesson a preselect asked for but no deck holds. Drives the fallback card. */
+  const [needsDeckFor, setNeedsDeckFor] = useState<SpaceMaterial | null>(null);
+  const [buildingDeck, setBuildingDeck] = useState(false);
+
+  /**
+   * Which deck holds a lesson.
+   *
+   * ⚠️ "THE DECK" IS NOT A THING — MORE THAN ONE CAN HOLD THE SAME MATERIAL.
+   * Nothing constrains it: `flashcard_decks` has no material column, and the 409
+   * "already generated" guard on the generate route is scoped to a single
+   * `deck_id`, so generating a lesson into a second deck is supported and
+   * unremarked. Rather than asking, pick deterministically — most cards from that
+   * lesson, then earliest created (decks arrive in `created_at` order, and
+   * `find`-style reduction keeps the first on a tie).
+   */
+  const deckHolding = (materialId: string): FlashcardSet | null => {
+    let best: FlashcardSet | null = null;
+    let bestCount = 0;
+    for (const set of flashcardSets) {
+      const count = set.cards.filter(c => c.sourceMaterialId === materialId).length;
+      if (count > bestCount) {
+        best = set;
+        bestCount = count;
+      }
+    }
+    return best;
+  };
+
+  /** Turn a set of concept ids into the marking for one deck. */
+  const markingFor = (set: FlashcardSet, materialId: string | null, conceptIds: string[]) => {
+    const wanted = new Set(conceptIds);
+    // `conceptId` is nullable — a card whose concept a re-upload removed matches
+    // nothing, which is correct.
+    const cardIds = new Set(
+      set.cards.filter(c => c.conceptId && wanted.has(c.conceptId)).map(c => c.id)
+    );
+    const covered = new Set(
+      set.cards.map(c => c.conceptId).filter((id): id is string => Boolean(id) && wanted.has(id!))
+    );
+    return {
+      deckId: set.id,
+      materialId,
+      cardIds,
+      missing: wanted.size - covered.size,
+    };
+  };
+
+  /*
+   * Apply the intent: open the deck that holds the lesson and mark what the test
+   * caught. Consumed in every branch, including the ones that resolve nothing —
+   * an intent the parent still holds would be re-applied on the next remount and
+   * would yank the student off a deck they had since picked by hand.
+   */
+  useEffect(() => {
+    const intent = preselectRef.current;
+    if (!intent) return;
+    preselectRef.current = null;
+
+    const materialId = intent.materialId;
+    const set = materialId ? deckHolding(materialId) : null;
+
+    if (set) {
+      setSelectedSetContent(set.id);
+      setMarkingState(markingFor(set, materialId, intent.conceptIds));
+      setNeedsDeckFor(null);
+    } else if (materialId) {
+      // No deck covers it yet — offer to build one rather than dead-ending. Shown
+      // on the deck list, so send them there. The concepts are parked for the
+      // marking that follows if they take the offer.
+      buildConceptsRef.current = intent.conceptIds;
+      setSelectedSetContent(null);
+      setNeedsDeckFor(availableResources.find(m => m.id === materialId) ?? null);
+    }
+
+    onPreselectConsumed();
+    // Runs on the arrival that carried an intent. `flashcardSets` is in the deps
+    // because the resolution needs the cards, and on a cold mount they land a
+    // moment after this component first renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preselect, flashcardSets, availableResources, onPreselectConsumed]);
+
+  /**
+   * Build the missing deck in one click: create it, fill it, land on it.
+   *
+   * ⚠️ `format: 'term'` — NEVER `'question'`. The term path has no model in it at
+   * all, so this is instant and free; the question path is a Gemini call against
+   * a bucket one adaptive test already takes five of, and a recommender that
+   * generates on a button press is a quota amplifier by construction.
+   */
+  const buildDeckFor = async (material: SpaceMaterial) => {
+    setBuildingDeck(true);
+    setActionError(null);
+    try {
+      const res = await api.post<{ id: string }>(`/spaces/${spaceId}/decks`, {
+        title: material.title,
+      });
+      const deckId = res.data?.id;
+      if (!deckId) throw new Error('The deck was created but could not be opened.');
+
+      await api.post(`/spaces/${spaceId}/decks/${deckId}/generate`, {
+        material_id: material.id,
+        format: 'term',
+      });
+
+      // The marking is applied once the refreshed cards arrive — see the effect
+      // below, which is why the wanted concepts are parked rather than resolved
+      // here against cards that do not exist yet.
+      pendingBuildRef.current = { deckId, materialId: material.id };
+      setNeedsDeckFor(null);
+      setSelectedSetContent(deckId);
+      onRefresh();
+    } catch (err: any) {
+      // The manual path stays open: a created-but-empty deck renders the existing
+      // "This deck is empty" card with its Add Cards button.
+      setActionError(err?.message ?? 'That deck could not be built. Please try again.');
+    } finally {
+      setBuildingDeck(false);
+    }
+  };
+
+  useEffect(() => {
+    const pendingBuild = pendingBuildRef.current;
+    if (!pendingBuild) return;
+    const set = flashcardSets.find(s => s.id === pendingBuild.deckId);
+    if (!set || set.cards.length === 0) return; // cards not delivered yet
+    pendingBuildRef.current = null;
+    setMarkingState(markingFor(set, pendingBuild.materialId, buildConceptsRef.current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flashcardSets]);
 
   /** Distinct material titles represented in a deck, in card order. */
   const deckSources = (set: FlashcardSet): string[] => {
@@ -423,7 +667,7 @@ export default function FlashcardsTab({
   };
 
   /** Start a session straight from a deck tile — the one-click path. */
-  const studyDeck = (deckId: string, mode: 'due' | 'practice' = 'due') => {
+  const studyDeck = (deckId: string, mode: StudyMode = 'due') => {
     setSelectedSetContent(deckId);
     setStudyMode(mode);
     setIsStudying(true);
@@ -560,9 +804,12 @@ export default function FlashcardsTab({
     // Starting from a deck TILE always gives the deck's own order, because
     // changing decks resets the nonce — correct, since the student never saw a
     // shuffled grid for that deck.
-    const sessionCards = studyMode === 'due'
-      ? orderedCards.filter(c => isDue(c.nextReviewAt))
-      : orderedCards;
+    const sessionCards =
+      studyMode === 'due'
+        ? orderedCards.filter(c => isDue(c.nextReviewAt))
+        : studyMode === 'marked'
+          ? orderedCards.filter(c => marking?.cardIds.has(c.id))
+          : orderedCards;
     if (sessionCards.length > 0) {
       return (
         <div className="fade-in duration-300">
@@ -577,7 +824,13 @@ export default function FlashcardsTab({
               source: materialTitle(c.sourceMaterialId) ?? undefined,
             }))}
             deckTitle={selectedSet.title}
-            isPractice={studyMode === 'practice' && dueCards(selectedSet).length === 0}
+            /* ⚠️ COMPUTED ON THE SESSION'S OWN CARDS, NOT THE WHOLE DECK. It
+               used to ask whether anything ANYWHERE in the deck was due, which
+               is the wrong question for a filtered session: a marked session
+               where none of the marked cards are due would have suppressed the
+               "your ratings won't count" banner just because some unrelated
+               card elsewhere happened to be due. */
+            isPractice={studyMode !== 'due' && !sessionCards.some(c => isDue(c.nextReviewAt))}
             answerFirst={answerFirst}
             frontNoun={frontNoun}
             onExit={exitStudy}
@@ -610,6 +863,49 @@ export default function FlashcardsTab({
           </div>
 
           {errorBanner}
+
+          {/* ── "Review its deck" arrived, but no deck holds that lesson ─────
+              Reachable and probably common early on: a student can take a test
+              on a lesson they have never made cards from. Without this the step
+              dead-ends on a deck list that says nothing about why they are here.
+
+              Rendered ONLY when an intent asked for it — never as a standing
+              nag, which is what it would become if it keyed off "some material
+              has no deck". */}
+          {needsDeckFor && (
+            <div className="mb-6 flex items-start gap-3 px-4 py-4 rounded-xl bg-amber-400/5 border border-amber-400/20">
+              <Target className="w-4 h-4 text-amber-400/80 shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <p className="font-sans text-sm font-semibold text-white">
+                  No deck covers “{needsDeckFor.title}” yet.
+                </p>
+                <p className="mt-1 font-sans text-xs text-slate-400 leading-relaxed">
+                  Making one gives you a card for each of its {needsDeckFor.concept_count} idea
+                  {needsDeckFor.concept_count === 1 ? '' : 's'}, and marks the ones you just missed.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => void buildDeckFor(needsDeckFor)}
+                    disabled={buildingDeck}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400/10 border border-amber-400/25 hover:bg-amber-400/15 disabled:opacity-50 disabled:cursor-not-allowed font-sans text-xs font-semibold text-amber-200 transition-colors"
+                  >
+                    {buildingDeck ? (
+                      <><Spinner className="w-3.5 h-3.5" /> Building…</>
+                    ) : (
+                      <><Sparkles className="w-3.5 h-3.5" /> Make a deck from this lesson</>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setNeedsDeckFor(null)}
+                    disabled={buildingDeck}
+                    className="font-sans text-xs text-slate-500 hover:text-slate-300 disabled:opacity-50 transition-colors"
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {flashcardSets.length === 0 ? (
             /* No decks at all — one instruction, one button. */
@@ -825,6 +1121,53 @@ export default function FlashcardsTab({
 
           {/* Caught up. Said explicitly so an inactive Review button reads as
               success rather than something being broken. */}
+          {/* ── What the last test caught ──────────────────────────────────
+              ⚠️ THE DUE SPLIT IS STATED BEFORE THEY START, and that is the whole
+              point of this banner. Flashcards move mastery only for cards that
+              are DUE — `POST /flashcards/rate` returns early otherwise and
+              writes no schedule, no log and no BKT update. So a student who
+              cleared this deck yesterday, then missed five concepts in a test,
+              can drill all five here and change nothing. The button that sent
+              them here carries a "moves mastery" chip, so the honest thing is to
+              say which half they are about to do rather than relax the rule. */}
+          {marking && marking.cardIds.size > 0 && (
+            <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-400/5 border border-amber-400/20">
+              <Target className="w-4 h-4 text-amber-400/80 shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                  <span className="text-slate-200 font-semibold">
+                    {marking.cardIds.size} card{marking.cardIds.size === 1 ? '' : 's'} from your last
+                    test {marking.cardIds.size === 1 ? 'is' : 'are'} marked below.
+                  </span>{' '}
+                  {markedDueCount > 0
+                    ? `${markedDueCount} ${markedDueCount === 1 ? 'is' : 'are'} due — reviewing ${markedDueCount === 1 ? 'it' : 'those'} updates your mastery.`
+                    : "None are due yet, so practising them won't change your mastery or your review dates."}
+                  {marking.missing > 0 && (
+                    <>
+                      {' '}
+                      <span className="text-amber-400/80">
+                        {marking.missing} other{marking.missing === 1 ? '' : 's'} you missed{' '}
+                        {marking.missing === 1 ? 'has' : 'have'} no card in this deck yet.
+                      </span>
+                    </>
+                  )}
+                </p>
+                <button
+                  // `marking.deckId`, not `selectedSet!.id` — the two are equal
+                  // by the guard above, but `selectedSet` is briefly null in the
+                  // window after a deck is built and before its cards arrive.
+                  onClick={() => studyDeck(marking.deckId, 'marked')}
+                  className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400/10 border border-amber-400/25 hover:bg-amber-400/15 font-sans text-xs font-semibold text-amber-200 transition-colors"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  {markedDueCount > 0
+                    ? `Review these ${marking.cardIds.size}`
+                    : `Practice these ${marking.cardIds.size}`}
+                </button>
+              </div>
+            </div>
+          )}
+
           {selectedSet && selectedSet.cards.length > 0 && dueCards(selectedSet).length === 0 && (
             <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-emerald-500/5 border border-emerald-500/15">
               <CalendarCheck className="w-4 h-4 text-emerald-400/80 shrink-0 mt-0.5" />
@@ -981,6 +1324,7 @@ export default function FlashcardsTab({
               {orderedCards.map((card) => {
                 const source = materialTitle(card.sourceMaterialId);
                 const flipped = flippedCardId === card.id;
+                const isMarked = marking?.cardIds.has(card.id) ?? false;
                 /* `front`/`back` keep one meaning everywhere — front is the term
                    or generated question, back is the educator's definition. Only
                    which one the student meets first changes here. */
@@ -1011,7 +1355,18 @@ export default function FlashcardsTab({
                       className={`relative w-full h-full transition-transform duration-500 [transform-style:preserve-3d] ${flipped ? '[transform:rotateY(180deg)]' : ''}`}
                     >
                       {/* Front */}
-                      <div className="absolute inset-0 [backface-visibility:hidden] rounded-2xl border border-white/10 bg-surface-container flex flex-col shadow-lg overflow-hidden">
+                      {/* ⚠️ THE MARK IS ON BOTH FACES, not on the card root. The
+                          root carries the focus ring, so a ring there would be
+                          indistinguishable from keyboard focus; and the back is
+                          a separate element, so a front-only border vanishes the
+                          moment the card is flipped. Amber is carried over from
+                          the results screen's own "Concepts to revisit" chips so
+                          the two screens read as one action. */}
+                      <div
+                        className={`absolute inset-0 [backface-visibility:hidden] rounded-2xl border bg-surface-container flex flex-col shadow-lg overflow-hidden ${
+                          isMarked ? 'border-amber-400/40' : 'border-white/10'
+                        }`}
+                      >
                         {/* The grid always shows every card — it is for browsing
                             a lesson. Scheduled cards are marked, never hidden. */}
                         <div className="shrink-0 flex items-baseline justify-between gap-2 px-5 pt-4">
@@ -1022,6 +1377,12 @@ export default function FlashcardsTab({
                               the tracking-widest labels below. */}
                           <p className="font-sans text-[11px] text-slate-500 truncate min-w-0">{source ?? ''}</p>
                           <span className="shrink-0 flex items-baseline gap-1.5 font-sans text-[11px]">
+                            {isMarked && (
+                              <>
+                                <span className="text-amber-400/90 font-semibold">Missed</span>
+                                <span className="text-slate-700">·</span>
+                              </>
+                            )}
                             {/* Rated cards only. A card nobody has reviewed shows
                                 nothing at all — no "Unrated" pill, no neutral
                                 dot. Sorting by rating is invisible without this,
@@ -1074,7 +1435,11 @@ export default function FlashcardsTab({
                           tint survives unchanged. Do not collapse this back to a
                           single `bg-<colour>/<opacity>` — an opacity modifier on
                           the only background is what caused this. */}
-                      <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border border-primary-fixed-dim/30 bg-surface-container bg-gradient-to-br from-primary-fixed-dim/[0.08] to-primary-fixed-dim/[0.02] flex flex-col shadow-[0_0_30px] shadow-primary-fixed-dim/10 overflow-hidden">
+                      <div
+                        className={`absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border bg-surface-container bg-gradient-to-br from-primary-fixed-dim/[0.08] to-primary-fixed-dim/[0.02] flex flex-col shadow-[0_0_30px] shadow-primary-fixed-dim/10 overflow-hidden ${
+                          isMarked ? 'border-amber-400/40' : 'border-primary-fixed-dim/30'
+                        }`}
+                      >
                         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col">
                           <p className={`my-auto font-sans text-primary-fixed-dim font-medium ${gridFaceClass(answer)}`}>{answer}</p>
                         </div>

@@ -625,6 +625,57 @@ and beside it. Server-legal unchanged (`explanations` is `.min(1)`, no `.max()`)
 failure — grading is one Gemini call at `maxOutputTokens: 16384` with ~one result object per concept,
 and `generateJson()` throws on `finishReason: MAX_TOKENS`.
 
+### "Review its deck" — the flashcards step
+
+**⚠️ `FlashcardsTab` WAS THE ONLY INTENT TARGET NEVER HANDED `preselect`, SO THE STEP WAS A DEAD
+END.** `TestResultsView` already fired `onNavigate({tab:'flashcards', …})` and `StudySpace` already
+set `pending`; the tab simply never received it, so the `materialId` was dropped and the student
+landed on a plain deck list. It now takes `preselect`/`onPreselectConsumed` like the other four.
+
+**`concept_id` reaches the client through `StudySpace`'s card mapping.** The server always sent it
+(`GET /:id/decks/:deckId/flashcards` selects `*`); the mapping was discarding it, which is why
+nothing client-side could match a card to a concept. It is **nullable** — `ON DELETE SET NULL`, so a
+card whose concept a re-upload removed matches nothing, and every membership test must tolerate that.
+
+**⚠️ "THE DECK" IS NOT A THING — MORE THAN ONE CAN HOLD THE SAME MATERIAL.** `flashcard_decks` has no
+material column and the 409 "already generated" guard is scoped to one `deck_id`, so generating a
+lesson into a second deck is supported and unremarked. `deckHolding()` picks deterministically —
+**most cards from that lesson, then the earliest** (strict `>`, so the first wins a tie). No chooser
+UI for a case most students never create.
+
+**⚠️ MARKED-FIRST IS A PARTITION INSIDE `orderedCards`, NOT A FIFTH `OrderKey`.** The file's own rule
+is that shuffle and the sort both decide one thing — the order — so a second piece of state would let
+the dropdown claim "Hardest first" over a grid that is not. A `'missed'` order would inherit that
+*plus* the `Dropdown` hazard where an unrecognised value silently renders the first option.
+Partitioning **composes**: "Hardest first" still holds inside each group, and the stable sort
+guarantees it.
+
+**⚠️ THE MARKING CARRIES ITS OWN `deckId` AND IS READ THROUGH A DERIVED `marking`.** Landing on a deck
+changes `selectedSetContent`, which fires the reset effect that clears `order`/`shuffleNonce`/flip —
+so a marking set in the same tick would be wiped by it. Rather than sequencing two effects, the value
+states which deck it belongs to and is ignored everywhere else; the reset effect needs no knowledge of
+it. It is **visit-scoped**: `<main key={activeTab}>` remounts the tab, so it describes one test rather
+than a property of the deck.
+
+**⚠️ THE DUE SPLIT IS STATED BEFORE THE STUDENT STARTS, AND THAT IS NOT DECORATION.** Flashcards move
+mastery only for cards that are **due** — `POST /flashcards/rate` returns early otherwise and writes
+no schedule, no `spaced_repetition_logs` row and no BKT update. So a student who cleared this deck
+yesterday, then missed five concepts in a test, can drill all five and change nothing, having arrived
+via a button carrying a "moves mastery" chip. The banner therefore reads *"12 cards from your last
+test are marked below. 8 are due — reviewing those updates your mastery"*, and the drill button says
+**Review these N** when some are due and **Practice these N** when none are. **The fix is never to
+relax the due-check.**
+
+**`studyMode` gained `'marked'`, and it is a CARD FILTER, not a new rule** — every rating is still
+posted and the server still decides `counted` by the same check. `isPractice` is now computed on
+**the session's own cards**; it previously asked whether anything anywhere in the deck was due, which
+is the wrong question for a filtered session.
+
+**The no-deck fallback offers to build one, and it generates `format: 'term'` — NEVER `'question'`.**
+The term path has no model in it, so it is instant and free; the question path is a Gemini call
+against a bucket one adaptive test already takes five of. It renders **only** when an intent asked for
+it, never as a standing nag, and a failure leaves the manual `New deck` path untouched.
+
 **⚠️ NO STEP IS ACCENTED. The first one used to be, and that was a progress marker for progress
 nothing tracks.** Nothing records whether a student actually read the lesson or wrote an explanation,
 so on a revisit the accent would still sit on step one however much they had done — the same class of

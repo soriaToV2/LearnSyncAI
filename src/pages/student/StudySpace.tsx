@@ -63,6 +63,15 @@ interface Flashcard {
   id: string;
   front: string;
   back: string;
+  /**
+   * The concept this card assesses — the link a test result is matched on.
+   *
+   * ⚠️ NULLABLE, AND THE NULL CASE IS REAL. `flashcards.concept_id` is
+   * `ON DELETE SET NULL`, so a card whose concept was removed by a re-upload
+   * keeps working as a card and matches no concept. Every membership test must
+   * tolerate null rather than assuming a card always has one.
+   */
+  conceptId?: string | null;
   /** Which material generated this card — drives "already in this deck". */
   sourceMaterialId?: string | null;
   /** When this card is next due. Past or null = due now. */
@@ -250,6 +259,10 @@ export default function StudySpace() {
               id: c.id,
               front: c.term,
               back: c.definition,
+              // Already on the wire — `GET /:id/decks/:deckId/flashcards` selects
+              // `*`. It was simply being dropped here, which is why nothing
+              // client-side could match a card to a concept.
+              conceptId: c.concept_id ?? null,
               sourceMaterialId: c.source_material_id ?? null,
               nextReviewAt: c.next_review_at ?? null,
               isAiGenerated: c.is_ai_generated ?? false,
@@ -474,6 +487,8 @@ export default function StudySpace() {
             setSelectedSetContent={setSelectedSetContent}
             onRefresh={fetchSpaceData}
             availableResources={availableResources}
+            preselect={pending?.tab === 'flashcards' ? pending : null}
+            onPreselectConsumed={consumePreselect}
           />
         )}
 

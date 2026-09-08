@@ -386,18 +386,20 @@ export default function TestResultsView({
           <div className="flex flex-col gap-2">
             {nextUp.rec.steps.map((s) => {
               /*
-               * The Feynman step is the only one that carries concepts, and it
-               * carries ALL of them — every chip in "Concepts to revisit" above.
+               * Two steps carry the missed concepts — every chip in "Concepts to
+               * revisit" above. Feynman TICKS them for explaining; Flashcards
+               * MARKS the matching cards in the deck and offers to drill them.
+               * The other two open on the lesson and ignore them.
                *
-               * Two guards on that. The count is shown, because ticking 34
-               * concepts opens 34 text boxes and the student should know that
-               * before pressing rather than after. And on a test with nothing
-               * missed — reachable, since a first all-correct test still leaves a
-               * lesson `foundational` — the ladder's "Explain what you missed"
-               * would be a lie, so it falls back to the neutral wording and ticks
-               * nothing.
+               * The count is shown because it is consequential in both places:
+               * ticking 34 concepts opens 34 text boxes, and marking 34 cards
+               * reorders a deck. On a test with nothing missed — reachable, since
+               * a first all-correct test still leaves a lesson `foundational` —
+               * "Explain what you missed" would be a lie, so it falls back to
+               * neutral wording and carries nothing.
                */
-              const carries = s.action === 'feynman' ? nextUp.missedIds : [];
+              const carriesIds = s.action === 'feynman' || s.action === 'flashcards';
+              const carries = carriesIds ? nextUp.missedIds : [];
               const label =
                 s.action === 'feynman' && carries.length === 0
                   ? 'Explain it in your own words'
