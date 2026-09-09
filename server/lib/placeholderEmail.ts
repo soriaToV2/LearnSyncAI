@@ -2,11 +2,19 @@
  * Placeholder sign-in addresses, and the one rule about them: never show one to
  * anybody.
  *
- * ⚠️ ONLY BULK IMPORT PRODUCES THESE NOW. The single-account form requires a real
- * email, because an administrator entering one account at a time has the address
- * in front of them. A CSV of fifty students may be prepared before anyone has
- * collected fifty addresses, and blocking the import on that would make the
- * feature useless exactly when it is needed.
+ * ⚠️ BOTH ADMIN CREATION PATHS PRODUCE THESE — bulk import always has, and the
+ * single-account form since 2026-09-09. The form required a real address until
+ * then, on the reasoning that an administrator entering one account at a time has
+ * it in front of them; that is usually true and was the wrong thing to enforce,
+ * since it blocked creating an account at all for a student who had not yet given
+ * one. `POST /api/admin/accounts/:userId/email` still never generates one — it
+ * only replaces an address — so there is no route from a real address back to a
+ * placeholder.
+ *
+ * ⚠️ AN ACCOUNT HOLDING ONE IS FULLY USABLE. The username is the credential, so
+ * the holder signs in normally; what they lose is self-service password recovery
+ * (`canReceiveMail()` is false, so `POST /auth/forgot-password` cannot reach
+ * them) until somebody adds a real address.
  *
  * `.invalid` is reserved by RFC 2606 precisely so that it can never resolve. That
  * is what makes it safe where a plausible-looking domain would not be: it cannot

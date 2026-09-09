@@ -74,15 +74,20 @@ export default function CreateAccountModal({
   const usernameError = username.length > 0 ? usernameProblem(username) : null;
 
   /*
-   * ⚠️ EMAIL IS REQUIRED HERE, AND OPTIONAL IN A CSV IMPORT.
-   * An admin creating one account at a time has the address in front of them, so
-   * there is no reason to fall back to a `<username>@pca.invalid` placeholder on
-   * this path. A class of fifty may legitimately be imported before anyone has
-   * collected fifty addresses, which is the one case the placeholder still serves.
+   * ⚠️ EMAIL IS OPTIONAL HERE, AS IT IS IN A CSV IMPORT. It was required until
+   * 2026-09-09; the argument for that — an admin entering one account at a time
+   * has the address in front of them — is usually true and was the wrong thing to
+   * enforce, because when it is not true the form refused to create the account at
+   * all. The server falls back to a `<username>@pca.invalid` placeholder, and the
+   * account signs in normally: the credential is the username, never this.
    *
-   * Shape-checked only, and shared with the account page's email form via
-   * `emailProblem()` — the server validates properly, and two browser-side regexes
-   * disagreeing about the same address is worse than either alone.
+   * ⚠️ A BLANK FIELD MUST OMIT THE KEY, NOT SEND `''` — see `submit()` below.
+   *
+   * `emailProblem()` already returns null for an empty value (unlike
+   * `isPasswordValid()`), so removing the length test is the whole gate change.
+   * It is shape-checked only, and shared with the account page's email form — the
+   * server validates properly, and two browser-side regexes disagreeing about the
+   * same address is worse than either alone.
    */
   const emailError = emailProblem(email);
 
@@ -91,7 +96,6 @@ export default function CreateAccountModal({
     last.trim().length > 0 &&
     username.trim().length > 0 &&
     !usernameError &&
-    email.trim().length > 0 &&
     !emailError &&
     (role !== 'student' || grade !== null) &&
     !busy;
@@ -126,7 +130,13 @@ export default function CreateAccountModal({
         username: username.trim().toLowerCase(),
         // Sent only for a student — an educator must carry no grade at all.
         ...(role === 'student' && grade !== null ? { grade_level: grade } : {}),
-        email: email.trim().toLowerCase(),
+        /*
+         * OMITTED ENTIRELY when blank, never sent as `''`. The server does accept
+         * an empty string and reads it as absent, deliberately — but the honest
+         * request for "no address given" is one with no key, and it is what the
+         * CSV importer already sends.
+         */
+        ...(email.trim() ? { email: email.trim().toLowerCase() } : {}),
       });
       setCreated(account);
       onCreated();
@@ -161,6 +171,27 @@ export default function CreateAccountModal({
               {created.first_name} {created.last_name} can now sign in.
             </p>
           </div>
+
+          {/*
+            ⚠️ SAYS AN ADDRESS IS MISSING WITHOUT EVER PRINTING THE PLACEHOLDER —
+            `<username>@pca.invalid` is generated, undeliverable by RFC 2606, and
+            showing it as though it were the account's contact address is the
+            mistake `isPlaceholderEmail()` exists to prevent.
+
+            It states the ONE consequence: no address means no self-service
+            password recovery, so a forgotten password comes back to this admin.
+            Left unsaid, that surfaces weeks later as "the reset email never
+            arrives" for an account that was never reachable.
+          */}
+          {created.email_is_placeholder && (
+            <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3">
+              <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                No email address was given, which is fine — they sign in with the username. Until
+                one is added from the account page, they cannot reset their own password; you will
+                have to do it for them.
+              </p>
+            </div>
+          )}
 
           <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 flex flex-col gap-3">
             <div>
@@ -344,8 +375,13 @@ export default function CreateAccountModal({
             </div>
           )}
 
+          {/*
+            ⚠️ "(optional)" IS IN THE LABEL, NOT ONLY IN THE HINT. A blank required
+            field and a blank optional one look identical, and the admin decides
+            whether to hunt down an address before reading three lines of hint.
+          */}
           <Field
-            label="Email"
+            label="Email (optional)"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -353,7 +389,7 @@ export default function CreateAccountModal({
             placeholder="name@example.com"
             hint={
               emailError ??
-              'Contact information only — they sign in with their username, never this. Each account needs its own address; two people cannot share one.'
+              'Contact information only — they sign in with their username, never this. Leave it blank if you do not have it yet; you can add it later from the account page. Each account needs its own address; two people cannot share one.'
             }
           />
 
