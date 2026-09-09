@@ -11,6 +11,7 @@ import PdfViewer from '../../../components/ui/PdfViewer';
 import SubjectBadge from '../../../components/educator/SubjectBadge';
 import { useSubjectName } from '../../../context/SubjectsContext';
 import { useBadges } from '../../../context/BadgeContext';
+import type { StudyIntent, StudyTab } from '../../../lib/studySpace';
 
 /**
  * The student's read-only view of the materials their educators published.
@@ -30,10 +31,19 @@ interface ResourcesTabProps {
   selectedDoc: string | null;
   handleConnectCourse: () => void;
   setSelectedDoc: (doc: string | null) => void;
-  setActiveTab: (tab: 'flashcards' | 'resources') => void;
+  /**
+   * Still unused, and now typed on the full tab union rather than two of the six.
+   * `ANALYTICS_IMPLEMENTATION.md` §12.1 asked that the `as any` this used to
+   * force not be extended before a deep link was built on it; widening the type
+   * is that fix. Deleting the prop outright is a separate cleanup.
+   */
+  setActiveTab: (tab: StudyTab) => void;
   setIsGenerating: (isGenerating: boolean) => void;
   setSelectedSetContent: (id: number | null) => void;
   setFlashcardSets: React.Dispatch<React.SetStateAction<any[]>>;
+  /** A recommendation's destination. Only `materialId` means anything here. */
+  preselect: StudyIntent | null;
+  onPreselectConsumed: () => void;
 }
 
 /** One material as GET /api/spaces/:id/materials returns it. */
@@ -119,8 +129,22 @@ export default function ResourcesTab({
   setIsGenerating,
   setSelectedSetContent,
   setFlashcardSets,
+  preselect,
+  onPreselectConsumed,
 }: ResourcesTabProps) {
   const subjectNameOf = useSubjectName();
+
+  /*
+   * The intent as it stood at MOUNT.
+   *
+   * A ref rather than the prop, because the load effect below is keyed on
+   * `[spaceId, applyPayload]` and must stay that way: adding `preselect` to its
+   * deps would re-run the whole materials fetch the moment the intent is
+   * consumed and the prop flips to null. A ref initialises once per mount, which
+   * is exactly the lifetime of a preselection — `<main key={activeTab}>` remounts
+   * this tab on every entry, and `StudySpace` clears the intent after the first.
+   */
+  const preselectRef = useRef(preselect);
 
   // ─── Materials state ───────────────────────────────────────
   const [materials, setMaterials] = useState<SpaceMaterial[]>([]);
@@ -210,6 +234,28 @@ export default function ResourcesTab({
         const res = await api.get<SpaceMaterialsResponse>(`/spaces/${spaceId}/materials`);
         if (cancelled) return;
         applyPayload(res.data);
+
+        /*
+         * A recommendation asked us to open one lesson.
+         *
+         * Applied here rather than in an effect of its own, because the id can
+         * only be checked once the list exists and a separate effect would race
+         * this one. Validated rather than trusted: an id the list does not carry
+         * would leave `selectedId` pointing at nothing, and the viewer would sit
+         * blank with no lesson highlighted — an educator can archive a material
+         * between the link being made and followed.
+         *
+         * Dropping it silently is right here: the tab's own "pick a lesson"
+         * state already explains itself.
+         */
+        if (preselectRef.current) {
+          const wanted = preselectRef.current.materialId;
+          const target = wanted ? (res.data.materials ?? []).find((m) => m.id === wanted) : null;
+          if (target) setSelectedId(target.id);
+          // Consumed whether or not it resolved: an intent `StudySpace` still
+          // holds would be re-applied on the next remount of this tab.
+          onPreselectConsumed();
+        }
       } catch (err: any) {
         if (cancelled) return;
         console.error('Failed to load materials:', err);

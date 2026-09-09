@@ -332,7 +332,9 @@ APP_URL=http://localhost:3000
 - **The materials-library status filter is `all` plus exactly those four values. "Archived" does not belong in it** — `is_archived` is an orthogonal boolean with its own toggle, and an archived material still has a real parse status, so folding them into one control would make both ambiguous.
 - **Every flashcard route is owner-checked, reads included.** All of `GET/POST/PUT/DELETE /api/spaces/:id/decks*` and `POST /api/flashcards/rate` resolve to the caller's own space via `loadOwnedSpace()` (or card → deck → space) and answer **404** otherwise. Reads are guarded as tightly as writes on purpose: a space id is visible in the address bar (`/student/space/:spaceId`), and a deck carries its owner's `ease_rating` and `next_review_at` — a direct readout of the concepts they are struggling with. Migration 0003 removed peer sharing to guarantee data isolation between students; an unguarded read contradicts that.
 - **Students own decks but not cards.** A deck is the student's own folder for organising lessons: create, rename and delete are all theirs (`POST/PUT/DELETE /api/spaces/:id/decks`). The **cards inside are not** — there is no add/edit/delete card control and no such endpoint. Every card assesses a `concepts` row an educator uploaded and vetted (educators curate concepts via `POST/PUT/DELETE /api/materials/:id/concepts`), so a hand-written card would have no concept to attach mastery to, or would inject unvetted text into the knowledge base that also feeds Free Recall scoring, Feynman grading, the chatbot and adaptive tests. **Cards enter a deck by generation against a selected material and by no other route.** A new deck is empty by design.
-- **A deck may gather several materials.** Decks are organisational, so "have I already generated this material?" is a question about cards, not decks: it is `flashcards.source_material_id` scoped to a `deck_id`. Do not add a `source_material_id` to `flashcard_decks` — it would force one deck per material and defeat the point.
+- **⚠️ ONE LESSON LIVES IN ONE DECK PER SPACE, AND THIS IS A BKT INTEGRITY GUARD.** `POST /:id/decks/:deckId/generate` refuses (409, `code: 'MATERIAL_IN_ANOTHER_DECK'`) when another deck in the space already holds cards from that material, naming it. The due-check that stops farming is keyed on a **card** (`flashcards.next_review_at`) while mastery is keyed on a **concept** (`bkt_mastery`, `UNIQUE (student_id, concept_id)`, no FK to any card, deck or space) — and a generated card is **born due** (`DEFAULT now()`, never set by the insert). So a second deck minted new cards that were all instantly due, each one another observation on a concept already assessed: **0.7231 after one Easy, 0.9824 after two**, i.e. `advanced` in two minutes against the eight days an honest schedule takes. It was also a plain correctness bug — nothing warned a student a lesson was already carded elsewhere, so an innocent duplicate double-counted every concept. **It fires regardless of `replace`** (which means "refresh THIS deck" and must not become a bypass) **but only when this deck does not already hold the material**, so decks duplicated before the guard are refreshable rather than stranded. The client's Add Cards list greys the row and names the deck; the server is the guarantee. **The residual is delete-and-regenerate** — `bkt_mastery` survives a deck deletion — left open by decision, with the delete copy now stating the cost and an audit query in `BKT_IMPLEMENTATION.md` §4.3 that finds it with zero false positives.
+
+**A deck may gather several materials.** Decks are organisational, so "have I already generated this material?" is a question about cards, not decks: it is `flashcards.source_material_id` scoped to a `deck_id`. Do not add a `source_material_id` to `flashcard_decks` — it would force one deck per material and defeat the point.
 - **The back of a flashcard is always the educator's definition, verbatim.** `POST /api/spaces/:id/decks/:deckId/generate` writes `definition` → back, plus `concept_id` and `source_material_id`, whatever the format. **A model never writes an answer** — the deleted helper did, which put unvetted text in front of students. Only the front varies, via `format`:
   - `'term'` (default) — front is the concept's `term`. No model in the path; instant.
   - `'question'` — `generateQuestionsForConcepts()` writes a question whose answer *is* that definition. ~13s for 68 concepts.
@@ -453,6 +455,245 @@ That single check covers retries, "Restart Entire Set", cramming before a test, 
 **`src/lib/mastery.ts` owns the client side** — types, `TIER_TONE`/`TIER_LABEL`, `masteryCaption()` and both API calls. Not `testMode.ts`: mastery is fed by flashcards as well as tests. `foundational` renders `neutral`, never `poor` — everyone starts there.
 
 **Do not add a client cache.** `<main key={activeTab}>` remounts the tab on entry, so data is fresh by construction — including on return from Test Mode having just moved the number, which is exactly when a cache would be stale.
+
+## Study Recommendations — what the app DOES about a low number
+
+> Built 2026-09-07, after the capstone adviser asked what the platform does when BKT says a student
+> is at 30% on a topic. Until then: nothing visible. `bkt_mastery` had three readers — test
+> difficulty, game calibration, the Analytics tab — and none turned a number into an instruction.
+> **No migration, no new table, no new endpoint** — every input was already reaching the client.
+
+**`src/lib/recommend.ts` is the single home for the rule.** Four bands map to an ordered ladder of
+steps plus the sentences that go with them. Client-side because `masteryApi.detail(spaceId)` already
+returns every concept in a space with `mastery`/`assessed`/`source_pages`, and `GET /api/dashboard`
+already returns the weakest five.
+
+**Two ladders. `recommendConcept()` is about one idea; `recommendMaterial()` is about a lesson.**
+
+| Band | Concept ladder | Material ladder |
+|---|---|---|
+| `unassessed` | Flashcards | Flashcards |
+| `foundational` < 0.50 | **Read** → Flashcards → Feynman | **Read** → Flashcards → Free Recall → Feynman |
+| `intermediate` 0.50–0.85 | **Feynman** → Flashcards | **Free Recall** → Feynman → Flashcards |
+| `advanced` ≥ 0.85 | Test | Test |
+
+**⚠️ ONLY THE ADAPTIVE-TEST RESULTS SCREEN RENDERS A FULL LADDER.** `AnalyticsTab` (Focus rows, lesson
+lines) and the dashboard's `FocusRow` all read **`steps[0]` alone**, which is what made lengthening the
+material bands safe — verified before it was done. **Re-verify before adding a fifth step, because a
+new `steps[0]` WOULD change all three.** `free_recall` appears only in the material ladder: it is
+material-addressable (`.max(1)` material, scored over every concept in it), so a per-concept ladder
+has no slot for it.
+
+**⚠️ `Recommendation.honesty` IS DERIVED FROM THE STEPS (`honestyFor()`), NOT PICKED BY HAND.** It was
+five constants, and the very first ladder extension desynced them — material `foundational` gained a
+Free Recall step while its sentence still named only reading and explaining. Deriving it makes the
+sentence provably match the buttons above it, which is the property that matters given this line
+carries the feature's whole credibility.
+
+**⚠️ THE ORDER IS THE DECISION, NOT A DEFAULT.** Below 0.50 the lead is READ, not Feynman. Feynman
+works by finding holes in what you already partly know, so a student at 20% asked to explain a concept
+to a ten-year-old writes an empty box and is graded near zero. It is still offered — third — once
+there is something to explain. Do not "simplify" the bands into one Feynman-always rule.
+
+**⚠️ `Step.movesMastery` IS THE FEATURE'S CREDIBILITY, AND IT IS A FIELD RATHER THAN A COMMENT.**
+`bkt_mastery` has exactly two writers and paper p. 58 fixes it at two, so reading, explaining and
+recalling change nothing measurable. Without this, the app tells a student to do Feynman to fix their
+30%, they do, the number does not budge, and they stop believing every number on the screen. A `why`
+string on a false step must say what the activity *finds*, never what it *moves*. **The fix is never
+to let Feynman or Free Recall write mastery.**
+
+**`Recommendation.honesty` is rendered ONCE PER CARD, never per row.** Three focus rows and nine
+lesson lines would otherwise print the same sentence twelve times on one screen.
+
+**⚠️ NO GEMINI CALL, EVER, ANYWHERE IN THIS FEATURE.** Fixed sentences are instant, free, identical
+every time, and statable as one paragraph in the paper. A model call would be none of those, on a
+~20/day free-tier bucket one adaptive test already takes five of. It is a module-header rule so it is
+not "improved" later.
+
+**No threshold is declared in `recommend.ts`.** It imports `masteryTier()`. (`MASTERED_AT = 0.85` in
+`dashboard.routes.ts` is a pre-existing fourth copy and its own change.) `conceptBand()` **rounds
+before banding** — 0.849 prints "85%", so banding the raw value would print *"You are at 85% … you
+know part of it"*.
+
+**⚠️ `rankOf()` / `NEUTRAL_MASTERY = 0.5` IS THE EASIEST THING HERE TO GET BACKWARDS.** Client mirror
+of `gameDifficulty.ts`. BKT floors every assessed posterior at P(T) = 0.20 while an unassessed concept
+sits at P(L₀) = 0.10, so **plain mastery-ascending puts every never-asked concept above every concept
+the student is measurably failing** — on a 57-concept lesson with six assessed, the Feynman picker
+would open entirely on `new`. The ordering is **known-weak > unknown > known-strong**. It is
+deterministic, not `pickConceptsByMastery()`'s sampling: a list that reshuffled every render reads as
+broken. **This 0.5 is not the `intermediate` threshold** — they coincide numerically and mean
+different things. Used only by the two pickers where unassessed concepts are eligible; "Focus next"
+and the dashboard `focus` stay assessed-only, where it degenerates to plain ascending anyway.
+
+### Deep links — `src/lib/studySpace.ts`
+
+**`StudyTab` moved out of `StudySpace.tsx`** so `ResourcesTab` and `recommend.ts` can import it
+without a child importing from its own parent. `MOBILE_TABS` is typed, which removes the
+`item.id as any` that `ANALYTICS_IMPLEMENTATION.md` §12.1 asked not be built on.
+
+**⚠️ IN-ROUTE NAVIGATION IS A CALLBACK (`onNavigate`), NEVER A `<Link>`, AND THIS IS THE DEFECT MOST
+LIKELY TO SHIP UNNOTICED.** `AnalyticsTab` and `TestResultsView` render *inside* `StudySpace`, so a
+`<Link>` carrying `?tab=feynman` from either is a same-route navigation: `location.search` changes,
+`StudySpace` never unmounts, and `activeTab` was seeded once at mount — **the URL changes and nothing
+happens.** It reviews as correct and is dead at runtime. `studySpaceLink()` is for cross-route links
+only (the dashboard).
+
+**⚠️ A `StudyIntent` IS CONSUMED, NOT HELD.** `<main key={activeTab}>` remounts every tab on entry, so
+a preselection kept as state would be re-applied every time the student returned — silently replacing
+a lesson or concept they had since picked by hand. Each tab calls `onPreselectConsumed()` **whether or
+not the ids resolved**; an un-consumed intent is one `StudySpace` still holds.
+
+**Every tab validates the ids against its own fetched list, and that is correctness, not politeness.**
+`SingleSelectDropdown` resolves with `options.find(o => o.value === selectedValue)`, so an unknown id
+renders the **placeholder** while the state says something is selected and Submit is live. In Feynman
+an unknown concept renders **zero textareas** under a button reading "1 concept selected". Unknown
+`tab` → default, silently. Unknown `material` → dropped, the picker's empty state explains itself.
+Unknown `concept` ids → dropped **with one visible note naming how many**, because they are the
+specific thing the student pressed and a re-upload cascade-deletes concepts. A partial match is the
+normal case now that an intent carries a list.
+
+**Feynman applies its concept INSIDE the material effect** (`FeynmanTab.tsx`), after
+`setAvailableConcepts` — that effect clears `selectedConceptIds` on every material change, so a
+separate effect would race it and lose. `preselectRef` is held out of that effect's deps (reading the
+live prop would refetch every concept on consumption) and **is cleared the moment it is acted on**, or
+it becomes a stale second source that re-selects on the student's next manual pick of the same lesson.
+
+**Free Recall ignores `conceptIds` deliberately** — `FreeRecallSchema` caps at one material and
+scores coverage over all of its concepts, so there is nothing to narrow.
+
+**⚠️ `StudyIntent.conceptIds` IS A LIST, AND TWO ENCODING TRAPS COME WITH IT.** `[]` is truthy, so a
+truthiness check appends a bare `?concept=` to every link ever built — test the length. And the URL
+pair must match: `append` on the way out, **`getAll` on the way back**, since `params.get()` returns
+only the first value and would silently drop every concept but one. Only the dashboard builds a URL
+(one id, one row); the results screen navigates in-route, so its list travels in memory.
+
+**The `advanced` band links to the Test tab, never to a one-click generate.** One test is five
+`gemini-3.6-flash` calls against a bucket shared with extraction, Feynman grading, flashcard fronts
+and games. A recommender is a quota amplifier by construction; the one path it must not have is advice
+straight to five model calls.
+
+### `mastery_changes` on `PUT /api/practice/:id/complete`
+
+**The before/after pair already existed and was thrown away.** `applyTestCompletion()` returns
+`updated[]`; the route only logged its problems. It is now serialised — **no new query**.
+
+**⚠️ `BktUpdateOutcome.assessedBefore` IS WHAT STOPS THE RESULTS SCREEN PRINTING P(L₀) AS A SCORE.**
+A concept whose first evidence is this test has `priorBefore = 0.10`, and "10% → 33%" states the
+engine's initialisation constant as a measurement. The row reads **"Not measured before"** instead,
+which is the common case on a first test. Stated explicitly rather than derived from
+`opportunityCount - observations > 0`, which is exact only because rows are never pre-seeded — a
+different invariant.
+
+**⚠️ OPTIONAL, AND ITS ABSENCE IS MEANINGFUL.** Present only on the request that actually flipped the
+status. **Both idempotent replay paths stay untouched** — they ran no BKT update, and reconstructing
+the pair from `bkt_update_logs` would make this route the audit trail's second UI reader, which is
+exactly what `logWriteError` staying non-fatal depends on nobody doing. Missing means "no claim";
+`[]` means "ran and moved nothing". `buildResult()` is untouched — it is pure and shared by four
+call sites.
+
+**⚠️ THE MASTERY BLOCK AND THE ADVICE ARE GATED DIFFERENTLY, AND BUNDLING THEM WAS A BUG.**
+"Mastery updated" is gated on `justFinished`: it is a fact about ONE submission, and the only other
+copy of that pair is `bkt_update_logs`, which the UI must not become a second reader of. **"What to do
+next" is NOT gated** — it is advice about a lesson, and it is just as true (more useful, even) when a
+student reopens the test to review.
+
+**⚠️ THE ADVICE IS LESSON-SCOPED, AND THE REASON IS ARITHMETIC RATHER THAN TASTE.** It promoted the
+single weakest concept at first. But BKT's all-incorrect posterior depends only on the question's
+FORMAT (`GUESS_KEY_BY_FORMAT`, five P(G) values), so a test the student got wrong throughout yields at
+most **five distinct mastery values across every concept in it** — the comparator then fell through to
+`localeCompare` and promoted whichever term sorted first alphabetically. Reported from a real
+34-concept test where it picked "ADVANCED SYSTEM INTEGRATION" while listing 33 other problems directly
+above it. It now calls `recommendMaterial()` on `result.test.material_id`; `AdaptiveTestTab` supplies
+the `MaterialMasteryDetail` from the `SpaceMasteryDetail` it already holds, so there is no new fetch.
+
+**⚠️ IT RENDERS NOTHING WHILE THAT ROW IS STALE.** `refreshList()` is fired un-awaited on finishing,
+so for a beat the material row can still read `assessed_concept_count === 0` — which `materialBand()`
+correctly calls `unassessed`, producing *"Nothing in X has been measured yet"* immediately after a
+test measured it. The card requires `assessed_concept_count > 0`: arriving a moment late beats being
+briefly wrong. There is no `mastery_changes` override available here the way there is per concept,
+because this needs a document mean and `documentMastery()` on the server is the only place that may
+compute one.
+
+**The Feynman step carries EVERY missed concept** — `result.missed_concepts.map(c => c.concept_id)`,
+exactly the chips listed above it — and the button states the count, because ticking 34 concepts opens
+34 text boxes. On a test with nothing missed (reachable: a first all-correct test still leaves a
+lesson `foundational`) the label falls back to neutral wording and carries nothing, since "Explain
+what you missed" would be a lie.
+
+**⚠️ THAT IS ALSO WHY `FeynmanTab` SUBMITS `readyConcepts`, NOT `selectedConcepts`.** `canEvaluate`
+used to require every ticked concept to be filled, so preselecting a whole lesson left Evaluate
+**permanently disabled**. It now sends what was written and needs one, with the count on the button
+and beside it. Server-legal unchanged (`explanations` is `.min(1)`, no `.max()`), and it bounds a real
+failure — grading is one Gemini call at `maxOutputTokens: 16384` with ~one result object per concept,
+and `generateJson()` throws on `finishReason: MAX_TOKENS`.
+
+### "Review its deck" — the flashcards step
+
+**⚠️ `FlashcardsTab` WAS THE ONLY INTENT TARGET NEVER HANDED `preselect`, SO THE STEP WAS A DEAD
+END.** `TestResultsView` already fired `onNavigate({tab:'flashcards', …})` and `StudySpace` already
+set `pending`; the tab simply never received it, so the `materialId` was dropped and the student
+landed on a plain deck list. It now takes `preselect`/`onPreselectConsumed` like the other four.
+
+**`concept_id` reaches the client through `StudySpace`'s card mapping.** The server always sent it
+(`GET /:id/decks/:deckId/flashcards` selects `*`); the mapping was discarding it, which is why
+nothing client-side could match a card to a concept. It is **nullable** — `ON DELETE SET NULL`, so a
+card whose concept a re-upload removed matches nothing, and every membership test must tolerate that.
+
+**⚠️ "THE DECK" IS NOT A THING — MORE THAN ONE CAN HOLD THE SAME MATERIAL.** `flashcard_decks` has no
+material column and the 409 "already generated" guard is scoped to one `deck_id`, so generating a
+lesson into a second deck is supported and unremarked. `deckHolding()` picks deterministically —
+**most cards from that lesson, then the earliest** (strict `>`, so the first wins a tie). No chooser
+UI for a case most students never create.
+
+**⚠️ MARKED-FIRST IS A PARTITION INSIDE `orderedCards`, NOT A FIFTH `OrderKey`.** The file's own rule
+is that shuffle and the sort both decide one thing — the order — so a second piece of state would let
+the dropdown claim "Hardest first" over a grid that is not. A `'missed'` order would inherit that
+*plus* the `Dropdown` hazard where an unrecognised value silently renders the first option.
+Partitioning **composes**: "Hardest first" still holds inside each group, and the stable sort
+guarantees it.
+
+**⚠️ THE MARKING CARRIES ITS OWN `deckId` AND IS READ THROUGH A DERIVED `marking`.** Landing on a deck
+changes `selectedSetContent`, which fires the reset effect that clears `order`/`shuffleNonce`/flip —
+so a marking set in the same tick would be wiped by it. Rather than sequencing two effects, the value
+states which deck it belongs to and is ignored everywhere else; the reset effect needs no knowledge of
+it. It is **visit-scoped**: `<main key={activeTab}>` remounts the tab, so it describes one test rather
+than a property of the deck.
+
+**⚠️ THE DUE SPLIT IS STATED BEFORE THE STUDENT STARTS, AND THAT IS NOT DECORATION.** Flashcards move
+mastery only for cards that are **due** — `POST /flashcards/rate` returns early otherwise and writes
+no schedule, no `spaced_repetition_logs` row and no BKT update. So a student who cleared this deck
+yesterday, then missed five concepts in a test, can drill all five and change nothing, having arrived
+via a button carrying a "moves mastery" chip. The banner therefore reads *"12 cards from your last
+test are marked below. 8 are due — reviewing those updates your mastery"*, and the drill button says
+**Review these N** when some are due and **Practice these N** when none are. **The fix is never to
+relax the due-check.**
+
+**`studyMode` gained `'marked'`, and it is a CARD FILTER, not a new rule** — every rating is still
+posted and the server still decides `counted` by the same check. `isPractice` is now computed on
+**the session's own cards**; it previously asked whether anything anywhere in the deck was due, which
+is the wrong question for a filtered session.
+
+**The no-deck fallback offers to build one, and it generates `format: 'term'` — NEVER `'question'`.**
+The term path has no model in it, so it is instant and free; the question path is a Gemini call
+against a bucket one adaptive test already takes five of. It renders **only** when an intent asked for
+it, never as a standing nag, and a failure leaves the manual `New deck` path untouched.
+
+**⚠️ NO STEP IS ACCENTED. The first one used to be, and that was a progress marker for progress
+nothing tracks.** Nothing records whether a student actually read the lesson or wrote an explanation,
+so on a revisit the accent would still sit on step one however much they had done — the same class of
+mistake as showing "Mastery updated" on a past test. The ORDER is the recommendation, and the sentence
+above the buttons already says which comes first. Do not reintroduce an active state without a writer
+that observes it.
+
+**"1 of 1 wrong" was removed from the chips**, rendered now only when `asked > 1`.
+`allocateConcepts()` deals each concept to exactly one question and the dealing cursor never rewinds
+(`testGeneration.ts`), so `asked` is 1 on every chip of every test — a concept *is* reused across
+formats as a matching **decoy**, but a decoy emits no question and no telemetry row. Conditional
+rather than deleted: one comparison, and correct if the allocator ever changes.
+
+**The results screen keeps "Test Score" and "Mastery updated" as two clearly separate blocks.** They
+are different quantities and the old rule against conflating them still holds; what changed is that
+mastery now appears at all, in its own labelled section.
 
 ## Student Dashboard — the one global read
 

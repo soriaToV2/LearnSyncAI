@@ -27,6 +27,8 @@ import {
   TIER_LABEL,
   TIER_TONE,
 } from '../../lib/mastery';
+import { conceptBand, recommendConcept } from '../../lib/recommend';
+import { studySpaceLink } from '../../lib/studySpace';
 import { scorePercent } from '../../lib/testMode';
 import { badgeStyle, badgeTotals } from '../../lib/badges';
 import BadgeGalleryModal from '../../components/student/BadgeGalleryModal';
@@ -497,13 +499,29 @@ function FocusCard({
           )}
         </p>
       ) : (
-        <div className="mt-4 space-y-3">
-          {focus.map((c) => (
-            <Fragment key={c.concept_id}>
-              <FocusRow concept={c} />
-            </Fragment>
-          ))}
-        </div>
+        <>
+          <div className="mt-4 space-y-3">
+            {focus.map((c) => (
+              <Fragment key={c.concept_id}>
+                <FocusRow concept={c} />
+              </Fragment>
+            ))}
+          </div>
+          {/* ⚠️ ONCE PER CARD, NEVER PER ROW — five rows would print it five
+              times. It is the sentence that stops the app implying that
+              explaining a concept moves a number only flashcards and tests can
+              move. */}
+          <p className="font-sans text-[11px] text-slate-600 mt-4 leading-relaxed">
+            {
+              recommendConcept({
+                term: focus[0].term,
+                band: conceptBand({ assessed: true, mastery: focus[0].mastery }),
+                mastery: focus[0].mastery,
+                sourcePages: null,
+              }).honesty
+            }
+          </p>
+        </>
       )}
     </div>
   );
@@ -514,9 +532,40 @@ function FocusRow({ concept }: { concept: FocusConcept }) {
   const percent = masteryPercent(concept.mastery);
   const tone = TIER_TONE[masteryTier(percent / 100)];
 
+  /*
+   * The lead step decides where this row goes.
+   *
+   * ⚠️ IT USED TO LINK AT THE SPACE AND NOTHING MORE, which lands on whatever
+   * tab a space opens on — Flashcards — regardless of what the concept actually
+   * needs. Naming the tab, the lesson and (for Feynman) the concept is what turns
+   * "here is your weakest idea" into somewhere to go.
+   *
+   * ⚠️ A REAL `<Link>` HERE, unlike every other recommendation in the app. The
+   * dashboard is a different route from the study space, so this is a genuine
+   * navigation and `StudySpace` mounts fresh and reads the params. Inside the
+   * space the same link would be inert — see `studySpaceLink()`.
+   */
+  const lead = recommendConcept({
+    term: concept.term,
+    band: conceptBand({ assessed: true, mastery: concept.mastery }),
+    mastery: concept.mastery,
+    // The dashboard payload carries no page numbers. `recommendConcept` degrades
+    // to "that part of the lesson"; the Analytics tab names the page precisely.
+    sourcePages: null,
+  }).steps[0];
+
   return (
     <Link
-      to={concept.space_id ? `/student/space/${concept.space_id}` : '/student/spaces'}
+      to={
+        concept.space_id
+          ? studySpaceLink(concept.space_id, {
+              tab: lead.tab,
+              materialId: concept.material_id,
+              // One row, one concept. The results screen is the multi-concept caller.
+              conceptIds: lead.action === 'feynman' ? [concept.concept_id] : [],
+            })
+          : '/student/spaces'
+      }
       className="block group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
     >
       <div className="flex items-center justify-between gap-3">
@@ -527,6 +576,9 @@ function FocusRow({ concept }: { concept: FocusConcept }) {
           <p className="font-sans text-[11px] text-slate-600 truncate">
             {concept.material_title}
             {concept.space_title && ` · ${concept.space_title}`}
+          </p>
+          <p className="font-sans text-[11px] font-semibold text-primary-fixed-dim truncate mt-0.5">
+            {lead.cta}
           </p>
         </div>
         <span className={`font-display text-sm font-bold tabular-nums shrink-0 ${toneText[tone]}`}>

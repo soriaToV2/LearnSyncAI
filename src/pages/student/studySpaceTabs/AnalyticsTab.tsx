@@ -15,6 +15,8 @@ import {
   type MaterialMasteryDetail,
   type SpaceMasteryDetail,
 } from '../../../lib/mastery';
+import { conceptBand, materialBand, pageHint, recommendConcept, recommendMaterial } from '../../../lib/recommend';
+import type { StudyIntent } from '../../../lib/studySpace';
 
 /**
  * Analytics — what BKT has actually learned about this student.
@@ -53,6 +55,14 @@ interface AnalyticsTabProps {
   spaceId: string;
   /** Used ONLY to tell "no lessons in this space" apart from "the fetch failed". */
   availableResources: { id: string; title: string; concept_count: number }[];
+  /**
+   * Follow a recommendation.
+   *
+   * ⚠️ A CALLBACK, NOT A `<Link>`. This tab renders inside `StudySpace`, so a
+   * link carrying `?tab=feynman` would be a same-route navigation: the URL would
+   * change and the tab would not.
+   */
+  onNavigate: (intent: StudyIntent) => void;
 }
 
 /** How many concepts the Focus card names. Three fits without becoming a list. */
@@ -69,7 +79,11 @@ const FOCUS_COUNT = 3;
  */
 const PANEL = `${CARD} border border-white/5 shadow-lg shadow-black/20`;
 
-export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsTabProps) {
+export default function AnalyticsTab({
+  spaceId,
+  availableResources,
+  onNavigate,
+}: AnalyticsTabProps) {
   const [detail, setDetail] = useState<SpaceMasteryDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -123,11 +137,49 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
    * lesson. Unassessed ones are excluded by construction, which is the whole
    * point — see the header note.
    */
-  const focus: (ConceptMastery & { materialTitle: string })[] = (detail?.by_material ?? [])
-    .flatMap((m) => m.concepts.filter((c) => c.assessed).map((c) => ({ ...c, materialTitle: m.title })))
+  const focus: (ConceptMastery & { materialTitle: string; materialId: string })[] = (
+    detail?.by_material ?? []
+  )
+    .flatMap((m) =>
+      m.concepts
+        .filter((c) => c.assessed)
+        // `materialId` rides along so a recommendation can open the right lesson.
+        // Plain ascending mastery is correct HERE and only here: this list is
+        // assessed-only, so `rankOf()`'s unknown-in-the-middle rule has nothing
+        // to do — every row is a real measurement.
+        .map((c) => ({ ...c, materialTitle: m.title, materialId: m.material_id }))
+    )
     .sort((a, b) => a.mastery - b.mastery || a.term.localeCompare(b.term));
 
   const updated = relativeTime(detail?.last_updated ?? null);
+
+  /**
+   * The lead step for one concept, as a button the row can render.
+   *
+   * Built here rather than inside `ConceptRow` so the row stays a presentational
+   * component with an OPTIONAL action — the expanded lesson lists render dozens
+   * of rows and must not each grow a button, which would turn a scannable
+   * breakdown into a wall of calls to action.
+   */
+  const actionFor = (c: ConceptMastery, materialId: string) => {
+    const rec = recommendConcept({
+      term: c.term,
+      band: conceptBand(c),
+      mastery: c.mastery,
+      sourcePages: c.source_pages,
+    });
+    const lead = rec.steps[0];
+    return {
+      label: lead.cta,
+      onClick: () =>
+        onNavigate({
+          tab: lead.tab,
+          materialId,
+          // Only Feynman can act on a concept. The rest open on the lesson.
+          conceptIds: lead.action === 'feynman' ? [c.concept_id] : [],
+        }),
+    };
+  };
 
   return (
     <div className="fade-in duration-300 pb-10">
@@ -254,15 +306,35 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
                   )}
                 </p>
               ) : (
-                <div className="mt-4 space-y-3">
-                  {focus.slice(0, FOCUS_COUNT).map((c) => (
-                    // Keyed Fragment, not the row: this project has no
-                    // @types/react, so a locally-declared component rejects `key`.
-                    <Fragment key={c.concept_id}>
-                      <ConceptRow concept={c} materialTitle={c.materialTitle} />
-                    </Fragment>
-                  ))}
-                </div>
+                <>
+                  <div className="mt-4 space-y-3">
+                    {focus.slice(0, FOCUS_COUNT).map((c) => (
+                      // Keyed Fragment, not the row: this project has no
+                      // @types/react, so a locally-declared component rejects `key`.
+                      <Fragment key={c.concept_id}>
+                        <ConceptRow
+                          concept={c}
+                          materialTitle={c.materialTitle}
+                          action={actionFor(c, c.materialId)}
+                        />
+                      </Fragment>
+                    ))}
+                  </div>
+                  {/* ⚠️ ONCE PER CARD, NEVER PER ROW. Three rows would print the
+                      same sentence three times. It is the line that stops the
+                      app implying that explaining a concept moves a number only
+                      flashcards and tests can move. */}
+                  <p className="font-sans text-[11px] text-slate-600 mt-4 leading-relaxed">
+                    {
+                      recommendConcept({
+                        term: focus[0].term,
+                        band: conceptBand(focus[0]),
+                        mastery: focus[0].mastery,
+                        sourcePages: focus[0].source_pages,
+                      }).honesty
+                    }
+                  </p>
+                </>
               )}
             </div>
           )}
@@ -277,6 +349,7 @@ export default function AnalyticsTab({ spaceId, availableResources }: AnalyticsT
                     material={m}
                     expanded={expanded.has(m.material_id)}
                     onToggle={() => toggle(m.material_id)}
+                    onNavigate={onNavigate}
                   />
                 </Fragment>
               ))}
@@ -326,7 +399,21 @@ function Stat({
  * One assessed concept. Never rendered for an unassessed one — those have no
  * percentage to show and appear as name chips instead.
  */
-function ConceptRow({ concept, materialTitle }: { concept: ConceptMastery; materialTitle?: string }) {
+function ConceptRow({
+  concept,
+  materialTitle,
+  action,
+}: {
+  concept: ConceptMastery;
+  materialTitle?: string;
+  /**
+   * Optional on purpose. Only the Focus card passes one; the expanded lesson
+   * list renders the same row for every assessed concept in a lesson — up to 29
+   * on real data — and a button on each would drown the numbers it exists to
+   * show.
+   */
+  action?: { label: string; onClick: () => void };
+}) {
   // Tier from the ROUNDED value, so the colour cannot contradict the number: 0.849
   // prints "85%" but tiers as intermediate on the raw value.
   const percent = masteryPercent(concept.mastery);
@@ -339,8 +426,17 @@ function ConceptRow({ concept, materialTitle }: { concept: ConceptMastery; mater
         <p className="font-sans text-[11px] text-slate-500 truncate">
           {materialTitle ? `${materialTitle} · ` : ''}
           {concept.opportunity_count} attempt{concept.opportunity_count === 1 ? '' : 's'}
-          {concept.source_pages?.length ? ` · page ${concept.source_pages.join(', ')}` : ''}
+          {pageHint(concept.source_pages) ? ` · ${pageHint(concept.source_pages)}` : ''}
         </p>
+        {action && (
+          <button
+            onClick={action.onClick}
+            className="mt-1 inline-flex items-center gap-1 font-sans text-[11px] font-semibold text-primary-fixed-dim hover:underline"
+          >
+            {action.label}
+            <ChevronRight className="w-3 h-3" />
+          </button>
+        )}
       </div>
       {/* The meter narrows on phones so the term keeps its width — a truncated
           concept name is far less readable than a slightly shorter bar, and the
@@ -359,16 +455,25 @@ function LessonCard({
   material,
   expanded,
   onToggle,
+  onNavigate,
 }: {
   material: MaterialMasteryDetail;
   expanded: boolean;
   onToggle: () => void;
+  onNavigate: (intent: StudyIntent) => void;
 }) {
   // Gate on the COUNT, never on `m_doc === 0.1` — a lesson can genuinely average
   // 0.10 while having been assessed, and the two must not look alike.
   const started = material.assessed_concept_count > 0;
   const assessed = material.concepts.filter((c) => c.assessed);
   const untested = material.concepts.filter((c) => !c.assessed);
+
+  const rec = recommendMaterial({
+    title: material.title,
+    band: materialBand(material),
+    m_doc: material.m_doc,
+  });
+  const lead = rec.steps[0];
 
   return (
     <div
@@ -418,6 +523,27 @@ function LessonCard({
           </div>
         </div>
       </button>
+
+      {/* ⚠️ A SIBLING OF THE TOGGLE BUTTON, NEVER INSIDE IT. A `<button>` may not
+          contain another interactive element — that is a DOM rule, not a style
+          preference, and nesting them makes both unreliable for keyboard and
+          screen-reader users.
+
+          Always visible rather than behind the expand, because this is the whole
+          point of the screen: a lesson at 34% should say what to do about it
+          without a click. */}
+      <div className="px-4 pb-4 -mt-1 flex items-center gap-2 flex-wrap">
+        <button
+          onClick={() =>
+            onNavigate({ tab: lead.tab, materialId: material.material_id, conceptIds: [] })
+          }
+          className="inline-flex items-center gap-1 font-sans text-[11px] font-semibold text-primary-fixed-dim hover:underline"
+        >
+          {lead.cta}
+          <ChevronRight className="w-3 h-3" />
+        </button>
+        <span className="font-sans text-[11px] text-slate-600 min-w-0">{lead.why}</span>
+      </div>
 
       {expanded && (
         /* `pl-11` aligns the rows under the lesson title, past the chevron — but

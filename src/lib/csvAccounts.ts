@@ -56,7 +56,19 @@ educator,Ana,Santos,,ana.santos@pca.edu.ph`;
 export const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export interface ParsedRow {
-  /** 1-based, counting the header as row 0 — matches what a spreadsheet shows. */
+  /**
+   * 1-based line number **in the file, header included** — the number the admin's
+   * spreadsheet shows in its row gutter. The header is line 1, so the first
+   * account is line 2.
+   *
+   * ⚠️ THIS USED TO BE THE LOOP INDEX OVER DATA ROWS, AND EVERY NUMBER AN ADMIN
+   * SAW WAS ONE TOO LOW. Reported from a real 31-student import: a genuine
+   * duplicate on spreadsheet row 30 was labelled row 29 and cross-referenced to
+   * "row 16" when the clashing address was on row 17 — so following the message
+   * landed on an unrelated student and the importer read as broken. Blank lines
+   * are also skipped, so this is carried through the filter rather than
+   * recomputed from the surviving rows' positions.
+   */
   line: number;
   account: NewAccount;
   /** Empty when the row is usable. */
@@ -241,15 +253,50 @@ export function toTsv(header: readonly string[], rows: string[][]): string {
   return [header.join('\t'), ...rows.map((r) => r.join('\t'))].join('\n');
 }
 
+/**
+ * Where an earlier row claimed a username or an address.
+ *
+ * The name rides along because a bare "already used on row 17" is not
+ * self-checking: an admin has to go and look, and if the number is wrong (as it
+ * was — see `ParsedRow.line`) they find an unrelated student and conclude the
+ * importer is broken. With the name in the message, a wrong number is visible
+ * in the message itself.
+ */
+interface Claim {
+  line: number;
+  name: string;
+}
+
+/** "James Abdiel B. Toledo", or "" when the row has no name — which is already
+ * its own error, so there is nothing useful to add in that case. */
+function claimantName(raw: Record<string, string>): string {
+  return [raw.first_name, raw.last_name].map((p) => (p ?? '').trim()).filter(Boolean).join(' ');
+}
+
+function claimRef(claim: Claim): string {
+  return claim.name ? `row ${claim.line} (${claim.name})` : `row ${claim.line}`;
+}
+
 export function parseAccountsCsv(text: string): ParseResult {
+  /*
+   * ⚠️ THE ORIGINAL LINE NUMBER IS CARRIED THROUGH THE BLANK-LINE FILTER, NOT
+   * RECOVERED FROM A POSITION AFTERWARDS. Blank rows are routine in a
+   * spreadsheet export, and every one of them would otherwise shift every
+   * number below it — the admin's whole reason for trusting these numbers is
+   * that they match the row gutter in Excel.
+   *
+   * Still line-oriented: a newline INSIDE a quoted field splits the record in
+   * two, because `splitLine()` takes one line at a time. That has always been
+   * true of this parser and is not something the numbering introduced.
+   */
   const lines = text
     .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+    .map((text, i) => ({ n: i + 1, text: text.trim() }))
+    .filter((l) => l.text.length > 0);
 
   if (lines.length === 0) return { rows: [], fatal: 'The file is empty.' };
 
-  const header = splitLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, '_'));
+  const header = splitLine(lines[0].text).map((h) => h.toLowerCase().replace(/\s+/g, '_'));
 
   /*
    * `username` is NOT required here any more — it left the template, because the
@@ -272,7 +319,7 @@ export function parseAccountsCsv(text: string): ParseResult {
   /* Case-insensitive, matching `ux_profiles_username_lower`. Catching duplicates
    * here is what keeps a within-file collision from becoming a mid-import failure
    * with some accounts already created. */
-  const seen = new Map<string, number>();
+  const seen = new Map<string, Claim>();
   /*
    * The same rule for addresses, and it is NOT optional politeness: Supabase
    * enforces a unique index on `auth.users.email` (`users_email_partial_key`), so
@@ -280,10 +327,13 @@ export function parseAccountsCsv(text: string): ParseResult {
    * the realistic way a class file hits this, and without the check the second of
    * them fails partway through the import with the first already created.
    */
-  const seenEmails = new Map<string, number>();
+  const seenEmails = new Map<string, Claim>();
 
   for (let i = 1; i < lines.length; i++) {
-    const cells = splitLine(lines[i]);
+    // The file line, never the loop index — see `ParsedRow.line`. Everything the
+    // admin is shown about this row, here and on the results screen, uses it.
+    const line = lines[i].n;
+    const cells = splitLine(lines[i].text);
     const raw: Record<string, string> = {};
     header.forEach((col, idx) => {
       raw[col] = cells[idx] ?? '';
@@ -312,24 +362,25 @@ export function parseAccountsCsv(text: string): ParseResult {
     };
 
     const errors = validate(account, { ...raw, grade_level: gradeText });
+    const claim: Claim = { line, name: claimantName(raw) };
 
     const previous = seen.get(username);
     if (username && previous !== undefined) {
-      errors.push(`Duplicate username — already used on row ${previous}`);
+      errors.push(`Duplicate username — already used on ${claimRef(previous)}`);
     } else if (username) {
-      seen.set(username, i);
+      seen.set(username, claim);
     }
 
     // A blank email column is fine and common — only a supplied one can clash.
     const email = (raw.email ?? '').trim().toLowerCase();
     const previousEmail = seenEmails.get(email);
     if (email && previousEmail !== undefined) {
-      errors.push(`Duplicate email — already used on row ${previousEmail}`);
+      errors.push(`Duplicate email — already used on ${claimRef(previousEmail)}`);
     } else if (email) {
-      seenEmails.set(email, i);
+      seenEmails.set(email, claim);
     }
 
-    rows.push({ line: i, account, errors });
+    rows.push({ line, account, errors });
   }
 
   return { rows, fatal: null };

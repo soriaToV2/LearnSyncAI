@@ -83,7 +83,7 @@ BKT Integration (Flashcard Mode):
       * Hard   → obs = 0 (incorrect), P(G_hard) = 0.10 (vague partial recall allowance)
   - The two-phase BKT update (evidence update then transition update) produces the student's new mastery P(L_{t+1}).
   - The updated latent_mastery in bkt_mastery reflects the student's knowledge state.
-  - Three read-only consumers use this value without writing it: Adaptive Test difficulty, game difficulty calibration, and the student Analytics tab.
+  - Read-only consumers use this value without writing it: Adaptive Test difficulty, game difficulty calibration, the student Analytics tab, the student dashboard, the educator analytics, and — since 2026-09-07 — the study recommendations (server/../src/lib/recommend.ts), which turn a mastery band into a next step and which also order the Feynman and Free Recall pickers. All are readers; bkt_mastery still has exactly two writers.
 
 ---
 
@@ -96,7 +96,7 @@ Logic Flow:
   - Student submits user_input (free-form text).
   - Scoring: see Section 11 for the authoritative algorithm. In brief, the backend extracts the discrete concepts the student discussed, embeds each one separately, and scores coverage against the material's stored concepts. Cosine similarity is computed in the backend, NOT via a pgvector <=> query — an earlier design did the latter, and migration 0006 dropped the evaluate_recall() function that implemented it.
   - The missed_concepts list and overall_verdict are stored in cognitive_logs.ai_feedback as a JSON string, alongside similarity_score.
-  - Free Recall provides personalized explanations and feedback but does not directly update BKT mastery estimates. As built it does not READ them either — server/routes/cognitive.routes.ts contains no reference to bkt_mastery. Its personalization comes from the material's concept set, not from the student's mastery of it. (Paper p. 58 groups it with the games as a mastery reader; only the games actually are one.)
+  - Free Recall provides personalized explanations and feedback but does not directly update BKT mastery estimates. The SCORING still does not read them — server/routes/cognitive.routes.ts contains no reference to bkt_mastery, and the coverage ratio is computed against the material's concept set alone. Since 2026-09-07 the CLIENT does: FreeRecallTab orders its lesson picker weakest-first from GET /api/practice/space/:id/mastery/concepts, which is what paper p. 58's grouping of Free Recall with the games as a mastery reader actually describes. It remains a read.
 
 ---
 
@@ -127,7 +127,7 @@ Logic Flow:
     configured.
   - The audience is fixed at a 10-year-old child. FEYNMAN_AUDIENCES is a single-value enum so adding an audience later is one rubric plus one entry, not a data migration.
   - The ai_feedback is stored in cognitive_logs as a JSON string and surfaced to the student.
-  - The Feynman Technique provides personalized feedback but does not directly update BKT mastery estimates, and like Free Recall it does not read them either — its grading is against the stored concept definition and the audience rubric, neither of which depends on mastery.
+  - The Feynman Technique provides personalized feedback but does not directly update BKT mastery estimates. Its GRADING does not read them either — that is against the stored concept definition and the audience rubric, neither of which depends on mastery. Since 2026-09-07 its concept picker does: concepts are listed weakest-first with the student's mastery beside each, which is the p. 58 personalization claim. It remains a read.
 
 ---
 

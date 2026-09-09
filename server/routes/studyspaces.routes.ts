@@ -695,6 +695,108 @@ router.post(
 
     const existingCards = existing ?? [];
 
+    /*
+     * ⚠️ ONE LESSON LIVES IN ONE DECK PER SPACE, AND THIS IS A BKT INTEGRITY
+     * GUARD RATHER THAN TIDINESS.
+     *
+     * The anti-farming mechanism is the due-check on `flashcards.next_review_at`
+     * in `POST /api/flashcards/rate`. But mastery is stored per CONCEPT —
+     * `bkt_mastery` is `UNIQUE (student_id, concept_id)` with no reference to a
+     * card, a deck or a space — while a freshly generated card is born due
+     * (`next_review_at DEFAULT now()`; the inserts below never set it). So a
+     * second deck built from the same lesson produces new card rows that are all
+     * instantly due, and every one yields another observation on a concept that
+     * was already assessed.
+     *
+     * Measured against the real engine with `g_easy = 0.05`: one Easy rating
+     * takes a concept to 0.7231 and a second to 0.9824 — past the 0.85
+     * `advanced` threshold. Honestly that takes EIGHT DAYS, because Easy pushes
+     * a card seven days out. Through a second deck it takes about two minutes.
+     *
+     * It is also a plain correctness bug, not only an exploit: nothing told a
+     * student a lesson was already carded elsewhere, so an innocent duplicate
+     * double-counted every concept in it.
+     *
+     * ⚠️ IT FIRES REGARDLESS OF `replace`. That flag means "refresh THIS deck",
+     * which reconciles in place and is safe; it must never become a bypass for
+     * putting a second copy of a lesson somewhere new.
+     *
+     * ⚠️ BUT ONLY WHEN THIS DECK DOES NOT ALREADY HOLD THE MATERIAL. Decks
+     * duplicated before this guard existed are real data, and refreshing either
+     * of them reconciles by `concept_id` in place — creating no rows and
+     * resetting no schedules. Blocking that would strand them with no way to
+     * update. So: already in this deck → the existing path below; only
+     * elsewhere → 409.
+     *
+     * The remaining path is deleting a deck and regenerating, which resets the
+     * schedules because `bkt_mastery` has no FK to `flashcards`. Left open by
+     * decision — it destroys the student's own rating history — and detectable
+     * with certainty from `bkt_update_logs`; see BKT_IMPLEMENTATION.md §4.3.
+     */
+    if (existingCards.length === 0) {
+      const { data: siblingDecks, error: siblingError } = await supabaseAdmin
+        .from('flashcard_decks')
+        .select('id, title')
+        .eq('space_id', space.id)
+        .neq('id', deck.id);
+
+      if (siblingError) {
+        res.status(500).json({ error: 'Failed to read decks', message: siblingError.message });
+        return;
+      }
+
+      const siblingIds = (siblingDecks ?? []).map((d) => d.id as string);
+      if (siblingIds.length > 0) {
+        const { data: elsewhere, error: elsewhereError } = await supabaseAdmin
+          .from('flashcards')
+          .select('deck_id')
+          .in('deck_id', siblingIds)
+          .eq('source_material_id', material_id);
+
+        if (elsewhereError) {
+          res
+            .status(500)
+            .json({ error: 'Failed to read deck contents', message: elsewhereError.message });
+          return;
+        }
+
+        const found = elsewhere ?? [];
+        if (found.length > 0) {
+          // Name the deck holding the most of it, so a pre-existing duplicate
+          // spanning several still points at the obvious one.
+          const byDeck = new Map<string, number>();
+          for (const row of found) {
+            const id = row.deck_id as string;
+            byDeck.set(id, (byDeck.get(id) ?? 0) + 1);
+          }
+          let ownerId = siblingIds[0];
+          let ownerCount = 0;
+          for (const [id, count] of byDeck) {
+            if (count > ownerCount) {
+              ownerId = id;
+              ownerCount = count;
+            }
+          }
+          const ownerTitle =
+            (siblingDecks ?? []).find((d) => d.id === ownerId)?.title ?? 'another deck';
+
+          res.status(409).json({
+            error: 'Already in another deck',
+            // ⚠️ A `code`, because the client MUST tell this 409 apart from the
+            // per-deck "Already generated" one below. That one is answered with a
+            // Refresh prompt; this one must not be, since a refresh here would be
+            // refused again by the very same guard. `api.ts` exists to make
+            // callers branch on a code rather than match the message — and these
+            // two messages are deliberately near-identical prose.
+            code: 'MATERIAL_IN_ANOTHER_DECK',
+            message: `This material is already in "${ownerTitle}" (${ownerCount} card${ownerCount === 1 ? '' : 's'}). A lesson lives in one deck at a time, so its review dates stay in one place.`,
+            data: { deck_id: ownerId, deck_title: ownerTitle, existing_count: ownerCount },
+          });
+          return;
+        }
+      }
+    }
+
     // Already here and no explicit go-ahead: say so and write nothing, rather
     // than silently doubling the deck. `current_format` comes back so the client
     // can offer a Refresh that keeps the deck's existing style.

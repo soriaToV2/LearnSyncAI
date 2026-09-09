@@ -373,6 +373,23 @@ export interface BktUpdateOutcome {
   mastery: number;
   observations: number;
   opportunityCount: number;
+  /**
+   * False when this batch was the FIRST evidence for the concept, i.e.
+   * `priorBefore` is P(L₀) rather than a measurement.
+   *
+   * ⚠️ WITHOUT THIS A CALLER CANNOT AVOID PRINTING P(L₀) AS A SCORE. A results
+   * screen rendering "10% → 33%" states the engine's initialisation constant as
+   * something it found out about the student, which is the one thing the whole
+   * analytics surface is built to prevent; it must read "Not measured before"
+   * instead.
+   *
+   * Stated explicitly rather than derived from
+   * `opportunityCount - observations > 0`, which is exact only because rows are
+   * never pre-seeded — a different invariant, held elsewhere, that this flag
+   * would silently inherit. Same reasoning as writing `p_slip`/`p_transit` into
+   * the audit rows rather than leaning on the column DEFAULTs.
+   */
+  assessedBefore: boolean;
 }
 
 export interface BktApplyResult {
@@ -561,6 +578,10 @@ export async function applyBktObservations(
       mastery: running,
       observations: group.length,
       opportunityCount: before.opportunities + group.length,
+      // The same map the prior itself came from, so the flag and the number it
+      // qualifies can never disagree. A miss here is exactly the `?? params.pL0`
+      // fallback twelve lines up.
+      assessedBefore: priors.has(conceptId),
     });
   }
 

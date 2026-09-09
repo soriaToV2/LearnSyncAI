@@ -38,7 +38,9 @@ import {
   TIER_LABEL,
   TIER_TONE,
   type SpaceMastery,
+  type SpaceMasteryDetail,
 } from '../../../lib/mastery';
+import type { StudyIntent } from '../../../lib/studySpace';
 
 /**
  * Test Mode.
@@ -72,13 +74,43 @@ type Screen = 'overview' | 'setup' | 'generating' | 'session' | 'results';
 interface AdaptiveTestTabProps {
   spaceId: string;
   availableResources: { id: string; title: string; concept_count: number }[];
+  /** A recommendation's destination. Only `materialId` means anything here. */
+  preselect: StudyIntent | null;
+  onPreselectConsumed: () => void;
+  /**
+   * Follow a recommendation from the results screen.
+   *
+   * ⚠️ A CALLBACK, NOT A `<Link>`. This tab renders inside `StudySpace`, so a
+   * link carrying `?tab=feynman` would be a same-route navigation: the URL would
+   * change and the tab would not.
+   */
+  onNavigate: (intent: StudyIntent) => void;
 }
 
-export default function AdaptiveTestTab({ spaceId, availableResources }: AdaptiveTestTabProps) {
+export default function AdaptiveTestTab({
+  spaceId,
+  availableResources,
+  preselect,
+  onPreselectConsumed,
+  onNavigate,
+}: AdaptiveTestTabProps) {
   const { celebrate } = useBadges();
   const [screen, setScreen] = useState<Screen>('overview');
   const [summaries, setSummaries] = useState<TestSummary[]>([]);
-  const [mastery, setMastery] = useState<SpaceMastery | null>(null);
+  /*
+   * ⚠️ `detail()`, NOT `space()`, SINCE THE RESULTS SCREEN STARTED RECOMMENDING.
+   * The summary carries no concepts, and the advice on that screen is keyed on
+   * the mastery of the concepts THIS TEST asked about — including when a student
+   * reopens the test days later, where the completion payload is long gone.
+   *
+   * This does not contradict "`/mastery` is Test Mode's hot path — do not widen
+   * it": that rule protects the ENDPOINT's shape for its other callers. Switching
+   * which endpoint this caller uses leaves the lean one lean. `SpaceMasteryDetail`
+   * is a superset of `SpaceMastery`, so the setup screen's tier sentence is
+   * unchanged. Measured 10.7 KB for 57 concepts — the Analytics tab already pays
+   * this on every mount.
+   */
+  const [mastery, setMastery] = useState<SpaceMasteryDetail | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [activeTest, setActiveTest] = useState<GeneratedTest | null>(null);
   const [activeResult, setActiveResult] = useState<TestResult | null>(null);
@@ -96,6 +128,47 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
 
   const materialTitle = (id: string | undefined | null) =>
     availableResources.find((r) => r.id === id)?.title ?? null;
+
+  /**
+   * Current mastery for whichever lesson the open result belongs to — the
+   * results screen's source for its lesson-scoped recommendation.
+   *
+   * Recomputed whenever `refreshList()` lands, so it is fresh on mount, after a
+   * submission, and on returning to the overview. Null while loading, or if the
+   * mastery read failed, in which case the results screen shows no advice rather
+   * than guessing.
+   */
+  const resultMaterialMastery = useMemo(() => {
+    const id = activeResult?.test.material_id;
+    if (!id) return null;
+    return mastery?.by_material.find((m) => m.material_id === id) ?? null;
+  }, [mastery, activeResult]);
+
+  /*
+   * A recommendation sent the student here to be tested on one lesson.
+   *
+   * ⚠️ IT OPENS THE SETUP SCREEN AND STOPS THERE. It deliberately does not
+   * generate: one test is five `gemini-3.6-flash` calls against a bucket that is
+   * ~20/day on a free key and is shared with concept extraction, Feynman grading,
+   * flashcard fronts and every game. A recommender is a quota amplifier by
+   * construction, so the one-click path from advice to five model calls is the
+   * one it must not have.
+   *
+   * `openSetup()` already existed and already takes a preset lesson — this is a
+   * new caller, not new behaviour. The id is validated first for the same reason
+   * the other tabs validate theirs: `SingleSelectDropdown` resolves by `.find`,
+   * so an unknown id would show the placeholder while `materialId` was set.
+   */
+  useEffect(() => {
+    if (!preselect) return;
+    if (preselect.materialId && availableResources.some((r) => r.id === preselect.materialId)) {
+      openSetup(preselect.materialId);
+    }
+    onPreselectConsumed();
+    // `openSetup` is a plain function redefined each render and only ever sets
+    // state; including it would re-run this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preselect, availableResources, onPreselectConsumed]);
 
   /*
    * Mastery is refreshed HERE rather than on its own, so it reloads at every
@@ -116,7 +189,7 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
       setIsLoadingList(false);
     }
     try {
-      setMastery(await masteryApi.space(spaceId));
+      setMastery(await masteryApi.detail(spaceId));
     } catch (err) {
       console.error('[TestMode] Failed to load mastery:', err);
     }
@@ -251,6 +324,8 @@ export default function AdaptiveTestTab({ spaceId, availableResources }: Adaptiv
         result={activeResult}
         materialTitle={materialTitle(activeResult.test.material_id)}
         justFinished={justFinished}
+        materialMastery={resultMaterialMastery}
+        onNavigate={onNavigate}
         onBack={backToOverview}
         onRetake={() => {
           const from = activeResult.test.material_id;

@@ -308,6 +308,28 @@ export interface MissedConcept {
   asked: number;
 }
 
+/**
+ * What this submission did to one concept's BKT mastery.
+ *
+ * Mirrors `MasteryChangeDto` in `server/routes/practice.routes.ts`.
+ */
+export interface MasteryChange {
+  concept_id: string;
+  term: string;
+  /**
+   * ⚠️ MEANINGLESS UNLESS `assessed_before` — it is exactly P(L₀) = 0.10 when
+   * this test was the concept's first evidence. Render "Not measured before",
+   * never "10%".
+   */
+  before: number;
+  after: number;
+  /** Items in THIS test that asked about it. */
+  observations: number;
+  /** Total attempts ever, after this test — flashcard ratings included. */
+  opportunity_count: number;
+  assessed_before: boolean;
+}
+
 export interface TestResult {
   test: Omit<GeneratedTest, 'questions' | 'answers'>;
   /** 0–1, correct / TOTAL. Never correct / answered — skipping must not raise a score. */
@@ -319,6 +341,19 @@ export interface TestResult {
   missed_concepts: MissedConcept[];
   /** Sum of per-question latency, ms. */
   elapsed_ms: number;
+  /**
+   * Present ONLY on the response that actually completed the test.
+   *
+   * ⚠️ OPTIONAL BECAUSE THERE IS ONE `TestResult` AND TWO PRODUCERS.
+   * `testApi.complete()` can supply it; `testApi.fetchResult()` re-grades a past
+   * test and has no before/after to report, and a double-submit reaches
+   * `complete()` and gets nothing back either. Making it required would force a
+   * second type and a union on `activeResult` for a distinction the one consumer
+   * has to make at runtime regardless.
+   *
+   * Absent means "no claim", never "nothing moved". `[]` is the second of those.
+   */
+  mastery_changes?: MasteryChange[];
 }
 
 export interface TestSummary {
