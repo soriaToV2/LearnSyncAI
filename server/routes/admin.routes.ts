@@ -262,10 +262,17 @@ async function createAccount(input: CreateAccountInput): Promise<CreateOutcome> 
 
   const password = input.password ?? generatePassword();
   /*
-   * ⚠️ THE FALLBACK IS REACHABLE ONLY FROM BULK IMPORT NOW.
-   * `CreateAccountSchema` requires an email, so the single-account form always
-   * supplies one; `ImportAccountRowSchema` leaves it optional, because a CSV of
-   * fifty students may be prepared before fifty addresses have been collected.
+   * ⚠️ REACHABLE FROM BOTH CREATION PATHS, and Supabase is the reason it exists at
+   * all: `auth.users` requires an identity on every account, so "no email" cannot
+   * be stored as no email. `@pca.invalid` is RFC 2606's reserved TLD — it can
+   * never resolve, so it cannot be mistaken for deliverable or accidentally
+   * mailed. Every screen that prints an address must therefore filter it; see
+   * `isPlaceholderEmail()` / `canReceiveMail()`.
+   *
+   * The single-account form fed this only from 2026-09-09; before then
+   * `CreateAccountSchema` required an address. It does not any more — an admin
+   * creating an account for a student who has not given one should not be blocked,
+   * and the account is fully usable without it (the username is the credential).
    */
   const email = input.email ?? placeholderEmailFor(username);
 
