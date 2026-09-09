@@ -496,7 +496,7 @@ export default function ImportAccountsModal({
                   </p>
                   <p className="font-sans text-xs text-slate-400 mt-1 leading-relaxed">
                     {problemCount > 0
-                      ? 'Correct them in your spreadsheet, save it again, and upload it again. Nothing has been created.'
+                      ? 'Correct them in your spreadsheet, save it again, and upload it again. Nothing has been created. Row numbers below match your spreadsheet, header row included.'
                       : 'Passwords are generated where you left the column blank, and shown once after this.'}
                   </p>
                 </div>
@@ -606,8 +606,22 @@ export default function ImportAccountsModal({
                     <tbody>
                       {results.map((r) => (
                         <tr key={r.row} className="border-b border-white/5 last:border-0">
+                          {/*
+                            ⚠️ THE SERVER'S `r.row` IS A 1-BASED INDEX INTO THE ARRAY
+                            THIS CLIENT POSTED, NOT A LINE IN THE FILE — so printing
+                            it raw makes this screen disagree with the preview, which
+                            shows the spreadsheet line. `rows` is still in state here
+                            (`restart()` is the only thing that clears it), so the
+                            lookup is exact.
+
+                            This is NOT the index-matching `credentialRows()` and the
+                            import route both forbid: the name, username and password
+                            still come from the server's own result row and are
+                            untouched. Only the display number is resolved locally,
+                            through an index the server itself assigned.
+                          */}
                           <td className="px-4 py-3 font-mono text-xs text-slate-500 tabular-nums">
-                            {r.row}
+                            {rows[r.row - 1]?.line ?? r.row}
                           </td>
                           <td className="px-4 py-3 font-sans text-xs text-slate-200 whitespace-nowrap">
                             {r.first_name} {r.last_name}

@@ -659,6 +659,29 @@ export default function FlashcardsTab({
       .filter((id): id is string => Boolean(id))
   );
 
+  /**
+   * Material id → the title of the OTHER deck that already holds it.
+   *
+   * ⚠️ A LESSON LIVES IN ONE DECK PER SPACE, and the server enforces it — this
+   * is the courtesy half, so the student is told before pressing rather than by
+   * a 409 afterwards. The rule is a BKT integrity guard: a second deck would
+   * mint new card rows that are all born due, and each one is another
+   * observation on a concept already assessed (0.10 → 0.7231 → 0.9824 on two
+   * Easy ratings, against the eight days an honest schedule takes).
+   *
+   * Free to compute — `StudySpace` already fetches every deck with every card,
+   * so this is a scan of state in hand rather than a request.
+   */
+  const deckHoldingMaterial = new Map<string, string>();
+  for (const set of flashcardSets) {
+    if (set.id === selectedSetContent) continue;
+    for (const card of set.cards) {
+      if (card.sourceMaterialId && !deckHoldingMaterial.has(card.sourceMaterialId)) {
+        deckHoldingMaterial.set(card.sourceMaterialId, set.title);
+      }
+    }
+  }
+
   const openAddCards = () => {
     setGenerateError(null);
     setGenerateNotice(null);
@@ -767,10 +790,20 @@ export default function FlashcardsTab({
       onRefresh();
     } catch (err: any) {
       const message: string = err?.message ?? 'Those cards could not be added. Please try again.';
-      // The 409 message names the deck and the existing count, so it reads as a
-      // prompt rather than a failure. A refresh keeps the deck's existing style
-      // unless the student deliberately picks the other one.
-      if (/already/i.test(message)) {
+      /*
+       * ⚠️ THE CODE IS CHECKED FIRST, AND IT HAS TO BE. Two different 409s reach
+       * here with near-identical prose — both start "This material is already
+       * in …". The per-deck one is an invitation to Refresh; the cross-deck one
+       * is a refusal, and offering a Refresh for it would send `replace: true`
+       * straight back into the guard that just rejected it. `api.ts` attaches
+       * `code` precisely so a caller never has to tell them apart by wording.
+       */
+      if (err?.code === 'MATERIAL_IN_ANOTHER_DECK') {
+        setGenerateError(message);
+      } else if (/already/i.test(message)) {
+        // Names this deck and the existing count, so it reads as a prompt rather
+        // than a failure. A refresh keeps the deck's existing style unless the
+        // student deliberately picks the other one.
         setConfirmRefresh({ material, message, currentFormat: cardFormat });
       } else {
         setGenerateError(message);
@@ -1691,12 +1724,13 @@ export default function FlashcardsTab({
             ) : (
               availableResources.map(material => {
                 const alreadyHere = materialsInDeck.has(material.id);
+                const otherDeck = alreadyHere ? null : deckHoldingMaterial.get(material.id) ?? null;
                 const isBusy = generatingId === material.id;
                 return (
                   <button
                     key={material.id}
                     onClick={() => handleGenerate(material)}
-                    disabled={!!generatingId}
+                    disabled={!!generatingId || otherDeck !== null}
                     className="w-full flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-surface-container hover:border-primary-fixed-dim/40 hover:bg-primary-fixed-dim/5 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <div className="w-9 h-9 rounded-lg bg-surface-container-high border border-white/5 flex items-center justify-center shrink-0">
@@ -1715,6 +1749,15 @@ export default function FlashcardsTab({
                     {alreadyHere && !isBusy && (
                       <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-400/10 border border-emerald-400/20 text-emerald-400 font-sans text-[10px] font-bold uppercase tracking-wider shrink-0">
                         <Check className="w-3 h-3" /> In deck
+                      </span>
+                    )}
+                    {/* Amber, not emerald: this one is a refusal, not a
+                        confirmation. The deck is named so the student knows
+                        where to go rather than being told only "no". */}
+                    {otherDeck && !isBusy && (
+                      <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-400/10 border border-amber-400/25 text-amber-400 font-sans text-[10px] font-bold uppercase tracking-wider shrink-0 max-w-[45%]">
+                        <AlertCircle className="w-3 h-3 shrink-0" />
+                        <span className="truncate">In {otherDeck}</span>
                       </span>
                     )}
                   </button>
@@ -1737,10 +1780,17 @@ export default function FlashcardsTab({
             <Trash2 className="w-5 h-5" />
           </div>
 
+          {/* ⚠️ IT USED TO END "You can generate them again from the same
+              material", which advertised the one mastery-reset path the
+              cross-deck guard leaves open — and said nothing about the cost.
+              Deleting cascades `spaced_repetition_logs`, so the review dates and
+              ratings go with them; `bkt_mastery` is keyed on (student, concept)
+              and does not. Say both. */}
           <p className="font-sans text-xs text-slate-400 leading-relaxed">
             Are you sure you want to delete <span className="font-semibold text-white">"{selectedSet?.title}"</span>?
-            This removes the deck and the {selectedSet?.cardCount ?? 0} card{selectedSet?.cardCount === 1 ? '' : 's'} inside it.
-            You can generate them again from the same material.
+            This removes the deck and the {selectedSet?.cardCount ?? 0} card{selectedSet?.cardCount === 1 ? '' : 's'} inside it,
+            along with <span className="font-semibold text-white">your review dates and ratings</span> for them.
+            Your mastery scores are not affected.
           </p>
 
           <div className="flex gap-3 justify-end pt-2">

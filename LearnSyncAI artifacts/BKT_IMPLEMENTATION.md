@@ -111,8 +111,10 @@ Each of these is load-bearing for a claim in the paper, not a style preference.
 9. **A BKT failure must never cost a student their score.** Both call sites `await` inside their own
    `try/catch`. Not fire-and-forget — Express 4 does not forward async rejections and there is no
    `unhandledRejection` handler, so a detached rejected promise takes the process down.
-10. **Do not relax the flashcard due-check.** It is the only thing stopping a student farming mastery
-    by re-drilling one card, and BKT's independence assumption depends on it.
+10. **Do not relax the flashcard due-check, and do not remove the one-lesson-per-deck guard.** The
+    due-check stops a student farming mastery by re-drilling one CARD; the generation guard stops
+    them minting a second card for the same CONCEPT. BKT's independence assumption needs both — see
+    §4.3, which used to credit the due-check alone and was wrong to.
 11. **`applyTestCompletion()` is fed the `telemetry` array that was inserted**, never a
     re-derivation from `questions_payload`. One source means the two can never disagree, and
     `count(bkt_update_logs) == count(practice_telemetry)` stays a valid reconciliation.
@@ -288,9 +290,64 @@ because `L/(1−L)` diverges.)*
 With `g_easy = 0.05`, two Easy ratings run **0.10 → 0.7231 → 0.9824** — past the 0.85 `advanced`
 threshold. Compare two correct multiple-choice answers (0.7685) or one correct true/false (0.3271).
 
-That is what a 0.05 guess rate means, and paper p. 72 specifies it. **Do not change it.** The brake
-already exists: Easy pushes the card seven days out, so a deck cannot be farmed in an afternoon, and
-a not-due rating produces no observation at all.
+That is what a 0.05 guess rate means, and paper p. 72 specifies it. **Do not change it.**
+
+### ⚠️ The brake is TWO things, and for a long time only one of them existed
+
+1. **The due-check.** Easy pushes the card seven days out, and a not-due rating produces no
+   observation at all. One observation per concept per week.
+2. **One lesson per deck, per space** — `POST /:id/decks/:deckId/generate`, added 2026-09-08.
+
+**This section used to claim (1) alone meant "a deck cannot be farmed in an afternoon". That was
+false.** The due-check is keyed on `flashcards.next_review_at` — a CARD — while mastery is keyed on a
+CONCEPT (`bkt_mastery`, `UNIQUE (student_id, concept_id)`, with no FK to a card, deck or space). A
+freshly generated card is born due (`next_review_at DEFAULT now()`, never set by the insert). So a
+second deck built from the same lesson minted new card rows that were all instantly due, and each one
+was another observation on a concept already assessed:
+
+| Path | Time to `advanced` on a 29-concept lesson |
+|---|---|
+| Honest (one Easy per concept per week) | **8 days** |
+| Second deck from the same lesson | **~2 minutes** |
+
+It also minted mastery badges, and skewed adaptive-test difficulty, game calibration and the
+educator's class analytics. It was equally a **correctness bug** — nothing warned a student that a
+lesson was already carded elsewhere, so an innocent duplicate double-counted every concept in it.
+
+The guard refuses with `code: 'MATERIAL_IN_ANOTHER_DECK'`, naming the deck that holds it. It fires
+**regardless of `replace`** (that flag means "refresh this deck", which reconciles in place and is
+safe — it must not become a bypass), but **only when this deck does not already hold the material**,
+so decks duplicated before the guard existed can still be refreshed rather than stranded.
+
+### ⚠️ The residual: delete and regenerate
+
+`flashcards` cascades from `flashcard_decks`, and `spaced_repetition_logs` cascades from `flashcards`
+— but **`bkt_mastery` cascades only from `profiles` and `concepts`**. So deleting a deck destroys the
+cards and their due dates while the inflated mastery survives, and regenerating starts everything due
+again.
+
+**Left open by decision.** It costs the student their entire rating history for that lesson, takes
+deliberate repeated effort, and the delete confirmation now states the cost instead of — as it used to
+— suggesting they regenerate afterwards.
+
+**It is detectable with certainty.** `bkt_update_logs` survives deck deletion (`flashcard_id … ON
+DELETE SET NULL`), records `source` and a per-row-staggered `created_at`, and is already indexed on
+`(student_id, concept_id, created_at)`. Two flashcard observations on one concept inside seven days
+**cannot happen under an honest schedule** — zero false positives:
+
+```sql
+SELECT student_id, concept_id, count(*) AS observations,
+       min(created_at) AS first_seen, max(created_at) AS last_seen
+FROM   bkt_update_logs
+WHERE  source = 'flashcard'
+GROUP  BY student_id, concept_id
+HAVING count(*) > 1
+   AND max(created_at) - min(created_at) < interval '7 days';
+```
+
+Expect **zero rows**. If closing this path is ever wanted, the place is not another guard: it is
+seeding `next_review_at` at generation from the concept's own history rather than defaulting to
+`now()`, so a regenerated card is born due only if the concept genuinely is.
 
 Expect the first live run to show a study space jumping to `advanced` after one thorough deck review.
 It is not broken.
