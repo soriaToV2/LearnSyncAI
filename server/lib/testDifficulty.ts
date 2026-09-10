@@ -65,6 +65,12 @@ export interface ConceptMasteryRow {
 const IN_CHUNK = 200;
 
 /**
+ * PostgREST's own default `db.max_rows`; nothing in this project raises it.
+ * Declared beside `IN_CHUNK` because both readers below page against it.
+ */
+const PAGE = 1_000;
+
+/**
  * Every `bkt_mastery` row this student has for `conceptIds`.
  *
  * Concepts with no row are simply absent from the map — that absence is the
@@ -207,22 +213,42 @@ export async function classMasteryRows(
     for (let c = 0; c < conceptIds.length; c += IN_CHUNK) {
       const concepts = conceptIds.slice(c, c + IN_CHUNK);
 
-      const { data } = await supabaseAdmin
-        .from('bkt_mastery')
-        .select('student_id, concept_id, latent_mastery, opportunity_count, last_updated')
-        .in('student_id', students)
-        .in('concept_id', concepts);
+      /*
+       * ⚠️ PAGED, and it must stay paged. PostgREST caps a response at 1000 rows
+       * by default (nothing sets `db.max_rows` in `server/lib/supabase.ts`) and
+       * one chunk pair asks for up to IN_CHUNK², i.e. 40,000. A single 50-student
+       * class on a 57-concept material is already 2,850 — so the unpaged version
+       * silently returned the first 1000 and every screen reading this quietly
+       * under-reported. There is no error to notice: the request succeeds.
+       *
+       * Ordered, because a cap without an order is a cap on an arbitrary subset.
+       */
+      for (let offset = 0; ; offset += PAGE) {
+        const { data } = await supabaseAdmin
+          .from('bkt_mastery')
+          .select('student_id, concept_id, latent_mastery, opportunity_count, last_updated')
+          .in('student_id', students)
+          .in('concept_id', concepts)
+          .order('student_id', { ascending: true })
+          .order('concept_id', { ascending: true })
+          .range(offset, offset + PAGE - 1);
 
-      for (const row of data ?? []) {
-        // NUMERIC and INTEGER both arrive as strings over PostgREST.
-        const mastery = Number(row.latent_mastery);
-        if (!Number.isFinite(mastery)) continue;
-        const opportunities = Number(row.opportunity_count);
-        rows.set(classKey(row.student_id as string, row.concept_id as string), {
-          mastery,
-          opportunityCount: Number.isFinite(opportunities) ? opportunities : 0,
-          lastUpdated: (row.last_updated as string) ?? null,
-        });
+        const page = data ?? [];
+        for (const row of page) {
+          // NUMERIC and INTEGER both arrive as strings over PostgREST.
+          const mastery = Number(row.latent_mastery);
+          if (!Number.isFinite(mastery)) continue;
+          const opportunities = Number(row.opportunity_count);
+          rows.set(classKey(row.student_id as string, row.concept_id as string), {
+            mastery,
+            opportunityCount: Number.isFinite(opportunities) ? opportunities : 0,
+            lastUpdated: (row.last_updated as string) ?? null,
+          });
+        }
+
+        // A short page is the last page. The pair can hold at most IN_CHUNK²
+        // rows, so this terminates without a separate cap.
+        if (page.length < PAGE) break;
       }
     }
   }
@@ -257,9 +283,6 @@ export interface FirstObservation {
  * `CURVE_ROW_CAP` in `dashboard.routes.ts` — same job, same order of magnitude.
  */
 const EVIDENCE_ROW_CAP = 5_000;
-
-/** PostgREST's own default `db.max_rows`; nothing in this project raises it. */
-const PAGE = 1_000;
 
 /**
  * The FIRST logged observation per (student, concept), for THESE students over

@@ -1017,6 +1017,36 @@ router.get(
 // GET /api/educator/materials/:materialId/mastery-evidence
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * One (student, concept) cell of the evidence matrix — the rows every summary
+ * figure is a mean OVER.
+ *
+ * Emitted for concepts that have a `bkt_mastery` row, which is exactly the
+ * "assessed" set. A concept nobody has been asked about has no row here and no
+ * row in the file: it enters EQ(4) at P(L₀) as a constant, and listing it would
+ * put 0.10 in a column of measurements.
+ *
+ * ⚠️ `first_posterior` is null when the audit trail lost the row. That row is
+ * excluded from start AND end (see `concepts_without_trail`), and a blank cell
+ * is what makes AVERAGEIFS reproduce that exclusion on its own.
+ */
+interface EvidenceConceptDto {
+  student_id: string;
+  last_name: string;
+  first_name: string;
+  concept_id: string;
+  concept_term: string;
+  /** Posterior after the FIRST opportunity on this concept. Not a baseline. */
+  first_posterior: number | null;
+  /** Current `bkt_mastery.latent_mastery`. */
+  latent_mastery: number;
+  opportunity_count: number;
+  flashcard_observations: number;
+  test_observations: number;
+  first_observed_at: string | null;
+  last_observed_at: string | null;
+}
+
 interface EvidenceStudentDto {
   student_id: string;
   first_name: string;
@@ -1124,6 +1154,22 @@ router.get(
      */
     let mismatches = 0;
 
+    /*
+     * ⚠️ THE PER-CONCEPT ROWS EXIST SO THE DOWNLOAD CAN SHOW ITS WORKING.
+     *
+     * `students[]` below is five means and a difference. A reader cannot check a
+     * mean against nothing, so the .xlsx the educator downloads carries these
+     * rows on their own sheet and rebuilds every summary column as a live
+     * AVERAGEIFS / COUNTIFS over them. Strip this and the workbook degrades to
+     * the same opaque numbers the CSV already had.
+     *
+     * No new query: both maps are already in hand. It is serialisation only.
+     * ~2,850 rows for 50 students × 57 concepts, on a route that is fetched
+     * lazily on a button press and never on a tab render.
+     */
+    const termById = new Map(concepts.map((c) => [c.id, c.term]));
+    const conceptRows: EvidenceConceptDto[] = [];
+
     const students: EvidenceStudentDto[] = roster.map((student) => {
       const byConcept = new Map<string, number>();
       const starts: number[] = [];
@@ -1152,6 +1198,24 @@ router.get(
           // start with P(L₀) would invent a measurement, and dropping it only
           // from the start would break the pairing and inflate `growth`.
           withoutTrail += 1;
+          // Still emitted, with a null start. The workbook's AVERAGEIFS skips a
+          // blank cell, which reproduces "excluded from both sides" exactly —
+          // and the row being visible is what makes the exclusion auditable
+          // rather than an unexplained gap in a count.
+          conceptRows.push({
+            student_id: student.id,
+            last_name: student.lastName,
+            first_name: student.firstName,
+            concept_id: conceptId,
+            concept_term: termById.get(conceptId) ?? '',
+            first_posterior: null,
+            latent_mastery: row.mastery,
+            opportunity_count: row.opportunityCount,
+            flashcard_observations: 0,
+            test_observations: 0,
+            first_observed_at: null,
+            last_observed_at: null,
+          });
           continue;
         }
 
@@ -1162,6 +1226,21 @@ router.get(
         if (firstAt === null || trail.firstAt < firstAt) firstAt = trail.firstAt;
         if (lastAt === null || trail.lastAt > lastAt) lastAt = trail.lastAt;
         if (Math.abs(trail.lastPosterior - row.mastery) > 1e-9) mismatches += 1;
+
+        conceptRows.push({
+          student_id: student.id,
+          last_name: student.lastName,
+          first_name: student.firstName,
+          concept_id: conceptId,
+          concept_term: termById.get(conceptId) ?? '',
+          first_posterior: trail.firstPosterior,
+          latent_mastery: row.mastery,
+          opportunity_count: row.opportunityCount,
+          flashcard_observations: trail.bySource.flashcard,
+          test_observations: trail.bySource.adaptive_test,
+          first_observed_at: trail.firstAt,
+          last_observed_at: trail.lastAt,
+        });
       }
 
       const mDoc = documentMastery(conceptIds, byConcept);
@@ -1231,6 +1310,7 @@ router.get(
           m_doc: classMean,
         },
         students,
+        concept_rows: conceptRows,
       },
     });
   }

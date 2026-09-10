@@ -264,68 +264,34 @@ export interface MasteryEvidence {
   };
   /** Roster order (by name), NOT weakest-first — this is a table, not a ranking. */
   students: EvidenceStudent[];
+  /**
+   * One row per (student, assessed concept) — what every figure above is a mean
+   * OVER. The .xlsx export puts these on their own sheet and rebuilds each
+   * summary column as a live formula against them, so a reader can check the
+   * arithmetic instead of taking it on trust.
+   */
+  concept_rows: EvidenceConceptRow[];
 }
 
 /**
- * The export's columns.
- *
- * `assessed_concepts` is not optional decoration: it is the denominator of
- * `start_mastery`, `end_mastery` and `growth`, and those three cannot be
- * interpreted without it. Names lead so a row can be checked against a class list
- * — `profiles` has no email, and one must not be invented to fill a column.
+ * ⚠️ `first_posterior` is null where the audit trail lost the row. Such a row is
+ * excluded from start AND end (it is counted in `concepts_without_trail`), and a
+ * blank cell is precisely what makes AVERAGEIFS reproduce that exclusion.
  */
-export const EVIDENCE_HEADER = [
-  'material_title',
-  'last_name',
-  'first_name',
-  'grade_level',
-  'concept_count',
-  'assessed_concepts',
-  'opportunities',
-  'flashcard_obs',
-  'test_obs',
-  'start_mastery',
-  'end_mastery',
-  'growth',
-  'm_doc',
-  'first_observed_at',
-  'last_observed_at',
-] as const;
-
-/**
- * ⚠️ A BLANK CELL MEANS NOT STARTED. Never `0`, never `0.1` — a fabricated number
- * is worse than an empty cell, and 0.10 is P(L₀), the assumption this whole file
- * exists to keep off the screen.
- *
- * Unlike `credentialRows()`, not-started students are LISTED rather than filtered.
- * "Nineteen of twenty never opened this" is a finding about the study, and a
- * filtered file would hide it.
- *
- * Values are the server's 4dp numbers verbatim — no re-rounding and no ×100.
- * `masteryPercent()` is for the screen; a second precision here would let the
- * paper's numbers disagree with the ones the educator saw. Timestamps stay ISO
- * 8601 UTC for the same reason a localised date is unparseable months later.
- */
-export function evidenceRows(data: MasteryEvidence): string[][] {
-  const num = (v: number | null) => (v === null ? '' : String(v));
-
-  return data.students.map((s) => [
-    data.material.title,
-    s.last_name,
-    s.first_name,
-    String(s.grade_level),
-    String(s.concept_count),
-    String(s.assessed_concept_count),
-    String(s.opportunity_count),
-    String(s.flashcard_observations),
-    String(s.test_observations),
-    num(s.start_mastery),
-    num(s.end_mastery),
-    num(s.growth),
-    num(s.m_doc),
-    s.first_observed_at ?? '',
-    s.last_observed_at ?? '',
-  ]);
+export interface EvidenceConceptRow {
+  student_id: string;
+  last_name: string;
+  first_name: string;
+  concept_id: string;
+  concept_term: string;
+  /** Posterior AFTER the first opportunity on this concept. Never a baseline. */
+  first_posterior: number | null;
+  latent_mastery: number;
+  opportunity_count: number;
+  flashcard_observations: number;
+  test_observations: number;
+  first_observed_at: string | null;
+  last_observed_at: string | null;
 }
 
 export const educatorAnalyticsApi = {

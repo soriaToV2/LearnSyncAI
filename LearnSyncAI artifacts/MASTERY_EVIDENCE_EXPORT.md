@@ -128,16 +128,28 @@ two-`.in()`-lists-in-one-URL rule.
   `buildCurve()` gets the same property from ordering the other way, because it is anchored at the
   other end.
 
-### Known, not fixed here
+### ✅ Fixed 2026-09-10 — was "known, not fixed here"
 
-`classMasteryRows()` has the same unguarded 1000-row hazard: 200 × 200 chunks can request up to
-40,000 rows, and 50 students × 57 fully-assessed concepts is 2,850. If it fires, Class Performance
-and the educator dashboard silently under-report. **Verify against the live project and fix in its
-own change** — repeating the fix here would have hidden it.
+`classMasteryRows()` carried the same 1000-row hazard **unguarded**: 200 × 200 chunks can request up
+to 40,000 rows, and 50 students × 57 fully-assessed concepts is 2,850. The request succeeds and
+returns the first 1000, so Class Performance, the educator dashboard and this export all silently
+under-reported with no error to notice. It now pages exactly as `classFirstObservations()` does,
+ordered by `(student_id, concept_id)` — a cap without an order caps an arbitrary subset.
+
+It was fixed as a prerequisite of the .xlsx export (§5): that file puts the per-concept rows on their
+own sheet, so the truncation would have become visible as missing rows under a formula.
 
 ---
 
-## 5 · The CSV
+## 5 · The file
+
+> **⚠️ SUPERSEDED 2026-09-10 — this is now an .xlsx, not a CSV.** `EVIDENCE_HEADER` and
+> `evidenceRows()` are deleted. The column reasoning below still holds and is what the workbook's
+> `Summary` sheet renders; what changed is that each column is now a live Excel formula over a new
+> `ConceptDetail` sheet carrying the per-concept rows, with the server's own value beside it and a
+> `check` column comparing the two. See `src/lib/masteryWorkbook.ts` and the .xlsx section of
+> `CLAUDE.md`. Anything below describing comma quoting or `csvCell()` applies to the account-import
+> CSV only.
 
 `EVIDENCE_HEADER` and `evidenceRows()` live in `src/lib/educatorAnalytics.ts`, beside their own
 types, exactly as `CREDENTIAL_HEADER` / `credentialRows()` live beside theirs in `csvAccounts.ts`.

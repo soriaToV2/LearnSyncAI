@@ -1081,6 +1081,22 @@ conditional: ~1.5 million combinations against ~2.5 × 10¹⁷, acceptable ONLY 
 single-use (this gate forces replacement) and Supabase rate-limits sign-in by IP. If the forced change
 is ever removed, revert the generator with it.**
 
+**⚠️ THAT CONDITION IS CURRENTLY SUSPENDED FOR THE 98 STUDY ACCOUNTS — DATA STATE, NOT CODE.** On
+2026-09-09, at the principal's request, every imported student (`role = 'student'`, excluding the
+seven sample accounts in `default_users.csv`) was given **one shared password** and had
+`must_change_password` cleared, so the cohort signs in with a single credential for the usage week.
+`scripts/set-unified-password.ts` did it and documents the reasoning; the password is a CLI argument
+and appears nowhere in this repository. **Nothing in the code changed** — `RequireRole`,
+`requireRole.ts` and the two flag-arming call sites are untouched, and a newly created account is
+still born gated.
+
+The cost is the one the paragraph above predicts: usernames are `first.last` and derivable from a
+class list, so **any student can sign in as any classmate**, and because `bkt_mastery` is per-student
+an impersonated session corrupts the study's own measurements with nothing in the data marking it.
+Accepted deliberately for a one-week window. **Re-arm the gate when the window closes** — until then,
+do not read "an account created by an admin is born un-activated" as describing the live cohort, and
+do not cite the single-use property of `brave-otter-93` as currently holding.
+
 **`POST /api/admin/username-suggestion` is the enumeration oracle this codebase deliberately does not
 have — and is safe only behind `requireRole('admin')`.** A public username-availability check lets a
 stranger work through plausible names and learn which children attend one named school; that is why
@@ -1315,9 +1331,9 @@ correct, not a bug, which is why `opportunity_count` ships beside it. The rule i
 `classMasteryRows()` does, and additionally **pages each chunk pair** — PostgREST's default cap is
 1000 rows and one material can legitimately want 2,000 (50 students × 2 tests × 20 items).
 **Ascending order is load-bearing**: the row cap then drops only the NEWEST rows, which this reader
-does not need, because the "after" side is anchored to `bkt_mastery` and never to the log. (The same
-1000-row hazard exists unguarded in `classMasteryRows()` — 200 × 200 chunks, and 50 students × 57
-concepts is 2,850 rows. Verify and fix that in its own change.)
+does not need, because the "after" side is anchored to `bkt_mastery` and never to the log.
+(`classMasteryRows()` carried the same hazard **unguarded until 2026-09-10** and is now paged too —
+see the .xlsx section below.)
 
 **A mastery row with no surviving log row is dropped from BOTH sides** and counted in
 `concepts_without_trail`. Filling the start with P(L₀) would invent a measurement; dropping it only
@@ -1346,10 +1362,62 @@ still be able to export its evidence. `is_archived` ships so the file's provenan
 a material cascade-deletes its concepts → `bkt_mastery` → `bkt_update_logs`, destroying the evidence
 irrecoverably.
 
-**`downloadCsvFile()` moved into `src/lib/csvAccounts.ts`**, beside `toCsv()`/`csvCell()`, which now
-owns the whole write-a-CSV-file job. Two call sites — `ImportAccountsModal` and this export. All
-writing goes through `csvCell()`: a surname like `Dela Cruz, Jr.` unquoted splits into two cells and
-shifts every number one column across, which is the measured failure that put it there.
+**`downloadCsvFile()` lives in `src/lib/csvAccounts.ts`**, beside `toCsv()`/`csvCell()`, which owns
+the whole write-a-CSV-file job. Its one remaining call site is `ImportAccountsModal` — this export
+stopped being a CSV on 2026-09-10, below. All writing still goes through `csvCell()`: a surname like
+`Dela Cruz, Jr.` unquoted splits into two cells and shifts every number one column across, which is
+the measured failure that put it there.
+
+### The export is an .xlsx that shows its working — `src/lib/masteryWorkbook.ts`
+
+**⚠️ THE CSV COULD NOT BE CHECKED, WHICH FOR THE PAPER'S ONLY PROGRESS EVIDENCE IS THE WHOLE
+PROBLEM.** It carried fifteen finished numbers per student and nothing to recompute them from — a
+reader asked to trust `growth = 0.2391` had no way to derive it. The workbook ships the per-concept
+rows every figure is a mean OVER (`ConceptDetail`) and rebuilds each summary column as a live
+`AVERAGEIFS`/`COUNTIFS` against them, so any cell traces to its inputs in one click. **`EVIDENCE_HEADER`
+and `evidenceRows()` are deleted; do not reinstate a CSV path** — a stats package reads .xlsx, and a
+second writer would be a second precision.
+
+**⚠️ THE ROUTE NOW RETURNS `concept_rows`, AND THAT IS THE FEATURE, NOT PAYLOAD BLOAT.** One row per
+(student, assessed concept). Without them every formula would have nothing to point at and the file
+degrades to the opaque numbers the CSV already had. **No new query** — both maps were already in hand;
+it is serialisation only. ~2,850 rows at 50 students × 57 concepts, on a route fetched lazily on a
+button press and never on a tab render. A concept nobody was asked about is deliberately **absent**:
+it enters EQ(4) as the constant P(L₀), and a row for it would put 0.10 in a column of measurements.
+
+**⚠️ COLUMNS R–U CARRY THE SERVER'S OWN NUMBERS BESIDE THE FORMULAS, AND COLUMN V COMPARES THEM.**
+That pairing is the point of the file: if the aggregation ever drifts from its own evidence, the
+educator sees it without running anything. **The tolerance is `1e-4`, and that is not sloppiness** —
+`meanOrNull()` rounds to 4dp server-side while Excel averages at full double precision, so a correct
+pair differs by up to 5e-5. At `1e-9` every healthy row would read DIFFERS. Do not "tidy away" the
+duplicate columns.
+
+**⚠️ A FORMULA CELL WRITES BOTH `<f>` AND A CACHED `<v>`.** `fullCalcOnLoad="1"` makes Excel and
+LibreOffice recompute on open, so a spreadsheet never needs the cache — **headless readers do**.
+pandas' `read_excel` and R's `readxl` read the cached value and never evaluate the formula, so a
+formula-only workbook reaches a statistics package as a sheet of blanks, which would break the exact
+analysis this exists to feed. `cached` must be computed from the SAME inputs the formula references;
+the two agreeing is what makes it safe.
+
+**No new dependency: `src/lib/xlsx.ts` writes SpreadsheetML over `jszip`**, which was already declared
+and imported by nothing. ExcelJS and SheetJS are both an order of magnitude larger for one
+educator-only export. Both modules are behind a **dynamic `import()`** in `ClassPerformance.tsx`, so
+jszip (97 KB) and the writer (20 KB) are their own chunks and never reach the bundle an educator
+downloads to open a materials list — verified in the build output.
+
+**`scripts/mastery-evidence-xlsx.py` is a SEPARATE artifact and is not redundant with this.** It
+verifies the *engine* — EQ(1)/(2)/(3) recomputed per observation out of `bkt_update_logs`, plus the
+P(G) selection, which an equation-only check cannot catch because both sides would use the same wrong
+number. The in-app export verifies the *aggregation*. Read-only, pages past the 1000-row cap, and its
+output is `.gitignore`d because it carries student names.
+
+**🔴 `classMasteryRows()` WAS SILENTLY TRUNCATING AT 1000 ROWS AND IS NOW PAGED.** PostgREST caps a
+response at 1000 by default (nothing sets `db.max_rows`) and one `IN_CHUNK²` pair asks for up to
+40,000; 50 students × 57 concepts is 2,850. The request *succeeds* — there is no error to notice — so
+Class Performance, the educator dashboard and this export all quietly under-reported. It was flagged
+in this file for months as "verify and fix in its own change"; the per-concept sheet would have made
+it visible, so it was fixed first. **`PAGE` moved up beside `IN_CHUNK`** — both readers page against
+it now.
 
 **Deliberately not built:** no class-level before/after chart (the denominator moves as students
 start, so the line drops when a new student begins — the same reason the educator dashboard has no

@@ -9,11 +9,9 @@ import { toneText } from '../../../components/ui/surfaces';
 import {
   educatorAnalyticsApi, classCaption, conceptCaption, STRUGGLING_BELOW,
   masteryPercent, masteryTier, relativeTime, TIER_TONE,
-  EVIDENCE_HEADER, evidenceRows,
   type DifficultyTier, type MaterialPerformance, type StudentMaterialDetail,
   type ConceptClassDetail,
 } from '../../../lib/educatorAnalytics';
-import { toCsv, downloadCsvFile } from '../../../lib/csvAccounts';
 
 /**
  * The Class Performance tab inside a material.
@@ -98,11 +96,14 @@ export default function ClassPerformance({ materialId }: { materialId: string })
     setExportError(null);
     try {
       const evidence = await educatorAnalyticsApi.evidence(materialId);
-      const today = new Date().toISOString().slice(0, 10);
-      downloadCsvFile(
-        toCsv(EVIDENCE_HEADER, evidenceRows(evidence)),
-        `learnsyncai-mastery-evidence-${today}.csv`
-      );
+      /*
+       * Imported here rather than at the top of the file: the workbook writer
+       * pulls in jszip, which nothing else in the app imports. A research export
+       * pressed once a study must not sit in the bundle every educator downloads
+       * to open a materials list.
+       */
+      const { downloadMasteryWorkbook } = await import('../../../lib/masteryWorkbook');
+      await downloadMasteryWorkbook(evidence);
     } catch {
       setExportError('Could not build the export. Try again in a moment.');
     } finally {
@@ -251,7 +252,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
             {exporting
               ? <Spinner className="w-3.5 h-3.5 text-slate-400" />
               : <Download className="w-3.5 h-3.5" />}
-            Export mastery evidence
+            Export mastery evidence (Excel)
           </button>
         </div>
 
