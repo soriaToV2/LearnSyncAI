@@ -10,6 +10,3 @@ coverage/
 # Server build output
 server/dist/
 .mcp.json
-# Research exports: contain student names and mastery data. Never commit.
-mastery-evidence-verification*.xlsx
-mastery-evidence*.csv
