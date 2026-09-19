@@ -9,19 +9,40 @@ import {
 } from '../types/api';
 import { extractPdfPages, type PdfPage } from '../lib/pdfText';
 import { extractConcepts } from '../lib/conceptExtraction';
+import { imagesToPdf } from '../lib/pdfAssemble';
+import { transcribeScannedPdf } from '../lib/ocr';
 import { requireMaterialAccess, rejectInaccessibleMaterials } from '../lib/materialAccess';
 import { loadOwnedMaterial } from '../lib/educatorScope';
 import multer from 'multer';
 
 const router = Router();
+
+/**
+ * Documented ingest limits: 20 MB per material (`materials_file_size_limit` and
+ * the bucket's `file_size_limit` both say 20,971,520), and scanned or
+ * photographed documents at most 20 pages (`materials_scanned_page_limit`).
+ * Both are enforced HERE, before anything reaches storage, so the educator gets
+ * a sentence rather than a CHECK-constraint 500 after the file is already up.
+ */
+const MAX_MATERIAL_BYTES = 20 * 1024 * 1024;
+const MAX_SCANNED_PAGES = 20;
+
+/**
+ * One upload is EITHER one PDF (text or scanned) OR up to MAX_SCANNED_PAGES
+ * photos of the pages, all under the same `file` field. Photos are assembled
+ * into a single PDF server-side (`pdfAssemble.ts`), so from the storage bucket
+ * onward there is only ever one shape of material. The mimetype filter is a
+ * courtesy; the bytes are sniffed again before they are embedded.
+ */
+const ACCEPTED_MIMETYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB limit
+  limits: { fileSize: MAX_MATERIAL_BYTES, files: MAX_SCANNED_PAGES },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
+    if (ACCEPTED_MIMETYPES.has(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Only PDF files are allowed'));
+      cb(new Error('Only a PDF or JPEG/PNG photos can be uploaded.'));
     }
   },
 });
@@ -33,9 +54,16 @@ router.use(authenticate);
 // student read path now goes through GET /api/spaces/:id/materials, which joins
 // study_space_materials and applies the grade-level and subject filters.
 
-const SCANNED_NOT_SUPPORTED =
-  'Scanned documents are not supported yet. This module has no readable text layer; ' +
-  'OCR for image-based PDFs is a later phase. Please upload a text-based PDF.';
+/**
+ * Every `materials` column EXCEPT `ocr_pages`, for the educator list, detail
+ * and upload responses. A 20-page transcript is tens of kilobytes and belongs
+ * to one screen; it is served by `GET /:id/ocr-text` on demand, never carried
+ * by a list. Add a column here when the table gains one a screen renders.
+ */
+// One literal, not a concatenation: supabase-js types the result by parsing the
+// select string, and a `string`-typed expression parses to GenericStringError.
+const MATERIAL_COLUMNS =
+  'id, educator_id, title, description, subject, grade_levels, storage_path, file_size_bytes, page_count, is_scanned, parsed_status, parse_error, is_archived, created_at, updated_at';
 
 /** Builds a filesystem-safe storage key under the educator's own folder. */
 function storageKey(educatorId: string, title: string): string {
@@ -50,23 +78,32 @@ function storageKey(educatorId: string, title: string): string {
 
 /**
  * POST /api/materials
- * Uploads a plain-text PDF learning module and inserts a material record.
- * Educators only. A text PDF starts background concept extraction; a scanned
- * (image-only) PDF is stored and marked failed with a plain-language reason.
+ * Uploads a learning module and inserts a material record. Educators only.
  *
- * Form data: file (PDF binary), title, subject, description?, grade_levels (JSON array)
+ * Three inputs, one storage shape:
+ *   - a text PDF          → stored as-is, concept extraction runs on its text layer;
+ *   - a scanned PDF       → stored as-is, OCR (`ocr.ts`) produces the text first;
+ *   - JPEG/PNG photos     → assembled into one PDF (`pdfAssemble.ts`), then as a scan.
+ *
+ * Every branch ends in `processMaterialAsync()`; nothing is marked failed at
+ * upload any more. Until 2026-09-19 a scanned PDF was stored `failed` with
+ * "OCR is a later phase", which contradicted the paper (p. 60).
+ *
+ * Form data: file (one PDF, or 1–20 photos), title, subject, description?, grade_levels (JSON array)
  */
 router.post(
   '/',
   requireRole('educator'),
   (req: Request, res: Response, next: import('express').NextFunction) => {
-    upload.single('file')(req, res, (err: any) => {
+    upload.array('file', MAX_SCANNED_PAGES)(req, res, (err: any) => {
       if (err) {
-        // Multer's own errors (file too large, wrong type) are user-facing 400s.
+        // Multer's own errors (file too large, too many, wrong type) are user-facing 400s.
         const message =
           err?.code === 'LIMIT_FILE_SIZE'
             ? 'That file is larger than the 20 MB limit.'
-            : err?.message ?? 'File upload failed';
+            : err?.code === 'LIMIT_FILE_COUNT' || err?.code === 'LIMIT_UNEXPECTED_FILE'
+              ? `Upload at most ${MAX_SCANNED_PAGES} photos per material.`
+              : err?.message ?? 'File upload failed';
         return res.status(400).json({ error: 'Upload rejected', message });
       }
       next();
@@ -79,8 +116,9 @@ router.post(
       return;
     }
 
-    if (!req.file) {
-      res.status(400).json({ error: 'No file uploaded', message: 'Choose a PDF to upload.' });
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    if (!files.length) {
+      res.status(400).json({ error: 'No file uploaded', message: 'Choose a PDF, or photos of the pages, to upload.' });
       return;
     }
 
@@ -102,10 +140,57 @@ router.post(
       return;
     }
 
+    // One PDF, or photos only. A PDF among photos has no sensible page order,
+    // and two PDFs are two materials.
+    const pdfCount = files.filter((f) => f.mimetype === 'application/pdf').length;
+    if (pdfCount > 1 || (pdfCount === 1 && files.length > 1)) {
+      res.status(400).json({
+        error: 'Mixed upload',
+        message: 'Upload one PDF, or photos of the pages — not both in the same material.',
+      });
+      return;
+    }
+
+    // The 20 MB limit is on the MATERIAL. Multer only caps each file, so twenty
+    // 3 MB photos would otherwise sail through and fail at the bucket.
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+    if (totalBytes > MAX_MATERIAL_BYTES) {
+      res.status(400).json({
+        error: 'Upload too large',
+        message: `These photos add up to ${(totalBytes / (1024 * 1024)).toFixed(1)} MB. The limit is 20 MB per material.`,
+      });
+      return;
+    }
+
+    // Whatever arrived, we hold ONE PDF from here on.
+    let fileBuffer: Buffer;
+    if (pdfCount === 1) {
+      fileBuffer = files[0].buffer;
+    } else {
+      try {
+        fileBuffer = await imagesToPdf(files.map((f) => ({ buffer: f.buffer, mimetype: f.mimetype })));
+      } catch (err) {
+        res.status(400).json({
+          error: 'Unreadable photo',
+          message: err instanceof Error ? err.message : 'One of the photos could not be read.',
+        });
+        return;
+      }
+      if (fileBuffer.length > MAX_MATERIAL_BYTES) {
+        res.status(400).json({
+          error: 'Upload too large',
+          message: 'These photos make a document larger than the 20 MB limit. Use fewer or smaller photos.',
+        });
+        return;
+      }
+    }
+
     // Read the PDF once: page count, per-page text, and whether it is scanned.
+    // Photos assembled above come back `isScanned` by construction — there is
+    // no text layer to find — which is exactly the branch they need.
     let pdf;
     try {
-      pdf = await extractPdfPages(req.file.buffer);
+      pdf = await extractPdfPages(fileBuffer);
     } catch {
       res.status(400).json({
         error: 'Unreadable PDF',
@@ -119,20 +204,28 @@ router.post(
       return;
     }
 
-    // Store the raw file (private bucket). The leading educator folder is what
+    if (pdf.isScanned && pdf.pageCount > MAX_SCANNED_PAGES) {
+      res.status(400).json({
+        error: 'Too many pages',
+        message: `Scanned or photographed documents are limited to ${MAX_SCANNED_PAGES} pages; this one has ${pdf.pageCount}. Split it into two materials.`,
+      });
+      return;
+    }
+
+    // Store the file (private bucket). The leading educator folder is what
     // storage RLS keys on.
     const fileName = storageKey(educatorId, title);
     const { error: storageError } = await supabaseAdmin.storage
       .from('materials')
-      .upload(fileName, req.file.buffer, { contentType: 'application/pdf' });
+      .upload(fileName, fileBuffer, { contentType: 'application/pdf' });
 
     if (storageError) {
       res.status(500).json({ error: 'File upload failed', message: storageError.message });
       return;
     }
 
-    // Insert the material row. Scanned files are marked failed immediately and
-    // never sent to extraction; text PDFs start as pending.
+    // Insert the material row. Every kind starts pending; the scanned branch of
+    // processMaterialAsync() runs OCR before extraction.
     const { data: material, error: dbError } = await supabaseAdmin
       .from('materials')
       .insert({
@@ -142,13 +235,13 @@ router.post(
         subject,
         grade_levels,
         storage_path: fileName,
-        file_size_bytes: req.file.size,
+        file_size_bytes: fileBuffer.length,
         page_count: pdf.pageCount,
         is_scanned: pdf.isScanned,
-        parsed_status: pdf.isScanned ? 'failed' : 'pending',
-        parse_error: pdf.isScanned ? SCANNED_NOT_SUPPORTED : null,
+        parsed_status: 'pending',
+        parse_error: null,
       })
-      .select()
+      .select(MATERIAL_COLUMNS)
       .single();
 
     if (dbError) {
@@ -158,20 +251,20 @@ router.post(
       return;
     }
 
-    if (pdf.isScanned) {
-      res.status(201).json({
-        data: material,
-        message: 'Scanned document detected — saved but not processed (OCR is a later phase).',
-      });
-      return;
-    }
+    // Fire-and-forget background processing. A text PDF reuses the pages we
+    // already parsed; a scan carries its bytes along so OCR can read them.
+    processMaterialAsync(
+      material.id,
+      pdf.pages,
+      pdf.isScanned ? { buffer: fileBuffer, pageCount: pdf.pageCount } : undefined
+    ).catch((err) => console.error(`[Material Processing Error] material_id=${material.id}`, err));
 
-    // Fire-and-forget background extraction, reusing the text we already parsed.
-    processMaterialAsync(material.id, pdf.pages).catch((err) =>
-      console.error(`[Material Processing Error] material_id=${material.id}`, err)
-    );
-
-    res.status(201).json({ data: material, message: 'Material uploaded. Concept extraction started.' });
+    res.status(201).json({
+      data: material,
+      message: pdf.isScanned
+        ? 'Material uploaded. Reading the pages, then extracting concepts.'
+        : 'Material uploaded. Concept extraction started.',
+    });
   }
 );
 
@@ -182,7 +275,7 @@ router.post(
 router.get('/', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const { data: materials, error } = await supabaseAdmin
     .from('materials')
-    .select('*')
+    .select(MATERIAL_COLUMNS)
     .eq('educator_id', req.user!.id)
     .order('created_at', { ascending: false });
 
@@ -213,7 +306,7 @@ router.get('/', requireRole('educator'), async (req: Request, res: Response): Pr
 router.get('/:id', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const { data: material, error } = await supabaseAdmin
     .from('materials')
-    .select('*')
+    .select(MATERIAL_COLUMNS)
     .eq('id', req.params.id)
     .eq('educator_id', req.user!.id)
     .maybeSingle();
@@ -376,6 +469,40 @@ router.get('/:id/view', requireMaterialAccess(), async (req: Request, res: Respo
   }
 
   res.json({ data: { url: data.signedUrl } });
+});
+
+/**
+ * GET /api/materials/:id/ocr-text
+ * The per-page transcript OCR produced for a scanned or photographed material,
+ * `{ pages: [{ page, text }] }`, empty for a text PDF or a scan that has not
+ * been read yet. Owner only — 404 otherwise, like every other educator read.
+ *
+ * Its own route rather than a column on the detail payload because a 20-page
+ * transcript is tens of kilobytes that exactly one collapsible panel wants;
+ * `MATERIAL_COLUMNS` keeps it out of the list and the detail on purpose. A
+ * student never reaches it: they read the pages themselves in the viewer, and
+ * the assistant reads the concepts.
+ */
+router.get('/:id/ocr-text', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
+  const owned = await loadOwnedMaterial(req.params.id, req.user!.id);
+  if (!owned) {
+    res.status(404).json({ error: 'Material not found' });
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('materials')
+    .select('ocr_pages')
+    .eq('id', owned.id)
+    .single();
+
+  if (error || !data) {
+    res.status(500).json({ error: 'Failed to load the transcript', message: error?.message });
+    return;
+  }
+
+  const pages = Array.isArray(data.ocr_pages) ? data.ocr_pages : [];
+  res.json({ data: { pages } });
 });
 
 /**
@@ -617,19 +744,48 @@ router.get('/:id/status', requireMaterialAccess(), async (req: Request, res: Res
 const CONCEPT_INSERT_BATCH = 25;
 
 /**
- * Runs windowed concept extraction over the already-parsed page text, then
- * inserts each concept (with its embedding and source pages). Runs asynchronously
- * after upload. Any failure lands in `parsed_status = 'failed'` with a readable
+ * The bytes of a scanned/photographed PDF, carried from the upload handler so
+ * OCR can read them without a round trip to storage.
+ */
+interface ScanInput {
+  buffer: Buffer;
+  pageCount: number;
+}
+
+/**
+ * Runs windowed concept extraction over the page text, then inserts each
+ * concept (with its embedding and source pages). Runs asynchronously after
+ * upload. Any failure lands in `parsed_status = 'failed'` with a readable
  * `parse_error`, so the educator sees a reason rather than a document stuck on
  * Processing.
+ *
+ * For a scan (`scan` present) the page text comes from OCR first. The transcript
+ * is written to `ocr_pages` BEFORE extraction runs, so an extraction failure —
+ * or a model quota spent halfway — still leaves the educator the text that was
+ * read, which is the one thing that tells a blurry photo from a model problem.
  */
-async function processMaterialAsync(materialId: string, pages: PdfPage[]): Promise<void> {
+async function processMaterialAsync(
+  materialId: string,
+  pages: PdfPage[],
+  scan?: ScanInput
+): Promise<void> {
   await supabaseAdmin
     .from('materials')
     .update({ parsed_status: 'processing', parse_error: null })
     .eq('id', materialId);
 
   try {
+    if (scan) {
+      pages = await transcribeScannedPdf(scan.buffer, scan.pageCount);
+      const { error: ocrSaveError } = await supabaseAdmin
+        .from('materials')
+        .update({ ocr_pages: pages })
+        .eq('id', materialId);
+      if (ocrSaveError) {
+        throw new Error(`Saving the page transcript failed: ${ocrSaveError.message}`);
+      }
+    }
+
     const concepts = await extractConcepts(pages);
 
     const rows = concepts.map((c) => ({

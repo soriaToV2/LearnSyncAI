@@ -109,8 +109,21 @@ export interface Material {
   parsed_status: ParsedStatus;
   parse_error: string | null;
   is_archived: boolean;
+  /**
+   * OCR transcript for a scanned/photographed material, one entry per page in
+   * page order (`""` for a page the model could not read); NULL for a text PDF.
+   * Served only by `GET /api/materials/:id/ocr-text` — `MATERIAL_COLUMNS` in
+   * `materials.routes.ts` keeps it out of the list and detail payloads.
+   */
+  ocr_pages: OcrPage[] | null;
   created_at: string;
   updated_at: string;
+}
+
+/** One page of `materials.ocr_pages` — the same shape the concept extractor consumes. */
+export interface OcrPage {
+  page: number;
+  text: string;
 }
 
 /** public.concepts */

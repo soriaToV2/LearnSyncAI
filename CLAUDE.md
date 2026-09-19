@@ -122,6 +122,9 @@ LearnSyncAI/
 │   │   ├── gameContent.ts         # Trivia / crossword / term matching (Gemini)
 │   │   ├── questionGeneration.ts  # Flashcard question fronts (Gemini)
 │   │   ├── materialAccess.ts      # Who may read which material (grade/ownership gate)
+│   │   ├── ocr.ts                 # Scanned/photographed pages → per-page text (Gemini)
+│   │   ├── pdfAssemble.ts         # Photos → one PDF; page slicing for OCR (pdf-lib)
+│   │   ├── pdfText.ts             # PDF text layer + scanned detection (pdfjs-dist)
 │   │   └── supabase.ts            # Supabase admin client
 │   ├── middleware/
 │   │   ├── auth.ts                # JWT authentication middleware
@@ -275,6 +278,98 @@ The Free Recall evaluation pipeline works as follows:
 
 **Two known limits, both pre-existing.** Domain hubness still lets a few unrelated concepts clear 0.70 (`SQL Injection` scored 0.718 against an answer that never mentions it), and because extraction is a sampling step the same text re-submitted scores within roughly ±10 percentage points — `findMemoisedAttempt()` pins byte-identical resubmissions, nothing else. Do not "fix" either by raising the threshold without re-measuring false negatives; the two move in opposite directions.
 
+### OCR — photographed and scanned materials
+
+> Built 2026-09-19. The paper (p. 60), `ARCHITECTURE.md` and `README.md` all promised that
+> image-based or scanned documents of up to 20 pages are "processed using OCR"; until this landed
+> the upload route stored a scan `failed` with *"OCR is a later phase"*, and photos could not be
+> uploaded at all. `STUDENT_RESOURCES_IMPLEMENTATION.md` §11.5 recorded the contradiction.
+
+**Gemini does the OCR, and the engine lives in exactly one place: `transcribeScannedPdf()` in
+`server/lib/ocr.ts`.** Google Cloud Vision was evaluated and not chosen — it cannot be enabled
+without a GCP billing account with a card attached, a service-account secret on every deployment
+and a gRPC dependency, for a job the model this app already pays for does natively (Gemini renders
+each PDF page as an image at 560 tokens/page; Google's own guidance is that OCR quality "saturates
+at medium", so no `mediaResolution` override is sent). Tesseract was ruled out for phone photos in
+classroom lighting; Mistral OCR for being a second vendor for the reason Groq was removed. If quality
+ever demands a dedicated engine, swap the inside of that one function — nothing else knows how pages
+become text.
+
+**⚠️ IT IS TWO STEPS, AND THE SECOND ONE IS THE UNCHANGED EXTRACTOR.** OCR returns `PageText[]`
+(`{page, text}`) and hands it to `extractConcepts()` exactly as `pdfText.ts` hands over a text
+layer, so every extraction guarantee — fixed windows, `[PAGE n]` markers, one-row-per-term folding,
+cross-term dedup, embeddings, `source_pages` — applies to a photographed lesson without a line
+changing. Do not "save a call" by asking the model for concepts straight from the images: that
+bypasses all of it and leaves nothing to inspect when a concept looks wrong.
+
+**The accepted cost is hallucination, and four things bound it.** A dedicated OCR engine returns
+garbage for garbage; a model can return plausible prose. The prompt is verbatim-only (no correcting,
+completing, translating or summarising); **`[?]` (`UNREADABLE_MARK`) is the required output for a
+word the model cannot read**, so uncertainty is written down rather than papered over; the shape is
+pinned by `PAGE_SCHEMA` and every page number is range-checked against its chunk, as extraction
+range-checks against its window; and the transcript is **stored and shown to the educator** (below).
+Measured on three phone photos of a Grade 7 Science textbook taken at an angle: verbatim text, a
+five-row table transcribed row by row with ` | ` separators, zero `[?]`, 8 s, one call. A
+deliberately blurred page came back blank and failed with the retake message — no invented prose.
+
+**Pages go `OCR_PAGES_PER_CALL = 5` at a time, sequentially, via `slicePdfPages()`.** A 20-page
+scan is four calls, absorbed by `withRetry()` inside the free tier's 5 requests/minute the same way
+extraction's windows are. Chunking is also what makes a lazy transcription detectable: asked for 20
+pages at once a model may quietly abbreviate page 17; asked for five it returns five or fails
+loudly. `generateJsonFromDocument()` now treats a `MAX_TOKENS` finish as an error even when text
+came back, for the same reason. Budget per 20-page material: ~4 OCR + ~4 extraction requests on
+`gemini-3.6-flash`, ≈ $0.05 all-in.
+
+**A material with no readable page at all FAILS with `OCR_UNREADABLE_MESSAGE`; one unreadable page
+among readable ones does NOT.** The blank page is stored as `""` so `[PAGE n]` numbering downstream
+stays aligned with the document the student sees, and the other pages still yield concepts.
+
+**⚠️ PHOTOS BECOME ONE PDF AT UPLOAD (`imagesToPdf()` in `pdfAssemble.ts`), AND THAT IS WHAT KEEPS
+THE REST OF THE APP UNCHANGED.** Photo N is page N. The bucket still holds one `application/pdf`
+per material (`allowed_mime_types` untouched), `storage_path` still ends `.pdf`, `PdfViewer.tsx`
+renders it, the delete path removes one object, `page_count` and `concepts.source_pages` mean what
+they always meant, and `extractPdfPages()` reports the assembled file `isScanned` by construction —
+which is exactly the branch it needs. Do not add a second storage shape for images. Bytes are
+sniffed (JPEG `FF D8 FF`, PNG `89 50 4E 47`) before embedding; the client's mimetype is a claim.
+
+**⚠️ ORIENTATION IS FIXED IN THE BROWSER, NOT DECORATION.** `preparePhoto()` in `src/lib/photoPrep.ts`
+redraws every photo through a canvas (`createImageBitmap(file, { imageOrientation: 'from-image' })`,
+long edge ≤ 2000 px, JPEG q0.85) before upload. A phone stores a portrait page as landscape pixels
+plus an EXIF rotate tag, and `pdf-lib` embeds raw bytes and ignores the tag — every sample photo in
+`sample/` carries orientation 6, and un-redrawn they render sideways for every student. The same
+pass takes a 5 MB photo to ~400 KB so twenty pages fit the 20 MB material cap, and 2000 px loses
+nothing Gemini would have read. Verified: three 4000×3200 orientation-6 photos stored as
+1369×2000 / 1530×2000 / 1397×2000 portrait pages.
+
+**Limits are enforced in the route before anything reaches storage:** one PDF **or** up to
+`MAX_SCANNED_PAGES = 20` photos under the same `file` field (multer `.array`), never both; a
+material ≤ `MAX_MATERIAL_BYTES` = 20 MB **summed across photos** (multer only caps each file); a
+scanned document > 20 pages is a readable 400 rather than `materials_scanned_page_limit` 500-ing
+after the file is already up. The modal mirrors all three so the round trip is usually saved; the
+server is the guarantee.
+
+**The transcript is stored in `materials.ocr_pages` (JSONB, migration 0028) and written BEFORE
+extraction runs**, so an extraction failure — or a quota spent halfway — still leaves the educator
+the text that was read, which is the one thing that tells a blurry photo from a model problem.
+**It is served only by the owner-gated `GET /api/materials/:id/ocr-text`**, fetched on demand by
+`OcrTranscriptPanel` on the material page (shown for a scanned material once processing has finished
+either way). `MATERIAL_COLUMNS` in `materials.routes.ts` keeps it out of the list and detail
+payloads — a 20-page transcript is tens of kilobytes — and it never reaches a student: they read the
+pages in the viewer and the assistant reads the concepts. **`MATERIAL_COLUMNS` is one string
+literal, not a concatenation** — supabase-js types a select by parsing the literal, and a
+`string`-typed expression parses to `GenericStringError`.
+
+**`is_scanned` no longer means "unavailable" anywhere.** `ResourcesTab.unavailableReason()` consults
+it only on `failed`, where the likely cause (photos too blurry to read) is one a student can relay;
+the list icon flags a scanned material only when it failed. Educator copy says
+"Scanned / photographed (OCR)" and, on failure, "The pages could not be read". Do not reintroduce
+an amber scan state for a completed material.
+
+**No new model constant and no new Gemini rule.** OCR runs on `GEMINI_EXTRACTION_MODEL` at
+`ThinkingLevel.LOW` — by the two-question rule the transcript becomes concepts a student reads as
+fact, so it is authoring, and reading order on a two-column page or a table is the same class of
+judgement extraction already pays LOW for. MINIMAL is a later measurement, not a default.
+
 ### Chat (RAG) vs. Full Context
 The AI chatbot in ResourcesTab supports two modes (set via the `mode` field):
 - `rag`: Performs semantic similarity search against stored concept embeddings, retrieves the top-N relevant concepts, and uses those as context for the LLM. Best for specific questions.
@@ -323,7 +418,7 @@ APP_URL=http://localhost:3000
 - **Always run `npm run lint` after changes.** The project uses `tsc --noEmit` as its linting step.
 - **Three user roles exist: `student`, `educator`, and `admin`.** Use the appropriate `requireRole()` middleware for each endpoint. Admin manages accounts only. Educators manage materials and view analytics. Students access learning features.
 - **BKT is implemented directly in the backend.** Do NOT use pyBKT or any external BKT library. Do NOT implement Expectation Maximization (EM) parameter fitting. Use the default parameters specified in ARCHITECTURE.md.
-- **Only educators upload materials.** Students access materials uploaded by their educators. Students cannot upload instructional materials, and the student UI must contain no upload control, no file picker, and no delete control.
+- **Only educators upload materials.** Students access materials uploaded by their educators. Students cannot upload instructional materials, and the student UI must contain no upload control, no file picker, and no delete control. An educator uploads one PDF (text or scanned) or up to 20 JPEG/PNG photos of the pages; photos are assembled into one PDF and scans are read with OCR — see the OCR section.
 - **A material is published to EXACTLY ONE grade level**, enforced in three places that must agree: `materials_grade_levels_valid` (`array_length(grade_levels, 1) = 1`), `GradeLevelsField` in `server/types/api.ts` (`.length(1)`), and a single-select `Dropdown` in the two educator forms. **`grade_levels` stays `SMALLINT[]`** — a scalar column would be a cleaner model but would rewrite every grade-access path (`@>` in `materialAccess.ts`, `= ANY` in five RLS policies and `v_grade_level_mastery`, `unnest()` in `private.auth_assigned_grades()`, the GIN index). The CHECK enforces the rule just as hard; the array is an implementation detail, so **do not "simplify" a caller by assuming a scalar**.
 - **`PATCH /api/materials/:id` is the ONLY writer for `is_archived` and `grade_levels`, and it accepts nothing else.** Before it existed both controls were local `useState` toggles that looked functional and persisted nothing. `UpdateMaterialSchema` deliberately omits `subject` (a study space is built from its subject plus the materials published to it — re-pointing one would strand it in every space holding it, the mirror of `UpdateStudySpaceSchema`), `parsed_status`/`parse_error`/`is_scanned` (owned by the ingest pipeline; accepting them lets an educator mark a failed material Ready and push a concept-less material into student spaces), and `title`/`description` (no UI asks, and this must not become a general row editor). It sets `updated_at` explicitly — the column is `NOT NULL DEFAULT now()` with **no trigger**.
 - **Archiving and re-grading need no cascade, and must not have one.** Both work purely because reads filter live: `accessibleMaterialIds()`/`publishedMaterialIds()` drop archived material for students (the educator branch is archive-blind on purpose), and `spaceMaterialIds()` intersects the stored `study_space_materials` list against the live published set. So the **link rows and every `bkt_mastery` row survive untouched**, and un-archiving or moving the grade back restores exactly what was there. Verified: archive → restore and grade 9 → 8 → 9 both return the identical `m_doc`. Deleting link rows here would destroy that property. **Delete is the destructive one** (it cascades concepts → mastery), which is what the delete-modal copy already says.

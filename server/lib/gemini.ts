@@ -752,15 +752,22 @@ export async function streamContent(options: StreamContentOptions): Promise<Asyn
  * Generates structured JSON content from a document passed as inlineData —
  * the file itself goes to the model, with no text-extraction step in front.
  *
- * NO PRODUCTION CALLER TODAY; `server/test-gemini.ts` is the only one. It is
- * kept because it is the natural route for SCANNED materials, which the ingest
- * pipeline already detects and records (`materials.is_scanned`) without yet
- * doing anything about — a scanned PDF yields no extractable text, so
- * `conceptExtraction.ts` has nothing to work from and this is the way in.
+ * Its production caller is `ocr.ts`, which sends a scanned or photographed PDF
+ * a few pages at a time and gets a verbatim per-page transcript back — the
+ * route into `conceptExtraction.ts` for a material with no text layer. Gemini
+ * renders each PDF page as an image (560 tokens per page at the default
+ * resolution); no `mediaResolution` override is sent, because Google's own
+ * guidance is that OCR quality saturates at that default. `server/test-gemini.ts`
+ * is the other caller.
  *
  * `options.model` is required for the same reason `generateJson()`'s is: this
  * function used to hardcode `gemini-2.5-flash`, which has returned HTTP 404
  * since before it was last touched. Anything reaching it was broken.
+ *
+ * A `MAX_TOKENS` finish is an error here even when text came back. A page
+ * transcript cut off mid-array is unparseable anyway, but the reason must be
+ * the one `describeEmptyResponse()` gives — "raise maxOutputTokens" — rather
+ * than a JSON parse failure that sends the reader hunting a prompt bug.
  *
  * @param prompt - The instructions for extraction.
  * @param mimeType - The mime type of the file (e.g. 'application/pdf').
@@ -794,9 +801,13 @@ export async function generateJsonFromDocument<T = unknown>(
     'generateJsonFromDocument'
   );
 
+  if (response.candidates?.[0]?.finishReason === FinishReason.MAX_TOKENS) {
+    throw new Error(`Failed to generate JSON content: ${describeEmptyResponse(response)}`);
+  }
+
   const text = response.text;
   if (!text) {
-    throw new Error('Failed to generate JSON content: empty response from Gemini API');
+    throw new Error(`Failed to generate JSON content: ${describeEmptyResponse(response)}`);
   }
 
   try {

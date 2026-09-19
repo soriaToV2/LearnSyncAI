@@ -91,9 +91,12 @@ function formatFileSize(bytes: number | null): string {
 }
 
 /**
- * Why a material cannot be used, in words a student can act on. A scanned module
- * is the common case: the upload pipeline stores it but never extracts concepts
- * from it, so there is nothing for the assistant to read.
+ * Why a material cannot be used, in words a student can act on.
+ *
+ * A scanned or photographed lesson is read with OCR at upload and is then an
+ * ordinary material — `is_scanned` alone says nothing about availability any
+ * more. It only matters when processing FAILED, where the likely cause (photos
+ * too blurry or dark to read) is one the student can relay to their teacher.
  */
 function unavailableReason(material: SpaceMaterial): string | null {
   if (material.parsed_status === 'completed') return null;
@@ -101,7 +104,7 @@ function unavailableReason(material: SpaceMaterial): string | null {
     return 'Your teacher just added this. It is still being prepared.';
   }
   if (material.is_scanned) {
-    return 'This is a scan of printed pages, so there is no text the study assistant can read. Ask your teacher for a text version.';
+    return 'The photos of this lesson could not be read clearly. Ask your teacher to retake and upload them again.';
   }
   /*
    * ⚠️ `parse_error` IS DELIBERATELY NOT RENDERED HERE. It used to be, verbatim.
@@ -586,14 +589,15 @@ export default function ResourcesTab({
                 >
                   {/* A READY document is no longer red. Red is the alarm colour
                       this list uses for "Not available", so painting the healthy
-                      state red — while scanned got a calmer amber — inverted the
-                      whole scale. */}
+                      state red inverted the whole scale. A scanned lesson that
+                      processed is simply ready; the scan icon marks only one
+                      whose pages could not be read. */}
                   <div className="shrink-0 opacity-90 mt-0.5">
-                    {material.is_scanned
-                      ? <ScanLine className="w-5 h-5 text-amber-400" />
-                      : material.parsed_status === 'failed'
-                        ? <FileText className="w-5 h-5 text-red-400" />
-                        : <FileText className="w-5 h-5 text-primary-fixed-dim" />}
+                    {material.parsed_status === 'failed'
+                      ? material.is_scanned
+                        ? <ScanLine className="w-5 h-5 text-amber-400" />
+                        : <FileText className="w-5 h-5 text-red-400" />
+                      : <FileText className="w-5 h-5 text-primary-fixed-dim" />}
                   </div>
 
                   <div className="flex-1 min-w-0">

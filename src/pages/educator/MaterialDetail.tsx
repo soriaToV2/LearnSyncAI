@@ -11,6 +11,7 @@ import SubjectBadge, { SUBJECT_COLOR } from '../../components/educator/SubjectBa
 import GradeChips from '../../components/educator/GradeChips';
 import ParseStatusPill from '../../components/educator/ParseStatusPill';
 import ClassPerformance from './components/ClassPerformance';
+import OcrTranscriptPanel from './components/OcrTranscriptPanel';
 import {
   ALL_GRADE_LEVELS,
   formatFileSize, formatDate,
@@ -334,7 +335,9 @@ export default function MaterialDetail() {
     ['Subject', subjectNameOf(material.subject)],
     ['Pages', material.page_count ? String(material.page_count) : '—'],
     ['Size', formatFileSize(material.file_size_bytes)],
-    ['Type', material.is_scanned ? 'Scanned PDF' : 'Text PDF'],
+    // Photos are assembled into a PDF at upload, so a scan and a photographed
+    // lesson are one case here: both were read with OCR before extraction.
+    ['Type', material.is_scanned ? 'Scanned / photographed (OCR)' : 'Text PDF'],
     ['Uploaded', formatDate(material.created_at)],
     ['Concepts', String(material.concept_count)],
   ];
@@ -442,7 +445,7 @@ export default function MaterialDetail() {
             <AlertTriangle className="w-4.5 h-4.5 text-rose-400 shrink-0 mt-0.5" />
             <div>
               <p className="font-sans text-sm font-semibold text-rose-300 mb-1">
-                {material.is_scanned ? 'Scanned document — not processed' : 'Concept extraction failed'}
+                {material.is_scanned ? 'The pages could not be read' : 'Concept extraction failed'}
               </p>
               <p className="font-sans text-xs text-rose-300/80 leading-relaxed">{material.parse_error}</p>
               {canEdit && (
@@ -588,6 +591,17 @@ export default function MaterialDetail() {
           )}
           </div>
         </section>
+
+        {/*
+          Scanned and photographed materials only: the per-page OCR transcript
+          the concepts were extracted from. Shown once processing has finished
+          either way — after a FAILED extraction the transcript is exactly what
+          tells a blurry page from a model problem, and the server writes it
+          before extraction runs so it survives that failure.
+        */}
+        {material.is_scanned && canEdit && materialId && (
+          <OcrTranscriptPanel materialId={materialId} focusClass={FOCUS} />
+        )}
 
         {/*
           ⚠️ THE THREE LABELS SHORTEN BELOW `sm:`, FOR THE SAME REASON THE

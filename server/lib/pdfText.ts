@@ -7,7 +7,7 @@
  *
  * Two jobs, one pass:
  *   1. Report page_count and whether the document is scanned (image-only), so the
- *      upload handler can refuse scanned files without an OCR phase.
+ *      upload handler can route it through OCR instead of the text layer.
  *   2. Hand the per-page text to the concept extractor, so every concept can
  *      record the page(s) it came from (educator traceability).
  */
@@ -28,8 +28,9 @@ export interface PdfExtract {
   pages: PdfPage[];
   /**
    * True when the document carries essentially no text — i.e. it is a scan or
-   * photos of printed pages. Extraction is not attempted on these; OCR is a
-   * later phase.
+   * photos of printed pages. These go through OCR (`ocr.ts`) before extraction;
+   * a PDF assembled from uploaded photos (`pdfAssemble.ts`) reads as scanned by
+   * construction, which is exactly the branch it needs.
    */
   isScanned: boolean;
 }

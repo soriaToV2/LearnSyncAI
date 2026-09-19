@@ -60,8 +60,8 @@ The extraction pipeline enables educators to:
 
 ### Key Constraints
 
-- **Plain-text PDFs only** — scanned / image-based PDFs are detected and rejected at upload time
-- **20 MB file size limit** — enforced before any processing
+- **Text PDFs, scanned PDFs, and photos of pages** — a scan is detected by the text-layer density check and read with OCR (`server/lib/ocr.ts`, Gemini) before extraction; 1–20 JPEG/PNG photos are assembled into one PDF (`server/lib/pdfAssemble.ts`) and then treated as a scan. Until 2026-09-19 scans were stored `failed` with "OCR is a later phase"; see the OCR section of `CLAUDE.md`.
+- **20 MB per material, 20 pages per scanned/photographed document** — both enforced before any processing
 - **Grades 7–10 only** — educators select which grades can access each material
 - **Educators only** — students cannot upload materials
 - **Single ownership** — each material belongs to one educator; RLS enforces this
@@ -88,19 +88,17 @@ The extraction pipeline enables educators to:
                          │ [Express backend: materials.routes.ts]
                          │ ├─ Zod validation (title, subject, grades)
                          │ ├─ Subject exists? (query DB)
-                         │ ├─ Save file to Supabase Storage
+                         │ ├─ One PDF, or 1–20 photos? (photos → one PDF, pdfAssemble.ts)
                          │ ├─ Extract PDF text (pdfText.ts)
-                         │ ├─ Detect scanned? (text-layer density check)
-                         │ └─ Insert material row
+                         │ ├─ Detect scanned? (text-layer density check; > 20 pages → 400)
+                         │ ├─ Save file to Supabase Storage
+                         │ └─ Insert material row (always Pending)
                          │
-                    ┌────┴────┐
-           SCANNED? │         │ TEXT?
-                    ▼         ▼
-             ✗ Failed     ✓ Pending
-             + Error        │
-             + is_scanned    └──→ processMaterialAsync()
+                              └──→ processMaterialAsync()
                                   │
                                   ├─ Set status = "processing"
+                                  ├─ SCANNED? → OCR (ocr.ts, 5 pages per Gemini call)
+                                  │             → save transcript to materials.ocr_pages
                                   ├─ Split document into windows (8k chars / 6 pages)
                                   ├─ For each window:
                                   │  ├─ Call Gemini (schema-pinned, no temperature)
@@ -184,20 +182,15 @@ The extraction pipeline enables educators to:
    - **Returns 400 if unknown** (before any file operations)
 
 4. **File Type & Size Check:**
-   ```typescript
-   if (!req.file || req.file.mimetype !== 'application/pdf') {
-     return res.status(400).json({ error: 'Only PDF files are allowed' });
-   }
-   if (req.file.size > 20 * 1024 * 1024) {
-     return res.status(400).json({ error: 'File exceeds 20 MB limit' });
-   }
-   ```
+   - multer accepts `application/pdf`, `image/jpeg`, `image/png` under the one `file` field, up to 20 files, 20 MB each.
+   - The route then requires **one PDF or photos only** (400 on a mix), sums the photo bytes against the 20 MB material cap (multer only caps each file), and assembles photos into one PDF with `imagesToPdf()` — which sniffs the bytes (JPEG `FF D8 FF`, PNG `89 50 4E 47`) rather than trusting the mimetype.
 
 5. **PDF Text Extraction (Scan Detection):**
    ```typescript
-   const pages = await extractPdfPages(req.file.buffer);
+   const pages = await extractPdfPages(fileBuffer);   // the uploaded PDF, or the assembled one
    // Returns: { pageCount: number, pages: PdfPage[], isScanned: boolean }
    ```
+   - A scanned document with more than 20 pages is a 400 here, before storage, rather than a CHECK-constraint 500 after.
    - **File:** [server/lib/pdfText.ts](server/lib/pdfText.ts)
    - Reads the PDF using `pdfjs-dist` (legacy Node.js build)
    - For each page, counts text items (MIN_TEXT_ITEM_PER_PAGE = 5)
@@ -215,18 +208,16 @@ The extraction pipeline enables educators to:
        subject,
        description,
        grade_levels,
-       file_size_bytes: req.file.size,
+       file_size_bytes: fileBuffer.length,
        page_count: pages.pageCount,
        is_scanned: isScanned,
-       parsed_status: isScanned ? 'failed' : 'pending',
-       parse_error: isScanned ? 'Scanned documents are not supported yet.' : null,
-       is_archived: false,
+       parsed_status: 'pending',
+       parse_error: null,
      })
-     .select()
+     .select(MATERIAL_COLUMNS)   // every column except ocr_pages
      .single();
    ```
-   - Sets `parsed_status` to `'failed'` if scanned, else `'pending'`
-   - If scanned, sets `parse_error` message
+   - Every kind of material starts `'pending'`; a scan carries its bytes into `processMaterialAsync()` so OCR can read them without a storage round trip
    - **Returns 201** with the new material row
 
 7. **File Upload to Storage:**
@@ -986,14 +977,13 @@ const MIN_TEXT_ITEM_PER_PAGE = 5;
 const isScanned = totalTextItems / pageCount < MIN_TEXT_ITEM_PER_PAGE;
 ```
 
-**Handling:**
-- Mark material `is_scanned = true`
-- Set `parsed_status = 'failed'`
-- Set `parse_error = 'Scanned documents are not supported yet.'`
-- Do NOT upload file to storage
-- Do NOT attempt extraction
+**Handling (since 2026-09-19):**
+- Mark material `is_scanned = true`, store it, insert it `pending` like a text PDF
+- In `processMaterialAsync()`: `transcribeScannedPdf()` (`server/lib/ocr.ts`) sends the PDF to Gemini five pages at a time with a verbatim-transcription prompt (`[?]` for any word it cannot read) and returns `PageText[]`
+- The transcript is saved to `materials.ocr_pages` **before** extraction, then `extractConcepts(pages)` runs unchanged
+- A document with no readable page at all fails with `OCR_UNREADABLE_MESSAGE` ("Retake the photos flat, in focus and in good light…"); one blank page among readable ones is stored as `""` and the rest still yield concepts
 
-**Why?** Scanned PDFs have no text layer; Gemini cannot extract concepts from the images. OCR is deferred as a future phase.
+**Why two steps?** The transcript enters the same windowed extractor a text layer does, so every guarantee in this document applies to a photographed lesson unchanged — and the educator can read what the OCR read (`GET /api/materials/:id/ocr-text`, the "Text read from the pages" panel) when a concept looks wrong. Full reasoning, including why Cloud Vision was not chosen, is in the OCR section of `CLAUDE.md`.
 
 ### Empty PDFs
 
@@ -1327,12 +1317,12 @@ Response (201):
 - [ ] Verify all concepts have `source_pages` populated
 - [ ] Verify `page_count` and `file_size_bytes` are correct
 
-#### Scanned PDF Detection
-- [ ] Upload a scanned/image PDF
-- [ ] Verify `is_scanned = true`, `parsed_status = 'failed'`
-- [ ] Verify `parse_error` contains "not supported"
-- [ ] Verify file is NOT uploaded to Storage
-- [ ] Verify no concepts are extracted
+#### Scanned PDF / photographed pages (OCR)
+- [x] Upload 3 phone photos of a textbook page → `is_scanned = true`, `page_count = 3`, `parsed_status` pending → processing → completed (~21 s), 10 concepts with `source_pages ⊆ {1,2,3}`, stored PDF has three upright portrait pages (verified on the clone, 2026-09-19)
+- [x] `GET /:id/ocr-text` returns 3 pages; the list payload carries no `ocr_pages`; another educator gets 404
+- [x] A deliberately blurred photo → `failed` with the retake message and zero concepts
+- [x] The same photos uploaded as one scanned PDF → same pipeline, completed
+- [x] 21 photos, a PDF mixed with a photo, a `.docx`, and bytes claiming to be JPEG → 400 with a readable message, nothing stored
 
 #### Auth & Authorization
 - [ ] Upload without token → `401`

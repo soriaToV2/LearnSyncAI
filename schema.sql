@@ -258,6 +258,11 @@ CREATE TABLE materials (
     parsed_status   parsed_status NOT NULL DEFAULT 'pending',
     parse_error     TEXT,
     is_archived     BOOLEAN    NOT NULL DEFAULT false,
+    -- OCR transcript for a scanned/photographed material (migration 0028):
+    -- [{page, text}] in page order, "" for an unreadable page, NULL for a text
+    -- PDF. Written before extraction runs; read only by the owner-gated
+    -- GET /api/materials/:id/ocr-text, never by a list or a student.
+    ocr_pages       JSONB,
     created_at      TIMESTAMPTZ DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -290,7 +295,9 @@ COMMENT ON COLUMN materials.subject IS
 COMMENT ON COLUMN materials.grade_levels IS
     'The ONE JHS grade level this material is published to, held as a single-element array (see materials_grade_levels_valid). Drives student-side RLS and, in turn, which students the educator can monitor. Editable after upload via PATCH /api/materials/:id.';
 COMMENT ON COLUMN materials.is_scanned IS
-    'True for image-based/scanned PDFs, which are limited to 20 pages.';
+    'True for image-based/scanned PDFs (including assembled photo uploads), which are limited to 20 pages and go through OCR before extraction.';
+COMMENT ON COLUMN materials.ocr_pages IS
+    'Per-page transcript produced by OCR for scanned/photographed materials, [{page, text}] in page order; NULL for text PDFs.';
 COMMENT ON COLUMN materials.parse_error IS
     'Populated alongside parsed_status = failed so the educator sees why ingestion failed.';
 

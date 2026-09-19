@@ -729,15 +729,19 @@ instead of looking up which material each concept actually came from. Labels are
 wrong whenever there is more than one material, and archiving changes the list length
 so the labels shift. Pre-existing; not caused by this work.
 
-### 11.5 Paper promises OCR; the code refuses scanned documents
+### 11.5 Paper promises OCR; the code refuses scanned documents — RESOLVED 2026-09-19
 
 p. 60 states the platform "supports image-based or scanned documents with a maximum
 of 20 pages, which are processed using Optical Character Recognition (OCR)."
-The upload pipeline detects scanned PDFs and marks them `failed` with
+The upload pipeline used to detect scanned PDFs and mark them `failed` with
 "Scanned documents are not supported yet… OCR for image-based PDFs is a later phase."
 
-The Resources tab explains this to students in plain language, but **the paper and
-the system disagree** and this must be resolved before the capstone defence.
+**Resolved.** Scanned PDFs and photographed pages (up to 20, assembled into one PDF)
+are now read with OCR (`server/lib/ocr.ts`, Gemini) and go through the same concept
+extraction as text PDFs. `unavailableReason()` consults `is_scanned` only when
+processing failed, where the message tells the student the photos could not be read
+clearly and to ask their teacher to retake them; a completed scan is simply "Ready".
+See the OCR section of `CLAUDE.md`.
 
 ### 11.6 Three student routes still take material IDs without a gate
 
