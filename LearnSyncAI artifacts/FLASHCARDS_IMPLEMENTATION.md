@@ -42,9 +42,9 @@
 A student creates a **deck** — their own folder for organising a lesson. They open it, pick one of
 their educator's materials, and the system fills the deck with one flashcard per vetted concept in
 that material. They study the deck; each card they rate Easy / Medium / Hard is scheduled to reappear
-in 7 / 3 / 1 days. When they come back, the deck offers only the cards that are actually due. Cards
-that are not due can still be practised, but practising changes nothing — no reschedule, and (once
-BKT lands) no mastery movement.
+in 7 / 3 / 1 days. When they come back, the deck offers only the cards that are actually due; when nothing is
+due it says the day the cards come back. There is no practice session over cards that are not due —
+the cards can still be flipped through in the deck's grid, which records nothing.
 
 ### The division of ownership, which is the heart of the design
 
@@ -203,6 +203,13 @@ this space's deck and corrupt the mastery picture the space represents.
 > **A rating reschedules the card if and only if the card was due when it was rated:
 > `next_review_at <= now()`.**
 
+> **⚠️ There is no practice mode (removed 2026-10-11).** A session holds only due cards. "Practice
+> all", "Practice these N", "Drill N Hard Cards Again", "Restart Entire Set" and the "Practice
+> round" banner are gone. The server always ignored those ratings, but practice spoiled the NEXT
+> rating that did count: a card seen on Wednesday, Friday and Sunday is easy on its due Monday, and
+> that counted Easy records yesterday's look rather than a week's retention. The card grid stays
+> browsable (flip, nothing recorded). Do not reintroduce a not-due session.
+
 That single check is the entire system. It needs no session id, no practice flag, and no new column,
 because `flashcards.next_review_at` defaults to `now()` — a fresh card is born due, so the first
 honest pass always counts.
@@ -212,14 +219,14 @@ honest pass always counts.
 | First time seeing a card | Yes | New cards default to due |
 | Due today, or overdue by days | Yes | `<=`, not `===` a date |
 | Re-drilled 30 seconds later | No | Already rated — now due in 1–7 days |
-| "Practice all" before a test | No | Those cards are not due |
+| Rated from a stale second tab | No | Already rated in the first — no longer due |
 | Comes back next week | Yes | Due again |
 
 **Do not special-case any of these.** They are all the same check.
 
 ### Why retries must not count
 
-A student rates Hard, presses "Drill hard cards again", and rates the same card Easy thirty seconds
+A student rates Hard, re-opens the card, and rates it Easy thirty seconds
 later — because they just read the answer. That is working memory, not knowledge. Counting it drives
 mastery **up** on exactly the concepts the student is weakest at, and lets anyone farm mastery by
 re-drilling one card. BKT assumes each observation is an independent test of latent knowledge; a
@@ -228,9 +235,8 @@ later ones as help-seeking.
 
 ### The client never decides
 
-`FlashcardStudyView` posts **every** rating, including inside a practice round. A "Practice all"
-session over a deck with 12 genuinely due cards must still schedule those 12 — skipping the request
-would lose them. The server checks and returns `counted`; the UI reports what happened rather than
+`FlashcardStudyView` posts **every** rating. Building only due sessions is a courtesy, not the
+guarantee — the server checks and returns `counted`; the UI reports what happened rather than
 asserting it.
 
 ### Ratings save immediately, one request per card
@@ -407,7 +413,8 @@ again clears them.
 
 // not due — nothing written
 { "data": { "counted": false, "next_review_at": "<unchanged>" },
-  "message": "Practice rating — this card was not due, so its schedule is unchanged." }
+  "message": "Not due — this card's schedule is unchanged." }
+// (writes no activity row either, since 2026-10-11)
 ```
 
 ---
@@ -432,13 +439,13 @@ the tab and starting a session is one click. The deck view is not on the way.
 |---|---|---|---|
 | No cards | — | `Empty — no cards yet` | `Add Cards` |
 | Cards due | **`12`** | `68 cards` | **`Review 12`** (primary) |
-| None due | — | `68 cards · next review Tue 4 Aug` | `Practice all` (quiet) |
+| None due | — | `68 cards` | `✓ Caught up · back Tue 4 Aug` — a status bar, **not a button** |
 
 ⚠️ **The due count appears exactly TWICE on a due tile — badge and button — and that is deliberate.**
 `deckSummary()` used to append `· 12 due`; it no longer does. Three copies of one number on a small
 tile read as noise rather than emphasis. The badge is for *scanning* a grid of decks, the button is
-for *acting*; the summary line is facts. The not-due branch is untouched, because "next review Tue
-4 Aug" is the useful thing to say when there is nothing to do.
+for *acting*; the summary line is facts. A caught-up tile states its return date once, on the status
+bar, so the summary line no longer repeats it (and the deck view states it in its caught-up banner).
 
 ### The due badge (added 6 August 2026)
 
@@ -491,9 +498,10 @@ every card.
 - The results ring says **"Session Score"**, never "Mastery". It is `(easy + medium × 0.5) / cards` —
   a tally of self-ratings for one session. BKT mastery is a per-concept probability in `bkt_mastery`.
   One word for both invites a reader to mistake this figure for the paper's.
-- The results screen **reports** what was rescheduled from `counted` replies. It must never assert
-  "your next review dates have been scheduled" — that was false after any practice round.
-- A practice round says so **up front**, in a banner above the first card, not at the end.
+- The results screen **reports** what was rescheduled from the server's replies, and only once every
+  reply is in (*"Saving your ratings…"* until then). Each rating records `saved: 'counted' |
+  'unchanged' | 'failed'`; recording only `counted` made the last card's late reply flash a false
+  "not counted" sentence. **Back to Deck** is the only button — no drill, no restart.
 - Every failure is rendered. `console.error`-only is a regression.
 
 ---
@@ -560,7 +568,7 @@ select rating, interval_days, count(*),
        count(*) filter (where concept_id is null) as missing_concept
 from spaced_repetition_logs group by rating, interval_days;
 
--- Did a practice round wrongly create rows? Should stay 1 per card per due cycle.
+-- Did a not-due rating wrongly create rows? Should stay 1 per card per due cycle.
 select flashcard_id, count(*) from spaced_repetition_logs
 group by flashcard_id having count(*) > 1;
 ```
@@ -730,7 +738,7 @@ than failing.
 | **Concept** | An educator-vetted term + definition extracted from a material. The unit of mastery. |
 | **Deck** | A student's folder. Organisational only; holds cards from one or more materials. |
 | **Due** | `next_review_at <= now()`. The only condition under which a rating counts. |
-| **Practice round** | A session over cards that are not due. Ratings are sent, the server ignores them. |
+| **Practice round** | *Removed 2026-10-11.* Was a session over cards that are not due. Every session is now due-only. |
 | **Counted** | Server's answer for whether a rating actually moved the schedule. |
 | **Session Score** | `(easy + medium × 0.5) / cards` for one session. **Not** BKT mastery. |
 | **Reconcile** | Refresh strategy that updates/inserts/deletes by `concept_id` instead of wiping, to preserve rating history. |

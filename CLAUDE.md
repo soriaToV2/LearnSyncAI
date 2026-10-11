@@ -453,7 +453,7 @@ APP_URL=http://localhost:3000
 
 ## Flashcards Tab — Layout
 
-**Study is on the deck tile, not behind the deck view.** Opening the tab and starting a session is one click. The deck view still exists — for browsing cards, adding another lesson, renaming and deleting — but it is no longer a step you pass *through* to reach studying. A tile shows exactly one action: **Study** when it has cards, **Add Cards** when it does not.
+**Study is on the deck tile, not behind the deck view.** Opening the tab and starting a session is one click. The deck view still exists — for browsing cards, adding another lesson, renaming and deleting — but it is no longer a step you pass *through* to reach studying. A tile shows exactly one thing in its action slot: **Add Cards** when it is empty, **Review N** when cards are due, and — when nothing is due — a non-interactive **`Caught up · back Tue 14 Oct`** status bar, never a button (see *There is no practice mode* below).
 
 **A deck's summary line is derived, not stored.** `deckSummary()` reads the distinct `sourceMaterialId`s of the deck's cards and resolves them against `availableResources`, giving "68 cards · from 6. Information Security" or "· from 2 lessons". Nothing on `flashcard_decks` records this — see the rule above about not adding `source_material_id` to the deck.
 
@@ -461,7 +461,7 @@ APP_URL=http://localhost:3000
 
 **`isDue()` lives in `src/lib/reviewSchedule.ts`, mirroring the server file of the same name.** It moved out of `FlashcardsTab` when `StudySpace` needed it — a tab exporting a utility up to its own parent is backwards, and two copies of a scheduling rule drift. The server stays authoritative; this only decides what to *show* and which cards a session opens with. The tab badge and the per-deck badges must both use it, or their numbers stop agreeing.
 
-**A due deck's tile states the count exactly twice — badge and "Review N" button — and `deckSummary()` deliberately stops appending "· N due".** Three copies on one small tile read as noise. The not-due branch is unchanged, because "68 cards · next review Tue 4 Aug" is the useful thing to say when there is nothing to do.
+**A due deck's tile states the count exactly twice — badge and "Review N" button — and `deckSummary()` deliberately stops appending "· N due".** Three copies on one small tile read as noise. For the same reason it no longer appends "· next review …" either: a caught-up tile states its date on the status bar, and the deck view states it in the caught-up banner. `deckSummary()` is the card count and nothing else.
 
 **A brand-new deck shows as entirely due, and that is correct.** `flashcards.next_review_at` defaults to `now()`, so a freshly generated 29-card deck puts **29** on the badge. It reads like a backlog when the student made the deck a minute ago, but separating "new" from "needs revisiting" would change what the server counts as due — which is the single load-bearing check in `POST /api/flashcards/rate`. Shipped as-is deliberately.
 
@@ -481,21 +481,23 @@ APP_URL=http://localhost:3000
 
 ## Flashcards — Spaced Repetition
 
-**One rule governs everything: a rating counts only if the card was due.** `next_review_at` moves — and, when BKT lands, mastery updates — if and only if `next_review_at <= now()` at the moment the student rates. Every other rating is practice: nothing is written, and `POST /api/flashcards/rate` answers `counted: false`. No column was needed for this; `flashcards.next_review_at` defaults to `now()`, so a fresh card is born due and the first honest pass always counts.
+**One rule governs everything: a rating counts only if the card was due.** `next_review_at` moves — and, when BKT lands, mastery updates — if and only if `next_review_at <= now()` at the moment the student rates. Every other rating writes nothing at all — no schedule, no BKT observation, no activity row — and `POST /api/flashcards/rate` answers `counted: false`. No column was needed for this; `flashcards.next_review_at` defaults to `now()`, so a fresh card is born due and the first honest pass always counts.
 
-That single check covers retries, "Restart Entire Set", cramming before a test, and studying the same deck three times in a day. **Do not special-case any of them, and do not add a session id or a practice flag** — a card rated moments ago is not due, which is the whole mechanism.
+That single check covers a stale second tab, a double-tap and any request our UI did not make. **Do not special-case any of them, and do not add a session id or a practice flag** — a card rated moments ago is not due, which is the whole mechanism.
 
-**Why retries must not count.** A student rates Hard, presses "Drill hard cards again", and rates the same card Easy thirty seconds later — because they just read the answer. That is working memory, not knowledge. Counting it drives mastery *up* on exactly the concepts the student is weakest at, and lets anyone farm mastery by re-drilling one card. BKT assumes each observation is an independent test of latent knowledge; a retry is not one, which is why ITS implementations score the **first attempt** and treat later ones as help-seeking.
+**⚠️ THERE IS NO PRACTICE MODE, AND IT MUST NOT COME BACK (removed 2026-10-11).** A session holds only due cards: "Practice all", "Practice these N", "Drill N Hard Cards Again" and "Restart Entire Set" are all gone, along with `isPractice` and the "Practice round" banner. The server always ignored those ratings, so the schedule's data was never at risk — **the damage was to the NEXT rating that did count.** A card rated Easy on Monday and practised on Wednesday, Friday and Sunday is easy on its due Monday, and that counted Easy (0.72 → 0.98) records yesterday's look rather than a week's retention. The gap is the mechanism; practice silently shortened it and the server cannot tell. When nothing is due the tile and the deck view say **when cards come back** instead of offering a drill. The card grid stays browsable (flip, no rating, nothing recorded) — the same text is one tab away in Learning Resources, so locking it would stop nothing; what was removed is the rated drill that looked like a review.
 
-**The client never decides this.** `FlashcardStudyView` posts every rating, including in a practice round — a "Practice all" session over a deck with 12 genuinely due cards must still schedule those 12. The server checks and returns `counted`; the UI reports what actually happened rather than asserting it.
+**Why retries must not count.** A student rates Hard, re-opens the card, and rates it Easy thirty seconds later — because they just read the answer. That is working memory, not knowledge. Counting it drives mastery *up* on exactly the concepts the student is weakest at, and lets anyone farm mastery by re-drilling one card. BKT assumes each observation is an independent test of latent knowledge; a retry is not one, which is why ITS implementations score the **first attempt** and treat later ones as help-seeking.
+
+**The client never decides this.** `FlashcardStudyView` posts every rating and the server checks and returns `counted`; the UI reports what actually happened rather than asserting it. Building only due sessions is a courtesy, not the guarantee.
 
 **`server/lib/reviewSchedule.ts` is the only place intervals and due-ness are defined.** `REVIEW_INTERVALS` is Easy 7 / Medium 3 / Hard 1, matching `CHECK (interval_days IN (1, 3, 7))`. Four separate places used to disagree about Easy (7 vs 4) and the database would have rejected 4 outright. `FlashcardsTab` has a small `isDue()` mirroring the server's, for display and session composition only.
 
 **Due dates land on midnight Asia/Manila, not `now + N × 24h`.** A student who rates at 8pm Monday and revises after school on Tuesday must find their cards waiting; exact 24-hour intervals would hide them until 8pm and the deck would look broken. `nextReviewAt()` shifts into the Manila frame, truncates to the date, adds the interval and shifts back. A fixed +8 offset is correct — the Philippines has observed no DST since 1978. If the platform ever spans timezones this becomes a per-profile setting.
 
-**Sessions are due-only; the card grid always shows everything.** Different jobs. A deck tile reads `68 cards · 12 due` with a *Review 12* button, falling back to `next review Tue 4 Aug` and a quiet *Practice all* when nothing is due. The grid inside a deck is for browsing a lesson, so scheduled cards are marked `Due in 3 days` — never hidden, or the deck would look emptied.
+**Sessions are due-only; the card grid always shows everything.** Different jobs. A deck tile reads `68 cards` with a badge and a *Review 12* button, or a *Caught up · back Tue 4 Aug* status bar when nothing is due. The grid inside a deck is for browsing a lesson, so scheduled cards are marked `Due in 3 days` — never hidden, or the deck would look emptied.
 
-**The results screen reports what was rescheduled, never asserts it.** It counts `counted` responses: "12 cards rescheduled" or "Nothing was rescheduled — these weren't due yet." The old unconditional "Your next review dates have been scheduled" was false after any practice round.
+**The results screen reports what was rescheduled, never asserts it — and only once every reply is in.** Each rating records `saved: 'counted' | 'unchanged' | 'failed'` from the server's reply; until none is pending the panel reads *"Saving your ratings…"*. Only `'counted'` used to be written, so the last card's reply — which routinely lands after the results screen opens — read as not-counted for a moment and the screen flashed a false sentence. Inside a due-only session `'unchanged'` can only mean the card was reviewed in another tab first, and the copy says so. **"Back to Deck" is the only button** — no drill, no restart.
 
 **`POST /api/flashcards/rate` walks card → deck → space and 404s unless the space is the caller's.** It previously took any card UUID from any student. Once BKT hangs here, that would have written mastery against a stranger's concepts.
 
@@ -754,19 +756,19 @@ states which deck it belongs to and is ignored everywhere else; the reset effect
 it. It is **visit-scoped**: `<main key={activeTab}>` remounts the tab, so it describes one test rather
 than a property of the deck.
 
-**⚠️ THE DUE SPLIT IS STATED BEFORE THE STUDENT STARTS, AND THAT IS NOT DECORATION.** Flashcards move
-mastery only for cards that are **due** — `POST /flashcards/rate` returns early otherwise and writes
-no schedule, no `spaced_repetition_logs` row and no BKT update. So a student who cleared this deck
-yesterday, then missed five concepts in a test, can drill all five and change nothing, having arrived
-via a button carrying a "moves mastery" chip. The banner therefore reads *"12 cards from your last
-test are marked below. 8 are due — reviewing those updates your mastery"*, and the drill button says
-**Review these N** when some are due and **Practice these N** when none are. **The fix is never to
-relax the due-check.**
+**⚠️ THE DUE SPLIT IS STATED BEFORE THE STUDENT STARTS, AND THAT IS NOT DECORATION.** Only **due**
+cards can be reviewed — a session is due-only and `POST /flashcards/rate` writes nothing otherwise.
+So a student who cleared this deck yesterday, then missed five concepts in a test, has nothing to
+review here until those cards come back, having arrived via a button carrying a "moves mastery"
+chip. The banner therefore reads *"12 cards from your last test are marked below. 8 are due —
+reviewing those updates your mastery. The rest come back from Tue 14 Oct."* with a **Review 8 marked
+cards** button (the count is the DUE marked cards — exactly what the session holds). With none due
+there is **no button**, only the date the first one comes back. **The fix is never to relax the
+due-check, and never to reintroduce a practice drill here.**
 
-**`studyMode` gained `'marked'`, and it is a CARD FILTER, not a new rule** — every rating is still
-posted and the server still decides `counted` by the same check. `isPractice` is now computed on
-**the session's own cards**; it previously asked whether anything anywhere in the deck was due, which
-is the wrong question for a filtered session.
+**`studyMode` is `'due' | 'marked'`, and `'marked'` is a CARD FILTER, not a new rule** — it narrows
+the due cards to the ones the test flagged; every rating is still posted and the server still
+decides `counted` by the same check.
 
 **The no-deck fallback offers to build one, and it generates `format: 'term'` — NEVER `'question'`.**
 The term path has no model in it, so it is instant and free; the question path is a Gemini call
@@ -845,7 +847,7 @@ mastery now appears at all, in its own labelled section.
 ## Gamification — streaks & badges
 
 > **Full reference: `LearnSyncAI artifacts/STREAKS_BADGES_IMPLEMENTATION.md`.** Read it before
-> changing anything here — it carries the data model, the nine call sites with their three
+> changing anything here — it carries the data model, the call sites with their exclusions,
 > exclusions, the badge catalogue with the reasoning behind each threshold, the debugging
 > playbook with verified SQL, and the acceptance evidence. What follows is only what must not
 > be broken by accident.
@@ -859,22 +861,22 @@ mastery now appears at all, in its own labelled section.
 > database 2026-08-20. It drops the `activity_logs` student INSERT policy (see below). The
 > feature works without it; the migration closes a security hole.
 
-**`server/lib/activity.ts` is the ONLY writer for `activity_logs`, and `logActivity()` NEVER THROWS.** That is deliberately unlike `applyFlashcardRating()` / `bktProblems()`, which throw and are caught at each of their two call sites: a BKT failure is diagnostically important and its return value is consumed, whereas this has **nine call sites** and no consumer that can act on a failure. Nine chances to forget a `try/catch` is the larger risk. A missing streak day must never cost anyone a score.
+**`server/lib/activity.ts` is the ONLY writer for `activity_logs`, and `logActivity()` NEVER THROWS.** That is deliberately unlike `applyFlashcardRating()` / `bktProblems()`, which throw and are caught at each of their two call sites: a BKT failure is diagnostically important and its return value is consumed, whereas this has **eight call sites** and no consumer that can act on a failure. Eight chances to forget a `try/catch` is the larger risk. A missing streak day must never cost anyone a score.
 
 **One insert is the whole streak mechanism.** `trigger_update_streak` is `AFTER INSERT ON activity_logs` and maintains `day_streak`, `longest_streak` and `total_study_hours` itself. It has **already run by the time the insert resolves** (same transaction), so reading `longest_streak` immediately afterwards is correct — it looks racy and is not. **A day is an Asia/Manila calendar day**, never a 48-hour clock; `ARCHITECTURE.md` claimed the latter for months and was wrong.
 
-**The nine call sites, and the three exclusions that matter more:**
+**The eight call sites, and the exclusions that matter more:**
 
 | Logs | Where |
 |---|---|
-| `flashcard` ×2 | `flashcards.routes.ts` — the counted path **and** the not-due practice branch |
+| `flashcard` | `flashcards.routes.ts` — the counted path only |
 | `adaptive_test` | `practice.routes.ts` `PUT /:id/complete`, after `applyTestCompletion` |
 | `free_recall` ×2 | `cognitive.routes.ts` — fresh **and** memo-hit |
 | `feynman` ×2 | `cognitive.routes.ts` — fresh **and** memo-hit |
 | `game` | `gamification.routes.ts`, after the `game_sessions` insert |
 | `chat` | `chat.routes.ts`, after the normal-turn `chatbot_logs` insert |
 
-- **The not-due flashcard branch MUST log.** With 7-day Easy intervals a student who cleared their deck yesterday has nothing due today; logging only the counted path would break their streak for using spaced repetition correctly.
+- **The not-due flashcard branch must NOT log — a reversal (2026-10-11).** It used to, so a student with nothing due could keep a streak by practising. Practice sessions were removed (see *There is no practice mode*), so a not-due rating now comes only from a stale second tab or a hand-made request, and neither should earn a streak day or `cards_100` progress. On a day with nothing due, any other activity keeps the streak.
 - **Both cognitive memo paths MUST log.** A resubmission is a real attempt and writes a real `cognitive_logs` row; only the model calls are skipped.
 - **The compare-and-swap loser must NOT log** (`flashcards.routes.ts`) — a duplicate request, not a second study event. Nor must the **off-topic chat refusal** (`chat.routes.ts`), which writes a `chatbot_logs` row for a question the assistant declined. Nor a `PUT /complete` that does not flip the status.
 
@@ -890,7 +892,7 @@ mastery now appears at all, in its own labelled section.
 
 **⚠️ EVALUATION ORDER IS WHAT KEEPS THIS CHEAP, AND IT RUNS AFTER EVERY SINGLE FLASHCARD RATING.** One indexed read of the badges already held → narrow the catalogue to (not held) ∧ (triggered by this activity type) → **if nothing survives, return with zero further queries.** That is the steady state, so a saturated activity costs exactly one lookup forever after, and every COUNT-based rule stops running the moment its badge is earned. Measured: ~260ms per saturated activity. **Do not add a rule that queries before the held-set filter.**
 
-**`cards_100` counts `activity_logs`, not `spaced_repetition_logs`** — the latter gets no row for a practice rating on an un-due card, so the two tables disagree about what "reviewed" means. One uniform source for every "N times" rule.
+**`cards_100` counts `activity_logs`, not `spaced_repetition_logs`** — one uniform source for every "N times" rule. Since the not-due branch stopped logging, both tables now record one row per counted rating, so the count means *due reviews*. It stays at 100 by decision (2026-10-11): reachable in the study week with two lessons' decks, and the gallery's progress bar makes it read as a goal.
 
 **Mastery badges trigger only on `flashcard` and `adaptive_test`** — the two modes permitted to move mastery (p. 58). A game or chat turn cannot change the count, so checking after one would be a query guaranteed to find nothing.
 

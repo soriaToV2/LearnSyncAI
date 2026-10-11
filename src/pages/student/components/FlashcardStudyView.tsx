@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { RotateCcw, Trophy, ArrowLeft, Zap, Clock, AlertTriangle, Brain, Calendar, CheckCircle2 } from 'lucide-react';
+import { Trophy, ArrowLeft, Zap, Clock, AlertTriangle, Brain, Calendar, CheckCircle2 } from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import { api } from '../../../lib/api';
 import { useBadges } from '../../../context/BadgeContext';
@@ -19,21 +19,26 @@ interface Flashcard {
 interface CardSession {
   cardId: number | string;
   rating: EaseRating;
-  /** Whether the server actually rescheduled it — false when it wasn't due. */
-  counted?: boolean;
+  /**
+   * What the server did with the rating; `undefined` while it is in flight.
+   *
+   * `'unchanged'` means the server answered `counted: false` — the card was no
+   * longer due, which inside a due-only session means it was reviewed in
+   * another tab first. `'failed'` means the request itself failed.
+   *
+   * ⚠️ ALL THREE ARE RECORDED, NOT JUST `'counted'`. Only the counted case used
+   * to be written, so the last card's reply — which routinely lands after the
+   * results screen opens — read as "not counted" for a moment and the screen
+   * flashed a false sentence about it. The results panel now waits until
+   * nothing is pending.
+   */
+  saved?: 'counted' | 'unchanged' | 'failed';
 }
 
 interface FlashcardStudyViewProps {
   cards: Flashcard[];
   deckTitle: string;
   onExit: () => void;
-  /**
-   * A round the student chose to run over cards that are not due — "Practice
-   * all", or re-drilling cards they just rated. Ratings are still sent (a
-   * practice round can contain genuinely due cards, and those must schedule),
-   * but the UI says up front that most of them will not count.
-   */
-  isPractice?: boolean;
   /**
    * The deck's `answer_first` setting: show the definition first and ask for the
    * term, rather than the other way round.
@@ -217,7 +222,6 @@ export default function FlashcardStudyView({
   cards,
   deckTitle,
   onExit,
-  isPractice = false,
   answerFirst = false,
   frontNoun = 'Term',
 }: FlashcardStudyViewProps) {
@@ -237,7 +241,10 @@ export default function FlashcardStudyView({
   const [isFinished, setIsFinished] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null);
-  const [studyCards, setStudyCards] = useState<Flashcard[]>(cards);
+  // Snapshotted at mount. The caller derives `cards` from due-ness on every
+  // render, so reading the prop live would let a refresh mid-session shrink the
+  // list under `currentIndex`.
+  const [studyCards] = useState<Flashcard[]>(cards);
   const [isSaving, setIsSaving] = useState(false);
   // Track which rating was chosen on current card for animation feedback
   const [selectedRating, setSelectedRating] = useState<EaseRating | null>(null);
@@ -249,9 +256,6 @@ export default function FlashcardStudyView({
    * would open a modal over whatever card the student had already moved on to.
    * And a thirty-card session would fire thirty requests to answer a question
    * that only changes at the end.
-   *
-   * On `isFinished` rather than at the `setIsFinished(true)` call site, so
-   * "Restart Entire Set" correctly re-arms it for the next run.
    */
   useEffect(() => {
     if (isFinished) celebrate();
@@ -259,9 +263,6 @@ export default function FlashcardStudyView({
   // A rating the server refused. Shown to the student rather than swallowed —
   // silently dropping it would leave them believing the card was scheduled.
   const [saveError, setSaveError] = useState<string | null>(null);
-  // Starts from the prop, but a retry round turns it on: those cards were rated
-  // moments ago, so they are no longer due and can no longer count.
-  const [practiceRound, setPracticeRound] = useState(isPractice);
 
   // The card on screen. Hoisted above the results-screen return further down so
   // the face hooks below can read it — a hook cannot run after an early return.
@@ -307,26 +308,26 @@ export default function FlashcardStudyView({
 
     const card = studyCards[currentIndex];
 
-    // Every rating is posted, even in a practice round — a practice session can
-    // still contain genuinely due cards, and those must be scheduled. The server
-    // owns the decision and answers `counted`; the client only reports it.
+    // The session holds only due cards, but the server still owns the decision
+    // and answers `counted` — the client only reports it.
     //
     // Not awaited — the card advances immediately either way, so a slow network
     // never stalls the session. The student is told if it did not save.
+    const settle = (saved: NonNullable<CardSession['saved']>) =>
+      setSessionResults(prev =>
+        prev.map(r => (r.cardId === card.id && r.saved === undefined ? { ...r, saved } : r))
+      );
     api.post<{ counted: boolean }>('/flashcards/rate', {
       flashcard_id: card.id,
       rating,
     }).then(res => {
-      if (res.data?.counted) {
-        setSessionResults(prev =>
-          prev.map(r => (r.cardId === card.id && r.counted === undefined ? { ...r, counted: true } : r))
-        );
-      }
+      settle(res.data?.counted ? 'counted' : 'unchanged');
     }).catch((err: Error) => {
+      settle('failed');
       setSaveError(err.message ?? 'That rating could not be saved.');
     });
 
-    // Record session result. `counted` is filled in when the server replies.
+    // Record session result. `saved` is filled in when the server replies.
     setSessionResults(prev => [...prev, { cardId: card.id, rating }]);
 
     // Slide animation based on rating
@@ -373,35 +374,6 @@ export default function FlashcardStudyView({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleFlip, handleRate, isFlipped]);
 
-  // ── Restart helpers ─────────────────────────────────────────────────────────
-
-  const handleRestartHard = () => {
-    const hardCardIds = new Set(
-      sessionResults.filter(r => r.rating === 'hard').map(r => r.cardId)
-    );
-    const hardCards = cards.filter(c => hardCardIds.has(c.id));
-    if (!hardCards.length) return;
-    setStudyCards(hardCards);
-    setSessionResults([]);
-    setCurrentIndex(0);
-    setIsFlipped(false);
-    setIsFinished(false);
-    setSaveError(null);
-    // These cards were rated seconds ago, so they are no longer due. Say so
-    // rather than letting the student believe a second pass moves anything.
-    setPracticeRound(true);
-  };
-
-  const handleRestartAll = () => {
-    setStudyCards(cards);
-    setSessionResults([]);
-    setCurrentIndex(0);
-    setIsFlipped(false);
-    setIsFinished(false);
-    setSaveError(null);
-    setPracticeRound(true);
-  };
-
   // ── Derived stats ───────────────────────────────────────────────────────────
 
   const easyCount = sessionResults.filter(r => r.rating === 'easy').length;
@@ -414,9 +386,12 @@ export default function FlashcardStudyView({
     studyCards.length > 0
       ? Math.round(((easyCount + mediumCount * 0.5) / studyCards.length) * 100)
       : 0;
-  // How many ratings the server actually acted on. Anything else was a card
-  // that was not due — reviewed, but not rescheduled.
-  const countedCount = sessionResults.filter(r => r.counted).length;
+  // What the server did with each rating. Nothing is claimed about the
+  // schedule until `pendingCount` reaches zero.
+  const countedCount = sessionResults.filter(r => r.saved === 'counted').length;
+  const unchangedCount = sessionResults.filter(r => r.saved === 'unchanged').length;
+  const failedCount = sessionResults.filter(r => r.saved === 'failed').length;
+  const pendingCount = sessionResults.filter(r => r.saved === undefined).length;
 
   // ════════════════════════════════════════════════════════════════════════════
   // RESULTS SCREEN
@@ -439,7 +414,7 @@ export default function FlashcardStudyView({
     const getGradeMessage = () => {
       if (sessionScore >= 90) return "Outstanding! You knew almost all of these.";
       if (sessionScore >= 75) return "Great work! Keep reviewing the harder ones.";
-      if (sessionScore >= 50) return "Good progress! Focus on the hard cards.";
+      if (sessionScore >= 50) return "Good progress! The hard ones come back tomorrow.";
       return "Keep going — spaced repetition will help!";
     };
 
@@ -515,60 +490,63 @@ export default function FlashcardStudyView({
               </div>
             </div>
 
-            {/* What the schedule actually did. Claiming reviews were scheduled
-                unconditionally was false after a practice round. */}
+            {/* What the schedule actually did — reported from the server's
+                replies, never asserted, and only once every reply is in. */}
             <div className={`flex items-start gap-3 rounded-xl p-4 mb-8 text-left border ${
-              countedCount > 0
+              pendingCount === 0 && countedCount > 0
                 ? 'bg-primary-fixed-dim/5 border-primary-fixed-dim/15'
                 : 'bg-white/5 border-white/10'
             }`}>
-              <Calendar className={`w-4 h-4 shrink-0 mt-0.5 ${countedCount > 0 ? 'text-primary-fixed-dim' : 'text-slate-500'}`} />
+              {pendingCount > 0 ? (
+                <Spinner className="w-4 h-4 shrink-0 mt-0.5 text-slate-500" label="Saving your ratings" />
+              ) : (
+                <Calendar className={`w-4 h-4 shrink-0 mt-0.5 ${countedCount > 0 ? 'text-primary-fixed-dim' : 'text-slate-500'}`} />
+              )}
               <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                {countedCount > 0 ? (
-                  <>
-                    <span className="text-slate-200 font-semibold">
-                      {countedCount} card{countedCount === 1 ? '' : 's'} rescheduled.
-                    </span>{' '}
-                    Cards you found hard come back in 1 day, medium in 3, easy in 7.
-                    {countedCount < sessionResults.length && (
-                      <> The other {sessionResults.length - countedCount} weren't due yet, so their dates are unchanged.</>
-                    )}
-                  </>
+                {pendingCount > 0 ? (
+                  'Saving your ratings…'
                 ) : (
                   <>
-                    <span className="text-slate-200 font-semibold">Nothing was rescheduled.</span>{' '}
-                    These cards weren't due yet, so this was practice — your review dates are unchanged.
+                    {countedCount > 0 ? (
+                      <>
+                        <span className="text-slate-200 font-semibold">
+                          {countedCount} card{countedCount === 1 ? '' : 's'} rescheduled.
+                        </span>{' '}
+                        Cards you found hard come back in 1 day, medium in 3, easy in 7.
+                      </>
+                    ) : (
+                      <span className="text-slate-200 font-semibold">Nothing was rescheduled.</span>
+                    )}
+                    {/* Inside a due-only session, a card the server did not
+                        count can only have been reviewed in another tab first. */}
+                    {unchangedCount > 0 && (
+                      <>
+                        {' '}
+                        {countedCount > 0 ? `The other ${unchangedCount}` : unchangedCount === 1 ? 'This card' : `These ${unchangedCount}`}{' '}
+                        had already been reviewed, so {unchangedCount === 1 ? 'its date is' : 'their dates are'} unchanged.
+                      </>
+                    )}
+                    {failedCount > 0 && (
+                      <span className="block mt-1 text-rose-300">
+                        {failedCount} rating{failedCount === 1 ? '' : 's'} didn't save. Any card still
+                        due will be waiting in the deck.
+                      </span>
+                    )}
                   </>
                 )}
               </p>
             </div>
 
-            {/* Buttons */}
-            <div className="flex flex-col gap-3">
-              {hardCount > 0 && (
-                <button
-                  onClick={handleRestartHard}
-                  className="w-full px-5 py-3 bg-red-500/10 border border-red-500/20 text-red-300 rounded-xl font-sans text-sm font-bold hover:bg-red-500/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  Drill {hardCount} Hard Card{hardCount !== 1 ? 's' : ''} Again
-                </button>
-              )}
-              <button
-                onClick={handleRestartAll}
-                className="w-full px-5 py-3 bg-surface-container border border-white/10 text-on-surface rounded-xl font-sans text-sm font-semibold hover:bg-surface-container-high transition-all flex items-center justify-center gap-2"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Restart Entire Set
-              </button>
-              <button
-                onClick={onExit}
-                className="w-full px-5 py-3 text-slate-400 hover:text-white font-sans text-sm font-semibold transition-colors flex items-center justify-center gap-2"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Deck
-              </button>
-            </div>
+            {/* One way out. There is no "drill again" or "restart": those cards
+                were rated seconds ago, so they are not due, and a session holds
+                only due cards. The schedule brings them back. */}
+            <button
+              onClick={onExit}
+              className="w-full px-5 py-3 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px] shadow-primary-fixed-dim/20 hover:shadow-[0_0_30px] shadow-primary-fixed-dim/35 transition-all flex items-center justify-center gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Deck
+            </button>
           </div>
         </div>
       </div>
@@ -583,18 +561,6 @@ export default function FlashcardStudyView({
 
   return (
     <div className="fade-in duration-300 flex flex-col items-center">
-
-      {/* Said up front, not discovered at the end: these cards are not due, so
-          rating them is for the student's own benefit and nothing else. */}
-      {practiceRound && (
-        <div className="w-full max-w-3xl mb-4 flex items-start gap-2.5 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10">
-          <Brain className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-          <p className="font-sans text-xs text-slate-400 leading-relaxed">
-            <span className="text-slate-200 font-semibold">Practice round.</span>{' '}
-            These cards aren't due yet, so your ratings won't change their review dates.
-          </p>
-        </div>
-      )}
 
       {/* ── Progress header ─────────────────────────────────────────── */}
       <div className="w-full max-w-3xl mb-5">

@@ -25,7 +25,7 @@ activity can award `first_game` / `flawless_game` (§5.1). Nothing else is share
 |---|---|
 | What actually changed in the database schema? | **Nothing.** No new tables, columns or enum values. Every table already existed. |
 | So what was missing? | **A writer.** Nothing had ever inserted into `activity_logs`, so the streak trigger had never once fired. |
-| Where is the writer? | `server/lib/activity.ts` — `logActivity()`, 9 call sites |
+| Where is the writer? | `server/lib/activity.ts` — `logActivity()`, 8 call sites (9 until 2026-10-11) |
 | Where are the badge rules? | `server/lib/badges.ts` — `BADGES` catalogue + `evaluateBadges()` |
 | Is there a `badges` table? | **No, deliberately.** The catalogue is a code constant. |
 | How does the student find out? | A modal, driven by `src/context/BadgeContext.tsx`, which **diffs** rather than being told |
@@ -138,15 +138,14 @@ throw and are caught individually at each of their two call sites.
 | Diagnostic value of a failure | High | Low |
 | Therefore | throws, caller catches | **swallows, logs to `console.error`** |
 
-Nine chances to forget a `try/catch` is a larger risk than losing the ability to catch. The response
+Eight chances to forget a `try/catch` is a larger risk than losing the ability to catch. The response
 the student is waiting for is never affected.
 
-### 4.2 The nine call sites
+### 4.2 The eight call sites
 
 | # | File:line | Type | `durationMs` | `outcome` |
 |---|---|---|---|---|
-| 1 | `flashcards.routes.ts:106` | `flashcard` | 0 | — |
-| 2 | `flashcards.routes.ts:220` | `flashcard` | 0 | — |
+| 2 | `flashcards.routes.ts:213` | `flashcard` | 0 | — |
 | 3 | `practice.routes.ts:924` | `adaptive_test` | `result.elapsed_ms` | `{ score }` |
 | 4 | `cognitive.routes.ts:533` | `free_recall` | 0 | — |
 | 5 | `cognitive.routes.ts:875` | `free_recall` | 0 | — |
@@ -155,8 +154,8 @@ the student is waiting for is never affected.
 | 8 | `gamification.routes.ts:131` | `game` | `time_spent_ms` | `{ accuracy }` |
 | 9 | `chat.routes.ts:422` | `chat` | 0 | — |
 
-**Sites 1 and 2 are both flashcards on purpose.** Site 1 is the **not-due practice branch**; site 2 is
-the counted branch. Sites 4/6 are **memo-hit** paths; 5/7 are fresh evaluations.
+**Site 1 was removed on 2026-10-11** — the not-due flashcard branch, which logged so practice could
+keep a streak; numbering is kept so older references still resolve. Site 2 is the counted branch. Sites 4/6 are **memo-hit** paths; 5/7 are fresh evaluations.
 
 ### 4.3 ⚠️ The three exclusions — these matter more than the inclusions
 
@@ -171,9 +170,12 @@ chat activity count stay at 1 → 1, and drove a double-tapped rating and a seco
 
 ### 4.4 ⚠️ Two inclusions that look wrong and are not
 
-**The not-due flashcard branch MUST log.** With 7-day Easy intervals, a student who cleared their deck
-yesterday has *nothing due today*. If only counted ratings logged activity, that student would break
-their streak **for using spaced repetition correctly** — the exact opposite of what a streak rewards.
+**~~The not-due flashcard branch MUST log.~~ Reversed 2026-10-11 — it must NOT.** It logged so that a
+student with nothing due could keep a streak by practising. Practice sessions were removed from the
+client (a session holds only due cards — see `FLASHCARDS_IMPLEMENTATION.md` §6), so a not-due rating
+now comes only from a stale second tab or a hand-made request, and neither should earn a streak day
+or `cards_100` progress. On a day with nothing due, any other activity keeps the streak. The
+acceptance line *"PRACTICE rating also logs activity"* in §11.1 records the old behaviour.
 
 **Both cognitive memo-hit paths MUST log.** `findMemoisedAttempt()` answers a byte-identical
 resubmission from the stored row, skipping the model calls. But `CLAUDE.md` is explicit that *"a memo
@@ -284,9 +286,10 @@ into a per-rating cost.
 
 ### 5.7 `cards_100` counts `activity_logs`, not `spaced_repetition_logs`
 
-`spaced_repetition_logs` gets **no row** for a practice rating on an un-due card, so the two tables
-disagree about what "reviewed" means — and the streak the student is looking at is built from
-`activity_logs`. One uniform source for every "N times" rule.
+The streak the student is looking at is built from `activity_logs`, so it is the one uniform source
+for every "N times" rule. Since the not-due branch stopped logging (2026-10-11) both tables record
+one row per counted rating, so the count means *due reviews*. Kept at 100 by decision: reachable in
+the study week with two lessons' decks.
 
 ### 5.8 The one gameable badge
 
@@ -347,7 +350,7 @@ a case whose failure mode is "the badge appears on the dashboard instead".
 
 | File:line | Fires when |
 |---|---|
-| `FlashcardStudyView.tsx:214` | `isFinished` flips true (a `useEffect`, so Restart re-arms it) |
+| `FlashcardStudyView.tsx:260` | `isFinished` flips true (a `useEffect`) |
 | `AdaptiveTestTab.tsx:239` | inside `onFinish` |
 | `FreeRecallTab.tsx:280` | after a successful submission |
 | `FeynmanTab.tsx:292` | after a successful submission |

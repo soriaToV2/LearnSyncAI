@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Layers, ChevronLeft, RefreshCw, RotateCcw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck, Shuffle, ArrowUpDown, Target } from 'lucide-react';
+import { Plus, Layers, ChevronLeft, RefreshCw, Play, Trash2, BookOpen, Pencil, AlertCircle, Sparkles, FileText, Check, CheckCircle2, LibraryBig, CalendarCheck, Shuffle, ArrowUpDown, Target } from 'lucide-react';
 import Spinner from '../../../components/ui/Spinner';
 import FlashcardStudyView from '../components/FlashcardStudyView';
 import Modal from '../../../components/ui/Modal';
@@ -34,8 +34,8 @@ interface Flashcard {
   isAiGenerated?: boolean;
   /**
    * The student's last self-rating, or null for a card never rated while due.
-   * See the fuller note on the same field in `StudySpace.tsx`: practice ratings
-   * do not write it, so null is common and must never be read as "easy".
+   * See the fuller note on the same field in `StudySpace.tsx`: only a rating on
+   * a DUE card writes it, so null is common and must never be read as "easy".
    */
   easeRating?: EaseRating | null;
 }
@@ -64,7 +64,7 @@ interface Flashcard {
 type OrderKey = 'deck' | 'hardest' | 'easiest' | 'shuffled';
 
 /** Which cards a session opens with. See `studyMode`. */
-type StudyMode = 'due' | 'practice' | 'marked';
+type StudyMode = 'due' | 'marked';
 
 const ORDER_OPTIONS: Array<{ label: string; value: OrderKey }> = [
   { label: 'Default', value: 'deck' },
@@ -215,13 +215,19 @@ export default function FlashcardsTab({
 }: FlashcardsTabProps) {
   const [isStudying, setIsStudying] = useState(false);
   /**
-   * 'due' opens with only the cards that are due; 'practice' with all of them;
-   * 'marked' with the ones a test result flagged.
+   * 'due' opens with the deck's due cards; 'marked' with the due cards a test
+   * result flagged.
    *
-   * ⚠️ `'marked'` IS A CARD FILTER, NOT A NEW RULE. It changes which cards the
-   * session opens with and nothing else — every rating is still posted, and the
-   * server still decides whether it counts by the same due-check. There is no
-   * session id and no practice flag on the wire.
+   * ⚠️ BOTH ARE DUE-ONLY, AND THERE IS NO PRACTICE MODE. A session over cards
+   * that are not due used to exist ("Practice all", "Restart Entire Set", the
+   * hard-card drill). The server ignored those ratings, but the practice still
+   * spoiled the NEXT rating that did count: a card seen on Wednesday, Friday and
+   * Sunday is easy on its due Monday, and that Easy moves mastery on the
+   * strength of yesterday's look rather than a week's retention. The gap is the
+   * mechanism, so it must not come back.
+   *
+   * `'marked'` is a card filter, not a new rule — every rating is still posted,
+   * and the server still decides whether it counts by the same due-check.
    */
   const [studyMode, setStudyMode] = useState<StudyMode>('due');
   const [flippedCardId, setFlippedCardId] = useState<string | null>(null);
@@ -413,6 +419,17 @@ export default function FlashcardsTab({
         : 0,
     [selectedSet?.cards, marking]
   );
+
+  /** When the first marked card that is NOT due yet comes back. */
+  const markedNextReview = useMemo(() => {
+    if (!marking) return null;
+    const upcoming = (selectedSet?.cards ?? [])
+      .filter(c => marking.cardIds.has(c.id))
+      .map(c => c.nextReviewAt)
+      .filter((d): d is string => Boolean(d) && !isDue(d))
+      .sort();
+    return upcoming[0] ?? null;
+  }, [selectedSet?.cards, marking]);
 
   /** How many cards in the open deck carry a rating at all. */
   const ratedCount = (selectedSet?.cards ?? []).filter(c => c.easeRating).length;
@@ -626,19 +643,17 @@ export default function FlashcardsTab({
   };
 
   /**
-   * The one-line summary under a deck name. Leads with what the student has to
-   * do — how many are due — rather than the deck's total size.
+   * The one-line summary under a deck name: its size, nothing else.
+   *
+   * Deliberately carries neither "· N due" nor the next review date. A due tile
+   * already states its count twice — on the badge and on the "Review N" button —
+   * and a caught-up tile states its date on the status bar where the button
+   * would be (the deck view says it in the caught-up banner). A second copy of
+   * either on one small tile reads as noise rather than emphasis.
    */
   const deckSummary = (set: FlashcardSet): string => {
     if (set.cardCount === 0) return 'Empty — no cards yet';
-    const cards = `${set.cardCount} card${set.cardCount === 1 ? '' : 's'}`;
-    // Deliberately does NOT append "· N due". The tile already carries that
-    // number twice — on the badge and on the "Review N" button — and a third
-    // copy on one small tile reads as noise rather than emphasis.
-    if (dueCards(set).length > 0) return cards;
-    // Nothing due, so the tile has room to say something useful instead.
-    const next = nextReviewDate(set);
-    return next ? `${cards} · next review ${formatReviewDate(next)}` : cards;
+    return `${set.cardCount} card${set.cardCount === 1 ? '' : 's'}`;
   };
 
   /**
@@ -829,20 +844,18 @@ export default function FlashcardsTab({
 
   // Render study view if active.
   //
-  // A 'due' session opens with only the cards that are due — that is what makes
-  // the schedule mean anything. 'practice' opens with the whole deck; those
-  // ratings are still sent, and the server schedules any that happen to be due.
+  // Every session is due-only — that is what makes the schedule mean anything.
+  // A 'marked' session narrows it further to the cards a test flagged. If
+  // nothing qualifies (the cards were reviewed in another tab meanwhile) this
+  // falls through to the deck view, which says when they come back.
   if (isStudying && selectedSet && selectedSet.cards.length > 0) {
     // Built from `orderedCards`, so a shuffled grid opens a shuffled session.
     // Starting from a deck TILE always gives the deck's own order, because
     // changing decks resets the nonce — correct, since the student never saw a
     // shuffled grid for that deck.
-    const sessionCards =
-      studyMode === 'due'
-        ? orderedCards.filter(c => isDue(c.nextReviewAt))
-        : studyMode === 'marked'
-          ? orderedCards.filter(c => marking?.cardIds.has(c.id))
-          : orderedCards;
+    const sessionCards = orderedCards.filter(
+      c => isDue(c.nextReviewAt) && (studyMode === 'due' || (marking?.cardIds.has(c.id) ?? false))
+    );
     if (sessionCards.length > 0) {
       return (
         <div className="fade-in duration-300">
@@ -857,13 +870,6 @@ export default function FlashcardsTab({
               source: materialTitle(c.sourceMaterialId) ?? undefined,
             }))}
             deckTitle={selectedSet.title}
-            /* ⚠️ COMPUTED ON THE SESSION'S OWN CARDS, NOT THE WHOLE DECK. It
-               used to ask whether anything ANYWHERE in the deck was due, which
-               is the wrong question for a filtered session: a marked session
-               where none of the marked cards are due would have suppressed the
-               "your ratings won't count" banner just because some unrelated
-               card elsewhere happened to be due. */
-            isPractice={studyMode !== 'due' && !sessionCards.some(c => isDue(c.nextReviewAt))}
             answerFirst={answerFirst}
             frontNoun={frontNoun}
             onExit={exitStudy}
@@ -1040,15 +1046,20 @@ export default function FlashcardsTab({
                         Review {due}
                       </button>
                     ) : (
-                      /* Nothing due. Practice stays available for cramming, but
-                         quietly — it is not the recommended next action. */
-                      <button
-                        onClick={e => { e.stopPropagation(); studyDeck(set.id, 'practice'); }}
-                        className="relative z-10 w-full px-4 py-2.5 bg-surface-container border border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                        Practice all
-                      </button>
+                      /* Nothing due: a STATUS, not a button. There is no
+                         practice session to offer — see `studyMode`. Same height
+                         as the buttons so a row of tiles stays aligned, and NOT
+                         `relative z-10`, so a click here falls through to the
+                         title's stretched overlay and opens the deck to browse.
+                         Sentence case on purpose: every uppercase pill on a tile
+                         is something to press. */
+                      <div className="w-full px-4 py-2.5 bg-emerald-500/5 border border-emerald-500/15 rounded-xl font-sans text-xs font-semibold text-slate-300 flex items-center justify-center gap-2">
+                        <CalendarCheck className="w-4 h-4 text-emerald-400/80 shrink-0" />
+                        <span className="truncate">
+                          Caught up
+                          {nextReviewDate(set) && <> · back {formatReviewDate(nextReviewDate(set)!)}</>}
+                        </span>
+                      </div>
                     )}
                   </div>
                 );
@@ -1085,24 +1096,16 @@ export default function FlashcardsTab({
 
             {selectedSet && (
               <div className="flex flex-col sm:flex-row gap-3 shrink-0">
-                {selectedSet.cards.length > 0 && (
-                  dueCards(selectedSet).length > 0 ? (
-                    <button
-                      onClick={() => studyDeck(selectedSet.id, 'due')}
-                      className="px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 shadow-[0_0_20px] shadow-primary-fixed-dim/20 hover:shadow-[0_0_30px] shadow-primary-fixed-dim/35 transition-all"
-                    >
-                      <Play className="w-4 h-4" />
-                      Review {dueCards(selectedSet).length}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => studyDeck(selectedSet.id, 'practice')}
-                      className="px-5 py-2.5 bg-surface-container border border-white/10 text-slate-300 hover:bg-surface-container-high hover:text-white rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      Practice all
-                    </button>
-                  )
+                {/* Only when something is due. A caught-up deck has no study
+                    button at all; the banner below says when it comes back. */}
+                {dueCards(selectedSet).length > 0 && (
+                  <button
+                    onClick={() => studyDeck(selectedSet.id, 'due')}
+                    className="px-5 py-2.5 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 shadow-[0_0_20px] shadow-primary-fixed-dim/20 hover:shadow-[0_0_30px] shadow-primary-fixed-dim/35 transition-all"
+                  >
+                    <Play className="w-4 h-4" />
+                    Review {dueCards(selectedSet).length}
+                  </button>
                 )}
                 <div className="flex gap-2">
                   <button
@@ -1156,13 +1159,13 @@ export default function FlashcardsTab({
               success rather than something being broken. */}
           {/* ── What the last test caught ──────────────────────────────────
               ⚠️ THE DUE SPLIT IS STATED BEFORE THEY START, and that is the whole
-              point of this banner. Flashcards move mastery only for cards that
-              are DUE — `POST /flashcards/rate` returns early otherwise and
-              writes no schedule, no log and no BKT update. So a student who
-              cleared this deck yesterday, then missed five concepts in a test,
-              can drill all five here and change nothing. The button that sent
-              them here carries a "moves mastery" chip, so the honest thing is to
-              say which half they are about to do rather than relax the rule. */}
+              point of this banner. Only DUE cards can be reviewed — a session
+              is due-only (see `studyMode`) and `POST /flashcards/rate` ignores
+              anything else. So a student who cleared this deck yesterday, then
+              missed five concepts in a test, has nothing to review here until
+              those cards come back. The button that sent them here carries a
+              "moves mastery" chip, so the honest thing is to say when that
+              becomes true rather than offer a drill that changes nothing. */}
           {marking && marking.cardIds.size > 0 && (
             <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-400/5 border border-amber-400/20">
               <Target className="w-4 h-4 text-amber-400/80 shrink-0 mt-0.5" />
@@ -1174,7 +1177,11 @@ export default function FlashcardsTab({
                   </span>{' '}
                   {markedDueCount > 0
                     ? `${markedDueCount} ${markedDueCount === 1 ? 'is' : 'are'} due — reviewing ${markedDueCount === 1 ? 'it' : 'those'} updates your mastery.`
-                    : "None are due yet, so practising them won't change your mastery or your review dates."}
+                    : `None are due yet${markedNextReview ? ` — the first comes back ${formatReviewDate(markedNextReview)}` : ''}.`}
+                  {markedDueCount > 0 && markedNextReview && (
+                    <> The rest come back from {formatReviewDate(markedNextReview)}.</>
+                  )}
+                  {markedDueCount === 0 && <> They're marked so you can find them.</>}
                   {marking.missing > 0 && (
                     <>
                       {' '}
@@ -1185,18 +1192,20 @@ export default function FlashcardsTab({
                     </>
                   )}
                 </p>
-                <button
-                  // `marking.deckId`, not `selectedSet!.id` — the two are equal
-                  // by the guard above, but `selectedSet` is briefly null in the
-                  // window after a deck is built and before its cards arrive.
-                  onClick={() => studyDeck(marking.deckId, 'marked')}
-                  className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400/10 border border-amber-400/25 hover:bg-amber-400/15 font-sans text-xs font-semibold text-amber-200 transition-colors"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  {markedDueCount > 0
-                    ? `Review these ${marking.cardIds.size}`
-                    : `Practice these ${marking.cardIds.size}`}
-                </button>
+                {/* Counts the DUE marked cards, because that is exactly what
+                    the session will hold. */}
+                {markedDueCount > 0 && (
+                  <button
+                    // `marking.deckId`, not `selectedSet!.id` — the two are equal
+                    // by the guard above, but `selectedSet` is briefly null in the
+                    // window after a deck is built and before its cards arrive.
+                    onClick={() => studyDeck(marking.deckId, 'marked')}
+                    className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400/10 border border-amber-400/25 hover:bg-amber-400/15 font-sans text-xs font-semibold text-amber-200 transition-colors"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    Review {markedDueCount} marked card{markedDueCount === 1 ? '' : 's'}
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -1209,7 +1218,8 @@ export default function FlashcardsTab({
                 {nextReviewDate(selectedSet)
                   ? `Your next cards are due ${formatReviewDate(nextReviewDate(selectedSet)!)}.`
                   : 'Nothing is due right now.'}{' '}
-                You can still practise — it just won't change your review dates.
+                Cards come back on the day they're due — that gap is what makes them stick. You can
+                still flip through them below.
               </p>
             </div>
           )}

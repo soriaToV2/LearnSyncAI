@@ -86,8 +86,8 @@ interface Flashcard {
    * The student's last self-rating on this card, or null.
    *
    * ⚠️ IT RECORDS ONLY RATINGS THAT COUNTED. `POST /api/flashcards/rate` writes
-   * it inside the same compare-and-swap as `next_review_at`, so a practice
-   * rating on a card that was not due leaves it untouched. Null means "never
+   * it inside the same compare-and-swap as `next_review_at`, so a rating on a
+   * card that was not due leaves it untouched. Null means "never
    * rated while due", which is the state of most of a real deck — never treat
    * it as easy.
    */

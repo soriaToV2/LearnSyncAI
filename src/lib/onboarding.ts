@@ -584,7 +584,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
     intro: TOOL_INTROS.tool_flashcards.body,
     how: [
       'Make a deck, then choose Add Cards and pick a lesson.',
-      'Press Study on the deck, read the front, then flip it.',
+      'Press Review on a deck, read the front, then flip it. Review only asks the cards that are due today; when none are, the deck shows the day they come back.',
       'Rate yourself honestly. Hard brings the card back tomorrow, Medium in three days, Easy in seven.',
       'Open a deck and press Shuffle to mix up the order, so you learn the ideas and not the sequence.',
       'The menu beside it reorders the deck instead. Hardest first brings up the cards you found hard last time. A card only gets a rating when you review it on the day it is due, so a new deck has none yet and that order will not change anything.',

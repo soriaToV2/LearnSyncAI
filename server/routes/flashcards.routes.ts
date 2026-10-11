@@ -33,7 +33,10 @@ router.use(authenticate, requireRole('student'));
  * re-read thirty seconds later is not. Do not relax it.
  *
  * The client is never trusted to decide this. It posts every rating; the server
- * answers `counted` and the UI reports what actually happened.
+ * answers `counted` and the UI reports what actually happened. The client no
+ * longer OFFERS a session over cards that are not due (there is no practice
+ * mode), but that is a courtesy — this check remains the guarantee, for a stale
+ * second tab and for any request not made by our UI.
  *
  * Ratings map to observations per paper pp. 78-79: Easy and Medium both record a
  * CORRECT answer (obs = 1) differing only in P(G); Hard records an INCORRECT one
@@ -89,27 +92,17 @@ router.post('/rate', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // 2. Due check. Not due → write nothing. The student reviewed the card, which
-  // is good for them, but it was not a scheduled retrieval so it is not evidence
-  // and it does not move the schedule.
+  // 2. Due check. Not due → write nothing at all: no schedule, no BKT
+  // observation, and no activity row.
+  //
+  // ⚠️ NO `logActivity()` HERE, AND THAT IS A REVERSAL. This branch used to log,
+  // so a student with nothing due could keep a streak by practising. Practice
+  // sessions were removed from the client (2026-10-11: a session holds only due
+  // cards), so a not-due rating now comes only from a stale second tab or a
+  // hand-made request — neither of which should earn a streak day or count
+  // toward `cards_100`. A flashcard activity means a due review.
   const now = new Date();
   if (!isDue(card.next_review_at, now)) {
-    /*
-     * Nothing is scheduled and no BKT observation is recorded — but this IS
-     * study activity, so it counts toward the streak.
-     *
-     * That distinction is load-bearing. With 7-day Easy intervals a student who
-     * cleared their deck yesterday has nothing due today; logging only the
-     * counted branch would break their streak for using spaced repetition
-     * correctly, which is the opposite of what a streak is for.
-     */
-    await logActivity({
-      studentId,
-      type: 'flashcard',
-      spaceId: space.id,
-      materialId: card.source_material_id,
-    });
-
     res.status(200).json({
       data: {
         flashcard_id,
@@ -117,7 +110,7 @@ router.post('/rate', async (req: Request, res: Response): Promise<void> => {
         counted: false,
         next_review_at: card.next_review_at,
       },
-      message: 'Practice rating — this card was not due, so its schedule is unchanged.',
+      message: "Not due — this card's schedule is unchanged.",
     });
     return;
   }
@@ -156,7 +149,7 @@ router.post('/rate', async (req: Request, res: Response): Promise<void> => {
     // not-due branch does, so the UI reports one counted rating, not two.
     res.status(200).json({
       data: { flashcard_id, rating, counted: false, next_review_at: card.next_review_at },
-      message: 'Practice rating — this card was not due, so its schedule is unchanged.',
+      message: "Not due — this card's schedule is unchanged.",
     });
     return;
   }
