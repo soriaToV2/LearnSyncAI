@@ -44,7 +44,7 @@ export const STUDY_TABS: readonly StudyTab[] = [
 ];
 
 /** The tab a space opens on when nothing says otherwise. Matches `StudySpace.tsx`. */
-export const DEFAULT_STUDY_TAB: StudyTab = 'flashcards';
+export const DEFAULT_STUDY_TAB: StudyTab = 'resources';
 
 export function isStudyTab(value: string | null | undefined): value is StudyTab {
   return value !== null && value !== undefined && (STUDY_TABS as readonly string[]).includes(value);

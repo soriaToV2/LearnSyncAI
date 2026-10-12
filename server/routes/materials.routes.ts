@@ -327,13 +327,14 @@ router.get('/:id', requireRole('educator'), async (req: Request, res: Response):
 /**
  * PATCH /api/materials/:id
  *
- * The only writer for `is_archived` and `grade_levels`. Both controls existed in
+ * The only writer for `is_archived`, `grade_levels`, `title` and `subject`.
+ * Archive and grade access existed in
  * the UI as local `useState` toggles that looked functional and persisted
  * nothing, because there was no endpoint behind them — the seven educator routes
  * were upload, list, get, delete and concept CRUD, and none of them mutated the
  * material row.
  *
- * `UpdateMaterialSchema` accepts those two fields and nothing else; the reasons
+ * `UpdateMaterialSchema` accepts those four fields and nothing else; the reasons
  * per excluded field are on the schema itself.
  *
  * ── Archiving needs no cascade, and must not have one ────────────────────────
@@ -356,6 +357,14 @@ router.get('/:id', requireRole('educator'), async (req: Request, res: Response):
  * survive, and setting the grade back restores everything. Class Performance
  * follows too: `rosterFor()` re-derives the class from `grade_levels`, so the old
  * grade's students disappear and the new grade's appear as "not started".
+ *
+ * ── So is changing the subject ───────────────────────────────────────────────
+ *
+ * `spaceMaterialIds()` requires the material's live subject to equal the space's,
+ * so it leaves spaces of the old subject and is offered by "N new materials
+ * available" in spaces of the new one. Link rows and mastery survive; setting the
+ * subject back restores it. Class Performance is unaffected — the roster is
+ * grade-based, not subject-based.
  */
 router.patch('/:id', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const parsed = UpdateMaterialSchema.safeParse(req.body);
@@ -371,6 +380,23 @@ router.patch('/:id', requireRole('educator'), async (req: Request, res: Response
     return;
   }
 
+  // Same check as upload, so an unknown code is a readable 400 rather than an
+  // FK violation surfacing as a 500.
+  if (parsed.data.subject !== undefined) {
+    const { data: subjectRow } = await supabaseAdmin
+      .from('subjects')
+      .select('code')
+      .eq('code', parsed.data.subject)
+      .maybeSingle();
+    if (!subjectRow) {
+      res.status(400).json({
+        error: 'Unknown subject',
+        message: `"${parsed.data.subject}" is not a recognised subject.`,
+      });
+      return;
+    }
+  }
+
   const update: Record<string, unknown> = {
     // `updated_at` is NOT NULL DEFAULT now() with no trigger behind it, so an
     // unset value here would leave the row claiming its upload time forever.
@@ -378,6 +404,8 @@ router.patch('/:id', requireRole('educator'), async (req: Request, res: Response
   };
   if (parsed.data.is_archived !== undefined) update.is_archived = parsed.data.is_archived;
   if (parsed.data.grade_levels !== undefined) update.grade_levels = parsed.data.grade_levels;
+  if (parsed.data.title !== undefined) update.title = parsed.data.title;
+  if (parsed.data.subject !== undefined) update.subject = parsed.data.subject;
 
   const { data: material, error } = await supabaseAdmin
     .from('materials')

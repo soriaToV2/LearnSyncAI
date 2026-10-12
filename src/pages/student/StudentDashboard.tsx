@@ -536,7 +536,7 @@ function FocusRow({ concept }: { concept: FocusConcept }) {
    * The lead step decides where this row goes.
    *
    * ⚠️ IT USED TO LINK AT THE SPACE AND NOTHING MORE, which lands on whatever
-   * tab a space opens on — Flashcards — regardless of what the concept actually
+   * tab a space opens on — Learning Resources — regardless of what the concept actually
    * needs. Naming the tab, the lesson and (for Feynman) the concept is what turns
    * "here is your weakest idea" into somewhere to go.
    *

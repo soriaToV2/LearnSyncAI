@@ -17,7 +17,7 @@ import {
   formatFileSize, formatDate,
   type EducatorMaterial,
 } from '../../data/mockEducator';
-import { useSubjectName } from '../../context/SubjectsContext';
+import { useSubjectName, useSubjects } from '../../context/SubjectsContext';
 import { api } from '../../lib/api';
 
 type MaterialRow = EducatorMaterial & { concept_count: number };
@@ -72,6 +72,7 @@ const pagesToInput = (pages: number[] | null): string => (pages ?? []).join(', '
 
 export default function MaterialDetail() {
   const subjectNameOf = useSubjectName();
+  const { subjects } = useSubjects();
   const { materialId } = useParams<{ materialId: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -89,7 +90,18 @@ export default function MaterialDetail() {
    */
   const [gradeDraft, setGradeDraft] = useState<string>('');
   const [isEditingGrades, setIsEditingGrades] = useState(false);
+  // Title and subject follow the same draft-vs-saved-truth split as grade access.
+  const [titleDraft, setTitleDraft] = useState('');
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [subjectDraft, setSubjectDraft] = useState('');
+  const [isEditingSubject, setIsEditingSubject] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
+  /*
+   * Its own slot, not `actionError`: that one renders inside the Concepts tab, so
+   * a failed title/subject/grade save made from the Class Performance tab would
+   * otherwise fail silently.
+   */
+  const [metaError, setMetaError] = useState<string | null>(null);
   const [conceptSearch, setConceptSearch] = useState('');
   const [showDelete, setShowDelete] = useState(false);
   /*
@@ -142,26 +154,27 @@ export default function MaterialDetail() {
   // under an unsaved grade choice.
   const busyRef = useRef(false);
   busyRef.current =
-    addingNew || editingId !== null || saving || isEditingGrades || savingMeta;
+    addingNew || editingId !== null || saving || isEditingGrades || isEditingTitle ||
+    isEditingSubject || savingMeta;
 
   /**
-   * The one writer for archive and grade access.
+   * The one writer for archive, grade access, title and subject.
    *
    * Replaces the whole row from the response rather than merging a field, so the
    * page cannot drift from the server — `PATCH` deliberately returns the same
    * shape as `GET /:id`.
    */
   const patchMaterial = useCallback(
-    async (body: { is_archived?: boolean; grade_levels?: number[] }) => {
+    async (body: { is_archived?: boolean; grade_levels?: number[]; title?: string; subject?: string }) => {
       if (!materialId) return false;
       setSavingMeta(true);
-      setActionError(null);
+      setMetaError(null);
       try {
         const { data } = await api.patch<MaterialRow>(`/materials/${materialId}`, body);
         setMaterial(data);
         return true;
       } catch (e) {
-        setActionError(e instanceof Error ? e.message : 'Could not save that change.');
+        setMetaError(e instanceof Error ? e.message : 'Could not save that change.');
         return false;
       } finally {
         setSavingMeta(false);
@@ -179,6 +192,28 @@ export default function MaterialDetail() {
       return;
     }
     if (await patchMaterial({ grade_levels: [next] })) setIsEditingGrades(false);
+  };
+
+  const saveTitle = async () => {
+    const next = titleDraft.trim();
+    if (!next) {
+      setMetaError('A material needs a title.');
+      return;
+    }
+    if (material && material.title === next) {
+      setIsEditingTitle(false);
+      return;
+    }
+    if (await patchMaterial({ title: next })) setIsEditingTitle(false);
+  };
+
+  const saveSubject = async () => {
+    if (!subjectDraft) return;
+    if (material && material.subject === subjectDraft) {
+      setIsEditingSubject(false);
+      return;
+    }
+    if (await patchMaterial({ subject: subjectDraft })) setIsEditingSubject(false);
   };
 
   // Poll while extraction is still running so concepts + status appear on their own.
@@ -332,7 +367,8 @@ export default function MaterialDetail() {
   const tint = SUBJECT_COLOR[material.subject] ?? '#94a3b8';
 
   const facts: Array<[string, string]> = [
-    ['Subject', subjectNameOf(material.subject)],
+    // No Subject here: it has its own editable row below, and a read-only copy
+    // above an editable one reads as "this cannot be changed".
     ['Pages', material.page_count ? String(material.page_count) : '—'],
     ['Size', formatFileSize(material.file_size_bytes)],
     // Photos are assembled into a PDF at upload, so a scan and a photographed
@@ -383,9 +419,58 @@ export default function MaterialDetail() {
                   </span>
                 )}
               </div>
-              <h1 className="font-display text-2xl md:text-3xl font-semibold text-on-surface leading-tight">
-                {material.title}
-              </h1>
+              {isEditingTitle ? (
+                <form
+                  className="flex flex-col sm:flex-row sm:items-center gap-2"
+                  onSubmit={(e) => { e.preventDefault(); void saveTitle(); }}
+                >
+                  <input
+                    autoFocus
+                    aria-label="Material title"
+                    value={titleDraft}
+                    maxLength={200}
+                    onChange={(e) => setTitleDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setIsEditingTitle(false); }}
+                    className="w-full sm:w-80 px-3 py-2 rounded-lg bg-surface-container border border-white/10 font-display text-lg font-semibold text-on-surface focus:outline-none focus:border-primary-fixed-dim/50"
+                  />
+                  <div className="flex items-center gap-3 shrink-0 animate-swap-in">
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingTitle(false)}
+                      disabled={savingMeta}
+                      className={`font-sans text-xs text-slate-400 font-semibold hover:text-slate-200 transition-colors disabled:opacity-50 rounded px-1 ${FOCUS}`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={savingMeta || !titleDraft.trim()}
+                      className={`flex items-center gap-1.5 font-sans text-xs text-primary-fixed-dim font-semibold hover:opacity-80 transition-opacity disabled:opacity-50 rounded px-1 ${FOCUS}`}
+                    >
+                      {savingMeta ? <Spinner className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+                      Save
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="flex items-start gap-2">
+                  <h1 className="font-display text-2xl md:text-3xl font-semibold text-on-surface leading-tight break-words min-w-0">
+                    {material.title}
+                  </h1>
+                  <button
+                    onClick={() => {
+                      setTitleDraft(material.title);
+                      setMetaError(null);
+                      setIsEditingTitle(true);
+                    }}
+                    title="Rename"
+                    aria-label="Rename material"
+                    className={`mt-1.5 p-1.5 rounded-lg text-slate-500 hover:text-primary-fixed-dim hover:bg-white/5 transition-colors shrink-0 ${FOCUS}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
               {material.description && (
                 <p className="font-sans text-sm text-on-surface-variant mt-2 max-w-2xl">
                   {material.description}
@@ -484,10 +569,78 @@ export default function MaterialDetail() {
             ))}
           </div>
 
+          {/*
+            Subject — same shape as the grade row below, and the same mechanism:
+            reads filter live on (subject, grade), so changing it moves the
+            material between students' spaces without deleting anything.
+            Edit stays disabled until the catalogue has loaded, because
+            `Dropdown` silently renders its first option for a value it does not
+            recognise.
+          */}
+          <div className="flex flex-col gap-2.5 py-3.5 px-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <span className="font-sans text-xs font-semibold text-slate-300 shrink-0 sm:w-24">Subject</span>
+            <div className="flex-1 min-w-0">
+              {isEditingSubject ? (
+                <Dropdown
+                  value={subjectDraft}
+                  onChange={setSubjectDraft}
+                  options={subjects.map((sub) => ({ value: sub.code, label: sub.name }))}
+                  className="w-full sm:w-56"
+                />
+              ) : (
+                <span className="font-sans text-sm text-slate-200">{subjectNameOf(material.subject)}</span>
+              )}
+            </div>
+
+            {isEditingSubject ? (
+              <div className="flex items-center gap-3 shrink-0 animate-swap-in">
+                <button
+                  onClick={() => setIsEditingSubject(false)}
+                  disabled={savingMeta}
+                  className={`font-sans text-xs text-slate-400 font-semibold hover:text-slate-200 transition-colors disabled:opacity-50 rounded px-1 ${FOCUS}`}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveSubject()}
+                  disabled={savingMeta}
+                  className={`flex items-center gap-1.5 font-sans text-xs text-primary-fixed-dim font-semibold hover:opacity-80 transition-opacity disabled:opacity-50 rounded px-1 ${FOCUS}`}
+                >
+                  {savingMeta ? <Spinner className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+                  Save
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setSubjectDraft(material.subject);
+                  setMetaError(null);
+                  setIsEditingSubject(true);
+                }}
+                disabled={subjects.length === 0}
+                className={`flex items-center gap-1.5 font-sans text-xs text-primary-fixed-dim font-semibold hover:opacity-80 transition-opacity disabled:opacity-40 shrink-0 self-start sm:self-auto rounded px-1 ${FOCUS}`}
+              >
+                <Pencil className="w-3 h-3" />
+                Edit
+              </button>
+            )}
+          </div>
+
+          {isEditingSubject && (
+            <p className="font-sans text-[11px] text-slate-500 leading-relaxed animate-swap-in">
+              Students will stop seeing this material in their {subjectNameOf(material.subject)} study
+              spaces, and it will be offered as a new material in their spaces for the new subject.
+              Nothing is deleted — their decks and progress are kept and return if you change the
+              subject back.
+            </p>
+          )}
+          </div>
+
           {/* Grade access — one grade per material (materials_grade_levels_valid) */}
           <div className="flex flex-col gap-2.5 py-3.5 px-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <span className="font-sans text-xs font-semibold text-slate-300 shrink-0">Grade access</span>
+            <span className="font-sans text-xs font-semibold text-slate-300 shrink-0 sm:w-24">Grade access</span>
             {/*
               ⚠️ ONLY THE EDITING STATES ANIMATE — the chips and the Edit button
               deliberately do not. Those are the resting state: they are present
@@ -565,6 +718,7 @@ export default function MaterialDetail() {
               <button
                 onClick={() => {
                   setGradeDraft(String(gradeValues[0] ?? ALL_GRADE_LEVELS[0]));
+                  setMetaError(null);
                   setIsEditingGrades(true);
                 }}
                 className={`flex items-center gap-1.5 font-sans text-xs text-primary-fixed-dim font-semibold hover:opacity-80 transition-opacity shrink-0 self-start sm:self-auto rounded px-1 ${FOCUS}`}
@@ -590,6 +744,13 @@ export default function MaterialDetail() {
             </p>
           )}
           </div>
+
+          {metaError && (
+            <div className="flex items-center gap-2 px-4 py-3" role="alert">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              <p className="font-sans text-xs text-rose-300">{metaError}</p>
+            </div>
+          )}
         </section>
 
         {/*

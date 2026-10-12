@@ -604,31 +604,40 @@ export const CreateMaterialSchema = z.object({
 export type CreateMaterialInput = z.infer<typeof CreateMaterialSchema>;
 
 /**
- * The two things an educator may change about a material after upload.
+ * What an educator may change about a material after upload: archive, grade
+ * access, title and subject.
  *
  * ⚠️ EVERYTHING ELSE IS DELIBERATELY ABSENT, and this is not an oversight to be
  * filled in later:
  *
- *  - `subject` — a study space is built from its subject plus the materials
- *    published to it, so re-pointing a material's subject would strand it in
- *    every space already holding it. `UpdateStudySpaceSchema` omits subject for
- *    the mirror-image reason.
  *  - `parsed_status` / `parse_error` / `is_scanned` / `page_count` — owned by the
  *    ingest pipeline. Accepting them would let an educator mark a failed material
  *    Ready and push a concept-less material into students' study spaces.
- *  - `title` / `description` — no UI asks for them, and this route must stay the
- *    answer to "archive and grade access", not become a general row editor.
+ *  - `description` — no UI asks for it, and this must not become a general row
+ *    editor.
+ *
+ * `subject` WAS excluded until 2026-10-12 on the theory that re-pointing it would
+ * strand the material in every space holding it. It does not strand anything:
+ * it is the same mechanism as a grade change. `spaceMaterialIds()` intersects the
+ * stored `study_space_materials` list against the live (subject, grade) published
+ * set, so the material leaves old-subject spaces on their next read, appears as
+ * "available" in new-subject ones, and link rows and `bkt_mastery` survive — so
+ * setting the subject back restores exactly what was there. The code is
+ * re-checked against `public.subjects` in the route, as on upload.
  *
  * At least one field must be present, or the request is a no-op that would still
- * bump `updated_at`.
+ * bump `updated_at`. `.strict()` so a refused field is a 400, not a silent drop.
  */
 export const UpdateMaterialSchema = z
   .object({
     is_archived: z.boolean().optional(),
     grade_levels: GradeLevelsField.optional(),
+    title: z.string().trim().min(1, 'Title is required').max(200, 'Keep the title under 200 characters').optional(),
+    subject: z.string().trim().min(1, 'Subject is required').optional(),
   })
-  .refine((v) => v.is_archived !== undefined || v.grade_levels !== undefined, {
-    message: 'Provide is_archived or grade_levels',
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'Provide is_archived, grade_levels, title or subject',
   });
 export type UpdateMaterialInput = z.infer<typeof UpdateMaterialSchema>;
 

@@ -36,17 +36,15 @@ import type { StudyIntent, StudyTab } from '../../lib/studySpace';
  * handler, which is the pattern `ANALYTICS_IMPLEMENTATION.md` §12.1 asked not be
  * extended before a deep link could be built on it.
  *
- * Its order is deliberately not the desktop order: Resources leads there, and
- * Flashcards leads here because it is the tab a space opens on.
+ * Resources leads, matching the desktop order and the tab a space opens on
+ * (`DEFAULT_STUDY_TAB`).
  */
 const MOBILE_TABS: { id: StudyTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'resources', label: 'Learning Resources', icon: BookOpen },
   { id: 'flashcards', label: 'Flashcards', icon: Layers },
   { id: 'free-recall', label: 'Free Recall AI', icon: Brain },
   { id: 'feynman', label: 'Feynman Technique', icon: Award },
   { id: 'adaptive-test', label: 'Test Mode', icon: BrainCircuit },
-  // "Course Resources" here vs "Learning Resources" on the desktop tab — same
-  // destination, two names. Matched to the tab.
-  { id: 'resources', label: 'Learning Resources', icon: BookOpen },
   { id: 'analytics', label: 'Analytics', icon: ChartColumn },
 ];
 
