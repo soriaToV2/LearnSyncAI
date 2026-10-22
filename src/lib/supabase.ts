@@ -10,16 +10,5 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-/**
- * Supabase client for the frontend (browser).
- *
- * Use this for:
- *  - Authentication: signUp, signInWithPassword, signOut
- *  - Reading the current session/JWT: supabase.auth.getSession()
- *  - Real-time subscriptions (future)
- *
- * ⚠️  This uses the ANON key and respects Row Level Security.
- *     For protected data, always go through the Express API (/api/*)
- *     rather than querying Supabase directly from the frontend.
- */
+/** Browser Supabase client (anon key, RLS applies): auth and the session JWT. Fetch data through /api. */
 export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '');

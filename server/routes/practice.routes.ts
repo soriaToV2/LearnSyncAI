@@ -27,39 +27,15 @@ import {
 } from '../types/api';
 
 /**
- * Adaptive Test Mode.
- *
- * Rewritten from a version that had zero callers and six defects, each of which
- * is now a rule rather than a fix:
- *
- *   1. `practice_telemetry.question_type` is NOT NULL and was never supplied, so
- *      every telemetry write silently failed and BKT never received an
- *      observation. It is written in `completeTest()` and nowhere else.
- *   2. Generation called a dead Gemini model with no try/catch, so a quota error
- *      rejected unhandled under Express 4 and hung the request. Every AI call is
- *      wrapped and mapped to `err.status`.
- *   3. There was no ownership or material-access check at all. Both gates run on
- *      every route, in the order below.
- *   4. `is_correct` came from the request body. It is now computed from the
- *      stored key, always.
- *   5. The model echoed `concept_id` UUIDs that were never validated. The model
- *      no longer sees a UUID; see `testGeneration.ts`.
- *   6. Completion fired at a pyBKT FastAPI service, which CLAUDE.md forbids.
- *      Removed; the in-process BKT engine now runs in `completeTest()`.
- *
- * THIS IS ONE OF THE TWO PERMITTED MASTERY WRITERS. Paper p. 58 limits BKT
- * updates to Adaptive Flashcards and Adaptive Test Mode; `flashcards.routes.ts`
- * is the other. Games, Free Recall and Feynman read mastery and must never write
- * it. The write happens in exactly one place — `PUT /:id/complete` — via
- * `applyTestCompletion()` in `server/lib/bkt.ts`.
+ * Adaptive Test Mode. One of the two permitted mastery writers (paper p. 58), and it writes in exactly
+ * one place: `PUT /:id/complete` via applyTestCompletion().
+ * Every route checks ownership and material access; `is_correct` is always computed from the stored key.
  */
 
 const router = Router();
 router.use(authenticate, requireRole('student'));
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Gates
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface TestRow {
   id: string;
@@ -77,13 +53,7 @@ interface TestRow {
   completed_at: string | null;
 }
 
-/**
- * A test row belonging to the caller, or null after answering 404.
- *
- * Scoped by `student_id` on reads as tightly as on writes. A practice test
- * carries its own answer key and the student's answers; an unguarded read would
- * hand both to anyone holding an id.
- */
+/** The caller's own test row, or null after a 404. Reads are scoped as tightly as writes. */
 async function requireOwnedTest(
   testId: string,
   req: Request,
@@ -103,17 +73,11 @@ async function requireOwnedTest(
   return data as unknown as TestRow;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Serialisation
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * THE ONLY FUNCTION THAT SENDS A QUESTION TO A BROWSER.
- *
- * It allow-lists fields rather than deleting `answer` and `explanation`, so a
- * field added to `StoredTestQuestion` later cannot leak by omission. The whole
- * point of storing the key server-side is undone the moment a second serialiser
- * exists — do not add one.
+ * The only function that sends a question to a browser. Allow-lists fields so nothing new can leak.
+ * Do not add a second serialiser.
  */
 function stripKey(q: StoredTestQuestion) {
   return {
@@ -168,13 +132,7 @@ function toSummary(row: TestRow) {
   };
 }
 
-/**
- * Grades the stored answers against the stored key.
- *
- * Pure and re-runnable: the result is recomputed on every read rather than
- * cached, so a fix to the grading ladder applies to past tests too. Only `score`
- * is denormalised onto the row, for the list view.
- */
+/** Grades stored answers against the stored key. Pure; recomputed on every read. */
 function buildResult(row: TestRow) {
   const questions = questionsOf(row);
   const stored = row.student_answers ?? {};
@@ -214,8 +172,7 @@ function buildResult(row: TestRow) {
 
   return {
     test: testMeta,
-    // Divided by TOTAL, never by the number answered — skipping a question must
-    // not be a way to raise a score.
+    // Divide by the total, never by the number answered, so skipping can't raise a score.
     score: results.length > 0 ? correct / results.length : 0,
     correct,
     total: results.length,
@@ -229,16 +186,10 @@ function buildResult(row: TestRow) {
 
 function failGeneration(res: Response, err: unknown): void {
   if (err instanceof GeminiUnavailableError) {
-    // 429 for spent quota, 503 for an outage. A rate limit reported as a generic
-    // failure tells the student to retry at once, which cannot work.
-    //
-    // GeminiQuotaError extends GeminiUnavailableError, so one instanceof still
-    // catches both, exactly as with the Groq pair this replaces. What moved is the
-    // retry hint: Groq exposed `retryAfterSeconds` on the error itself, Gemini
-    // parses Google's RetryInfo into `upstream.retryAfterMs`. Hence the /1000.
+    // 429 for spent quota, 503 for an outage. GeminiQuotaError extends GeminiUnavailableError.
     const retryAfterMs = err.upstream?.retryAfterMs;
     if (retryAfterMs) res.setHeader('Retry-After', String(Math.ceil(retryAfterMs / 1000)));
-    // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+    // userMessage, never err.message.
     res.status(err.status).json({
       error: 'Question writer unavailable',
       message: studentFacingError(err),
@@ -253,9 +204,7 @@ function failGeneration(res: Response, err: unknown): void {
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/practice/space/:spaceId — the overview list
-// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/space/:spaceId: the overview list
 
 router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void> => {
   const space = await requireOwnedSpace(req.params.spaceId, req, res);
@@ -276,38 +225,12 @@ router.get('/space/:spaceId', async (req: Request, res: Response): Promise<void>
   res.json({ data: (data ?? []).map((row) => toSummary(row as unknown as TestRow)) });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Mastery — EQ(4), read-only
-// ─────────────────────────────────────────────────────────────────────────────
-
-// `latestUpdate()` moved to `server/lib/testDifficulty.ts` when the educator
-// analytics needed it against a `masteryRows()` map of its own.
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/practice/space/:spaceId/mastery — EQ(4) per material
-// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/space/:spaceId/mastery: EQ(4) per material (read-only)
 
 /**
- * What the student has actually mastered in this space, per material and overall.
- *
- * EQ(4), paper p. 81: the arithmetic mean of per-concept probabilities over every
- * concept in the document, with an unassessed concept counting as P(L₀) = 0.10.
- *
- * Built from `masterySnapshot()` — the SAME function that picks a test's
- * difficulty tier — rather than the `v_student_material_mastery` view, for two
- * reasons. It guarantees the figure shown to the student is the exact figure the
- * generator used, which is what the paper's Difficulty Alignment check (p. 98) is
- * about. And that view double-counts: a material linked to two of the same
- * student's spaces joins twice, inflating `concept_count` (the average survives).
- *
- * `concepts_assessed` is not decoration. Without it the UI cannot tell "10%
- * because they have shown no evidence" from "10% because they genuinely know
- * very little", and rendering the prior as a measured percentage would tell a
- * student who has done nothing that they know a tenth of the lesson.
- *
- * Mastery is per (student, concept), so a material sitting in two of the
- * student's spaces reports the same number in both. That is correct — it is
- * their knowledge, not the space's.
+ * Mastery per material and overall: EQ(4) (paper p. 81), unassessed = P(L₀).
+ * Uses the same computation as test difficulty so the shown figure is the one the generator used.
+ * `concepts_assessed` lets the UI avoid printing the prior as a score.
  */
 router.get('/space/:spaceId/mastery', async (req: Request, res: Response): Promise<void> => {
   const space = await requireOwnedSpace(req.params.spaceId, req, res);
@@ -349,15 +272,7 @@ router.get('/space/:spaceId/mastery', async (req: Request, res: Response): Promi
 
   const allConceptIds = (conceptRows ?? []).map((c) => c.id as string);
 
-  /*
-   * ONE read of `bkt_mastery`, then all the arithmetic in memory.
-   *
-   * This loop used to call `masterySnapshot()` once per material, plus a
-   * separate query for `last_updated` — `6 + N` round trips. Every one of those
-   * re-fetched rows the first call already had: EQ(4) is an arithmetic mean, and
-   * a per-material `byConcept` is provably the restriction of the full one to
-   * that material's ids. Constant now, whatever the space holds.
-   */
+  // One read of bkt_mastery, then the arithmetic in memory.
   const rows = await masteryRows(req.user!.id, allConceptIds);
   const byConcept = new Map<string, number>();
   for (const [conceptId, row] of rows) byConcept.set(conceptId, row.mastery);
@@ -380,8 +295,7 @@ router.get('/space/:spaceId/mastery', async (req: Request, res: Response): Promi
 
   res.json({
     data: {
-      // null, not 0.10, when nothing has been assessed — the caller must be able
-      // to say "not assessed yet" rather than print the prior as a score.
+      // null, not 0.10, when nothing is assessed.
       overall: byConcept.size === 0 ? null : overall,
       tier: masteryTier(overall),
       concepts_total: allConceptIds.length,
@@ -393,30 +307,14 @@ router.get('/space/:spaceId/mastery', async (req: Request, res: Response): Promi
 });
 
 /**
- * What one submission did to the student's mastery — one row per concept the
- * test asked about, in the order `applyTestCompletion()` applied them.
- *
- * ⚠️ IT RIDES ON `PUT /:id/complete` ONLY, AND ITS ABSENCE IS MEANINGFUL. It is
- * present only on the request that actually flipped the status. The two
- * idempotent replay paths return the stored grading with no `mastery_changes`
- * at all, because they ran no BKT update and the before/after pair from the
- * original run was never persisted — and reconstructing it from
- * `bkt_update_logs` would make this route the audit trail's second UI reader,
- * which is precisely what `logWriteError` staying non-fatal depends on nobody
- * doing. A client must read "missing" as "no claim", never as "nothing moved".
- *
- * `[]` is a different statement: the update ran and moved nothing.
+ * What one submission did to mastery, per concept. Present only on the request that flipped the
+ * status: missing means "no claim", `[]` means "ran and moved nothing". Never reconstruct it from
+ * bkt_update_logs.
  */
 interface MasteryChangeDto {
   concept_id: string;
   term: string;
-  /**
-   * P(L) before this test's observations.
-   *
-   * ⚠️ MEANINGLESS UNLESS `assessed_before`. When this test was the concept's
-   * first evidence it is exactly P(L₀) = 0.10, and rendering "10% → 33%" prints
-   * the engine's initialisation constant as a measurement.
-   */
+  /** P(L) before this test. Meaningless unless `assessed_before` (otherwise it's P(L₀)). */
   before: number;
   /** P(L) after, exactly as persisted to `bkt_mastery.latent_mastery`. */
   after: number;
@@ -427,17 +325,12 @@ interface MasteryChangeDto {
   assessed_before: boolean;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/practice/space/:spaceId/mastery/concepts — the same, per concept
-// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/space/:spaceId/mastery/concepts: the same, per concept
 
 interface ConceptMasteryDto {
   concept_id: string;
   term: string;
-  /**
-   * Exactly P(L₀) = 0.10 when `assessed` is false — a PRIOR, not a measurement.
-   * A client must not print it as a percentage in that case.
-   */
+  /** Exactly P(L₀) when `assessed` is false; never print it as a percentage then. */
   mastery: number;
   /** False when the student has no `bkt_mastery` row for this concept. */
   assessed: boolean;
@@ -448,12 +341,7 @@ interface ConceptMasteryDto {
 
 interface MaterialMasteryDetailDto {
   material_id: string;
-  /**
-   * Sent by the server rather than joined client-side. The obvious join target,
-   * `GET /spaces/:id/materials`, filters on `parsed_status = 'completed'` while
-   * this route filters on published ∩ linked — so during a re-upload a material
-   * can appear here with concepts intact and no title on the other side.
-   */
+  /** Sent by the server: client-side joins can disagree during a re-upload. */
   title: string;
   m_doc: number;
   tier: string;
@@ -465,24 +353,8 @@ interface MaterialMasteryDetailDto {
 }
 
 /**
- * GET /api/practice/space/:spaceId/mastery/concepts
- *
- * Everything `/mastery` returns, plus every concept of every material in the
- * space. Owner only.
- *
- * A SEPARATE ROUTE, not a flag on `/mastery`, because Test Mode refetches that
- * one on mount and after every submission — it must not start carrying a payload
- * it discards on a hot path. One request rather than expand-on-demand because
- * the whole space is ~10 KB gzipped at realistic sizes, and a cross-material
- * "weakest concepts" list is impossible without it.
- *
- * READ-ONLY, PERMANENTLY. Paper p. 58 and the `bkt_source` enum allow exactly two
- * mastery writers — `PUT /:id/complete` here and the flashcard rating route.
- * Nothing served from this endpoint may ever write `bkt_mastery` or
- * `bkt_update_logs`.
- *
- * The path segment is the literal `concepts`, not `:materialId`, so it can never
- * swallow an id.
+ * GET /api/practice/space/:spaceId/mastery/concepts: `/mastery` plus every concept in the space.
+ * A separate route to keep `/mastery` (Test Mode's hot path) small. Read-only, permanently.
  */
 router.get('/space/:spaceId/mastery/concepts', async (req: Request, res: Response): Promise<void> => {
   const space = await requireOwnedSpace(req.params.spaceId, req, res);
@@ -560,12 +432,7 @@ router.get('/space/:spaceId/mastery/concepts', async (req: Request, res: Respons
       };
     });
 
-    /*
-     * Sorted here, not on the client: weakest-first is what makes the list
-     * actionable without a second widget, and it is the ordering
-     * `testDifficulty.ts` anticipated. Unassessed always sort last regardless of
-     * their 0.10 — they have no position on a scale they were never measured on.
-     */
+    // Weakest assessed first; unassessed last (they have no position on the scale).
     detail.sort((a, b) => {
       if (a.assessed !== b.assessed) return a.assessed ? -1 : 1;
       if (a.assessed && a.mastery !== b.mastery) return a.mastery - b.mastery;
@@ -598,9 +465,7 @@ router.get('/space/:spaceId/mastery/concepts', async (req: Request, res: Respons
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/practice — generate
-// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/practice: generate
 
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   const parsed = CreatePracticeTestSchema.safeParse(req.body);
@@ -610,10 +475,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   }
   const { space_id, material_id, formats } = parsed.data;
 
-  // Gate order, copied from the deck generator: ownership, then grade/archive,
-  // then space membership. The last is not redundant — passing the grade rule
-  // only proves the student may READ the material, not that this space holds it,
-  // and a test generated from another subject would corrupt the space's picture.
+  // Gate order: ownership → grade/archive → linked to this space (proves the space holds it, not just read access).
   const space = await requireOwnedSpace(space_id, req, res);
   if (!space) return;
   if (!(await rejectInaccessibleMaterials(req, res, [material_id]))) return;
@@ -629,24 +491,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     .eq('id', material_id)
     .maybeSingle();
 
-  /*
-   * Document order, which is extraction order.
-   *
-   * THIS IS NOT A TODO. An earlier note here proposed re-ordering by ascending
-   * `bkt_mastery.latent_mastery` once BKT existed, to "test the weakest concepts
-   * first". BKT now exists and the change should NOT be made, for two reasons.
-   *
-   * It would achieve nothing. `allocateConcepts()` emits one question per
-   * concept for every concept — there is no length cap — so ordering cannot
-   * change WHICH concepts are asked about, only which format each one lands in.
-   * (The lone exception is a matching-only test, where coverage is a multiple of
-   * four and one to three concepts fall off the end.)
-   *
-   * And the sign is wrong anyway. `orderedFormats()` puts `multiple_choice`
-   * first, so weakest-first would hand the least-known concepts the format with
-   * the HIGHEST guess probability, P(G) = 0.25 — the least informative evidence
-   * for precisely the concepts most in need of measurement.
-   */
+  // Document order. Don't reorder weakest-first: every concept gets a question anyway, and it would
+  // give the weakest concepts the highest-P(G) format.
   const { data: conceptRows, error: conceptError } = await supabaseAdmin
     .from('concepts')
     .select('id, term, definition')
@@ -682,9 +528,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // Difficulty, paper p. 81. Every concept without a bkt_mastery row counts as
-  // P(L0) = 0.10, so until Phase 3 this is 0.10 / foundational for everyone —
-  // correct, not broken.
+  // Difficulty (paper p. 81). Unassessed concepts count as P(L₀).
   const { snapshot } = await masterySnapshot(req.user!.id, concepts.map((c) => c.id));
   const tier = masteryTier(snapshot);
 
@@ -717,9 +561,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       question_types: allocation.items.map((i) => i.format),
       questions_payload: payload,
       student_answers: {},
-      // Both stored because the paper's Difficulty Alignment check (p. 98)
-      // verifies that the mastery parameter reached the prompt, and it cannot
-      // be run against data that was never written.
+      // Both stored for the Difficulty Alignment check (paper p. 98).
       difficulty_tier: tier,
       mastery_snapshot: snapshot,
       status: 'in_progress',
@@ -738,9 +580,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/practice/:id — resume
-// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/:id: resume
 
 router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   const row = await requireOwnedTest(req.params.id, req, res);
@@ -748,9 +588,7 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   res.json({ data: toGeneratedTest(row) });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/practice/:id/result — review a finished test
-// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/practice/:id/result: review a finished test
 
 router.get('/:id/result', async (req: Request, res: Response): Promise<void> => {
   const row = await requireOwnedTest(req.params.id, req, res);
@@ -767,9 +605,7 @@ router.get('/:id/result', async (req: Request, res: Response): Promise<void> => 
   res.json({ data: buildResult(row) });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PUT /api/practice/:id/answer — record one answer
-// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/practice/:id/answer: record one answer
 
 router.put('/:id/answer', async (req: Request, res: Response): Promise<void> => {
   const parsed = SubmitAnswerSchema.safeParse(req.body);
@@ -796,9 +632,7 @@ router.put('/:id/answer', async (req: Request, res: Response): Promise<void> => 
     return;
   }
 
-  // Read-modify-write on a JSONB column. Safe here because the client sends one
-  // answer at a time per test and a lost write is recoverable — the client keeps
-  // its own copy and re-sends everything before completing.
+  // Read-modify-write on JSONB. Acceptable: one answer at a time, and the client re-sends all before completing.
   const merged: Record<string, StoredAnswer> = { ...(row.student_answers ?? {}) };
   const previous = merged[String(question_index)]?.latency_ms ?? 0;
   merged[String(question_index)] = { answer, latency_ms: previous + latency_ms };
@@ -814,21 +648,17 @@ router.put('/:id/answer', async (req: Request, res: Response): Promise<void> => 
     return;
   }
 
-  // Deliberately does NOT return correctness. Nothing is graded until the test
-  // is submitted, and telling the client would also tell the student.
+  // No correctness until submission.
   res.json({ data: { saved: true } });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PUT /api/practice/:id/complete — grade, write telemetry, update BKT mastery
-// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/practice/:id/complete: grade, write telemetry, update mastery
 
 router.put('/:id/complete', async (req: Request, res: Response): Promise<void> => {
   const row = await requireOwnedTest(req.params.id, req, res);
   if (!row) return;
 
-  // Fast path for an obviously-finished test. The real guarantee is the
-  // compare-and-swap below, not this read — see there.
+  // Fast path only; the compare-and-swap below is the guarantee.
   if (row.status === 'completed') {
     res.json({ data: buildResult(row), message: 'Practice test already submitted' });
     return;
@@ -838,17 +668,8 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
   const questions = questionsOf(row);
   const stored = row.student_answers ?? {};
 
-  /*
-   * COMPARE-AND-SWAP, not a plain update.
-   *
-   * `.eq('status', 'in_progress')` is what actually makes completion idempotent.
-   * The status check above reads a row fetched moments earlier, so two requests
-   * racing — a double-tap on Submit, or a retry after a slow response — both see
-   * `in_progress` and both fall through. Before BKT that duplicated a telemetry
-   * batch; now it would apply every observation twice and inflate mastery for
-   * the whole test. Postgres serialises the two updates, so exactly one gets a
-   * row back and the loser writes nothing.
-   */
+  // Compare-and-swap on status makes completion idempotent; a race would otherwise apply every
+  // BKT observation twice.
   const { data: claimed, error: updateError } = await supabaseAdmin
     .from('practice_tests')
     .update({
@@ -867,27 +688,13 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
   }
 
   if (!claimed || claimed.length === 0) {
-    // Another request completed it between our read and our write. Grading is
-    // pure, so the stored result is the same one that request returned.
+    // Another request completed it first; grading is pure, so return the stored result.
     res.json({ data: buildResult(row), message: 'Practice test already submitted' });
     return;
   }
 
-  /*
-   * Telemetry: one row per question, written ONCE, here.
-   *
-   * Not per answer, despite paper p. 80's "during active testing". The student
-   * can jump back and change an answer, so a per-answer write would produce two
-   * rows for one question — two BKT observations for one piece of evidence — and
-   * a real-time BKT update cannot be un-applied when the answer changes. Writing
-   * from the final answers keeps what the paper actually requires ("graded as a
-   * binary value ... on a per-question basis", each with its own P(G)) while
-   * staying coherent with a test you can revise.
-   *
-   * `question_type` is the column whose omission broke this endpoint since
-   * migration 0011 made it NOT NULL. It selects the P(G) for the observation, so
-   * a missing value is not a reporting gap — it is an ungradeable row.
-   */
+  // Telemetry: one row per question, written once here (not per answer, which would double-count
+  // revised answers). question_type is NOT NULL and selects P(G).
   const telemetry = questions.map((q) => ({
     student_id: req.user!.id,
     concept_id: q.concept_id,
@@ -901,31 +708,12 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
   const { error: telemetryError } = await supabaseAdmin.from('practice_telemetry').insert(telemetry);
 
   if (telemetryError) {
-    // Loud, but not fatal: the student's score is already saved and showing it
-    // is the thing they are waiting for. A missing telemetry batch breaks the
-    // `count(bkt_update_logs) == count(practice_telemetry)` reconciliation,
-    // which is how the gap gets noticed.
+    // Not fatal: the score is already saved.
     console.error('[Practice] Telemetry insert failed:', telemetryError.message);
   }
 
-  /*
-   * BKT. One observation per question, each with the P(G) its format implies.
-   *
-   * Fed from `telemetry` rather than re-derived from `questions`, so the audit
-   * rows and the telemetry rows cannot disagree about what happened. A matching
-   * block already contributes four rows — one per matched term — which is
-   * exactly paper p. 75's "applied per matched item", so it needs no special
-   * handling here.
-   *
-   * Runs even when the telemetry insert failed: mastery is the student's actual
-   * knowledge state and outranks the audit trail's completeness.
-   *
-   * Awaited and inside its own try/catch. Not fire-and-forget — Express 4 does
-   * not forward async rejections and there is no `unhandledRejection` handler,
-   * so a detached promise that rejects would take the process down. And never
-   * fatal: a BKT failure must not cost a student the score they are waiting for,
-   * the same rule that governs Free Recall's feedback call.
-   */
+  // BKT: fed the same telemetry array that was inserted. Runs even if telemetry failed. Awaited in
+  // its own try/catch and never fatal to the score.
   let masteryChanges: MasteryChangeDto[] | undefined;
 
   try {
@@ -943,17 +731,9 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
       console.error(`[BKT] test=${row.id} student=${req.user!.id}: ${problem}`);
     }
 
-    /*
-     * Report the movement only when the state was actually persisted.
-     * `applyBktObservations()` already returns `updated: []` on a mastery write
-     * failure, so this cannot claim a change that was rolled back — the explicit
-     * check states the rule rather than inheriting it.
-     */
+    // Report movement only when mastery was persisted.
     if (!bkt.masteryWriteError) {
-      // The term as of GENERATION, from the same `questions_payload` every other
-      // row on the results screen reads. Stale if an educator has renamed the
-      // concept since — deliberately, because a second source would let two
-      // blocks on one screen disagree about one concept's name.
+      // The term as of generation, matching the rest of the results screen.
       const termByConcept = new Map(questions.map((q) => [q.concept_id, q.concept_term]));
       masteryChanges = bkt.updated.map((u) => ({
         concept_id: u.conceptId,
@@ -972,19 +752,8 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
     );
   }
 
-  /*
-   * Activity + badges. Past the compare-and-swap, so a double-submitted test
-   * logs one row and awards `perfect_test` once.
-   *
-   * `elapsed_ms` rather than `completed_at — created_at`: it is the sum of the
-   * per-question latencies already stored on each answer, so it measures time on
-   * task instead of wall clock. A test opened before dinner and finished after
-   * it would otherwise contribute three hours of "study". It feeds only
-   * `total_study_hours`, which no screen displays.
-   *
-   * `score` is the server's own `correct / total` from `buildResult()` — never a
-   * client-supplied figure, the same rule that keeps `is_correct` server-side.
-   */
+  // Activity + badges, after the CAS so a double submit logs once. Duration is summed answer
+  // latency, not wall clock. Score is server-computed.
   await logActivity({
     studentId: req.user!.id,
     type: 'adaptive_test',
@@ -994,12 +763,7 @@ router.put('/:id/complete', async (req: Request, res: Response): Promise<void> =
     outcome: { score: result.score },
   });
 
-  /*
-   * `buildResult()` is untouched and stays untouched: it is pure, re-runnable
-   * and shared by four call sites including `GET /:id/result`, which grades a
-   * PAST test and has no before/after to report. `mastery_changes` is spread on
-   * at the one call site that earned it.
-   */
+  // mastery_changes is added only here; buildResult() stays pure and shared.
   res.json({
     data: { ...buildResult({ ...row, status: 'completed' }), mastery_changes: masteryChanges },
     message: 'Practice test submitted',

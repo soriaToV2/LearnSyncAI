@@ -16,31 +16,10 @@ import {
 /**
  * The Class Performance tab inside a material.
  *
- * Replaces the roster pages that used to live at `/educator/students`. Those were
- * built entirely on `src/data/mockEducator.ts` — eighteen invented students — and
- * this tab was too: it called `masteryRowsForMaterial()` with a real database
- * UUID against a table keyed on `'mat-sci-1'`, so the lookup never matched and
- * only its empty state ever rendered. Everything below is real BKT data.
+ * Never print P(L₀): a student with no mastery row renders as "Not started" with an empty MeterBar,
+ * not "10%" (which would also rank them above students measurably struggling, given the P(T) floor).
  *
- * ── Never print P(L₀) ────────────────────────────────────────────────────────
- *
- * A student with no `bkt_mastery` row for a concept sits at 0.10 by assumption.
- * Rendering that as "10%" would tell an educator a student knows a tenth of
- * something nobody has asked them about, and — because the BKT transition step
- * floors every assessed posterior at P(T) = 0.20 — would rank every student who
- * has done nothing ABOVE every student who is measurably struggling. So a null
- * `m_doc` renders as "Not started" with `<MeterBar value={null} />`, which draws
- * an empty track of the same height rather than a short bar.
- *
- * ── No cache, deliberately ───────────────────────────────────────────────────
- *
- * The parent renders this only while its tab is active, so switching away and
- * back remounts it and refetches. That is the same freshness-by-construction the
- * student Analytics tab gets from `<main key={activeTab}>`, and it matters more
- * here: an educator returning to this tab is usually checking whether something
- * moved. The per-student drill-downs ARE cached, but only for the life of one
- * mount — they are fetched on expansion and there is no reason to pay for the
- * same expansion twice in one sitting.
+ * No cache: the tab remounts on entry, so it refetches. Drill-downs are cached for one mount only.
  */
 
 type View = 'students' | 'concepts';
@@ -58,7 +37,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  // The By-concept view's own expansion — the transpose of the above.
+  // The By-concept view's expansion (the transpose of the above).
   const [openConcept, setOpenConcept] = useState<string | null>(null);
   const [conceptDetails, setConceptDetails] = useState<Record<string, ConceptClassDetail>>({});
   const [conceptLoading, setConceptLoading] = useState<string | null>(null);
@@ -81,27 +60,13 @@ export default function ClassPerformance({ materialId }: { materialId: string })
     return () => { cancelled = true; };
   }, [materialId]);
 
-  /**
-   * The learning-progress export for the study — one row per student.
-   *
-   * Fetched HERE, on the click, rather than beside the summary on mount: it reads
-   * the BKT audit trail, and this tab's job is the screen. It is a once-per-study
-   * educator action, so paying for it on every tab entry would be the wrong trade.
-   *
-   * It stays enabled when nobody has started. A file showing an empty class is a
-   * legitimate artifact, and refusing to produce one would hide that finding.
-   */
+  /** The study's learning-progress export. Fetched on click (it reads the audit trail); enabled even with nobody started. */
   const downloadEvidence = useCallback(async () => {
     setExporting(true);
     setExportError(null);
     try {
       const evidence = await educatorAnalyticsApi.evidence(materialId);
-      /*
-       * Imported here rather than at the top of the file: the workbook writer
-       * pulls in jszip, which nothing else in the app imports. A research export
-       * pressed once a study must not sit in the bundle every educator downloads
-       * to open a materials list.
-       */
+      /* Dynamic import keeps jszip and the writer out of the main bundle. */
       const { downloadMasteryWorkbook } = await import('../../../lib/masteryWorkbook');
       await downloadMasteryWorkbook(evidence);
     } catch {
@@ -157,7 +122,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
     [openConcept, conceptDetails, materialId]
   );
 
-  // ── Load / error ───────────────────────────────────────────────────────
+  // Load / error
   if (loading) {
     return (
       <section className={`${PANEL} p-10 flex items-center justify-center gap-3`}>
@@ -167,20 +132,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
     );
   }
 
-  /*
-    ⚠️ EVERY POST-LOADING BRANCH BELOW CARRIES `animate-tab-in`, AND THE LOADING
-    BRANCH ABOVE DELIBERATELY DOES NOT. `MaterialDetail` animates the tab panel
-    when it mounts, but this component mounts into a spinner and fetches — so
-    that entrance played on the loader and was over before anything readable
-    arrived, and the content then just appeared. The animation has to fire on
-    the transition the reader actually sees, which is loading → result.
-
-    No `key` is needed: React reuses the `<section>` across that render, and a
-    CSS animation restarts whenever `animation-name` changes from `none` to a
-    name. The three empty/error branches get it too — they are results as much
-    as the table is, and an empty state that snaps in while a populated one
-    animates would look like a different component.
-  */
+  /* Every post-loading branch carries animate-tab-in (the loading one doesn't), so the entrance plays on loading → result. */
   if (error || !data) {
     return (
       <section className={`${PANEL} p-6 flex items-start gap-2.5 animate-tab-in`}>
@@ -192,12 +144,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
 
   const { class: cls, students, concepts, material } = data;
 
-  /*
-   * Three distinct empty states, not one. "This lesson has no concepts yet" and
-   * "nobody is in these grades" and "nobody has started" are different problems
-   * with different fixes, and collapsing them into a single paragraph is how the
-   * old tab managed to say nothing useful in every case.
-   */
+  /* Three distinct empty states: no concepts, nobody in these grades, nobody started. Each has a different fix. */
   if (material.concept_count === 0) {
     return (
       <section className={`${PANEL} p-8 text-center animate-tab-in`}>
@@ -231,19 +178,13 @@ export default function ClassPerformance({ materialId }: { materialId: string })
   return (
     <section className="flex flex-col gap-4 animate-tab-in">
 
-      {/* ── Class summary ─────────────────────────────────────────────── */}
+      {/* Class summary */}
       <div className={`${PANEL} p-6`}>
         <div className="flex items-center gap-2 mb-5">
           <Users className="w-4 h-4 text-slate-400" />
           <h2 className="font-display text-lg font-bold text-white">Class Performance</h2>
 
-          {/*
-            The study's evidence export. It sits here rather than in a tab of its
-            own because the numbers it contains are the ones already on this
-            screen, and because a research export does not deserve a permanent
-            third tab — that is the surface the pre/post instrument occupied and
-            that was deliberately removed.
-          */}
+          {/* The evidence export, here rather than in its own tab: it holds the numbers already on this screen. */}
           <button
             onClick={downloadEvidence}
             disabled={exporting}
@@ -303,11 +244,8 @@ export default function ClassPerformance({ materialId }: { materialId: string })
         </div>
       </div>
 
-      {/* ── By student / By concept ───────────────────────────────────── */}
-      {/* Labels shorten below `sm:` for the same reason the dashboard's control
-          and the material tab bar do — this sits inside a padded card, so on a
-          320px phone the two content-fitted buttons have ~240px to share. "By "
-          carries nothing: the heading above already says what is being listed. */}
+      {/* By student / By concept */}
+      {/* Short labels below sm: so both buttons fit a 320px phone. */}
       <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/5 self-start">
         {([
           ['students', 'Students', 'By student', cls.size],
@@ -331,11 +269,8 @@ export default function ClassPerformance({ materialId }: { materialId: string })
         )}
       </div>
 
-      {/* ── By student ────────────────────────────────────────────────── */}
-      {/* Both branches carry the entrance. No `key` is needed: they are siblings
-          at different child positions, so switching genuinely unmounts one and
-          mounts the other — unlike a single slot whose content changes, which is
-          what needs a key. */}
+      {/* By student */}
+      {/* Both branches animate; as siblings they genuinely remount, so no key is needed. */}
       {view === 'students' && (
         <div className="flex flex-col gap-1.5 animate-tab-in">
           {students.map((s) => {
@@ -404,12 +339,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
                       </p>
                     )}
 
-                    {/* On the loaded list, not on the panel — expanding a row
-                        shows a spinner first, so an entrance on the panel
-                        itself would play against the loader and be over before
-                        the concepts arrived. Same rule as the tab panels; the
-                        `.animate-tab-in` name is about the motion, not the
-                        widget. */}
+                    {/* Animate the loaded list, not the panel, which shows a spinner first. */}
                     {detail && (
                       <div className="flex flex-col gap-1.5 animate-tab-in">
                         {detail.concepts.map((c) => (
@@ -440,11 +370,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
                                   : '—'}
                               </span>
                               <div className="w-28 sm:w-36">
-                                {/*
-                                  value={null} for an unassessed concept, NOT its 0.10.
-                                  MeterBar renders the empty track and drops the meter
-                                  role — announcing "10" would be a lie.
-                                */}
+                                {/* value={null} for an unassessed concept, never its 0.10: MeterBar draws an empty track. */}
                                 <MeterBar
                                   value={c.assessed ? c.mastery : null}
                                   tone={TIER_TONE[c.assessed ? tierOf(c.mastery) : 'foundational']}
@@ -467,7 +393,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
         </div>
       )}
 
-      {/* ── By concept ────────────────────────────────────────────────── */}
+      {/* By concept */}
       {view === 'concepts' && (
         <div className="flex flex-col gap-1.5 animate-tab-in">
           <p className="font-sans text-xs text-slate-500 mb-1 leading-relaxed">
@@ -543,10 +469,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
                       </p>
                     )}
 
-                    {/* A plain `<div>` rather than the fragment this was, purely
-                        so the entrance has something to sit on — it wraps the
-                        definition AND the student list, which arrive together.
-                        Block-in-block, so nothing about the flow changes. */}
+                    {/* A div (not a fragment) so the entrance wraps the definition and student list together. */}
                     {detail && (
                       <div className="animate-tab-in">
                         <p className="font-sans text-[11px] text-slate-500 mb-3 leading-relaxed">
@@ -612,13 +535,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
         </div>
       )}
 
-      {/*
-        Careful with this sentence — the version it replaces said free recall and
-        the Feynman technique "read these values to personalise themselves", which
-        is not true of the built system. `cognitive.routes.ts` contains neither
-        the word "mastery" nor "bkt": those two tabs neither read nor write it.
-        Only the games read it (`server/lib/gameDifficulty.ts`).
-      */}
+      {/* Keep this accurate: Free Recall and Feynman neither read nor write mastery; only games read it. */}
       <p className="font-sans text-xs text-slate-500 mt-2 leading-relaxed">
         Mastery comes from Bayesian Knowledge Tracing and moves only when a student rates a due
         flashcard or completes an adaptive test. The games read it to pick their difficulty but never
@@ -628,16 +545,7 @@ export default function ClassPerformance({ materialId }: { materialId: string })
   );
 }
 
-/**
- * Tier from the value being DISPLAYED, not the raw one.
- *
- * `masteryTier()` carries this rule in its own JSDoc: a concept at 0.849 renders
- * as "85%" but tiers as `intermediate`, so feeding it the raw number puts an
- * amber bar beside a number that reads as the advanced threshold. Rounding first
- * makes the colour and the digits agree. The class and per-student tiers come
- * from the server and are not run through this — they are computed on the
- * unrounded mean, so the two can only differ inside a razor-thin band.
- */
+/** Tier from the displayed (rounded) value, so 0.849 shown as "85%" isn't coloured intermediate. */
 function tierOf(mastery: number): DifficultyTier {
   return masteryTier(masteryPercent(mastery) / 100);
 }

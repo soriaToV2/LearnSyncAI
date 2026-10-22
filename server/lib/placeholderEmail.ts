@@ -1,79 +1,25 @@
 /**
- * Placeholder sign-in addresses, and the one rule about them: never show one to
- * anybody.
- *
- * ⚠️ BOTH ADMIN CREATION PATHS PRODUCE THESE — bulk import always has, and the
- * single-account form since 2026-09-09. The form required a real address until
- * then, on the reasoning that an administrator entering one account at a time has
- * it in front of them; that is usually true and was the wrong thing to enforce,
- * since it blocked creating an account at all for a student who had not yet given
- * one. `POST /api/admin/accounts/:userId/email` still never generates one — it
- * only replaces an address — so there is no route from a real address back to a
- * placeholder.
- *
- * ⚠️ AN ACCOUNT HOLDING ONE IS FULLY USABLE. The username is the credential, so
- * the holder signs in normally; what they lose is self-service password recovery
- * (`canReceiveMail()` is false, so `POST /auth/forgot-password` cannot reach
- * them) until somebody adds a real address.
- *
- * `.invalid` is reserved by RFC 2606 precisely so that it can never resolve. That
- * is what makes it safe where a plausible-looking domain would not be: it cannot
- * be mistaken for deliverable, cannot be accidentally mailed, and cannot collide
- * with a real address the school later starts using.
- *
- * ⚠️ Supabase requires an identity on every account and enforces a UNIQUE index on
- * `auth.users.email` (`users_email_partial_key`). So the field cannot be left
- * empty, and two accounts can never share an address — which is also why real
- * emails cannot be reused between siblings.
- *
- * NOT `email = username`: that is exactly the squatting migration 0021 untangled,
- * where `auth.users.email` held `student`, `educ1` and `admin`.
+ * Placeholder addresses (`<username>@pca.invalid`, RFC 2606) for accounts created without an email.
+ * Supabase needs a unique identity per account. Never display one. Such accounts sign in normally
+ * but can only have their password reset by an admin.
  */
 
 import { z } from 'zod';
 
 const PLACEHOLDER_EMAIL_DOMAIN = 'pca.invalid';
 
-/** `<username>@pca.invalid`. */
 export function placeholderEmailFor(username: string): string {
   return `${username}@${PLACEHOLDER_EMAIL_DOMAIN}`;
 }
 
-/**
- * True for a generated address that must never be displayed.
- *
- * ⚠️ EVERY SCREEN THAT PRINTS AN EMAIL MUST CHECK THIS. The rule the invented
- * `liza.mendoza@pca.edu.ph` broke was about showing a fabricated address as
- * though it were genuine, and a placeholder printed to a student on their own
- * profile page is the same mistake with better intentions. The admin account page
- * checks it; so does the self-service profile, which missed it at first and
- * showed students `juan.delacruz@pca.invalid` as their contact address.
- */
+/** True for a generated address. Every screen that prints an email must check this. */
 export function isPlaceholderEmail(email: string | null | undefined): boolean {
   return !!email && email.toLowerCase().endsWith(`@${PLACEHOLDER_EMAIL_DOMAIN}`);
 }
 
 /**
- * Whether mail sent to this address could actually arrive.
- *
- * ⚠️ IT IS DELIBERATELY WIDER THAN `isPlaceholderEmail()`, AND CONFLATING THE
- * TWO WOULD SILENTLY EXCLUDE THE ACCOUNT THAT MOST NEEDS THIS. That function
- * tests one thing: the `@pca.invalid` suffix. But migration 0021 untangled
- * usernames that had been squatting in `auth.users.email`, and it did not rewrite
- * the values already there — so `educ1` and `admin` still hold those literal
- * words today, with no `@` at all. `isPlaceholderEmail('admin')` is `false`,
- * because `admin` is not a placeholder; it is simply not an address.
- *
- * Password recovery keys off THIS predicate, never the placeholder flag. Keying
- * it off the narrower one would leave the administrator — the single account
- * whose lockout has no recovery path above it — unable to receive a reset code
- * and never shown the banner telling them so.
- *
- * Three ways to fail, one answer: NULL (no address), a placeholder (generated,
- * undeliverable by RFC 2606), or anything Zod does not accept as an email shape
- * (the bare words above). Nothing here proves the mailbox EXISTS or belongs to
- * the user — only a delivered code does that, which is what the confirmation
- * step on `POST /auth/change-email` is for.
+ * Whether mail to this address could arrive. Wider than isPlaceholderEmail(): some legacy
+ * accounts hold bare words like `admin`. Password recovery must key off this predicate.
  */
 export function canReceiveMail(email: string | null | undefined): boolean {
   if (!email || isPlaceholderEmail(email)) return false;

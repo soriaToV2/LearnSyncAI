@@ -2,35 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { api } from '../lib/api';
 
 /**
- * The signed-in user's own profile, fetched once per layout mount.
- *
- * Before this existed, every screen that needed a name read `MOCK_STUDENTS[0]`
- * and rendered "Sarah Jenkins / MIT" — to every student, in every portal. The
- * profile was reachable the whole time at `GET /api/auth/me`; that route was
- * simply broken (it embedded a table that does not exist) and nothing called it,
- * so nothing surfaced the failure.
- *
- * DELIBERATELY THIN. It holds identity and nothing else. Mastery, spaces and
- * activity all belong to the pages that show them — a context that accumulates
- * "things several screens happen to need" becomes a second, invisible data layer
- * with its own staleness rules.
- *
- * No cache, no background revalidation, no localStorage. It is one small request
- * on mount, and `api.ts` already re-reads the Supabase session for the JWT on
- * every call, so there is no token to keep in sync here.
- *
- * `refresh()` is not a retreat from that. It re-runs the same request on demand,
- * and exists for exactly one caller: the Profile page, after a write it just
- * performed. The sidebar renders `fullName(user)` from this context, so without
- * it a renamed user keeps seeing their old name until a hard reload — the page
- * would contradict the form that had just reported success. What the rule above
- * rules out is staleness machinery that runs on its own; this only fires when the
- * data provably changed.
- *
- * There are NO ROUTE GUARDS in this app today, and this file deliberately does
- * not add them — that is a separate change with its own redirect semantics. It
- * does make them a five-line addition: `user === null && !isLoading` after a
- * settled fetch is exactly "not signed in, or not permitted".
+ * The signed-in user's profile, fetched once per layout mount. Identity only; don't add other shared
+ * data. No cache or background revalidation. `refresh()` is for a page that just changed the profile.
  */
 
 export type UserRole = 'student' | 'educator' | 'admin';
@@ -38,53 +11,21 @@ export type UserRole = 'student' | 'educator' | 'admin';
 export interface AuthUser {
   id: string;
   role: UserRole;
-  /**
-   * The LOGIN IDENTIFIER — `email` below is not. NULL means the account cannot
-   * sign in, which an administrator has to fix; see `profiles.username`.
-   */
+  /** The login identifier. NULL means the account can't sign in until an admin fixes it. */
   username: string | null;
   first_name: string;
   last_name: string;
-  /** NULL for educators and admins; NOT NULL for students by DB constraint. */
+  /** NULL for educators and admins. */
   grade_level: number | null;
   status: 'active' | 'disabled';
-  /**
-   * ⚠️ TRUE MEANS THE ACCOUNT IS UN-ACTIVATED AND ALMOST EVERY ROUTE WILL 403.
-   *
-   * It still holds a password an administrator set — so the administrator knows
-   * it, and after a bulk import so does everyone who saw the credentials table.
-   * `requireRole` refuses everything except `GET /api/auth/me` and
-   * `POST /api/auth/change-password` until the holder replaces it.
-   *
-   * `RequireRole` on the client redirects to `/set-password` on this, which is a
-   * convenience — the server gate is what actually enforces it.
-   */
+  /** Un-activated (admin-set password): most routes 403. RequireRole redirects to /set-password; the server enforces it. */
   must_change_password: boolean;
   created_at: string;
-  /**
-   * From `auth.users`, not `profiles` — the genuine sign-in address, which is why
-   * it may be shown despite `profiles` having no email column. It is CONTACT
-   * INFORMATION, not a credential: `username` is what you log in with.
-   */
+  /** From auth.users: contact information, not a credential. */
   email: string | null;
-  /**
-   * ⚠️ TRUE MEANS `email` IS A `<username>@pca.invalid` PLACEHOLDER AND MUST NOT
-   * BE DISPLAYED. Bulk import generates one when a CSV row leaves the column
-   * blank, because Supabase requires an identity on every account. Showing it
-   * would present a fabricated address as the user's own.
-   */
+  /** A generated placeholder; never display it. */
   email_is_placeholder: boolean;
-  /**
-   * ⚠️ WHETHER A PASSWORD-RESET CODE COULD ACTUALLY ARRIVE. Deliberately WIDER
-   * than `email_is_placeholder`: that flag tests only the `@pca.invalid` suffix,
-   * so it is FALSE for `admin` and `educ1`, whose `auth.users.email` still holds
-   * those literal words from before migration 0021 split username from email.
-   *
-   * Two consumers, and both must use this rather than the flag above:
-   * `EmailRecoveryBanner` (shown when false — "add an address so you can reset
-   * your own password"), and every screen that PRINTS the address, since a bare
-   * word is no more a real contact than a placeholder is.
-   */
+  /** Whether a reset code could arrive. Wider than the placeholder flag; use it for the recovery banner and for display. */
   email_can_receive: boolean;
   last_sign_in_at: string | null;
 }
@@ -92,9 +33,9 @@ export interface AuthUser {
 interface AuthValue {
   user: AuthUser | null;
   isLoading: boolean;
-  /** The thrown message, already display-ready — `api.ts` unwraps it. */
+  /** Display-ready error message. */
   error: string | null;
-  /** Re-read the profile. For a page that just wrote to it — see the note above. */
+  /** Re-read the profile after a write. */
   refresh: () => Promise<void>;
 }
 
@@ -110,10 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  /*
-   * Stable identity so a consumer can list it in a dependency array without
-   * re-running on every render.
-   */
+  // Stable identity for dependency arrays.
   const refresh = useCallback(async () => {
     try {
       const res = await api.get<AuthUser>('/auth/me');
@@ -153,14 +91,7 @@ export function useAuth(): AuthValue {
   return useContext(AuthContext);
 }
 
-/**
- * The name to greet someone by.
- *
- * `handle_new_user()` COALESCEs `first_name` to `''` when an account is created
- * without metadata, so an empty string is a real stored value and "Hi, " is a
- * real render. Falls back to the surname, then to a neutral word — never to a
- * placeholder that looks like a name.
- */
+/** The name to greet someone by. first_name may be '', so fall back to the surname, then a neutral word. */
 export function displayName(user: AuthUser | null): string {
   if (!user) return '';
   const first = user.first_name?.trim();
@@ -176,12 +107,7 @@ export function fullName(user: AuthUser | null): string {
   return [user.first_name, user.last_name].map((p) => p?.trim()).filter(Boolean).join(' ');
 }
 
-/**
- * One or two letters for the avatar monogram.
- *
- * `profiles` has no avatar column and no email, so there is no image to fetch and
- * none may be invented — the layout used to render an Unsplash URL from mock data.
- */
+/** One or two letters for the avatar monogram (there is no avatar column). */
 export function initials(user: AuthUser | null): string {
   if (!user) return '';
   const first = user.first_name?.trim()?.[0] ?? '';
@@ -189,11 +115,7 @@ export function initials(user: AuthUser | null): string {
   return (first + last).toUpperCase() || '?';
 }
 
-/**
- * The line under the name in the sidebar. `Grade 9` for students — a real column,
- * unlike the "MIT" it replaces. Educators and admins have no grade, so they get
- * their role instead.
- */
+/** Sidebar subtitle: "Grade N" for students, the role otherwise. */
 export function subtitleFor(user: AuthUser | null): string {
   if (!user) return '';
   if (user.grade_level !== null && user.grade_level !== undefined) return `Grade ${user.grade_level}`;

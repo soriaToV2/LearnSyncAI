@@ -7,19 +7,8 @@ import AccountForms from '../../components/common/AccountForms';
 import AppearanceCard from '../../components/common/AppearanceCard';
 
 /**
- * The student's own account.
- *
- * ⚠️ THE CARD IS READ-ONLY AND THE FORMS BELOW IT ARE NOT, AND THE SPLIT IS THE
- * POINT. Everything on the card is either derived or administrator-owned;
- * everything in the forms is the student's to change. `grade_level` carries its
- * reason explicitly, because `PATCH /api/auth/me` refuses it and an unexplained
- * gap in the form would read as a bug rather than a boundary.
- *
- * Replaces two pages that were entirely invented: `Settings.tsx`, which rendered
- * `MOCK_STUDENTS[0]` — an Unsplash avatar, "MIT", a location, follower counts and
- * an "Edit Profile Card" form that persisted nothing — and `StudentProfile.tsx`,
- * whose "Public Study Spaces" tab was CollabShare, the peer sharing migration
- * 0003 removed as contradicting the paper's data-isolation guarantee.
+ * The student's own account: a read-only card (derived or admin-owned facts, with grade_level's reason
+ * stated) above the editable forms.
  */
 export default function Profile() {
   const { theme, mode, setMode } = useStudentTheme();
@@ -34,11 +23,7 @@ export default function Profile() {
     {
       icon: GraduationCap,
       label: 'Grade level',
-      /*
-       * `grade_level` is NOT NULL for students by DB constraint, so the fallback
-       * is unreachable in practice — it exists so a null cannot render as
-       * "Grade null" if that constraint ever changes.
-       */
+      // grade_level is NOT NULL for students; the fallback only avoids "Grade null".
       value: user?.grade_level != null ? `Grade ${user.grade_level}` : 'Not set',
       note: 'Only an administrator can change this — it decides which materials you can open.',
     },
@@ -57,9 +42,7 @@ export default function Profile() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      {/* `sm:` steps on both axes so a tablet does not jump straight from phone
-          padding to desktop padding — the scale the rest of the student portal
-          uses. */}
+      {/* sm: steps so tablets don't jump from phone to desktop padding. */}
       <div className="max-w-[900px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
         <header className="mb-7 sm:mb-8 flex items-center gap-3 min-w-0">
           <div
@@ -95,9 +78,7 @@ export default function Profile() {
             facts={facts}
           />
 
-          {/* Above the credential forms: it is the one control here that takes
-              effect instantly and asks for nothing, so burying it under two
-              password fields would hide the cheapest thing on the page. */}
+          {/* Above the credential forms: it takes effect instantly and asks for nothing. */}
           <AppearanceCard
             mode={mode}
             onChange={setMode}

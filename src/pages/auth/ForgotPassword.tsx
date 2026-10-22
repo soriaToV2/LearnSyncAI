@@ -12,32 +12,14 @@ import {
 } from '../../lib/account';
 
 /**
- * Self-service password reset — TIER 1 of two, and the one that can fail to be
- * available.
+ * Self-service password reset by mailed code, for accounts with a deliverable address; everyone else
+ * goes through an administrator.
  *
- * An account with a deliverable address recovers itself here with a mailed code.
- * Every other account — no address, a `@pca.invalid` placeholder from CSV import,
- * or one of the bare words migration 0021 left in `auth.users.email` — still goes
- * through an administrator, which is Tier 2 and is the guarantee that never
- * moves. That is why the copy on screen 2 names the fallback explicitly.
+ * Screen 2 is reached whatever happens: the server answers identically for every case, so the page
+ * can't reveal which usernames exist. Never add a branch that reports whether mail was sent, and
+ * never show the address, not even masked.
  *
- * ⚠️ SCREEN 2 IS REACHED WHATEVER HAPPENS, AND THAT IS THE WHOLE DESIGN.
- * `POST /forgot-password` answers 200 identically for an unknown username, a
- * disabled account, an address nothing can be delivered to, a throttled caller
- * and a successful send. These usernames belong to identifiable minors at one
- * named school, so a screen that said "no such user" would be an oracle for which
- * children attend it. Do not add a branch here that reports whether mail was
- * actually sent — the server deliberately does not say.
- *
- * ⚠️ THE ADDRESS IS NEVER SHOWN, NOT EVEN MASKED. `m•••@gmail.com` is ordinary
- * practice elsewhere and is wrong here: a domain and a first letter are still a
- * partial disclosure about a child to whoever typed the username. The
- * "nothing arriving?" paragraph is what replaces it — it strands nobody while
- * disclosing nothing, which is the trade masking normally fails to make.
- *
- * MOUNTED OUTSIDE EVERY LAYOUT, beside `/login` and `/set-password`. It is
- * unauthenticated by definition, so it must not sit inside a shell whose
- * `RequireRole` would bounce a signed-out visitor straight back to `/login`.
+ * Mounted outside every layout, since RequireRole would bounce a signed-out visitor.
  */
 export default function ForgotPassword() {
   const [step, setStep] = useState<'username' | 'code'>('username');
@@ -60,13 +42,7 @@ export default function ForgotPassword() {
     setIsLoading(true);
     setError('');
 
-    /*
-     * ⚠️ NO `catch` BRANCH THAT CHANGES THE OUTCOME. The route cannot fail in a
-     * way the user may see, so a network error is the only thing that can land
-     * here — and even then, advancing is right: the code may well have been sent.
-     * Reporting "that username does not exist" is precisely what this flow must
-     * never do.
-     */
+    /* No catch branch that changes the outcome: advance even on a network error (the code may have been sent). */
     try {
       await recoveryApi.requestPasswordReset(normalised);
     } catch {
@@ -85,20 +61,10 @@ export default function ForgotPassword() {
 
     try {
       await recoveryApi.resetPassword(normalised, code.trim(), password);
-      /*
-       * ⚠️ TO `/login`, NOT INTO THE APP. The server deliberately discards the
-       * session `verifyOtp` produced: a session derived from an emailed code is
-       * weaker proof than one derived from a password, and the user has a
-       * password now. Signing in with it also confirms it works while they are
-       * still on the page that set it.
-       */
+      /* To /login, not into the app: the server discards the OTP session, and signing in confirms the new password. */
       navigate('/login', { replace: true });
     } catch (err: unknown) {
-      /*
-       * The password fields keep their values and only the code is cleared — a
-       * mistyped code should not cost someone the password they just composed
-       * and typed twice.
-       */
+      /* Clear only the code, so a typo doesn't cost the password they just typed twice. */
       setCode('');
       setError(err instanceof Error ? err.message : 'That code is not valid or has expired.');
       setIsLoading(false);
@@ -160,19 +126,8 @@ export default function ForgotPassword() {
         </form>
       ) : (
         <form className="flex flex-col gap-3" onSubmit={submitReset}>
-          {/*
-            ⚠️ THIS PARAGRAPH IS THE MOST IMPORTANT TEXT IN THE FEATURE, and both
-            halves are load-bearing. The first sentence is conditional ("if that
-            username has an email saved") because the server will not say whether
-            it does. The second names the fallback, which is what stops a uniform
-            response from stranding anyone: a student whose account has no address
-            would otherwise sit here waiting for mail that is never coming.
-          */}
-          {/* ⚠️ `bg-white/5`, NOT `bg-white/[0.03]`. Only the former has a
-              `[data-theme="white"]` rule (it lands on `#f1f5f9` with a matching
-              border); the arbitrary-value form has none, so on this page's white
-              card it rendered as white-on-white and the box vanished. The two are
-              visually indistinguishable in dark mode. */}
+          {/* Both halves matter: "if that username has an email saved" (the server won't say), and the administrator fallback. */}
+          {/* bg-white/5, not bg-white/[0.03]: only the former has a white-theme rule, so the other vanishes on the white card. */}
           <div className="flex items-start gap-2.5 rounded-xl border border-white/10 bg-white/5 px-3.5 py-3 mb-1">
             <MailCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary-fixed-dim" aria-hidden="true" />
             <div className="font-sans text-xs leading-relaxed text-slate-400">
@@ -188,11 +143,7 @@ export default function ForgotPassword() {
             </div>
           </div>
 
-          {/* Six boxes rather than one field: the length is known, the value is
-              copied out of an email rather than composed, and a phone can fill it
-              from the notification. `AuthCodeInput` keeps `one-time-code` on its
-              first box and handles paste and autofill — see its header for why it
-              carries no `maxLength`. */}
+          {/* Six boxes: known length, copied from an email, fillable from a notification. See AuthCodeInput. */}
           <AuthCodeInput id="code" label="6-digit code" value={code} onChange={setCode} />
 
           <AuthField
@@ -224,9 +175,7 @@ export default function ForgotPassword() {
             autoComplete="new-password"
           />
 
-          {/* The rule comes from `src/lib/account.ts`, which mirrors the server's
-              `PasswordField` — so this page cannot disagree with the other three
-              places a password is chosen about what is acceptable. */}
+          {/* The rule comes from src/lib/account.ts, which mirrors the server. */}
           <p
             className={`font-sans text-xs leading-relaxed ${
               mismatch || passwordError ? 'text-amber-700' : 'text-slate-500'

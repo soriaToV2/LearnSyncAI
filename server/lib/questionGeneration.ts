@@ -2,74 +2,28 @@ import { Type, ThinkingLevel, type Schema } from '@google/genai';
 import { generateJson, GeminiUnavailableError, GEMINI_CONTENT_MODEL } from './gemini';
 
 /**
- * Writing the QUESTION side of study flashcards.
- *
- * THE MODEL WRITES THE FRONT AND ONLY THE FRONT. The back of every card is the
- * educator's stored definition, verbatim — an earlier helper had the model
- * rewrite that too, which put text nobody vetted in front of students. Here the
- * definition is handed over as a fixed answer and the model writes a prompt for
- * it, so the AI adds pedagogy without touching the facts.
- *
- * THE MODEL NEVER SEES OR RETURNS A CONCEPT ID. It echoes the item's number
- * within its batch, and that number is range-checked before it is trusted. The
- * shape this replaced returned bare {front, back} pairs with no route back to a
- * `concept_id`, which is exactly what BKT needs — and a mis-attached id is the
- * worst failure available here, because the card still looks valid and nothing
- * downstream can detect it.
- *
- * A concept the model skips is simply absent from the returned map. That is not
- * an error: the caller falls back to the concept's term, so a card is never lost
- * and never left unlinked.
- *
- * Lived in `groq.ts` until 2026-08-19, on the decommissioned
- * `llama-3.3-70b-versatile`. It moved out rather than merely off Groq because
- * `groq.ts` was itself deleted on the same day, once nothing imported it.
+ * Writes flashcard fronts (questions). The model never writes the back: that is the educator's
+ * definition, verbatim. It echoes an item number (range-checked), never a concept id.
+ * A skipped concept is simply absent; the caller falls back to its term.
  */
 
-/** A concept to write a question for. `id` is the concepts row id. */
+/** `id` is the concepts row id. */
 export interface ConceptForQuestion {
   id: string;
   term: string;
   definition: string;
 }
 
-/**
- * Concepts per model call.
- *
- * TWENTY, MEASURED — do not raise it to fit a whole material in one call. That
- * is what the original helper did, under a 4096-token ceiling, and it truncated
- * on any real material: live data averages 33 concepts and reaches 42, so this
- * is 2–3 batches. Truncation surfaces as unparseable JSON, which aborts the
- * whole deck.
- */
+/** Don't raise this to fit a whole material in one call; large batches truncate. */
 const QUESTION_BATCH_SIZE = 20;
 
-/**
- * Nothing here reasons. The model rephrases a definition it has been given into
- * a question — the facts are fixed, the answer is fixed, and no judgement of its
- * becomes a number a student is shown. Measured, `gemini-3.6-flash` runs ~2s at
- * MINIMAL against 5–20s at LOW, and thinking tokens bill at the OUTPUT rate.
- */
+/** Rephrasing, not reasoning, so MINIMAL. */
 const THINKING = ThinkingLevel.MINIMAL;
 
-/**
- * Output ceiling per batch of up to `QUESTION_BATCH_SIZE` questions.
- *
- * DOUBLED from Groq's 2048 rather than ported across. MINIMAL thinking is not
- * *no* thinking, and Gemini 3 thinking tokens draw on `maxOutputTokens` — a
- * budget sized for the visible output alone comes back with
- * `finishReason=MAX_TOKENS` and no text at all, which `generateJson()` throws on
- * and the route turns into a failed deck. A ceiling is not a reservation, so
- * headroom that goes unused is free.
- */
+/** Generous because thinking tokens count against it. */
 const MAX_OUTPUT_TOKENS = 4096;
 
-/**
- * Pins the response shape. STRUCTURE ONLY, and the distinction is load-bearing:
- * a schema cannot express "n is inside this batch", so the range check below
- * stays exactly as it was written for Groq, which had no schema at all. Pinning
- * the shape removes a failure mode; it removes no validation.
- */
+/** Structure only; `n` is range-checked below. */
 const QUESTION_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -95,21 +49,8 @@ interface QuestionEcho {
 }
 
 /**
- * Writes one question per concept, keyed by concept id.
- *
- * A concept missing from the result is not an error — the caller uses its term
- * as the card front instead. Throws only when the model call itself fails, which
- * the route treats as "write nothing and let them retry" rather than saving a
- * deck of mixed quality.
- *
- * NO `temperature`. Gemini 3 dropped the sampling parameters and `generateJson()`
- * strips one loudly if passed. The 0.3 that used to sit here was justified as
- * keeping a Refresh from "rewording every card gratuitously" — be plain about the
- * fact that this guarantee is gone: two generations over the same concept will
- * phrase its question differently, and there is no knob left to prevent it. That
- * costs the student nothing, because a Refresh reconciles by `concept_id` and
- * updates cards in place: the front's wording changes, while `next_review_at`,
- * the rating history and the card's link to its concept all survive.
+ * One question per concept, keyed by concept id. Throws only when a model call fails, so the
+ * route writes nothing rather than a mixed deck.
  */
 export async function generateQuestionsForConcepts(
   concepts: ConceptForQuestion[]
@@ -122,11 +63,7 @@ export async function generateQuestionsForConcepts(
     const batch = concepts.slice(start, start + QUESTION_BATCH_SIZE);
     batchCount++;
 
-    // Definitions go in WHOLE — deliberately uncapped, unlike testGeneration.ts.
-    // There the model writes *about* a concept; here it must write a question
-    // whose answer is this exact text, which the student then reads verbatim on
-    // the back of the card. A truncated definition yields a question that only
-    // part of the answer answers.
+    // Definitions go in whole: the question must be answered by the exact text on the card's back.
     const list = batch
       .map((c, i) => `${i + 1}. Term: "${c.term}" — Answer: ${c.definition}`)
       .join('\n');
@@ -164,10 +101,7 @@ ${list}`;
         maxOutputTokens: MAX_OUTPUT_TOKENS,
       });
     } catch (err) {
-      // A typed Gemini failure passes through UNTOUCHED, so the route can tell a
-      // spent daily quota (429) from an outage (503). Wrapping it in a plain
-      // Error collapses both into "could not be reached — please try again",
-      // which is simply false once the day's allowance is gone.
+      // Rethrow typed failures unwrapped so the route can answer 429 vs 503.
       if (err instanceof GeminiUnavailableError) throw err;
       const reason = err instanceof Error ? err.message : String(err);
       throw new Error(`Flashcard question generation failed on batch ${batchCount}: ${reason}`);
@@ -175,8 +109,7 @@ ${list}`;
 
     for (const item of parsed?.questions ?? []) {
       const n = Number(item?.n);
-      // Range-checked: a hallucinated or out-of-range number is dropped rather
-      // than attaching a question to the wrong concept.
+      // Drop out-of-range echoes rather than attach a question to the wrong concept.
       if (!Number.isInteger(n) || n < 1 || n > batch.length) continue;
       const text = typeof item?.question === 'string' ? item.question.trim() : '';
       if (!text) continue;

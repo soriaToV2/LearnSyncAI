@@ -13,8 +13,7 @@ import {
   GEMINI_UTILITY_MODEL,
 } from '../lib/gemini';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
-// The canonical term-matching convention, shared with extraction so a student
-// typing "SSDLC" resolves to the same concept the fold would have joined it to.
+// Shared with extraction so "SSDLC" resolves to the concept extraction folded it into.
 import { foldKey, acronymOf } from '../lib/conceptExtraction';
 import {
   FreeRecallSchema,
@@ -31,17 +30,7 @@ import { logActivity } from '../lib/activity';
 const router = Router();
 router.use(authenticate, requireRole('student'));
 
-/**
- * Confirms the caller owns the study space they named.
- *
- * `requireRole('student')` only proves the caller is *a* student. Every route
- * here reads or writes that space's submissions, and the service-role key
- * bypasses RLS (migration 0008: "The API layer must still enforce role and
- * ownership itself"), so ownership has to be checked here.
- *
- * Answers 404 rather than 403 — a 403 would confirm the id names a real space.
- * Returns the space id on success, or null after sending the response.
- */
+/** Ownership check (RLS is bypassed). 404, never 403. Returns the student id, or null after responding. */
 async function requireOwnedSpace(
   spaceId: string,
   req: Request,
@@ -68,7 +57,6 @@ async function requireOwnedSpace(
   return userId;
 }
 
-// ─── Helper: Cosine similarity between two equal-length vectors ───────────
 function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   let dot = 0, magA = 0, magB = 0;
@@ -80,11 +68,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return magA && magB ? dot / (Math.sqrt(magA) * Math.sqrt(magB)) : 0;
 }
 
-/**
- * Supabase returns pgvector columns as a JSON string like "[0.1, 0.2, ...]" or
- * a PostgreSQL vector string like "[-0.013,0.024,...]".
- * This helper normalises either format into a proper number[].
- */
+/** Supabase returns pgvector columns as strings; normalise to number[]. */
 function parseVector(raw: unknown): number[] {
   if (Array.isArray(raw)) return raw as number[];
   if (typeof raw === 'string') {
@@ -100,22 +84,9 @@ function parseVector(raw: unknown): number[] {
   return [];
 }
 
-
 /**
- * Fingerprints the educator content a submission is graded against.
- *
- * This is what lets an identical resubmission be reused SAFELY. Reuse must stop
- * the moment the educator changes the material, and `concepts` has **no
- * `updated_at` column** — editing a definition changes no timestamp anywhere — so
- * the fingerprint has to be taken over the content itself.
- *
- * Both callers already fetch exactly these rows before their AI call, so this
- * costs no extra query. Sorted by id so row order from Postgres cannot affect it,
- * and hashed as JSON rather than concatenated text so no combination of field
- * values can be reassembled into a different set that hashes the same.
- *
- * `extra` carries anything else the grading depended on — Feynman passes the
- * lesson glossary, because that list drives its jargon detection.
+ * Hash of the concept content a submission is graded against (concepts have no updated_at), so an
+ * educator edit invalidates the memo. `extra` carries other grading inputs (Feynman's glossary).
  */
 function fingerprintConcepts(
   concepts: Array<{ id: string; term: string; definition: string }>,
@@ -129,28 +100,14 @@ function fingerprintConcepts(
     .digest('hex');
 }
 
-/** Every payload we memoise carries the fingerprint it was produced against. */
 interface MemoisableFeedback {
   concepts_fingerprint?: string;
 }
 
 /**
- * Returns a previous identical attempt's stored result, or null.
- *
- * REPRODUCIBILITY LIVES HERE. `temperature: 0` used to pin the scoring pipeline,
- * but Gemini 3 dropped the sampling parameters entirely, so there is no model-side
- * knob left. Rather than hope threshold quantisation absorbs the drift, an
- * identical submission is answered from what it scored last time — which is exact,
- * and true whichever model is configured. That is precisely what makes the model a
- * free variable rather than a load-bearing part of the guarantee.
- *
- * A hit skips EVERY AI call for that submission, which also matters on a free tier
- * metered at 20 requests per day per model.
- *
- * Matched on: same student, same mode, same text, same materials, and the same
- * concept content. The fingerprint is the part that makes this safe — an educator
- * edit changes it, so the next submission is evaluated fresh instead of being
- * served a score for a lesson that no longer exists.
+ * A previous identical attempt's stored result, or null. This is the reproducibility guarantee
+ * (Gemini 3 has no temperature): same student, mode, text, materials and concept fingerprint.
+ * Don't remove it when swapping models.
  */
 async function findMemoisedAttempt<T extends MemoisableFeedback>(params: {
   studentId: string;
@@ -180,18 +137,17 @@ async function findMemoisedAttempt<T extends MemoisableFeedback>(params: {
 
     try {
       const parsed = JSON.parse((prior.ai_feedback as string) ?? '{}') as T;
-      // Rows written before this field existed have no fingerprint and cannot be
-      // proven current, so they are ignored rather than trusted.
+      // Rows without a fingerprint are never reused.
       if (parsed.concepts_fingerprint === fingerprint) return parsed;
     } catch {
-      // Unparseable prior — fall through and evaluate fresh.
+      // Unparseable: evaluate fresh.
     }
   }
 
   return null;
 }
 
-/** Shape of the concepts a student's own answer is broken into. */
+/** Concepts extracted from a student's answer. */
 const STUDENT_CONCEPT_SCHEMA: Schema = {
   type: Type.ARRAY,
   items: {
@@ -205,34 +161,19 @@ const STUDENT_CONCEPT_SCHEMA: Schema = {
   },
 };
 
-/** Shape of the coaching prose. Pins structure only — emptiness is caught below. */
+/** Coaching prose. Structure only; emptiness is checked by the caller. */
 const RECALL_FEEDBACK_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
     feedback: { type: Type.STRING },
-    // Required rather than optional so "nothing to flag" is an explicit empty
-    // string the model had to decide on, not a field it quietly omitted.
+    // Required so "nothing to flag" is an explicit ''.
     corrections: { type: Type.STRING },
   },
   required: ['feedback', 'corrections'],
   propertyOrdering: ['feedback', 'corrections'],
 };
 
-/**
- * Embeds many texts at once, preserving order, a few at a time.
- *
- * Bounded rather than a plain `Promise.all`: a long answer can extract 60+
- * points, and firing all of them at once risks a rate-limit burst costing far
- * more than the serialisation saves. Eight keeps wall time within a whisker of
- * unbounded while never putting more than eight requests in flight.
- *
- * Measured on a real submission: 29 points took 11.5s one-at-a-time versus 1.5s
- * in parallel — 75% of everything spent before the feedback call, purely because
- * this was written as a for-loop over independent calls.
- *
- * Results are written by index, so the output lines up with the input whatever
- * order the responses arrive in.
- */
+/** Embeds texts with bounded concurrency (avoids rate-limit bursts), preserving input order. */
 const EMBED_CONCURRENCY = 8;
 
 async function embedAll(texts: string[]): Promise<number[][]> {
@@ -251,63 +192,27 @@ async function embedAll(texts: string[]): Promise<number[][]> {
   return out;
 }
 
-/**
- * Fixed prose for an attempt that matched NOTHING in the material.
- *
- * Written in code rather than by the model, for two reasons. There is nothing
- * specific to say — no point landed, and naming gaps from a 28-item missed list
- * is exactly the reciting the prompt forbids. And it would cost a model call to
- * say something already known, on the slowest step of the request.
- *
- * Used for both zero extracted points and zero COVERED concepts. The second case
- * is the common one: an off-topic answer still yields plenty of points
- * ("chlorophyll", "glucose"), so extraction is not empty — only the matching is.
- */
+/** Fixed prose (no model call) when extraction finds no points in the answer. */
 const NO_MATCH_FEEDBACK: FreeRecallWrittenFeedback = {
   feedback:
     "Nothing you wrote matched the ideas in this lesson yet. That usually means the answer is about a different material, or it is still too short for us to match anything against — it does not mean what you wrote is wrong. Open the material again, read one section, then close it and write down every idea from that section you can remember in your own words.",
 };
 
 /**
- * Writes coaching prose for a Free Recall attempt.
- *
- * Deliberately returns null instead of throwing. The caller invokes this
- * BEFORE saving and outside the scoring try block, so a failure here costs the
- * student their paragraphs and nothing else — the score, verdict and missed
- * list are already computed and still get written.
- *
- * Everything named here is read by the student as a statement about their own
- * answer, so the prompt below forbids naming any gap that is not in `missedTerms`.
+ * Coaching prose for a Free Recall attempt. Returns null instead of throwing, so a failure never
+ * costs the student their score. May only name gaps from `missedTerms`.
  */
 async function generateRecallFeedback(params: {
   userInput: string;
   studentPoints: string[];
   coveredTerms: string[];
-  /** Plain terms — the only gaps the prose is allowed to name. */
+  /** The only gaps the prose may name. */
   missedTerms: string[];
-  /**
-   * The same missed terms carrying their `source_pages`, e.g. "Injection (p. 24,
-   * 25)". This is what turns "review injection" into somewhere the student can
-   * actually go, and it is the whole reason `next_steps` survives as its own
-   * field rather than dissolving into the summary.
-   */
+  /** Missed terms with their pages, e.g. "Injection (p. 24, 25)". */
   missedWithPages: string[];
-  /**
-   * Every concept in the material with its page, not just the missed ones.
-   *
-   * A student who covers everything still gets a next step — "go deeper on X" —
-   * and with only the missed list supplied there were no pages left to cite.
-   * Two 100%-coverage attempts came back with "review the section on access
-   * control in your lesson materials", the model correctly declining to invent
-   * a page number it had not been given.
-   */
+  /** Every concept with its page, so a page can be cited even at full coverage. */
   conceptPages: string[];
-  /**
-   * Each point the student made, paired with the closest thing the LESSON says.
-   * This is the only ground truth in the prompt — without it the writer sees
-   * concept names and no definitions, so it cannot tell a correct statement
-   * from a confident error, and may praise the error back to the student.
-   */
+  /** Each student point paired with the lesson text that could settle it; the only ground truth. */
   nearestLessonText: string[];
   scorePercent: number;
 }): Promise<FreeRecallWrittenFeedback | null> {
@@ -380,21 +285,8 @@ Return ONLY a JSON object of this exact shape:
 }`;
 
   try {
-    // LOW rather than MINIMAL: the prompt carries real restraint rules — "do NOT
-    // recite the missed list", and "stay silent unless the lesson text settles
-    // it" — and a zero-thinking pass tends to just list things.
-    //
-    // 6144: the prompt carries a definition per student point plus a paged
-    // missed list, the passage runs 4-5 sentences, and thinking tokens draw on
-    // this same allowance. A truncated response surfaces as unparseable JSON,
-    // which here means the student silently loses their feedback.
-    //
-    // MEDIUM, raised from LOW when `corrections` landed. Comparing ~25 claims
-    // against ~20 definitions is the actual work in this call, and at LOW the
-    // model found one injected error, stopped, and then praised the second one
-    // as a strength. Still the utility model, not the grading model — the rule
-    // in CLAUDE.md turns on whether the model's judgement becomes a number the
-    // student is shown, and this one only ever becomes prose.
+    // MEDIUM: at LOW the model missed planted errors in `corrections`. Utility model because the
+    // output is prose, never a score. 6144 tokens since thinking shares the budget.
     const raw = await generateJson<Record<string, unknown>>(prompt, {
       model: GEMINI_UTILITY_MODEL,
       thinkingLevel: ThinkingLevel.MEDIUM,
@@ -405,13 +297,11 @@ Return ONLY a JSON object of this exact shape:
 
     const feedback: FreeRecallWrittenFeedback = {
       feedback: str(raw?.feedback),
-      // Empty is the expected answer, so it is never part of the emptiness test
-      // below — an attempt with nothing to correct is a normal attempt.
+      // '' is the normal answer.
       corrections: str(raw?.corrections),
     };
 
-    // An empty passage is a failed generation, not feedback. Treat it as
-    // unavailable so the student sees the honest note rather than a blank card.
+    // An empty passage counts as a failed generation.
     if (!feedback.feedback) return null;
     return feedback;
   } catch (err) {
@@ -421,21 +311,8 @@ Return ONLY a JSON object of this exact shape:
 }
 
 /**
- * POST /api/cognitive/free-recall
- *
- * Evaluates a Free Recall submission using the Concept-Extraction Pipeline.
- *
- * Flow:
- * 1. Fetch ALL concepts (with embeddings) for the selected material_ids from DB.
- * 2. Send student's raw text to Gemini to extract discrete concepts they discussed.
- * 3. Embed each extracted student concept individually (gemini-embedding-001).
- * 4. For each true DB concept, compute its highest cosine similarity against the student's concept vectors.
- * 5. Grade: "Missed" if highest match < 0.70, "Covered" otherwise.
- * 6. Compute overall similarity score (coverage ratio).
- * 7. Save the result to cognitive_logs.
- * 8. Return { similarity_score, missed_concepts[], overall_verdict }.
- *
- * Body: { space_id, material_ids[], user_input }
+ * POST /api/cognitive/free-recall. Extract the student's points → embed each → a lesson concept is
+ * covered if its best match ≥ 0.70 → score = covered / total. See CLAUDE.md § Free Recall Scoring.
  */
 router.post('/free-recall', async (req: Request, res: Response): Promise<void> => {
   const parsed = FreeRecallSchema.safeParse(req.body);
@@ -446,20 +323,15 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
 
   const { space_id, material_ids, user_input } = parsed.data;
 
-  // ── 0. Ownership and access ─────────────────────────────────────────────
-  // The response lists every concept term the student did not cover, so an
-  // ungated call would dump another grade's concept list to anyone who submits
-  // gibberish against its material id.
+  // 0. Ownership and access (the response lists concept terms).
   const studentId = await requireOwnedSpace(space_id, req, res);
   if (!studentId) return;
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
   try {
-    // ── 1. Fetch all reference concepts for the selected materials ────────
+    // 1. Reference concepts (source_pages lets feedback cite where to read).
     const { data: allConcepts, error: conceptsError } = await supabaseAdmin
       .from('concepts')
-      // `source_pages` is carried purely so the feedback can tell a student WHERE
-      // to go and read. Extraction already records it for educator traceability.
       .select('id, term, definition, embedding, source_pages')
       .in('material_id', material_ids);
 
@@ -473,7 +345,6 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // Filter to only concepts that have embeddings
     const conceptsWithEmbeddings = allConcepts.filter(c => {
       const vec = parseVector(c.embedding);
       return vec.length > 0;
@@ -484,11 +355,7 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // ── 1b. Identical resubmission? Answer from what it scored last time ───
-    // Runs BEFORE any AI call, so a hit costs zero Gemini requests (this endpoint
-    // otherwise spends 2 plus one embedding per student concept). This is also
-    // what guarantees an identical submission scores identically now that Gemini 3
-    // has no `temperature` to pin — see findMemoisedAttempt.
+    // 1b. Identical resubmission: answer from the stored result, before any AI call.
     const fingerprint = fingerprintConcepts(conceptsWithEmbeddings);
     const memoised = await findMemoisedAttempt<FreeRecallFeedback & MemoisableFeedback>({
       studentId,
@@ -499,8 +366,7 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
     });
 
     if (memoised) {
-      // Still writes a row: a resubmission is a real attempt and must appear in
-      // the student's history exactly as before. Only the model calls are skipped.
+      // Still a real attempt: write a row and log activity; only the model calls are skipped.
       const memoScore = memoised.total_concepts
         ? memoised.covered_count / memoised.total_concepts
         : 0;
@@ -525,12 +391,6 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
         return;
       }
 
-      /*
-       * A memoised attempt still counts. It writes a real `cognitive_logs` row
-       * and appears in the student's history exactly as a fresh one does, so it
-       * must count toward the streak too — only the model calls are skipped,
-       * not the fact that the student sat down and did the work.
-       */
       await logActivity({
         studentId,
         type: 'free_recall',
@@ -556,26 +416,11 @@ router.post('/free-recall', async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // ── 2. Extract discrete concepts from the student's text via Gemini ───
+    // 2. Extract the student's points.
     interface ExtractedConcept { term: string; explanation: string }
 
-    // GRANULARITY IS THE WHOLE JOB HERE, and it is not a stylistic preference.
-    //
-    // Each item becomes one vector, and a reference concept is "covered" only if
-    // some student vector clears 0.70 against it. A point that summarises a whole
-    // paragraph embeds as an average, so no individual concept inside it matches
-    // well — the student is then marked as having missed things they plainly
-    // wrote. Measured on a real submission: an earlier version of this prompt
-    // yielded 8 points for a six-paragraph answer and produced FIVE such false
-    // misses, including "Saves Money and Resources" and "Protects Data and
-    // Privacy" from the sentence "the benefits are that it minimises the damage,
-    // reduces downtime, protects data and privacy, and saves money". The rules
-    // below took the same answer to 21 points and zero false misses.
-    //
-    // The list rule carries most of that. Educator-side extraction stores each
-    // item of an enumeration as its own concept ("Preparation", "Containment",
-    // "Reduces Downtime"), so a student listing them in one sentence must be
-    // split the same way or the two sides cannot line up.
+    // Must stay granular (one item per idea, lists split): a coarse point embeds as an average
+    // and causes false misses. See CLAUDE.md § Free Recall Scoring.
     const extractionPrompt = `
 You are an expert academic assistant. Break the student's response below into EVERY distinct idea it contains, so each one can be matched against the lesson's concept list.
 
@@ -604,21 +449,8 @@ Example output:
 ]
 `;
 
-    // This is the only sampling step that feeds the score — a different concept
-    // list embeds differently and shifts the coverage ratio. `temperature: 0`
-    // used to pin it; Gemini 3 ignores temperature, so the schema pins the shape
-    // and findMemoisedAttempt above pins repeat submissions exactly.
-    //
-    // The utility model is correct here despite feeding a score: the model only
-    // ENUMERATES what the student mentioned. Nothing it returns is a score — the
-    // number comes from cosine similarity against COVERAGE_THRESHOLD, computed
-    // below in code.
-    //
-    // LOW rather than MINIMAL, and 8192 rather than 4096. Splitting an
-    // enumeration the student wrote as one sentence is a judgement the model
-    // will not make with thinking off, and a granular pass returns roughly three
-    // times as many items — a budget sized for the old coarse output truncates
-    // mid-array, which surfaces as unparseable JSON rather than a clean error.
+    // Utility model: it only enumerates; the score is computed in code. LOW because MINIMAL
+    // won't split lists; 8192 because granular output is long.
     const extractedConcepts = await generateJson<ExtractedConcept[]>(extractionPrompt, {
       model: GEMINI_UTILITY_MODEL,
       thinkingLevel: ThinkingLevel.LOW,
@@ -626,9 +458,8 @@ Example output:
       maxOutputTokens: 8192,
     });
 
-    // ── 3. Handle edge case: student wrote nothing recognizable ───────────
+    // 3. Nothing recognisable: score 0, everything missed.
     if (!Array.isArray(extractedConcepts) || extractedConcepts.length === 0) {
-      // Score is 0 — all concepts are missed
       const missedConcepts = conceptsWithEmbeddings.map(c => c.term);
 
       const emptyFeedback = NO_MATCH_FEEDBACK;
@@ -670,13 +501,7 @@ Example output:
       return;
     }
 
-    // ── 4. Embed each student-extracted concept individually ──────────────
-    //
-    // In parallel. Granular extraction turns one answer into ~30 points, and one
-    // await per point made this the single slowest stage of the request:
-    // measured 11.5s sequential against 1.5s in parallel for 29 points, 75% of
-    // everything spent before the feedback call. The calls are independent, so
-    // the only reason it was serial is that it was written as a for-loop.
+    // 4. Embed each point (in parallel).
     const vectors = await embedAll(
       extractedConcepts.map(ec => `${ec.term}: ${ec.explanation}`)
     );
@@ -685,38 +510,22 @@ Example output:
       embedding: vectors[i],
     }));
 
-    // ── 5. Grade each reference concept by its best match ─────────────────
+    // 5. Grade each reference concept by its best match.
     const COVERAGE_THRESHOLD = 0.70;
     const missedConcepts: string[] = [];
-    // Covered terms are kept, not just counted — the written feedback needs to
-    // name what the student actually got, not only what they left out.
     const coveredConcepts: string[] = [];
-    // The same misses, carrying the page they are taught on — prompt only. The
-    // stored `missed_concepts` stays plain terms so the payload shape and the
-    // UI's collapsible list are unaffected.
+    // Prompt only; stored missed_concepts stay plain terms.
     const missedWithPages: string[] = [];
 
-    /** One line per concept, so a page can be cited even at full coverage. */
     const pagesOf = (c: { source_pages?: unknown }) => {
       const pages = (c.source_pages as number[] | null) ?? [];
       return pages.length ? ` (p. ${pages.join(', ')})` : '';
     };
     const conceptPages = conceptsWithEmbeddings.map(c => `- ${c.term}${pagesOf(c)}`);
 
-    // The reverse pairing, for the accuracy note only: for each point the STUDENT
-    // made, which concepts is the lesson's closest answer to it?
-    //
-    // Deliberately ignores COVERAGE_THRESHOLD. A badly wrong statement drifts
-    // AWAY from the concept it is wrong about — "Injection is when a hacker plugs
-    // in a USB stick" scored 0.609 against Injection, so it is not in the covered
-    // list at all, and the definition needed to contradict it would never be seen.
-    //
-    // Two rather than one, because that drift also REORDERS the neighbours: for
-    // that same sentence Injection ranked SIXTH, behind XSS, SQLi, File Inclusion,
-    // Integrity Failures and Cybersecurity. Vectors alone cannot be relied on to
-    // surface the right concept for a badly wrong claim — which is why the term
-    // lookup below exists and this is only the fallback for claims the student
-    // never named.
+    // For `corrections` only: each student point's nearest lesson concepts. Ignores the threshold
+    // (wrong claims score below it) and keeps two (wrong claims reorder neighbours). This is the
+    // fallback; the term lookup below is primary.
     const TOP_NEAREST = 2;
     const nearestRef: { refIdx: number; score: number }[][] =
       studentEmbeddings.map(() => []);
@@ -725,7 +534,6 @@ Example output:
       const refEmbedding = parseVector(refConcept.embedding);
       if (refEmbedding.length === 0) continue;
 
-      // Find highest similarity score against any of the student's concept vectors
       let bestScore = 0;
       for (const [scIdx, sc] of studentEmbeddings.entries()) {
         const sim = cosineSimilarity(refEmbedding, sc.embedding);
@@ -751,31 +559,18 @@ Example output:
 
     const coveredCount = coveredConcepts.length;
 
-    // Resolve the NAME the student used straight to the concept it names.
-    //
-    // This is the primary route, not a refinement of the vector search. A
-    // student explaining injection writes the word "Injection", and an exact
-    // name match finds that concept instantly where cosine buried it sixth. It
-    // is also deterministic and free.
-    //
-    // Aliased through the extraction module's own foldKey/acronymOf rather than
-    // a second copy of the rule, so "SSDLC" typed by a student resolves to
-    // "SECURE SOFTWARE DEVELOPMENT LIFE CYCLE (SSDLC)" exactly as it would
-    // during extraction.
+    // Primary pairing: resolve the term the student named straight to its concept, via the
+    // extraction module's foldKey/acronymOf.
     const conceptIdxByAlias = new Map<string, number>();
     for (const [refIdx, c] of conceptsWithEmbeddings.entries()) {
       const term = c.term as string;
       for (const alias of [normaliseTerm(term), foldKey(term), acronymOf(term)]) {
-        // First writer wins: an earlier concept should not be displaced by a
-        // later one that merely shares an acronym.
+        // First writer wins.
         if (alias && !conceptIdxByAlias.has(alias)) conceptIdxByAlias.set(alias, refIdx);
       }
     }
 
-    // Pair each student point with the lesson text that could settle it — the
-    // concept they named, plus their nearest neighbours for claims they only
-    // described. Deduplicated on the concept, so a student who circled the same
-    // idea five times does not repeat its definition five times in the prompt.
+    // Pair each point with the named concept plus nearest neighbours, deduplicated by concept.
     const seenRef = new Set<number>();
     const nearestLessonText: string[] = [];
 
@@ -796,38 +591,19 @@ Example output:
       if (lines.length) nearestLessonText.push(`- You wrote about "${sc.term}":\n${lines.join('\n')}`);
     }
 
-    // ── 6. Compute score as coverage ratio ────────────────────────────────
-    // Score = covered / total. This avoids the "hubness" problem where random
-    // vector overlap inflates scores for concepts the student never discussed.
+    // 6. Coverage ratio, not a mean of raw cosines (which "hubness" inflates).
     const totalConcepts = conceptsWithEmbeddings.length;
     const similarityScore = totalConcepts > 0 ? coveredCount / totalConcepts : 0;
     const scorePercent = Math.round(similarityScore * 100);
 
-    // The denominator is every concept the material yielded, and extraction is
-    // granular — one lesson produced 78 concepts, including supporting details
-    // ("radio waves", "light pulses") nobody writes out from memory. Recalling
-    // a document well lands near 20-30%, not 75%, so the bands sit there. The
-    // ratio itself is left honest; only the label moved.
+    // Stored for analysis only; never displayed.
     const overallVerdict: 'strong' | 'partial' | 'needs_review' =
       similarityScore >= 0.30 ? 'strong' :
       similarityScore >= 0.15 ? 'partial' :
       'needs_review';
 
-    // ── 7. Written feedback — allowed to fail, never allowed to cost the score ─
-    // Scoring is finished and in memory by this point. The call below swallows
-    // its own errors and yields null, so an overloaded or misbehaving model
-    // costs the student their paragraphs and nothing else.
-    //
-    // Reuse of a previous identical attempt is handled earlier, before extraction
-    // ran at all — see the memo check in step 1b.
-    //
-    // Zero coverage is NOT short-circuited to fixed prose, though it was tried.
-    // The assumption was that an answer matching nothing leaves nothing to say;
-    // measured against a real off-topic submission, that was wrong. The model
-    // wrote "your recall drifted into biology, you missed the actual material we
-    // are studying" and sent them to page 2 — specific, and better than any
-    // fixed sentence. The genuine emptiness case is caught earlier, where
-    // extraction itself returns nothing.
+    // 7. Written feedback; may fail (null) without costing the score. Zero coverage still goes
+    // to the model on purpose: it writes more useful prose than a fixed message.
     const writtenFeedback = await generateRecallFeedback({
       userInput: user_input,
       studentPoints: extractedConcepts.map(ec => `${ec.term}: ${ec.explanation}`),
@@ -839,10 +615,7 @@ Example output:
       scorePercent,
     });
 
-    // ── 8. Save to cognitive_logs ─────────────────────────────────────────
-    // `concepts_fingerprint` is what lets an identical resubmission be answered
-    // from this row instead of re-calling the model, and what stops that reuse
-    // the moment the educator edits a concept.
+    // 8. Save. concepts_fingerprint enables memoised resubmissions.
     const payload: FreeRecallFeedback & MemoisableFeedback = {
       missed_concepts: missedConcepts,
       overall_verdict: overallVerdict,
@@ -872,7 +645,7 @@ Example output:
       return;
     }
 
-      // Streak + badges. Never throws, so no try/catch of its own.
+    // Never throws.
     await logActivity({
       studentId,
       type: 'free_recall',
@@ -880,7 +653,6 @@ Example output:
       materialId: material_ids?.[0] ?? null,
     });
 
-    // ── 9. Return results to the frontend ────────────────────────────────
     res.status(201).json({
       data: {
         log_id: log.id,
@@ -900,34 +672,21 @@ Example output:
   } catch (err: any) {
     console.error('[FreeRecall] Error:', err);
     if (err instanceof GeminiUnavailableError) {
-      // Surface the upstream failure with its own status — 503 for an overload,
-      // 429 when the key's quota is spent — rather than dumping Google's raw
-      // error JSON into the student's face. A quota refusal must not read as a
-      // retryable outage; retrying it just fails again.
-      // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+      // The upstream status (429 vs 503) with the student-safe message, never err.message.
       res.status(err.status).json({ error: 'AI service unavailable', message: studentFacingError(err) });
       return;
     }
     res.status(500).json({
       error: 'Failed to process free recall submission',
-      // Not a typed Gemini failure — a Supabase error, a vector-parse throw or a
-      // bug. `err.message` is then a Postgres string, and the student is the wrong
-      // reader for it; `console.error` above already has the real cause.
+      // Never send err.message to a student; it's logged above.
       message: 'Your writing could not be checked just now. Please try again in a moment.',
     });
   }
 });
 
 /**
- * GET /api/cognitive/history/:spaceId?mode=free_recall|feynman
- *
- * Returns the caller's last 20 cognitive log sessions for a given study space.
- * Ordered by most recent first. Defaults to `free_recall` when `mode` is
- * omitted, preserving the original behaviour for existing callers.
- *
- * These rows are the student's own written work. Filtering on space_id alone
- * let anyone read another student's submissions, scores and feedback by
- * supplying their space id, so the caller must own the space AND the rows.
+ * GET /api/cognitive/history/:spaceId?mode=free_recall|feynman: the caller's last 20 attempts.
+ * Filters on both the owned space and the student id.
  */
 router.get('/history/:spaceId', async (req: Request, res: Response): Promise<void> => {
   const { spaceId } = req.params;
@@ -944,10 +703,7 @@ router.get('/history/:spaceId', async (req: Request, res: Response): Promise<voi
 
   const { data: logs, error } = await supabaseAdmin
     .from('cognitive_logs')
-    // `material_ids` is what lets the client compare an attempt to the earlier
-    // attempt on the SAME material. A space can hold attempts against several
-    // materials, and their coverage ratios have different denominators — so
-    // comparing across them would repeat the very error the verdict bands made.
+    // material_ids lets the client compare attempts on the same material only.
     .select('id, mode, user_input, similarity_score, ai_feedback, material_ids, created_at')
     .eq('space_id', spaceId)
     .eq('student_id', studentId)
@@ -963,9 +719,7 @@ router.get('/history/:spaceId', async (req: Request, res: Response): Promise<voi
   res.json({ data: logs ?? [] });
 });
 
-// ─── Feynman: audience rubric ─────────────────────────────────────────────
-// The paper specifies one audience — a 10-year-old child. Kept as a lookup so
-// the rubric stays swappable without touching the prompt or the output schema.
+// Feynman: audience rubric (the paper specifies one audience).
 const AUDIENCE_RUBRICS: Record<FeynmanAudience, string> = {
   '10yr_old': `The student is explaining to a 10-YEAR-OLD CHILD.
 
@@ -976,23 +730,14 @@ Simplicity rubric (be strict):
 - A textbook-accurate explanation that a child could not follow scores LOW on simplicity, no matter how correct it is.`,
 };
 
-/** Clamp an untrusted model-produced number into a 0–100 integer. */
+/** Clamps an untrusted model number to an integer 0–100. */
 function clampScore(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-/**
- * Verdict is derived from accuracy, never taken from the model.
- *
- * When asked for a verdict directly, the model leaks the simplicity axis into
- * it — a jargon-heavy but flawless explanation came back `needs_improvement`
- * on an accuracy of 100. Deriving it guarantees the badge always agrees with
- * the accuracy score the student is looking at.
- *
- * Bands mirror the accuracy scale described in the prompt.
- */
+/** Derived from accuracy, never asked of the model (it leaks simplicity into the verdict). */
 function deriveVerdict(accuracyScore: number): FeynmanVerdict {
   if (accuracyScore >= 80) return 'correct';
   if (accuracyScore >= 30) return 'needs_improvement';
@@ -1006,13 +751,7 @@ function coerceStringArray(value: unknown): string[] {
 
 const normaliseTerm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
-/**
- * Every way a student might name the concept they were asked to explain.
- *
- * "Physical Layer (OSI Model)" yields the full string, "physical layer", and
- * "osi model" — so naming the concept never counts against them, whichever
- * form they used.
- */
+/** Forms of the concept's own name, e.g. "Physical Layer (OSI Model)" → full, "physical layer", "osi model". */
 function selfReferentialForms(term: string): Set<string> {
   const forms = new Set<string>();
   forms.add(normaliseTerm(term));
@@ -1023,41 +762,16 @@ function selfReferentialForms(term: string): Set<string> {
   return forms;
 }
 
-/**
- * Strips the concept's own name from its jargon list. The student was asked to
- * explain that term, so naming it cannot be jargon — but the model flags it
- * anyway when the explanation is circular. The prompt forbids this; this is the
- * belt-and-braces enforcement.
- */
+/** Naming the concept being explained is never jargon; enforced here as well as in the prompt. */
 function stripSelfReferentialJargon(jargon: string[], term: string): string[] {
   const forbidden = selfReferentialForms(term);
   return jargon.filter(j => !forbidden.has(normaliseTerm(j)));
 }
 
 /**
- * True when a claimed "everyday comparison" is built out of the lesson's own
- * vocabulary — which makes it an in-domain example, not an analogy.
- *
- * Measured against the live model: it accepted "it's like a backup server
- * taking over automatically" as an everyday comparison for Resilience. It says
- * "like" twice, but compares computers to computers, and "Web server" is a term
- * in that lesson's glossary. The prompt forbids this; the prompt alone did not
- * hold, so this enforces it in code — and therefore holds whichever model grades.
- *
- * The concept's own name is excluded: "Defense-in-depth is like a castle" must
- * stay a valid analogy even though "Defense-in-depth" is itself a glossary term.
- *
- * Deliberately matches WHOLE glossary terms only, never their individual words.
- * Splitting multi-word terms was tried and rejected: this material's glossary
- * yields head nouns like "pages" (Web pages), "traffic" (HTTP/HTTPS traffic),
- * "control" (Broken Access Control), "fields" (Input fields) and "waves" (Radio
- * waves). Matching those would reject "like pages in a book" and "like traffic
- * on a road" — precisely the everyday analogies the feature exists to reward.
- *
- * Consequence: a comparison sharing only a head noun ("a backup server") is not
- * caught here. That case is the prompt's job; this is the backstop for
- * unambiguous ones. A false rejection is the worse error, because the student is
- * then told to do something they already did.
+ * True when a claimed analogy uses the lesson's own glossary terms (an in-domain example, not an
+ * analogy). Whole terms only, never single words, which would reject "like pages in a book".
+ * The concept's own name is excluded.
  */
 function analogyUsesLessonVocabulary(
   quote: string,
@@ -1071,13 +785,10 @@ function analogyUsesLessonVocabulary(
 
   for (const raw of glossaryTerms) {
     const term = normaliseTerm(raw);
-    // Terms under 4 characters are too generic to be reliable evidence.
+    // Terms under 4 characters are too generic.
     if (term.length < 4 || own.has(term)) continue;
 
-    // Match singular and plural in both directions: a glossary "Web server"
-    // must catch "web servers", and "Web pages" must catch "web page".
-    // Only the trailing "s" comes off — stripping "es" would turn "pages" into
-    // "pag" and stop matching "page" at all.
+    // Singular/plural both ways. Strip only a trailing "s" ("pages" → "page", not "pag").
     const base = term.replace(/s$/, '');
     if (base.length < 4) continue;
     const pattern = new RegExp(`\\b${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:es|s)?\\b`);
@@ -1087,12 +798,7 @@ function analogyUsesLessonVocabulary(
   return false;
 }
 
-/**
- * Shown instead of the model's own analogy verdict when the backstop above
- * fires. The model wrote its `analogy_idea` believing the comparison counted,
- * so it reads as praise — displaying that under "No everyday comparison" would
- * contradict itself. This says plainly why it did not count, and what would.
- */
+/** Replaces the model's analogy note when the backstop above fires (the model's would read as praise). */
 const IN_DOMAIN_ANALOGY_NOTE =
   'Your comparison used words from this lesson, so it only makes sense to someone who already ' +
   'studied the topic. Try comparing it to something from everyday life instead — a castle with ' +
@@ -1103,14 +809,7 @@ function mean(values: number[]): number {
   return Math.round(values.reduce((sum, v) => sum + v, 0) / values.length);
 }
 
-/**
- * Shape of a Feynman grading response.
- *
- * STRUCTURE ONLY. It guarantees the keys exist and are the right type; it says
- * nothing about whether `accuracy_score` is sane, whether `concept_id` echoes an
- * id we actually sent, or whether a claimed analogy is really an analogy. The
- * coercion layer after the call is what enforces all of that and must stay.
- */
+/** Structure only; the coercion after the call validates values and must stay. */
 const FEYNMAN_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -1145,21 +844,8 @@ const FEYNMAN_SCHEMA: Schema = {
 };
 
 /**
- * POST /api/cognitive/feynman
- *
- * Grades a Feynman Technique submission on TWO independent axes:
- *   - accuracy_score   (0–100) — against the concept's stored `definition`
- *   - simplicity_score (0–100) — against the selected audience rubric
- *
- * These are deliberately separate: an explanation can be beautifully simple
- * and factually wrong, and it must not score highly for that.
- *
- * Unlike free-recall, this endpoint does NOT use embeddings. Cosine similarity
- * cannot see jargon or misconceptions — a student who parrots the textbook
- * verbatim would score ~0.95 while completely failing the Feynman exercise.
- * Instead we ground GEMINI_GRADING_MODEL on the stored definitions as truth.
- *
- * Body: { space_id, material_ids[], audience, explanations: [{ concept_id, explanation }] }
+ * POST /api/cognitive/feynman. Grades two independent axes: accuracy (vs the stored definition)
+ * and simplicity (vs the audience rubric). Model-graded, not embeddings, which can't see jargon.
  */
 router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
   const parsed = FeynmanEvaluationSchema.safeParse(req.body);
@@ -1170,15 +856,13 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
 
   const { space_id, material_ids, audience, explanations } = parsed.data;
 
-  // ── 0. Ownership and access ─────────────────────────────────────────────
-  // Grading echoes each concept's term back, and the feedback paraphrases its
-  // stored definition, so this is a read of the material's content.
+  // 0. Ownership and access.
   const studentId = await requireOwnedSpace(space_id, req, res);
   if (!studentId) return;
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
   try {
-    // ── 1. Reject duplicate concept submissions up front ──────────────────
+    // 1. Reject duplicate concepts.
     const conceptIds = explanations.map(e => e.concept_id);
     const uniqueConceptIds = [...new Set(conceptIds)];
     if (uniqueConceptIds.length !== conceptIds.length) {
@@ -1186,13 +870,7 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // ── 2. Look up the authoritative term + definition for each concept ───
-    // Scoped to material_ids so a client cannot grade against a concept from
-    // a material it did not select.
-    //
-    // One row per term is guaranteed upstream by extraction, so a submitted id
-    // names exactly one definition — see the ONE ROW PER TERM invariant in
-    // `lib/conceptExtraction.ts`.
+    // 2. Authoritative term + definition, scoped to the selected materials.
     const { data: concepts, error: conceptsError } = await supabaseAdmin
       .from('concepts')
       .select('id, term, definition')
@@ -1213,11 +891,7 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
 
     const conceptById = new Map(concepts.map(c => [c.id, c]));
 
-    // ── 2b. Load the lesson glossary for the jargon check ─────────────────
-    // The paper's step 1 compares the explanation "against the main glossary
-    // list extracted during the document upload phase" — that list is every
-    // term extracted from the selected materials, not just the ones being
-    // explained. Terms only; definitions would balloon the prompt for nothing.
+    // 2b. Lesson glossary (every term in the materials) for the jargon check.
     const { data: glossaryRows } = await supabaseAdmin
       .from('concepts')
       .select('term')
@@ -1225,14 +899,7 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
 
     const glossaryTerms = [...new Set((glossaryRows ?? []).map(r => r.term as string))];
 
-    // ── 2c. Identical resubmission? Answer from what it graded last time ──
-    // Built before the prompt so a hit costs zero Gemini requests. This is also
-    // what keeps an identical explanation scoring identically now that Gemini 3
-    // ignores `temperature` — a drifting accuracy_score would otherwise be able to
-    // cross deriveVerdict()'s 80 boundary and flip the badge a student is shown.
-    //
-    // The glossary is part of the fingerprint because it drives jargon detection,
-    // so adding a concept to the material legitimately changes the grade.
+    // 2c. Identical resubmission: reuse the stored grade. The glossary is in the fingerprint.
     const userInput = explanations
       .map(e => `Concept: ${conceptById.get(e.concept_id)!.term}\nExplanation: ${e.explanation}`)
       .join('\n\n');
@@ -1247,8 +914,7 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
     });
 
     if (memoised) {
-      // Still writes a row — a resubmission is a real attempt and must appear in
-      // history exactly as before. Only the model call is skipped.
+      // Still a real attempt: write a row and log activity.
       const { data: log, error: memoLogError } = await supabaseAdmin
         .from('cognitive_logs')
         .insert({
@@ -1269,8 +935,6 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
-      // Counts toward the streak for the same reason it writes a log row: the
-      // student did the work, and only the model call was skipped.
       await logActivity({
         studentId,
         type: 'feynman',
@@ -1285,7 +949,7 @@ router.post('/feynman', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // ── 3. Build a single grounded prompt covering every concept ──────────
+    // 3. One grounded prompt covering every concept.
     const submissionBlock = explanations
       .map((e, i) => {
         const concept = conceptById.get(e.concept_id)!;
@@ -1370,17 +1034,8 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
       concepts?: unknown;
     }
 
-    // The grading model, not the utility one: `accuracy_score` below comes
-    // straight from the model and drives deriveVerdict(), so this is the one call
-    // in the codebase where the model's judgement IS the number a student is told.
-    //
-    // MEDIUM thinking is where that model earns its price — two anti-correlated
-    // axes, a restraint rule, analogy classification and glossary-grounded jargon
-    // in one pass. maxOutputTokens is generous because thinking tokens draw on the
-    // same budget and a multi-concept submission is already a long response.
-    //
-    // `temperature: 0` used to pin repeat submissions; Gemini 3 ignores it, so
-    // findMemoisedAttempt above does that job exactly instead.
+    // Grading model: accuracy_score is the number the student sees. MEDIUM thinking for a hard
+    // multi-axis prompt; generous tokens because thinking shares the budget.
     const raw = await generateJson<RawFeynmanResponse>(prompt, {
       model: GEMINI_GRADING_MODEL,
       thinkingLevel: ThinkingLevel.MEDIUM,
@@ -1389,8 +1044,7 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
     });
     const rawConcepts = Array.isArray(raw?.concepts) ? (raw.concepts as Record<string, unknown>[]) : [];
 
-    // ── 4. Coerce the model output — never trust it to hold its schema ────
-    // Match on the echoed concept_id, falling back to positional order.
+    // 4. Coerce the output. Match on echoed concept_id, falling back to position.
     const results: FeynmanConceptResult[] = explanations.map((e, i) => {
       const concept = conceptById.get(e.concept_id)!;
       const match =
@@ -1398,12 +1052,7 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
 
       const accuracyScore = clampScore(match.accuracy_score);
 
-      // Two independent ways a claimed analogy is rejected:
-      //   1. No quote — the model asserted one without producing the student's
-      //      words, so there is nothing to show and nothing to trust.
-      //   2. The quote is built from the lesson's own vocabulary, which makes it
-      //      an in-domain example rather than an everyday comparison.
-      // Either way a student is never told they did something they did not.
+      // A claimed analogy is rejected if it has no quote, or the quote uses lesson vocabulary.
       const analogyQuote = typeof match.analogy_quote === 'string' ? match.analogy_quote.trim() : '';
       const claimedAnalogy = match.analogy_used === true && analogyQuote.length > 0;
       const inDomain =
@@ -1429,9 +1078,6 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
     const accuracyScore = mean(results.map(r => r.accuracy_score));
     const simplicityScore = mean(results.map(r => r.simplicity_score));
 
-    // `concepts_fingerprint` is what lets an identical resubmission be answered
-    // from this row instead of re-grading, and what stops that reuse the moment
-    // the educator edits a concept or the glossary changes.
     const feedbackPayload: FeynmanFeedback & MemoisableFeedback = {
       concepts_fingerprint: fingerprint,
       audience,
@@ -1442,12 +1088,8 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
       concepts: results,
     };
 
-    // ── 5. Persist one log row per submission ─────────────────────────────
-    // `concept_id` is null because a submission spans several concepts; the
-    // per-concept breakdown lives inside the ai_feedback JSON.
-    // `similarity_score` stores mean accuracy as a 0–1 numeric, matching the
-    // convention free-recall already uses for this column.
-    // `userInput` was built in step 2c — it doubles as the memo key.
+    // 5. One row per submission; per-concept results live in ai_feedback.
+    // similarity_score holds mean accuracy as 0–1.
     const { data: log, error: logError } = await supabaseAdmin
       .from('cognitive_logs')
       .insert({
@@ -1468,7 +1110,7 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
       return;
     }
 
-    // Streak + badges. Never throws, so no try/catch of its own.
+    // Never throws.
     await logActivity({
       studentId,
       type: 'feynman',
@@ -1488,17 +1130,11 @@ The "concepts" array must contain exactly ${explanations.length} object(s), one 
   } catch (err: any) {
     console.error('[Feynman] Error:', err);
     if (err instanceof GeminiUnavailableError) {
-      // Surface the upstream failure with its own status — 503 for an overload,
-      // 429 when the key's quota is spent — rather than dumping Google's raw
-      // error JSON into the student's face. A quota refusal must not read as a
-      // retryable outage; retrying it just fails again.
-      // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
       res.status(err.status).json({ error: 'AI service unavailable', message: studentFacingError(err) });
       return;
     }
     res.status(500).json({
       error: 'Failed to evaluate Feynman submission',
-      // See the Free Recall handler above — same reasoning, same wrong reader.
       message: 'Your explanation could not be checked just now. Please try again in a moment.',
     });
   }

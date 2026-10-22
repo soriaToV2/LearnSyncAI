@@ -1,33 +1,15 @@
--- ============================================================================
--- LearnSync AI — Database Schema (source of truth)
--- ============================================================================
--- An AI-powered personalized learning companion for Junior High School students
--- at Pasig Christian Academy.
+-- LearnSync AI database schema (source of truth). Kept in step with supabase/migrations/:
+-- running this on an empty database produces the same schema.
 --
--- This file is a complete, from-scratch definition of the live Supabase
--- database. It is kept byte-for-byte in step with the incremental migrations in
--- supabase/migrations/ — running this file against an empty database produces
--- the same schema those migrations produce.
---
--- Three roles:
---   admin     - manages accounts only; no learning content or analytics
---   educator  - uploads materials, scopes them to grade levels, monitors mastery
---   student   - studies educator materials, is tracked by Bayesian Knowledge Tracing
---
--- Key invariants:
---   * Only educators upload materials; every material is scoped to grade levels 7-10.
---   * Students pull materials into their own study spaces via study_space_materials.
---   * BKT mastery is written ONLY by Adaptive Flashcards and Adaptive Test Mode.
---     Games, Free Recall and the Feynman Technique read mastery but never write it.
---   * Concept embeddings are vector(3072) from gemini-embedding-001. Never change
---     the embedding model — every stored vector would become incompatible.
--- ============================================================================
+-- Roles: admin (accounts only), educator (uploads materials, monitors mastery), student (studies).
+-- Invariants:
+--   * Only educators upload materials; each is published to one grade level (7-10).
+--   * BKT mastery is written only by Adaptive Flashcards and Adaptive Test Mode.
+--   * Embeddings are vector(3072) from gemini-embedding-001. Never change the embedding model.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- ============================================================================
--- 1. ENUM TYPES
--- ============================================================================
+-- 1. Enum types
 
 CREATE TYPE user_role      AS ENUM ('student', 'educator', 'admin');
 CREATE TYPE account_status AS ENUM ('active', 'disabled');
@@ -56,9 +38,7 @@ CREATE TYPE activity_type AS ENUM (
     'chat'
 );
 
--- ============================================================================
--- 2. SHARED TRIGGER FUNCTION
--- ============================================================================
+-- 2. Shared trigger function
 
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER
@@ -71,9 +51,7 @@ BEGIN
 END;
 $$;
 
--- ============================================================================
--- 3. USER MANAGEMENT
--- ============================================================================
+-- 3. User management
 
 CREATE TABLE profiles (
     id          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -83,9 +61,7 @@ CREATE TABLE profiles (
     last_name   TEXT           NOT NULL,
     grade_level SMALLINT,
     status      account_status NOT NULL DEFAULT 'active',
-    -- True while the account still holds a password an ADMINISTRATOR chose. See
-    -- the note below the table: this is a separate fact from `status`, not a
-    -- third value of it.
+    -- True while the account holds an admin-set password; separate from `status` (see below).
     must_change_password BOOLEAN NOT NULL DEFAULT false,
     created_at  TIMESTAMPTZ    DEFAULT now(),
     updated_at  TIMESTAMPTZ    NOT NULL DEFAULT now(),
@@ -95,8 +71,7 @@ CREATE TABLE profiles (
     -- A student without a grade level cannot be matched to any material.
     CONSTRAINT profiles_student_needs_grade
         CHECK (role <> 'student' OR grade_level IS NOT NULL),
-    -- 3-30 chars, lowercase alphanumerics plus dot and underscore, never opening
-    -- or closing on punctuation. NULL is permitted: see the note below.
+    -- 3-30 chars, lowercase alphanumerics, dot, underscore; no leading/trailing punctuation. NULL allowed.
     CONSTRAINT profiles_username_format
         CHECK (username IS NULL OR username ~ '^[a-z0-9][a-z0-9._]{1,28}[a-z0-9]$')
 );
@@ -110,46 +85,18 @@ COMMENT ON COLUMN profiles.username IS
 COMMENT ON COLUMN profiles.must_change_password IS
     'True while the account still holds a password an administrator set. requireRole refuses every route except GET /api/auth/me and POST /api/auth/change-password until the user replaces it. Cleared by that endpoint; re-armed by admin account creation and admin password reset.';
 
--- ACCOUNT STATUS AND FIRST-LOGIN ACTIVATION ARE TWO FACTS, NOT ONE COLUMN.
--- The admin portal shows an account as "Not activated" until its holder replaces
--- the administrator-set password, but that label is DERIVED from
--- (status = 'active' AND must_change_password) — account_status stays a
--- two-value enum. Two reasons:
---
---   1. They are independent. A student can be created, never sign in, then leave
---      the school and be disabled. A single column would overwrite the "never
---      activated" fact and could not restore it when the account is re-enabled.
---   2. `status` is the access gate, read in roughly nineteen places —
---      requireRole, POST /api/auth/login, materialAccess.loadCaller,
---      spaceAccess.loadOwnedSpace, educatorScope, and private.auth_role() /
---      auth_grade_level() / auth_assigned_grades(), which every RLS policy below
---      inherits. A third enum value means re-auditing all of them, where the two
---      failure modes are a legitimate user locked out and an un-activated user
---      let through.
+-- "Not activated" is derived from (status = 'active' AND must_change_password); account_status stays
+-- two values. The facts are independent, and `status` is the access gate read in many places.
 
--- THE USERNAME IS THE LOGIN IDENTIFIER, AND auth.users.email IS NOT.
--- Sign-in used to run straight on auth.users.email, which on the development
--- project held 'student', 'educ1' and 'admin' — usernames squatting in the email
--- column, leaving nowhere to store a contactable address. Migration 0021 split
--- them: POST /api/auth/login resolves username -> email server-side and signs in,
--- so the browser never learns anyone's email and a public username->email oracle
--- never exists. auth.users.email is now purely a contact address the user owns.
---
--- NULLABLE ON PURPOSE. handle_new_user() fires on the auth.users INSERT and
--- cannot invent a unique name without a retry loop inside a trigger that must
--- never raise (an exception there aborts the INSERT and surfaces as an opaque
--- Supabase Auth failure). It takes one from user_metadata when the admin API
--- supplies it and leaves NULL otherwise. An account with a NULL username cannot
--- sign in, which is a loud recoverable failure rather than a silent duplicate.
+-- The username is the login identifier; auth.users.email is contact information only.
+-- POST /api/auth/login resolves username -> email server-side.
+-- Nullable: handle_new_user() must never raise, so a bad or taken username becomes NULL, and that
+-- account cannot sign in until an admin fixes it.
 
--- Case-insensitive: 'Juan' and 'juan' must not be two accounts, which would be an
--- impersonation vector where the username IS the credential. A functional index
--- rather than the citext extension, which would be a new extension for one column.
+-- Case-insensitive uniqueness, since the username is the credential.
 CREATE UNIQUE INDEX ux_profiles_username_lower ON profiles (lower(username));
 
--- An educator's grade levels are NOT stored here, and not stored anywhere on the
--- educator. They are derived from the grade levels of the materials that
--- educator published — see private.auth_assigned_grades().
+-- An educator's grades are derived from their published materials (private.auth_assigned_grades()).
 
 CREATE INDEX idx_profiles_role_grade ON profiles (role, grade_level);
 
@@ -157,17 +104,9 @@ CREATE TRIGGER trg_profiles_updated_at
     BEFORE UPDATE ON profiles
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- ============================================================================
--- 4. STUDY SPACES
--- ============================================================================
--- A study space is a private, student-owned learning environment hosting the
--- five study tabs (Flashcards, Free Recall, Feynman, Test Mode, Course Resources).
---
--- Each space covers exactly one subject, fixed at creation. That is what makes
--- its contents derivable: a space holds every non-archived material published to
--- (space.subject, owner's grade_level), so a new space arrives pre-filled and the
--- Resources tab can count materials the student does not have yet. The FK to
--- subjects is added in section 5, once that table exists.
+-- 4. Study spaces
+-- Private and student-owned. One subject per space, fixed at creation; contents are the materials
+-- published to (subject, owner's grade). The FK to subjects is added in section 5.
 
 CREATE TABLE study_spaces (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -189,17 +128,8 @@ CREATE TRIGGER trg_study_spaces_updated_at
     BEFORE UPDATE ON study_spaces
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- ============================================================================
--- 5. SUBJECTS
--- ============================================================================
--- A controlled vocabulary, nothing more. Educators are not pre-assigned to
--- subjects or grades: they choose both per upload, in materials.subject and
--- materials.grade_levels. A teacher does not upload material for a subject they
--- do not teach, so gating it only added an admin step before a new account could
--- do anything.
---
--- Which students an educator may monitor derives from what they published — see
--- private.auth_assigned_grades() in section 15.
+-- 5. Subjects
+-- A controlled vocabulary. Educators choose subject and grade per upload.
 
 CREATE TABLE subjects (
     code       TEXT PRIMARY KEY,
@@ -210,13 +140,7 @@ CREATE TABLE subjects (
 COMMENT ON TABLE subjects IS
     'Controlled list of JHS subjects. Referenced by materials.subject so free text cannot fragment dashboard grouping into Science / science / Sci.';
 
--- DepEd Junior High School core subjects. Adjust to match the school's actual
--- offering: this is a seed, not a fixed list, and both portals read the table at
--- runtime through `GET /api/subjects`, so editing it here or in the Supabase
--- dashboard is all that is needed — no client code names a subject.
---
--- Christian Living ('CL') was seeded here originally and was removed from the
--- live database on 2026-08-28. It is dropped from the seed so a rebuild matches.
+-- DepEd JHS core subjects (a seed). Both portals read this table at runtime via GET /api/subjects.
 INSERT INTO subjects (code, name, sort_order) VALUES
     ('FIL',   'Filipino',                                   1),
     ('ENG',   'English',                                    2),
@@ -227,22 +151,14 @@ INSERT INTO subjects (code, name, sort_order) VALUES
     ('TLE',   'Technology and Livelihood Education',        7),
     ('MAPEH', 'Music, Arts, Physical Education and Health',  8);
 
--- Declared here rather than inline in section 4, since study_spaces is created
--- before this table exists.
+-- Declared here because study_spaces is created first.
 ALTER TABLE study_spaces
     ADD CONSTRAINT study_spaces_subject_fkey
         FOREIGN KEY (subject) REFERENCES subjects(code) ON DELETE RESTRICT;
 
--- ============================================================================
--- 6. MATERIALS & CONCEPT EXTRACTION
--- ============================================================================
--- Only educators upload materials. Access is granted by grade level, not by
--- study space, so one upload serves every student in that grade.
--- The educator chooses subject and grade level at upload; both are editable
--- afterwards only in the case of the grade (PATCH /api/materials/:id) -- the
--- subject is fixed, because a study space is built from its subject plus the
--- materials published to it, and re-pointing one would strand it in every space
--- already holding it.
+-- 6. Materials & concept extraction
+-- Only educators upload. Access is by grade level. Title, subject, grade and archive state are
+-- editable afterwards via PATCH /api/materials/:id.
 
 CREATE TABLE materials (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -258,30 +174,20 @@ CREATE TABLE materials (
     parsed_status   parsed_status NOT NULL DEFAULT 'pending',
     parse_error     TEXT,
     is_archived     BOOLEAN    NOT NULL DEFAULT false,
-    -- OCR transcript for a scanned/photographed material (migration 0028):
-    -- [{page, text}] in page order, "" for an unreadable page, NULL for a text
-    -- PDF. Written before extraction runs; read only by the owner-gated
-    -- GET /api/materials/:id/ocr-text, never by a list or a student.
+    -- OCR transcript [{page, text}] for scans ('' for unreadable pages, NULL for text PDFs).
+    -- Read only by the owner-gated GET /api/materials/:id/ocr-text.
     ocr_pages       JSONB,
     created_at      TIMESTAMPTZ DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    -- EXACTLY ONE grade level per material.
-    --
-    -- The column stays SMALLINT[] rather than becoming a scalar because every
-    -- grade-access path is built on the array form: `grade_levels @> ARRAY[n]`
-    -- in the API layer, `= ANY (m.grade_levels)` in five RLS policies and in
-    -- v_grade_level_mastery, `unnest(m.grade_levels)` in
-    -- private.auth_assigned_grades(), and the GIN index below. This CHECK
-    -- enforces the rule just as hard without touching any of it, which makes the
-    -- array an implementation detail rather than a modelling claim.
+    -- Exactly one grade level. Kept as SMALLINT[] because all grade-access code uses the array form.
     CONSTRAINT materials_grade_levels_valid
         CHECK (grade_levels <@ ARRAY[7, 8, 9, 10]::SMALLINT[]
                AND array_length(grade_levels, 1) = 1),
-    -- Documented ingest limit: plain-text PDF modules up to 20 MB.
+    -- Ingest limit: 20 MB.
     CONSTRAINT materials_file_size_limit
         CHECK (file_size_bytes IS NULL OR file_size_bytes <= 20971520),
-    -- Documented ingest limit: scanned/image-based PDFs up to 20 pages.
+    -- Ingest limit: scanned PDFs up to 20 pages.
     CONSTRAINT materials_scanned_page_limit
         CHECK (NOT is_scanned OR page_count IS NULL OR page_count <= 20),
     CONSTRAINT materials_page_count_positive
@@ -338,13 +244,9 @@ CREATE TABLE concepts (
 CREATE INDEX idx_concepts_material ON concepts (material_id);
 CREATE INDEX idx_concepts_parent   ON concepts (parent_concept_id);
 
--- NOTE: no ANN index on concepts.embedding. pgvector HNSW/IVFFlat support at most
--- 2000 dimensions and gemini-embedding-001 emits 3072. Exact cosine search with
--- the <=> operator still works; it is simply a sequential scan.
+-- No ANN index: pgvector HNSW/IVFFlat cap at 2000 dimensions. <=> still works as a sequential scan.
 
--- Semantic search used by the Course Resources chatbot (RAG).
--- match_threshold gates results by minimum cosine similarity, so an empty result
--- signals an off-topic question. The chat route passes ~0.60.
+-- RAG search for the chatbot. Results are gated by match_threshold (~0.60), so empty means off-topic.
 CREATE OR REPLACE FUNCTION match_concepts(
     query_embedding vector(3072),
     material_ids    UUID[],
@@ -374,18 +276,14 @@ AS $$
     LIMIT match_count;
 $$;
 
--- ============================================================================
--- 7. FLASHCARDS (Spaced Repetition + BKT)
--- ============================================================================
+-- 7. Flashcards (spaced repetition + BKT)
 
 CREATE TABLE flashcard_decks (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     space_id     UUID NOT NULL REFERENCES study_spaces(id) ON DELETE CASCADE,
     title        TEXT NOT NULL,
     description  TEXT,
-    -- Migration 0027. A deck belongs to exactly one student, so this is a
-    -- per-student setting without a second table, and it is the right grain:
-    -- a question-format deck reads oddly reversed where a term deck reads well.
+    -- Per-student display setting (a deck belongs to one student).
     answer_first BOOLEAN NOT NULL DEFAULT false,
     created_at   TIMESTAMPTZ DEFAULT now()
 );
@@ -415,7 +313,7 @@ CREATE INDEX idx_flashcards_deck     ON flashcards (deck_id);
 CREATE INDEX idx_flashcards_concept  ON flashcards (concept_id);
 CREATE INDEX idx_flashcards_material ON flashcards (source_material_id);
 
--- Every rating event. Leitner tiers: Easy = 7 days, Medium = 3 days, Hard = 1 day.
+-- Every counted rating. Leitner tiers: Easy 7 days, Medium 3, Hard 1.
 CREATE TABLE spaced_repetition_logs (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id     UUID NOT NULL REFERENCES profiles(id)   ON DELETE CASCADE,
@@ -434,10 +332,7 @@ CREATE INDEX idx_spaced_repetition_logs_student   ON spaced_repetition_logs (stu
 CREATE INDEX idx_spaced_repetition_logs_flashcard ON spaced_repetition_logs (flashcard_id);
 CREATE INDEX idx_srl_concept                      ON spaced_repetition_logs (concept_id);
 
--- ============================================================================
--- 8. COGNITIVE REVIEW (Free Recall & Feynman Technique)
--- ============================================================================
--- Both provide AI feedback but never modify BKT mastery.
+-- 8. Cognitive review (Free Recall & Feynman). AI feedback only; never modifies mastery.
 
 CREATE TABLE cognitive_logs (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -468,9 +363,7 @@ COMMENT ON COLUMN cognitive_logs.ai_feedback IS
 CREATE INDEX idx_cognitive_logs_space   ON cognitive_logs (space_id);
 CREATE INDEX idx_cognitive_logs_student ON cognitive_logs (student_id, created_at DESC);
 
--- ============================================================================
--- 9. AI CHATBOT (Course Resources tab)
--- ============================================================================
+-- 9. AI chatbot (Course Resources tab)
 
 CREATE TABLE chatbot_logs (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -490,9 +383,7 @@ COMMENT ON COLUMN chatbot_logs.mode IS
 CREATE INDEX idx_chatbot_logs_space   ON chatbot_logs (space_id);
 CREATE INDEX idx_chatbot_logs_student ON chatbot_logs (student_id);
 
--- ============================================================================
--- 10. ADAPTIVE TEST MODE
--- ============================================================================
+-- 10. Adaptive Test Mode
 
 CREATE TABLE practice_tests (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -541,15 +432,10 @@ COMMENT ON COLUMN practice_telemetry.question_type IS
 CREATE INDEX idx_practice_telemetry_student ON practice_telemetry (student_id);
 CREATE INDEX idx_practice_telemetry_test    ON practice_telemetry (practice_test_id);
 
--- ============================================================================
--- 11. BAYESIAN KNOWLEDGE TRACING
--- ============================================================================
--- Classical four-parameter BKT, implemented directly in the Express backend.
--- No pyBKT, no Expectation Maximization fitting.
---
---   Evidence update, correct:    P(L|1) = P(L)(1-P(S)) / [P(L)(1-P(S)) + (1-P(L))P(G)]
---   Evidence update, incorrect:  P(L|0) = P(L)P(S)     / [P(L)P(S)     + (1-P(L))(1-P(G))]
---   Transition update:           P(L_t+1) = P(L|obs) + (1 - P(L|obs)) * P(T)
+-- 11. Bayesian Knowledge Tracing (classical four-parameter, in the Express backend; no pyBKT, no EM)
+--   Evidence, correct:    P(L|1) = P(L)(1-P(S)) / [P(L)(1-P(S)) + (1-P(L))P(G)]
+--   Evidence, incorrect:  P(L|0) = P(L)P(S)     / [P(L)P(S)     + (1-P(L))(1-P(G))]
+--   Transition:           P(L_t+1) = P(L|obs) + (1 - P(L|obs)) * P(T)
 
 CREATE TABLE bkt_parameters (
     key         TEXT PRIMARY KEY,
@@ -592,9 +478,7 @@ COMMENT ON COLUMN bkt_mastery.opportunity_count IS
 
 CREATE INDEX idx_bkt_student_concept ON bkt_mastery (student_id, concept_id);
 
--- Append-only audit trail. Every row carries the prior, the exact parameters
--- applied and both update phases, so the documented Implementation Correctness
--- Rate test can diff system output against hand-computed values.
+-- Append-only audit trail: prior, applied parameters and both phases, for the ICR test.
 CREATE TABLE bkt_update_logs (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id       UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -659,13 +543,8 @@ $$;
 COMMENT ON FUNCTION mastery_tier(NUMERIC) IS
     'Adaptive test / game difficulty tier: < 0.50 foundational, 0.50-0.85 intermediate, >= 0.85 advanced.';
 
--- ============================================================================
--- 12. ACTIVITY LOG, STREAKS & GAMIFICATION (PlayMe module)
--- ============================================================================
--- Streak days are measured in Asia/Manila, the school's local time. A bare
--- occurred_at::date depends on the session TimeZone (only STABLE, not indexable),
--- and under UTC an early-morning session in the Philippines would land on the
--- previous day.
+-- 12. Activity log, streaks & gamification
+-- Streak days use Asia/Manila calendar dates (a bare ::date depends on the session TimeZone).
 
 CREATE TABLE activity_logs (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -700,8 +579,7 @@ CREATE TABLE gamification_profiles (
 COMMENT ON COLUMN gamification_profiles.last_active_on IS
     'Asia/Manila calendar date of the most recent activity. Streak succession is measured against this, not a 48-hour clock.';
 
--- AI-generated game content (crossword grids, term/definition sets, trivia).
--- Declared before game_sessions, which carries an FK to it.
+-- AI-generated game content. Declared before game_sessions, which references it.
 CREATE TABLE game_content (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id       UUID   NOT NULL REFERENCES profiles(id)     ON DELETE CASCADE,
@@ -713,9 +591,7 @@ CREATE TABLE game_content (
     payload          JSONB  NOT NULL,
     created_at       TIMESTAMPTZ DEFAULT now(),
 
-    -- Same three tiers as practice_tests.difficulty_tier and mastery_tier(), and
-    -- deliberately no DEFAULT: an insert that forgets this column must fail
-    -- loudly rather than write a plausible-looking value outside the vocabulary.
+    -- Same tiers as mastery_tier(); no DEFAULT, so a missing value fails loudly.
     CONSTRAINT game_content_difficulty_tier
         CHECK (difficulty IN ('foundational', 'intermediate', 'advanced')),
     CONSTRAINT game_content_mastery_snapshot_check
@@ -771,23 +647,11 @@ CREATE TABLE user_badges (
 COMMENT ON COLUMN user_badges.badge_name IS
     'Stable identifier from the catalogue in server/lib/badges.ts (e.g. streak_3, mastery_10). Never renamed once live -- the string IS the identity. There is deliberately no `badges` table: a catalogue nobody can edit is a constant with extra steps.';
 
--- UNIQUE (student_id, badge_name) is load-bearing, not tidiness: awarding is
--- INSERT ... ON CONFLICT DO NOTHING, which is what makes re-evaluating a badge
--- on every single activity idempotent and free of a read-then-write race.
+-- UNIQUE (student_id, badge_name) makes awarding idempotent (ON CONFLICT DO NOTHING).
 CREATE INDEX idx_user_badges_student ON user_badges (student_id);
 
--- Onboarding progress. One row per first-run step a student has been shown --
--- the guided tour, and the intro on each of the six study tools.
---
--- Shaped after user_badges above, and for the same reason: it is a SET of string
--- keys held per student, and the composite PK is what makes the write
--- INSERT ... ON CONFLICT DO NOTHING, idempotent with no read-then-write race.
---
--- ⚠️ IT GATES NOTHING. Unlike profiles.must_change_password, no middleware reads
--- this and no route refuses on it, so a failed read costs a tour step and never
--- an account's access. Nothing writes to activity_logs for onboarding either:
--- that insert fires trigger_update_streak, which would award a study-streak day
--- for reading a tour.
+-- Onboarding steps a student has seen. Composite PK makes writes idempotent.
+-- Gates nothing, and never writes activity_logs (that would award streak days).
 CREATE TABLE onboarding_seen (
     student_id UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     step_key   TEXT        NOT NULL,
@@ -798,14 +662,10 @@ CREATE TABLE onboarding_seen (
 COMMENT ON COLUMN onboarding_seen.step_key IS
     'Stable identifier from the catalogue in src/lib/onboarding.ts, mirrored as a Zod enum in server/types/api.ts (e.g. tour_v1, tool_flashcards). The string IS the identity -- renaming one re-shows that step to every student who had already dismissed it. The version suffix (tour_v1) is how a genuinely rewritten tour gets re-shown on purpose.';
 
--- No secondary index: the PK leads with student_id, so a lookup by student uses
--- it as a prefix, and this table holds a handful of rows per student.
+-- No secondary index: the PK leads with student_id.
 
--- ============================================================================
--- 13. DASHBOARD VIEWS
--- ============================================================================
--- security_invoker so the querying role's RLS applies. A default view would run
--- as its owner and leak every student's mastery to anyone able to select from it.
+-- 13. Dashboard views
+-- security_invoker so the caller's RLS applies; a default view would leak every student's mastery.
 
 CREATE VIEW v_student_material_mastery
 WITH (security_invoker = on) AS
@@ -829,12 +689,8 @@ GROUP BY ss.student_id, ssm.material_id;
 COMMENT ON VIEW v_student_material_mastery IS
     'M_doc per student per material, deduplicated across study spaces. Backs the dashboard progress bar and game calibration.';
 
--- Built directly over materials -> concepts -> students, NOT over
--- v_student_material_mastery. That view joins study_space_materials and
--- study_spaces, which educators have no policy on (a student's study spaces are
--- private), so routing through it returned zero rows for every educator.
--- Ordinary RLS scopes this correctly: materials to the educator's own, concepts
--- to those materials, profiles/bkt_mastery to students in their assigned grades.
+-- Built over materials -> concepts -> students, not v_student_material_mastery (educators have no
+-- policy on study spaces, so that route returned zero rows).
 CREATE VIEW v_grade_level_mastery
 WITH (security_invoker = on) AS
 SELECT
@@ -866,18 +722,10 @@ GROUP BY m.educator_id, m.id, m.title, m.subject,
 COMMENT ON VIEW v_grade_level_mastery IS
     'Educator analytics: M_doc for every student in the educator''s grades against each material they published. Scoped by RLS, not by study space.';
 
--- ============================================================================
--- 14. AUTOMATION & TRIGGERS
--- ============================================================================
+-- 14. Automation & triggers
 
--- Mirrors a new auth user into profiles. Accounts are created by an admin via
--- the Supabase Auth admin API, which supplies role and grade_level in
--- user_metadata. Nothing further is needed for an educator: they can upload the
--- moment the account exists.
---
--- Defaults are applied rather than raising, because an exception here would
--- abort the auth.users INSERT and surface as an opaque Supabase Auth failure.
--- The API layer validates the payload before calling createUser.
+-- Mirrors a new auth user into profiles, taking role and grade from user_metadata.
+-- Applies defaults rather than raising: an exception would abort the auth.users INSERT.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -900,10 +748,7 @@ BEGIN
         v_grade := 7;
     END IF;
 
-    -- A malformed or already-taken username degrades to NULL rather than raising,
-    -- for the same reason the defaults above do: an exception here aborts the
-    -- auth.users INSERT. The account is then created without a login identifier,
-    -- which an admin fixes, instead of not being created at all.
+    -- A malformed or taken username becomes NULL rather than raising; an admin fixes it.
     v_username := NULLIF(lower(NEW.raw_user_meta_data ->> 'username'), '');
 
     IF v_username IS NOT NULL
@@ -912,10 +757,7 @@ BEGIN
         v_username := NULL;
     END IF;
 
-    -- Set HERE rather than by a follow-up UPDATE from the API, so the row is born
-    -- with the flag and there is no window in which the account exists without it.
-    -- Anything unparseable degrades to false: a usable account that was not forced
-    -- to re-key is a lesser failure than one nobody can activate.
+    -- Set here so the row is born with the flag; unparseable values become false.
     BEGIN
         v_must_change := COALESCE(
             (NULLIF(NEW.raw_user_meta_data ->> 'must_change_password', ''))::BOOLEAN,
@@ -946,8 +788,7 @@ BEGIN
         ON CONFLICT (student_id) DO NOTHING;
     END IF;
 
-    -- Educators need no further setup: subject and grade access are chosen per
-    -- material at upload time, so a new account can publish immediately.
+    -- Educators need no further setup.
     RETURN NEW;
 END;
 $$;
@@ -980,7 +821,7 @@ BEGIN
      FOR UPDATE;
 
     IF v_last IS NULL OR v_day > v_last THEN
-        -- A new calendar day: extend the run if it is the very next day, else restart.
+        -- New calendar day: extend the run if consecutive, else restart.
         v_streak := CASE WHEN v_last IS NOT NULL AND v_day = v_last + 1
                          THEN v_streak + 1
                          ELSE 1
@@ -992,7 +833,7 @@ BEGIN
                last_active_on = v_day
          WHERE student_id = NEW.student_id;
     END IF;
-    -- Repeat activity on a day already counted leaves the streak untouched.
+    -- A second activity on the same day leaves the streak unchanged.
 
     UPDATE gamification_profiles
        SET total_study_hours = total_study_hours + (NEW.duration_ms / 3600000.0)
@@ -1009,8 +850,7 @@ CREATE TRIGGER trigger_update_streak
     AFTER INSERT ON activity_logs
     FOR EACH ROW EXECUTE FUNCTION update_study_streak();
 
--- RLS grants row access, not column access, so a student allowed to UPDATE
--- their own profile could otherwise set role = 'admin'.
+-- RLS grants row access, not column access, so block self-escalation of role/status/grade here.
 CREATE OR REPLACE FUNCTION enforce_profile_immutables()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -1039,32 +879,16 @@ CREATE TRIGGER trg_profiles_immutables
     BEFORE UPDATE ON profiles
     FOR EACH ROW EXECUTE FUNCTION enforce_profile_immutables();
 
--- There is deliberately no publish-scope trigger. An educator files a material
--- under any subject in the catalogue and grants access to any JHS grades; the
--- FK on materials.subject and materials_grade_levels_valid are the only limits.
+-- No publish-scope trigger: the subject FK and the one-grade CHECK are the only limits.
 
--- ============================================================================
--- 15. ROW-LEVEL SECURITY
--- ============================================================================
--- Enforcement note: the Express API talks to Postgres with the service role key,
--- which bypasses RLS by design. These policies are the defence-in-depth layer
--- protecting direct anon-key access, and they are what the documented
--- "PostgreSQL RLS checks" are run against. The API layer must still enforce role
--- and ownership itself.
---
--- Mastery is deliberately read-only for students: bkt_mastery, bkt_update_logs,
--- gamification_profiles and user_badges have no student INSERT/UPDATE policy, so
--- a student holding an anon key cannot inflate their own scores.
+-- 15. Row-level security
+-- The API uses the service role, which bypasses RLS, so these policies are defence in depth for
+-- anon-key access and must still be enforced in the API layer.
+-- Mastery and gamification tables have no student write policy, so an anon key can't inflate scores.
 
--- Helper functions live in the `private` schema, which PostgREST does not
--- expose, so they cannot be called as /rest/v1/rpc/... endpoints. Separation is
--- by schema rather than by grant: RLS policy expressions ARE evaluated with the
--- caller's privileges, so revoking EXECUTE instead would raise
--- "permission denied for function auth_grade_level" on every student read.
---
--- SECURITY DEFINER so reading `profiles` inside a `profiles` policy does not
--- recurse. Each returns NULL for a disabled account, which fails every role
--- comparison below and locks the account out.
+-- Helpers live in the unexposed `private` schema (separated by schema, not by revoking EXECUTE,
+-- which would break policy evaluation). SECURITY DEFINER avoids recursion on profiles. Each returns
+-- NULL for a disabled account.
 
 CREATE SCHEMA IF NOT EXISTS private;
 
@@ -1086,13 +910,8 @@ AS $$
      WHERE id = auth.uid() AND status = 'active' AND role = 'student';
 $$;
 
--- Derived from the educator's own live materials, so what they may monitor can
--- never drift from what they actually published. Returns NULL for an educator
--- with no materials, which correctly shows them no students. Matches the
--- scoping v_grade_level_mastery already used.
---
--- SECURITY DEFINER runs as the table owner, which bypasses RLS on materials, so
--- there is no recursion with the materials policies below.
+-- Derived from the educator's live materials; NULL (no students) if they have none.
+-- SECURITY DEFINER bypasses RLS on materials, so there is no policy recursion.
 CREATE OR REPLACE FUNCTION private.auth_assigned_grades()
 RETURNS SMALLINT[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
@@ -1125,8 +944,7 @@ GRANT EXECUTE ON FUNCTION private.auth_grade_level()     TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION private.auth_assigned_grades() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION private.owns_study_space(UUID) TO anon, authenticated;
 
--- The trigger functions stay in `public` with EXECUTE revoked. Unlike policy
--- expressions, trigger execution does not re-check the caller's privilege.
+-- Trigger functions stay in `public` with EXECUTE revoked; triggers don't re-check caller privilege.
 REVOKE EXECUTE ON FUNCTION enforce_profile_immutables() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION handle_new_user()            FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION update_study_streak()        FROM PUBLIC, anon, authenticated;
@@ -1154,7 +972,7 @@ ALTER TABLE game_content           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_badges            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE onboarding_seen        ENABLE ROW LEVEL SECURITY;
 
--- ── profiles ────────────────────────────────────────────────────────────────
+-- profiles
 
 CREATE POLICY "Users read their own profile"
     ON profiles FOR SELECT USING (id = auth.uid());
@@ -1170,7 +988,7 @@ CREATE POLICY "Admins manage all profiles"
     ON profiles FOR ALL
     USING (private.auth_role() = 'admin') WITH CHECK (private.auth_role() = 'admin');
 
--- ── subjects ────────────────────────────────────────────────────────────────
+-- subjects
 
 CREATE POLICY "Authenticated users read subjects"
     ON subjects FOR SELECT USING (private.auth_role() IS NOT NULL);
@@ -1179,7 +997,7 @@ CREATE POLICY "Admins manage subjects"
     ON subjects FOR ALL
     USING (private.auth_role() = 'admin') WITH CHECK (private.auth_role() = 'admin');
 
--- ── materials & concepts ────────────────────────────────────────────────────
+-- materials & concepts
 
 CREATE POLICY "Educators manage their own materials"
     ON materials FOR ALL
@@ -1210,7 +1028,7 @@ CREATE POLICY "Educators read concepts of their own materials"
            AND m.educator_id = auth.uid()
     ));
 
--- ── student-owned study data ────────────────────────────────────────────────
+-- student-owned study data
 
 CREATE POLICY "Students manage their own study spaces"
     ON study_spaces FOR ALL
@@ -1269,16 +1087,13 @@ CREATE POLICY "Students manage their own game content"
     ON game_content FOR ALL
     USING (student_id = auth.uid()) WITH CHECK (student_id = auth.uid());
 
--- ── append-only / read-only student records ─────────────────────────────────
+-- append-only / read-only student records
 
 CREATE POLICY "Students read their own activity log"
     ON activity_logs FOR SELECT USING (student_id = auth.uid());
 
--- No student INSERT policy, deliberately (migration 0023 dropped the one that
--- existed). activity_logs is written ONLY by the API through the service role.
--- update_study_streak() is SECURITY DEFINER and fires on any insert, so a
--- student holding an anon key could otherwise move day_streak, longest_streak
--- and total_study_hours directly -- the exact inflation the note above forbids.
+-- No student INSERT policy: only the API (service role) writes activity_logs, and the
+-- SECURITY DEFINER streak trigger would otherwise let an anon key move streak counters.
 
 CREATE POLICY "Students read their own game sessions"
     ON game_sessions FOR SELECT USING (student_id = auth.uid());
@@ -1292,14 +1107,11 @@ CREATE POLICY "Students read their own gamification profile"
 CREATE POLICY "Students read their own badges"
     ON user_badges FOR SELECT USING (student_id = auth.uid());
 
--- SELECT only, and deliberately no INSERT policy -- the same call migration 0023
--- made for activity_logs. Express writes with the service role, so an INSERT
--- policy grants nothing the app needs and gives an anon key a way to suppress
--- its own onboarding.
+-- SELECT only; no INSERT policy (the API writes with the service role).
 CREATE POLICY "Students read their own onboarding progress"
     ON onboarding_seen FOR SELECT USING (student_id = auth.uid());
 
--- ── mastery: student reads own, educator reads their assigned grades ────────
+-- mastery: students read their own, educators read their assigned grades
 
 CREATE POLICY "Students read their own mastery"
     ON bkt_mastery FOR SELECT USING (student_id = auth.uid());
@@ -1325,7 +1137,7 @@ CREATE POLICY "Educators read BKT update logs for their assigned grades"
            AND p.grade_level = ANY (private.auth_assigned_grades())
     ));
 
--- ── reference data ──────────────────────────────────────────────────────────
+-- reference data
 
 CREATE POLICY "Authenticated users read BKT parameters"
     ON bkt_parameters FOR SELECT USING (private.auth_role() IS NOT NULL);
@@ -1334,15 +1146,9 @@ CREATE POLICY "Admins manage BKT parameters"
     ON bkt_parameters FOR ALL
     USING (private.auth_role() = 'admin') WITH CHECK (private.auth_role() = 'admin');
 
--- ============================================================================
--- 16. STORAGE
--- ============================================================================
--- The `materials` bucket is private: a public bucket would serve every uploaded
--- PDF to anyone knowing the object path, defeating grade-level access control.
--- The backend reads files through createSignedUrl() with the service role.
---
+-- 16. Storage
+-- The `materials` bucket is private; files are served via createSignedUrl() with the service role.
 -- Run once when provisioning a new project:
---
 --   INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 --   VALUES ('materials', 'materials', false, 20971520, ARRAY['application/pdf'])
 --   ON CONFLICT (id) DO UPDATE

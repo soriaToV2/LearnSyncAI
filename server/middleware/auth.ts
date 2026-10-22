@@ -2,35 +2,20 @@ import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 import { User } from '@supabase/supabase-js';
 
-// Extend Express's Request type to include the authenticated user
+// Extend Express's Request with the authenticated user.
 declare global {
   namespace Express {
     interface Request {
       user?: User;
-      /**
-       * The raw bearer token this request authenticated with.
-       *
-       * Needed because `supabaseAdmin.auth.admin.signOut(jwt, scope)` identifies
-       * the sessions to revoke by JWT, not by user id — passing an id there fails
-       * silently-ish, returning an error nobody is obliged to read. Only
-       * `POST /api/auth/change-password` uses it; everything else should key off
-       * `req.user!.id`.
-       */
+      /** Raw bearer token; admin.signOut() needs the JWT, not the user id. */
       accessToken?: string;
     }
   }
 }
 
 /**
- * Authentication middleware.
- *
- * Reads the `Authorization: Bearer <token>` header, verifies the JWT
- * with Supabase, and attaches the user object to `req.user`.
- *
- * Must be placed before any route handler that requires authentication.
- *
- * Usage:
- *   router.get('/protected', authenticate, (req, res) => { ... });
+ * Verifies the bearer token with the Supabase auth server and sets `req.user`. The server round trip
+ * is what makes revoked sessions fail; don't replace it with local JWT verification.
  */
 export async function authenticate(
   req: Request,

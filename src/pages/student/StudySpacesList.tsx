@@ -9,12 +9,7 @@ import SubjectBadge, { SUBJECT_COLOR } from '../../components/educator/SubjectBa
 import Modal from '../../components/ui/Modal';
 import Dropdown from '../../components/ui/Dropdown';
 
-/**
- * A study space covers exactly one subject, chosen at creation and fixed
- * afterwards. On creation the server fills the space with every material the
- * student's educators published for that subject at their grade level, so a new
- * space is never empty by the time the student opens it.
- */
+/** One subject per space, fixed at creation. The server fills a new space with that subject's published materials. */
 interface StudySpaceData {
   id: string;
   title: string;
@@ -22,15 +17,7 @@ interface StudySpaceData {
   created_at: string;
 }
 
-/**
- * A card's accent is derived from its SUBJECT, never from its position.
- *
- * The palette this replaced was `colorPalettes[index % 5]` — so a space's colour
- * changed whenever another space was created or deleted above it, and two spaces
- * on the same subject read as unrelated. Keying off the subject makes the colour
- * carry the same meaning it already carries in `SubjectBadge`, on the dashboard
- * and in the educator library: one subject, one colour, everywhere.
- */
+/** A card's accent comes from its subject, never its position, so colours are stable and match SubjectBadge. */
 const ACCENT_FALLBACK = '#94a3b8';
 
 const accentFor = (subject: string) => SUBJECT_COLOR[subject] ?? ACCENT_FALLBACK;
@@ -39,29 +26,12 @@ const accentFor = (subject: string) => SUBJECT_COLOR[subject] ?? ACCENT_FALLBACK
 export default function StudySpacesList() {
   const navigate = useNavigate();
 
-  /*
-   * The catalogue comes from `public.subjects` via `SubjectsProvider`, not from a
-   * constant. It used to be a hand-kept copy of the seeded rows, which meant
-   * deleting a subject in Supabase left it on offer here indefinitely.
-   */
+  // Subjects come from SubjectsProvider (public.subjects), never a constant.
   const { subjects, error: subjectsError } = useSubjects();
   const subjectNameOf = useSubjectName();
 
-  /*
-   * The subject choices, led by an empty-valued placeholder.
-   *
-   * That leading row is not decoration — `Dropdown` falls back to its FIRST
-   * option whenever `value` matches nothing, so without it the control would sit
-   * on the first subject from the moment it opened and a student could create a
-   * space for the wrong one without ever touching the field. The subject is
-   * immutable after creation, so that mistake is unrecoverable. Same reasoning,
-   * and the same shape, as `gradeOptions` in the educator's
-   * `UploadMaterialModal`.
-   *
-   * It also carries the loading and failure states: with no options the
-   * placeholder is all there is, and a bare "Choose a subject…" that can never be
-   * satisfied reads as a broken form rather than as a request that did not land.
-   */
+  // Subject options led by an empty placeholder: Dropdown shows its first option for an unmatched value,
+  // and the subject can't be changed later. The placeholder also carries loading/failure states.
   const subjectOptions = [
     {
       value: '',
@@ -78,7 +48,7 @@ export default function StudySpacesList() {
 
   const [isLoading, setIsLoading] = useState(true);
 
-  // Modals & Forms State
+  // Modals and forms
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newSpaceTitle, setNewSpaceTitle] = useState('');
   const [newSpaceSubject, setNewSpaceSubject] = useState('');
@@ -115,8 +85,7 @@ export default function StudySpacesList() {
     initData();
   }, []);
 
-  // Peer study-space cloning (CollabShare) was removed by migration 0003 — it
-  // contradicts the paper's guarantee that each student's data stays isolated.
+  // No space cloning: removed to keep each student's data isolated.
 
   const handleCreateSpace = async (e: FormEvent) => {
     e.preventDefault();
@@ -125,8 +94,7 @@ export default function StudySpacesList() {
     setIsCreating(true);
     setCreateError(null);
     try {
-      // The server fills the new space with every material published to this
-      // subject at the student's grade level, so it opens ready to study.
+      // The server fills the new space with this subject's published materials.
       await api.post('/spaces', {
         title: newSpaceTitle.trim(),
         subject: newSpaceSubject,
@@ -215,18 +183,7 @@ export default function StudySpacesList() {
             </p>
           </div>
 
-          {/*
-            * EXACTLY ONE create action per state, never two.
-            *
-            * This button and the dashed "Create New Space" tile that used to end
-            * the grid were the same action twice — and on a phone, where the grid
-            * is one column, they landed inches apart with a single card between
-            * them. The tile is gone; this is the only entry point once the student
-            * has spaces, because it stays put however long the list grows.
-            *
-            * Hidden while the list is empty: the empty state below carries its own
-            * CTA, and showing both would recreate the duplication one state over.
-            */}
+          {/* Exactly one create action per state: this button once spaces exist; the empty state has its own CTA. */}
           {!isLoading && spaces.length > 0 && (
             <button
               onClick={() => setIsCreateModalOpen(true)}
@@ -239,8 +196,7 @@ export default function StudySpacesList() {
         </header>
 
         {isLoading ? (
-          /* Skeletons rather than one centred spinner: they occupy the shape the
-             real cards will take, so nothing jumps when the data lands. */
+          /* Skeletons in the cards' shape, so nothing jumps when data lands. */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
             {Array.from({ length: 3 }).map((_, i) => (
               <div
@@ -257,8 +213,7 @@ export default function StudySpacesList() {
             ))}
           </div>
         ) : spaces.length === 0 ? (
-          /* A dashed tile alone on an empty screen reads as a broken layout.
-             A student with no spaces gets the explanation instead. */
+          /* No spaces: an explanation, not a lone dashed tile. */
           <div className="rounded-2xl border border-white/5 bg-surface-container-lowest/40 py-16 px-6 text-center animate-tab-in">
             <div className="w-16 h-16 rounded-2xl bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center mx-auto mb-5">
               <Layers className="w-7 h-7 text-primary-fixed-dim" />
@@ -289,15 +244,7 @@ export default function StudySpacesList() {
                   className="group relative flex flex-col justify-between min-h-[200px] rounded-2xl border bg-surface-container-lowest p-5 sm:p-6 overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-xl focus-within:-translate-y-1"
                   style={{ borderColor: `${accent}33` }}
                 >
-                  {/*
-                   * The subject glow.
-                   *
-                   * It sits at the DEFAULT stacking level, not `-z-10`. The card
-                   * background is opaque (`--color-surface-container-lowest` is
-                   * `#060e20`), so a negatively-stacked blob painted behind it and
-                   * was invisible — which is how it shipped. Content above it is
-                   * lifted with `relative z-10` instead.
-                   */}
+                  {/* The subject glow, at the default stacking level (behind an opaque card -z-10 is invisible); content uses relative z-10. */}
                   <div
                     aria-hidden="true"
                     className="pointer-events-none absolute top-0 right-0 w-32 h-32 rounded-full blur-3xl opacity-30 group-hover:opacity-60 transition-opacity translate-x-1/3 -translate-y-1/3"
@@ -319,13 +266,7 @@ export default function StudySpacesList() {
                     <div className="flex items-center gap-2 shrink-0">
                       <SubjectBadge code={space.subject} />
 
-                      {/*
-                       * Always at full opacity. These were `opacity-60` until the
-                       * card was hovered — and a touch device never hovers, so on
-                       * a phone they sat permanently dimmed with no way to bring
-                       * them up. `z-10` keeps them above the title's stretched
-                       * hit area below.
-                       */}
+                      {/* Full opacity: touch devices never hover. z-10 keeps them above the title's stretched hit area. */}
                       <div className="flex items-center gap-1">
                         <button
                           onClick={(e) => {
@@ -354,14 +295,7 @@ export default function StudySpacesList() {
                   </div>
 
                   <div className="relative z-10">
-                    {/*
-                     * The whole card used to be a bare `<div onClick>` — no Tab
-                     * stop, no focus ring, invisible to a keyboard. The title is
-                     * a real button whose `::after` covers the card, which keeps
-                     * the entire surface clickable for a mouse while giving the
-                     * card exactly ONE focus stop. The action buttons above sit
-                     * at `z-10`, so they stay clickable through it.
-                     */}
+                    {/* The title is a real button whose ::after covers the card: one focus stop, whole card clickable; actions sit at z-10. */}
                     <h2 className="font-display text-lg sm:text-xl font-medium text-white mb-2">
                       <button
                         onClick={() => navigate(`/student/space/${space.id}`)}
@@ -394,7 +328,7 @@ export default function StudySpacesList() {
         )}
       </div>
 
-      {/* Create Modal */}
+      {/* Create modal */}
       <Modal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
@@ -421,18 +355,7 @@ export default function StudySpacesList() {
               <label className="block text-sm font-medium text-slate-300 mb-1">
                 Subject
               </label>
-              {/*
-                * A native <select> renders the OS's own option list — an opaque
-                * white popup on Windows/Chrome that ignores every design token on
-                * this page, so the one control a student must touch to create a
-                * space was the one control that did not look like the app.
-                * `Dropdown` is the styled list the educator forms already use.
-                *
-                * Nothing about validation changed: `handleCreateSpace` still
-                * returns early without a subject, and the submit button is still
-                * disabled until one is picked, so the dropped `required`
-                * attribute was never what enforced this.
-                */}
+              {/* Dropdown, not a native <select> (which ignores the theme). Validation is unchanged: submit stays disabled without a subject. */}
               <Dropdown
                 value={newSpaceSubject}
                 onChange={setNewSpaceSubject}
@@ -477,7 +400,7 @@ export default function StudySpacesList() {
         </form>
       </Modal>
 
-      {/* Rename Modal */}
+      {/* Rename modal */}
       <Modal
         isOpen={isRenameModalOpen}
         onClose={() => {
@@ -526,7 +449,7 @@ export default function StudySpacesList() {
         </form>
       </Modal>
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete confirmation */}
       <Modal
         isOpen={isDeleteModalOpen}
         onClose={() => {

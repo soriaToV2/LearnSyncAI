@@ -1,19 +1,9 @@
 /**
- * Seeds a demo educator account for local development.
+ * Seeds a demo educator account for local development: `npx tsx scripts/seed-demo-educator.ts`
  *
- *   npx tsx scripts/seed-demo-educator.ts
- *
- * The account is created through the Supabase Auth admin API rather than raw SQL
- * so that auth.users, auth.identities and public.profiles stay consistent. The
- * handle_new_user() trigger reads role/first_name/last_name out of user_metadata
- * and creates the profiles row (and correctly skips gamification_profiles, which
- * only students get).
- *
- * No teaching load is seeded. Educators are not pre-assigned to subjects or
- * grades — they choose both per upload — so the account can publish the moment
- * it exists.
- *
- * Safe to re-run: if the email already exists the account is reused.
+ * Uses the Auth admin API, not raw SQL, so auth.users, auth.identities and profiles stay consistent
+ * (handle_new_user() builds the profile from user_metadata). Educators choose subject and grade per
+ * upload, so nothing else is seeded. Safe to re-run: an existing email is reused.
  */
 import { supabaseAdmin } from '../server/lib/supabase';
 
@@ -25,9 +15,7 @@ const DEMO = {
 };
 
 async function findExistingUserId(email: string): Promise<string | null> {
-  // listUsers is paginated; the dev project has a handful of accounts, so one
-  // generous page is plenty. Its return type is a union whose `users` member
-  // narrows to never[] under structural intersection, hence the explicit cast.
+  // One generous page is plenty on the dev project. The cast works around users narrowing to never[].
   const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 200 });
   if (error) throw new Error(`Could not list users: ${error.message}`);
 
@@ -62,8 +50,7 @@ async function main(): Promise<void> {
     console.log(`  • Created auth user ${userId}`);
   }
 
-  // The trigger creates the profile. Verify it landed with the right role rather
-  // than assuming — a silent trigger failure would otherwise show up much later.
+  // Verify the trigger created the profile with the right role rather than assuming.
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
     .select('id, first_name, last_name, role, grade_level, status')

@@ -12,29 +12,15 @@ import { isPhoto, preparePhoto } from '../../../lib/photoPrep';
 /** Documented platform limit (Scope & Limitations): one material ≤ 20 MB. */
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
-/**
- * Documented platform limit: a scanned or photographed document is at most 20
- * pages. Photo N becomes page N of the PDF the server assembles, so this is
- * also the photo cap. Mirrors `MAX_SCANNED_PAGES` in `materials.routes.ts`,
- * which is the guarantee; this only saves a round trip.
- */
+/** A scanned or photographed document is at most 20 pages (photo N = page N). Mirrors MAX_SCANNED_PAGES on the server. */
 const MAX_PHOTOS = 20;
 
 const ACCEPT = 'application/pdf,image/jpeg,image/png';
 
 /**
- * A material is published to EXACTLY ONE grade level, so this is a single-select.
- *
- * It was a `MultiSelectDropdown`. The rule is enforced in three places that must
- * agree: `materials_grade_levels_valid` (`array_length = 1`), `GradeLevelsField`
- * in `server/types/api.ts` (`.length(1)`), and this control. The wire format is
- * still a one-element array because `materials.grade_levels` is still SMALLINT[]
- * — see the schema comment for why the column did not become a scalar.
- *
- * `Dropdown` falls back to its FIRST option when `value` matches nothing, so the
- * empty placeholder below is what gives this an unselected state. Without it the
- * control would silently sit on Grade 7 and an educator could publish to the
- * wrong grade without ever touching the field.
+ * Exactly one grade per material, so a single-select (sent as a one-element array; the column is
+ * SMALLINT[]). The empty placeholder matters: Dropdown shows its first option for an unmatched value,
+ * so without it the control would silently sit on Grade 7.
  */
 const NO_GRADE = '';
 
@@ -46,21 +32,10 @@ interface UploadMaterialModalProps {
 }
 
 export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: UploadMaterialModalProps) {
-  /*
-   * The full catalogue: an educator is not pre-assigned to any subject.
-   *
-   * Read from `public.subjects` through `SubjectsProvider`, not from a constant.
-   * It used to be a hand-kept copy of the seeded rows, so a subject deleted in
-   * Supabase stayed on offer here until someone edited the code.
-   */
+  /* The full catalogue from SubjectsProvider; educators aren't pre-assigned subjects. */
   const { subjects, error: subjectsError } = useSubjects();
 
-  /*
-   * ONE material is EITHER one PDF OR an ordered set of page photos. `files`
-   * holds whichever it is; `isPdf` tells them apart. Photos are already
-   * downscaled and upright by the time they land here (`preparePhoto`), so
-   * the sizes shown are the sizes that will be sent.
-   */
+  /* Either one PDF or an ordered set of page photos (already upright and downscaled by preparePhoto). */
   const [files, setFiles] = useState<File[]>([]);
   const [isPreparing, setIsPreparing] = useState(false);
   const [title, setTitle] = useState('');
@@ -72,24 +47,12 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /*
-   * Preserve the old behaviour of opening on the first subject, now that the list
-   * arrives asynchronously and cannot seed `useState`.
-   *
-   * ⚠️ ONLY WHILE THE FIELD IS STILL EMPTY. Without that guard a slow response
-   * would overwrite a subject the educator had already chosen, filing the upload
-   * somewhere they did not pick — and `materials.subject` is what every student's
-   * space membership is derived from.
-   */
+  /* Default to the first subject once the list arrives, but only while the field is still empty. */
   useEffect(() => {
     if (!subject && subjects.length) setSubject(subjects[0].code);
   }, [subjects, subject]);
 
-  /*
-   * A leading placeholder only while there is nothing to choose. Once loaded the
-   * options are the catalogue alone and `subject` already matches one of them, so
-   * `Dropdown`'s first-option fallback never has to stand in for a real value.
-   */
+  /* A placeholder only while there's nothing to choose, so Dropdown's first-option fallback never stands in for a value. */
   const subjectOptions = subjects.length
     ? subjects.map((s) => ({ label: s.name, value: s.code }))
     : [{ label: subjectsError ? 'Subjects unavailable' : 'Loading subjects…', value: '' }];
@@ -103,11 +66,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
   const isPdf = files.length === 1 && files[0].type === 'application/pdf';
   const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
 
-  /*
-   * Object URLs for the photo thumbnails. Made in an effect, once per change to
-   * the set, and revoked by its cleanup — a URL per render would leak a blob
-   * for every keystroke in the title field.
-   */
+  /* Thumbnail object URLs, made once per set and revoked on cleanup (one per render would leak). */
   const [previews, setPreviews] = useState<string[]>([]);
   useEffect(() => {
     const urls = isPdf ? [] : files.map((f) => URL.createObjectURL(f));
@@ -137,14 +96,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     if (!title.trim()) setTitle(name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '));
   };
 
-  /**
-   * Takes whatever the picker or a drop produced. A PDF replaces everything;
-   * photos are appended to the photos already chosen, in the order given, so an
-   * educator can add the last few pages without starting over.
-   *
-   * Whether a PDF is text or scanned is decided on the server, which now reads
-   * scanned pages with OCR rather than refusing them.
-   */
+  /** A PDF replaces everything; photos append in order. Text vs scanned is decided on the server. */
   const acceptFiles = async (candidates: File[]) => {
     if (!candidates.length) return;
     setError(null);
@@ -220,14 +172,13 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     if (!title.trim()) return setError('Give the material a title.');
     if (grade === NO_GRADE) return setError('Select the grade level this material is for.');
 
-    // Every file goes under the same field, in page order. The server takes
-    // one PDF, or assembles the photos into one — see POST /api/materials.
+    // Every file under the same field, in page order. The server takes one PDF or assembles the photos.
     const formData = new FormData();
     for (const f of files) formData.append('file', f);
     formData.append('title', title.trim());
     formData.append('subject', subject);
     if (description.trim()) formData.append('description', description.trim());
-    // Still an array on the wire — the column is SMALLINT[] with a length-1 CHECK.
+    // Still an array on the wire: SMALLINT[] with a length-1 CHECK.
     formData.append('grade_levels', JSON.stringify([Number(grade)]));
 
     setError(null);
@@ -247,11 +198,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     <Modal isOpen={isOpen} onClose={handleClose} title="Upload Learning Material" maxWidth="max-w-lg">
       <form onSubmit={handleSubmit} className="flex flex-col gap-5 max-h-[70vh] overflow-y-auto pr-1 no-scrollbar">
 
-        {/*
-          The one hidden input serves every state: the empty drop zone, "Add
-          more photos" on the thumbnail strip, and a drop anywhere on the zone.
-          `multiple` is what lets a whole lesson's photos arrive in one pick.
-        */}
+        {/* One hidden input for every state (drop zone, "Add more photos", drop). `multiple` allows a whole lesson in one pick. */}
         <input
           ref={fileInputRef}
           type="file"
@@ -305,11 +252,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
                 </button>
               )}
             </div>
-            {/*
-              Numbered because the number IS the page number students will
-              see. Each tile keeps the photo's aspect so a sideways one is
-              obvious here rather than in the viewer.
-            */}
+            {/* The number is the page number students will see; tiles keep the photo's aspect so a sideways one shows here. */}
             <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
               {files.map((f, i) => (
                 <div key={`${f.name}-${f.lastModified}-${i}`} className="relative aspect-[3/4] rounded-lg overflow-hidden bg-black/30 border border-white/10">
@@ -409,11 +352,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
               options={subjectOptions}
               className="w-full"
             />
-            {/*
-              Stated rather than left to an empty dropdown. Submit is already
-              disabled without a subject, and a control that offers nothing with
-              no explanation reads as a form the educator is failing to fill in.
-            */}
+            {/* Say why the dropdown is empty rather than leave it blank. */}
             {subjectsError && (
               <p className="mt-1.5 font-sans text-[11px] text-red-400 leading-relaxed">
                 The subject list couldn't be loaded, so this material can't be uploaded yet. Check

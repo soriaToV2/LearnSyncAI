@@ -1,32 +1,9 @@
 import React, { createContext, useContext, useCallback, useState } from 'react';
 
 /**
- * DARK / LIGHT ONLY — NOT A SEVEN-THEME PICKER, AND THE DIFFERENCE IS THE POINT.
- *
- * The original picker offered all seven palettes and lived inside the two
- * Settings pages; it was deleted with them, and the providers were pinned to
- * `THEMES[0]` so that a stale `localStorage` choice could not strand anyone in a
- * palette they had no UI to leave. That note said keeping the array would make a
- * future control "a revert rather than a rewrite", and this is that revert.
- *
- * What came back is deliberately narrower than what went away: a BINARY mode.
- * Only `THEMES[0]` (Cyber Cyan) and the `white` entry are reachable, because
- * only those two have a stylesheet behind them — `index.css` carries ~500 lines
- * of `[data-theme="white"]` overrides plus the completion block at the end of
- * that file, and nothing equivalent exists for indigo, violet, emerald, rose or
- * amber. Exposing all seven would ship five options that render as the dark
- * theme with a different accent, which is not what "theme" promises.
- *
- * THE OTHER FIVE ENTRIES STAY, STILL UNREACHABLE, FOR THE ORIGINAL REASON. They
- * are the design system's palettes, and `applyThemeToElement()` is what writes
- * them into the custom properties every screen reads. Do not "clean up" the
- * array.
- *
- * ⚠️ THE STORAGE KEYS ARE NEW (`…_mode`), NOT THE OLD `…_theme` PAIR. A value
- * left in the old keys is a palette id like `violet` — a vocabulary this context
- * no longer speaks. Reading them would mean either honouring an unreachable
- * theme or silently discarding a preference; a fresh key means an old value is
- * simply never consulted, which is the same reasoning that retired them.
+ * Dark/light mode only. Just THEMES[0] (dark) and `white` (light) are reachable, because only they have
+ * stylesheet support in index.css. Keep the other palettes in the array: applyThemeToElement() uses them.
+ * Storage keys are `…_mode`; old `…_theme` values are never read.
  */
 export interface ThemeDefinition {
   id: string;
@@ -112,42 +89,18 @@ export const THEMES: ThemeDefinition[] = [
   },
 ];
 
-/**
- * The one theme every portal renders.
- *
- * There used to be a `learnsyncai_student_theme` / `learnsyncai_educator_theme`
- * pair in localStorage backing a per-portal choice. Both keys are gone with the
- * picker; any value still sitting in a browser is ignored rather than honoured,
- * which is the point — a stale preference nobody can change is worse than none.
- */
+/** The default (dark) theme. */
 export const ACTIVE_THEME = THEMES[0];
 
-/** The two reachable themes. `ACTIVE_THEME` stays the dark one and the default. */
+/** The two reachable themes; ACTIVE_THEME is the default. */
 export const DARK_THEME = THEMES[0];
 export const LIGHT_THEME = THEMES.find((t) => t.id === 'white')!;
 
 export type ColorMode = 'dark' | 'light';
 
 /**
- * The text/icon colour that reads on a block of `accent`.
- *
- * ⚠️ IT IS COMPUTED, NOT A CONSTANT, BECAUSE THE CONSTANT WAS WRONG THE MOMENT
- * A LIGHT THEME EXISTED. Nine call sites across seven files paired
- * `backgroundColor: accent` with a hard-coded `color: '#04121a'` — a near-black
- * ink, correct on all six dark palettes, whose accents are bright cyan, violet,
- * emerald and so on. The light theme's accent is `#0284c7` (sky-600), a DARK
- * blue, and near-black on it measures about 2.6:1 — under the 4.5:1 floor, on
- * the primary button of every form in the app.
- *
- * A CSS override cannot fix this: these are inline styles, so a stylesheet would
- * have to fight them with `!important` on an attribute selector broad enough to
- * catch every themed button. Deriving the ink at the call site is both smaller
- * and self-correcting — a palette added later gets a readable label without
- * anyone remembering this rule.
- *
- * Relative luminance per WCAG 2.x, with the sRGB gamma expansion. The 0.45
- * threshold rather than 0.5 leans slightly toward the dark ink, which is what
- * the six existing accents want.
+ * Text/icon colour that reads on an `accent` background, computed from WCAG relative luminance
+ * (a fixed dark ink fails contrast on the light theme's dark-blue accent). 0.45 leans toward dark ink.
  */
 export function inkOn(accent: string): string {
   const hex = accent.trim().replace('#', '');
@@ -159,8 +112,7 @@ export function inkOn(accent: string): string {
           .join('')
       : hex;
 
-  // Anything unparseable (a named colour, an rgba string) keeps the old ink
-  // rather than guessing — the dark themes are the ones that shipped with it.
+  // Unparseable colours keep the dark ink.
   if (!/^[0-9a-f]{6}$/i.test(full)) return '#04121a';
 
   const channel = (offset: number) => {
@@ -174,12 +126,7 @@ export function inkOn(accent: string): string {
 
 export const themeForMode = (mode: ColorMode) => (mode === 'light' ? LIGHT_THEME : DARK_THEME);
 
-/*
- * Every read and write is wrapped: `localStorage` THROWS rather than returning
- * null in a Safari private window and under some school-managed browser
- * policies, which is exactly the deployment this is going to. A student whose
- * browser refuses storage gets the default theme, not a blank screen.
- */
+// Storage access is wrapped: localStorage throws in Safari private windows and some managed browsers.
 function readMode(key: string, fallback: ColorMode): ColorMode {
   try {
     const stored = localStorage.getItem(key);
@@ -194,33 +141,13 @@ function writeMode(key: string, mode: ColorMode) {
   try {
     localStorage.setItem(key, mode);
   } catch {
-    /* Preference is not persisted this session. The toggle still works. */
+    /* Not persisted this session; the toggle still works. */
   }
 }
 
 /**
- * ⚠️ THE THEME GOES ON `documentElement` AS WELL AS THE WRAPPER, AND WITHOUT
- * THAT HALF THE LIGHT THEME IS BROKEN IN TWO WAYS THAT LOOK UNRELATED.
- *
- * `data-theme` used to be set only on each layout's wrapper `<div>`. Two
- * consequences, both measured:
- *
- *   1. EVERY MODAL STAYED DARK. `Modal` renders through
- *      `createPortal(…, document.body)`, so it is a SIBLING of the themed
- *      wrapper, not a descendant — no `[data-theme="white"] …` selector can
- *      reach it, and none of the inline custom properties inherit into it. In
- *      light mode that meant a near-black dialog over a white page.
- *
- *   2. 99 RULES IN `index.css` HAD NEVER ONCE RUN. The white block is written
- *      twice, the second copy prefixed `:root[data-theme="white"]` for
- *      specificity. `:root` IS `<html>`, which never carried the attribute, so
- *      that entire copy was inert. It is a byte-identical duplicate of the
- *      first, so switching it on is a visual no-op — verified by diffing the
- *      two — but it is now doing the job it was written for.
- *
- * The wrapper still gets it too. That costs nothing (the declarations are
- * identical, so double-matching resolves to the same values) and it keeps
- * `theme.accent` inline on the subtree that reads it.
+ * Sets data-theme on documentElement as well as the wrapper: modals render in a portal outside the
+ * wrapper, and the `:root[data-theme="white"]` rules in index.css need it on <html>.
  */
 export function applyThemeToElement(t: ThemeDefinition, el: HTMLElement) {
   if (typeof document !== 'undefined' && document.documentElement !== el) {
@@ -242,11 +169,7 @@ function applyThemeVars(t: ThemeDefinition, el: HTMLElement) {
   el.style.setProperty('--color-primary-container', t.accent);
 }
 
-/*
- * `mode` and `setMode` replace the old `setTheme`, which took any of the seven
- * palettes. A consumer can only ask for dark or light, so the shape says what it
- * can do — the same principle that removed the old setter.
- */
+// Consumers can only ask for dark or light.
 interface ThemeContextValue {
   theme: ThemeDefinition;
   mode: ColorMode;
@@ -254,29 +177,9 @@ interface ThemeContextValue {
 }
 
 /**
- * ⚠️ ONE HOOK, THREE KEYS — THE PER-PORTAL SPLIT IS PRESERVED ON PURPOSE.
- *
- * The three providers were kept separate rather than merged because "the split
- * is the seam a future per-portal preference would reopen". This is that
- * preference, so the seam earns its keep: a key each. A user only ever holds one
- * role, so in practice that is one key per person — but an admin who is also
- * shown a student view does not have their choice follow them across portals,
- * which is the behaviour the original design chose.
- *
- * The state is seeded from storage in the initialiser rather than in an effect.
- * An effect runs AFTER the first paint, so a student who chose light mode would
- * see the dark theme flash on every page load.
- *
- * ⚠️ EXPORTED, BUT IT IS STATE — NOT A SUBSCRIPTION. Two components calling this
- * with the same key get two independent copies that will not see each other's
- * writes until a remount. That is why the portals wrap it in a provider, and why
- * `AuthShell` may call it directly: it is the single owner of the auth palette,
- * and each auth page mounts exactly one.
- *
- * `fallback` is what applies when storage holds nothing — the auth pages default
- * light while the portals default dark, so it cannot be a constant. A stored
- * value always wins, including a stored `'dark'`, which is the whole point of
- * reading the string rather than testing it for `'light'`.
+ * Mode state per storage key (one per portal). Seeded in the initialiser, not an effect, so there's
+ * no dark flash on load. It's local state, not a subscription: wrap it in a provider to share.
+ * `fallback` applies only when nothing is stored.
  */
 export function useColorMode(
   storageKey: string,
@@ -332,11 +235,3 @@ export function AdminThemeProvider({ children }: { children: React.ReactNode }) 
 export function useAdminTheme() {
   return useContext(AdminThemeContext);
 }
-
-/*
- * `useTheme()` / `ThemeProvider` — two legacy aliases kept "so any component
- * using them still compiles" — are gone. Grep found zero consumers of either, and
- * `getAuthTheme()` went with the localStorage read it wrapped: the auth pages now
- * apply `ACTIVE_THEME` directly, since there is no longer a per-role choice for
- * them to recover.
- */

@@ -19,64 +19,24 @@ import { conceptBand, materialBand, pageHint, recommendConcept, recommendMateria
 import type { StudyIntent } from '../../../lib/studySpace';
 
 /**
- * Analytics — what BKT has actually learned about this student.
- *
- * This is the paper's EQ(4) deliverable. p. 81: the document mastery percentage
- * "displayed as a progress bar on the user dashboard"; p. 98 lists "BKT mastery
- * tracking and dashboard visualization" and "learning analytics display" among
- * the student-side black-box test cases.
- *
- * ── THE RULE THIS WHOLE TAB IS BUILT AROUND ─────────────────────────────────
- *
- * A concept with no `bkt_mastery` row sits at P(L₀) = 0.10, and that is an
- * ASSUMPTION, not a measurement. In a 29-concept lesson where six questions were
- * answered, twenty-three concepts read 0.10 — and rendering those as "10%" tells
- * a student they know a tenth of something nobody has asked them about.
- *
- * There is a second, sharper reason. Any concept with even one observation lands
- * at 0.20 or above, because the transition step floors the posterior at P(T).
- * So an unassessed concept at 0.10 would rank BELOW every genuinely struggling
- * one, and a weakest-first list would fill up with concepts the student has never
- * seen — the exact opposite of useful.
- *
- * Hence: assessed concepts get a bar, a percentage and a tier colour. Unassessed
- * ones get their name and nothing else. Every gate reads `assessed` or
- * `assessed_concept_count`, NEVER `mastery === 0.1`.
- *
- * Corollary worth knowing before you look at real data: **no assessed concept can
- * ever display below 20%**, and a cluster at 20–25% means "got everything wrong",
- * not "barely started".
- *
- * READ-ONLY. Mastery has exactly two writers (paper p. 58) — the flashcard rating
- * route and test completion. Nothing here may ever write it.
+ * Analytics: what BKT has learned about this student (EQ(4), paper pp. 81, 98).
+ * An unassessed concept sits at P(L₀) = 0.10, an assumption, and would rank below every struggling
+ * concept (assessed ones floor at 0.20). So assessed concepts get a bar, % and tier; unassessed ones
+ * get their name only. Gate on `assessed`, never on the value.
  */
 
 interface AnalyticsTabProps {
   spaceId: string;
-  /** Used ONLY to tell "no lessons in this space" apart from "the fetch failed". */
+  /** Only to tell "no lessons" from "fetch failed". */
   availableResources: { id: string; title: string; concept_count: number }[];
-  /**
-   * Follow a recommendation.
-   *
-   * ⚠️ A CALLBACK, NOT A `<Link>`. This tab renders inside `StudySpace`, so a
-   * link carrying `?tab=feynman` would be a same-route navigation: the URL would
-   * change and the tab would not.
-   */
+  /** Follow a recommendation. A callback, not a <Link> (same-route links do nothing). */
   onNavigate: (intent: StudyIntent) => void;
 }
 
-/** How many concepts the Focus card names. Three fits without becoming a list. */
+/** Concepts named in the Focus card. */
 const FOCUS_COUNT = 3;
 
-/**
- * Local depth on top of the shared `CARD`.
- *
- * `CARD` stays flat because Test Mode and the two cognitive tabs reuse it, so the
- * border and shadow live here rather than in `surfaces.ts` — same reason the
- * dashboard keeps its own copy. Every colour in it (`border-white/5`,
- * `shadow-black/20`) is one the `[data-theme="white"]` block in `index.css`
- * already overrides.
- */
+/** Local depth on top of the shared flat CARD. */
 const PANEL = `${CARD} border border-white/5 shadow-lg shadow-black/20`;
 
 export default function AnalyticsTab({
@@ -87,20 +47,10 @@ export default function AnalyticsTab({
   const [detail, setDetail] = useState<SpaceMasteryDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  /* Reset on every tab switch, because `<main key={activeTab}>` remounts this
-     component. That is correct and deliberate — see the fetch comment below. */
+  /* Reset on each tab switch (the tab remounts). */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  /*
-   * One fetch, on mount. No refresh button and no cache.
-   *
-   * `StudySpace` renders `<main key={activeTab}>`, so switching tabs unmounts and
-   * remounts this component — meaning the data is fresh by construction every
-   * time the student arrives, including the moment that matters most, arriving
-   * from Test Mode having just moved the number. A module-level cache would be
-   * stale at exactly that moment, and a refresh button would advertise a
-   * staleness that does not exist.
-   */
+  // One fetch on mount; no cache or refresh button. The tab remounts on entry, so data is always fresh.
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
@@ -132,11 +82,7 @@ export default function AnalyticsTab({
   const noMaterials = availableResources.length === 0;
   const nothingAssessed = detail !== null && detail.concepts_assessed === 0;
 
-  /*
-   * The weakest concepts the student has ACTUALLY been assessed on, across every
-   * lesson. Unassessed ones are excluded by construction, which is the whole
-   * point — see the header note.
-   */
+  // The weakest assessed concepts across every lesson (unassessed excluded).
   const focus: (ConceptMastery & { materialTitle: string; materialId: string })[] = (
     detail?.by_material ?? []
   )
@@ -153,14 +99,7 @@ export default function AnalyticsTab({
 
   const updated = relativeTime(detail?.last_updated ?? null);
 
-  /**
-   * The lead step for one concept, as a button the row can render.
-   *
-   * Built here rather than inside `ConceptRow` so the row stays a presentational
-   * component with an OPTIONAL action — the expanded lesson lists render dozens
-   * of rows and must not each grow a button, which would turn a scannable
-   * breakdown into a wall of calls to action.
-   */
+  /** A concept's lead step as a button. Optional on ConceptRow so long lesson lists don't grow a button per row. */
   const actionFor = (c: ConceptMastery, materialId: string) => {
     const rec = recommendConcept({
       term: c.term,
@@ -175,7 +114,7 @@ export default function AnalyticsTab({
         onNavigate({
           tab: lead.tab,
           materialId,
-          // Only Feynman can act on a concept. The rest open on the lesson.
+          // Only Feynman acts on a concept; the rest open on the lesson.
           conceptIds: lead.action === 'feynman' ? [c.concept_id] : [],
         }),
     };
@@ -183,7 +122,7 @@ export default function AnalyticsTab({
 
   return (
     <div className="fade-in duration-300 pb-10">
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div data-tour="an-header" className="flex items-center gap-3 min-w-0 border-b border-white/5 pb-5">
         <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center shrink-0">
           <ChartColumn className="w-5 h-5 text-primary-fixed-dim" />
@@ -220,15 +159,8 @@ export default function AnalyticsTab({
         </div>
       ) : (
         <div className="animate-tab-in">
-          {/* ── Summary ──────────────────────────────────────────────────────
-              "Level" dashes out at cold start for the same reason "Mastery"
-              does: `foundational` with no evidence behind it is the default the
-              system starts everyone at, not something it has found out. */}
-          {/* Two-up then three-up, and NOT `grid-cols-3` at every width: at 375px
-              three tiles leave ~74px of text each, and "Intermediate" — a
-              TIER_LABEL, so not shortenable here — does not fit that in
-              `text-xl`. The third tile spans the row below rather than sitting as
-              a half-width orphan. */}
+          {/* Summary. "Level" dashes out at cold start: foundational with no evidence is just the default. */}
+          {/* Two-up, then three-up: three tiles don't fit "Intermediate" at 375px. */}
           <div data-tour="an-summary" className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 mt-6">
             <Stat
               icon={TrendingUp}
@@ -261,11 +193,7 @@ export default function AnalyticsTab({
             {updated && !nothingAssessed ? ` · Updated ${updated}.` : ''}
           </p>
 
-          {/* ── Nothing measured yet ─────────────────────────────────────────
-              Deliberately NOT the house empty-card. The lesson list below is
-              itself the information — "these are the lessons being tracked" —
-              so replacing it with an empty state would hide the one thing the
-              student can act on. */}
+          {/* Nothing measured yet: keep the lesson list below, which is the useful part. */}
           {nothingAssessed && (
             <div className={`${PANEL} p-4 sm:p-5 mt-6`}>
               <p className="font-sans text-sm text-slate-300 font-semibold">Nothing measured yet.</p>
@@ -276,7 +204,7 @@ export default function AnalyticsTab({
             </div>
           )}
 
-          {/* ── Focus next ───────────────────────────────────────────────── */}
+          {/* Focus next */}
           {focus.length > 0 && (
             <div className={`${PANEL} p-4 sm:p-5 mt-6`}>
               <div className="flex items-center gap-2.5">
@@ -285,9 +213,7 @@ export default function AnalyticsTab({
                 </div>
                 <h3 className={SECTION}>Focus next</h3>
               </div>
-              {/* The honesty guard. Without it a student wonders why a concept
-                  they know they are bad at is missing — the answer is always
-                  "it has not come up yet", and this says so up front. */}
+              {/* Honesty line: missing concepts haven't come up yet. */}
               <p className="font-sans text-[11px] text-slate-600 mt-1.5">
                 Ranked from the {detail.concepts_assessed} concept
                 {detail.concepts_assessed === 1 ? '' : 's'} you have been tested on.
@@ -309,8 +235,7 @@ export default function AnalyticsTab({
                 <>
                   <div className="mt-4 space-y-3">
                     {focus.slice(0, FOCUS_COUNT).map((c) => (
-                      // Keyed Fragment, not the row: this project has no
-                      // @types/react, so a locally-declared component rejects `key`.
+                      // Keyed Fragment: without @types/react a local component rejects `key`.
                       <Fragment key={c.concept_id}>
                         <ConceptRow
                           concept={c}
@@ -320,10 +245,7 @@ export default function AnalyticsTab({
                       </Fragment>
                     ))}
                   </div>
-                  {/* ⚠️ ONCE PER CARD, NEVER PER ROW. Three rows would print the
-                      same sentence three times. It is the line that stops the
-                      app implying that explaining a concept moves a number only
-                      flashcards and tests can move. */}
+                  {/* Once per card, never per row. */}
                   <p className="font-sans text-[11px] text-slate-600 mt-4 leading-relaxed">
                     {
                       recommendConcept({
@@ -339,7 +261,7 @@ export default function AnalyticsTab({
             </div>
           )}
 
-          {/* ── By lesson ────────────────────────────────────────────────── */}
+          {/* By lesson */}
           <div data-tour="an-lessons" className="mt-8">
             <h3 className={`${SECTION} mb-4`}>By lesson</h3>
             <div className="space-y-3">
@@ -361,8 +283,6 @@ export default function AnalyticsTab({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 function Stat({
   label,
   value,
@@ -379,8 +299,7 @@ function Stat({
   return (
     <div className={`${PANEL} p-3 sm:p-4 text-center ${wrapperClassName}`}>
       <Icon className="w-4 h-4 text-primary-fixed-dim/70 mx-auto mb-1.5" />
-      {/* `text-lg` on phones: "Intermediate" at `text-xl` overruns a half-width
-          tile at 375px. The tone colour still comes from `className`. */}
+      {/* text-lg on phones so "Intermediate" fits a half-width tile. */}
       <p
         className={`font-display text-lg sm:text-xl font-bold tabular-nums leading-tight ${
           className || 'text-white'
@@ -395,10 +314,7 @@ function Stat({
   );
 }
 
-/**
- * One assessed concept. Never rendered for an unassessed one — those have no
- * percentage to show and appear as name chips instead.
- */
+/** One assessed concept (unassessed ones appear as name chips). */
 function ConceptRow({
   concept,
   materialTitle,
@@ -406,16 +322,10 @@ function ConceptRow({
 }: {
   concept: ConceptMastery;
   materialTitle?: string;
-  /**
-   * Optional on purpose. Only the Focus card passes one; the expanded lesson
-   * list renders the same row for every assessed concept in a lesson — up to 29
-   * on real data — and a button on each would drown the numbers it exists to
-   * show.
-   */
+  /** Optional: only the Focus card passes one. */
   action?: { label: string; onClick: () => void };
 }) {
-  // Tier from the ROUNDED value, so the colour cannot contradict the number: 0.849
-  // prints "85%" but tiers as intermediate on the raw value.
+  // Tier from the rounded value so colour matches the number shown.
   const percent = masteryPercent(concept.mastery);
   const tone = TIER_TONE[masteryTier(percent / 100)];
 
@@ -438,9 +348,7 @@ function ConceptRow({
           </button>
         )}
       </div>
-      {/* The meter narrows on phones so the term keeps its width — a truncated
-          concept name is far less readable than a slightly shorter bar, and the
-          percentage beside it carries the exact value anyway. */}
+      {/* The meter narrows on phones so the term keeps its width. */}
       <div className="w-14 sm:w-24 shrink-0">
         <MeterBar value={concept.mastery} tone={tone} label={`Mastery of ${concept.term}`} />
       </div>
@@ -462,8 +370,7 @@ function LessonCard({
   onToggle: () => void;
   onNavigate: (intent: StudyIntent) => void;
 }) {
-  // Gate on the COUNT, never on `m_doc === 0.1` — a lesson can genuinely average
-  // 0.10 while having been assessed, and the two must not look alike.
+  // Gate on the count, never on m_doc === 0.1.
   const started = material.assessed_concept_count > 0;
   const assessed = material.concepts.filter((c) => c.assessed);
   const untested = material.concepts.filter((c) => !c.assessed);
@@ -524,14 +431,7 @@ function LessonCard({
         </div>
       </button>
 
-      {/* ⚠️ A SIBLING OF THE TOGGLE BUTTON, NEVER INSIDE IT. A `<button>` may not
-          contain another interactive element — that is a DOM rule, not a style
-          preference, and nesting them makes both unreliable for keyboard and
-          screen-reader users.
-
-          Always visible rather than behind the expand, because this is the whole
-          point of the screen: a lesson at 34% should say what to do about it
-          without a click. */}
+      {/* A sibling of the toggle button, never inside it (buttons can't nest). Always visible: the advice is the point. */}
       <div className="px-4 pb-4 -mt-1 flex items-center gap-2 flex-wrap">
         <button
           onClick={() =>
@@ -546,9 +446,7 @@ function LessonCard({
       </div>
 
       {expanded && (
-        /* `pl-11` aligns the rows under the lesson title, past the chevron — but
-           at 375px it costs 28px that `ConceptRow`'s term cannot spare, so the
-           indent only applies once there is room for it. */
+        /* The pl-11 indent only once there's room for it. */
         <div className="px-4 pb-4 sm:pl-11 space-y-5">
           {assessed.length > 0 && (
             <div>
@@ -570,8 +468,7 @@ function LessonCard({
                 These haven't come up in a test or flashcard review yet, so there's nothing to
                 measure.
               </p>
-              {/* Names only. No bar, no number, no tier colour — every one of
-                  these sits at the P(L₀) prior, which is an assumption. */}
+              {/* Names only: these all sit at the prior. */}
               <div className="flex flex-wrap gap-1.5">
                 {untested.map((c) => (
                   <span

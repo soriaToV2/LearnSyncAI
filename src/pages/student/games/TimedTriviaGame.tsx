@@ -22,21 +22,16 @@ const TICK_MS = 100;
 const TIMEOUT_SENTINEL = '__timeout__';
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 
-/**
- * Fallback only — for mock mode and for rows generated before calibration
- * existed. The authority is `TRIVIA_QUESTION_MS` in `server/lib/gameDifficulty.ts`
- * (20s / 15s / 10s by tier, paper p. 83), written into the payload at generation.
- * 15s is the intermediate value, so this fallback matches the middle tier.
- */
+/** Fallback for mock mode and pre-calibration rows; the authority is TRIVIA_QUESTION_MS on the server (paper p. 83). */
 const DEFAULT_QUESTION_MS = 15_000;
 
-/** Guards a corrupt stored payload from producing a 0ms or hour-long question. */
+/** Guards against a corrupt stored value. */
 function clampQuestionMs(ms: number | undefined): number {
   if (typeof ms !== 'number' || !Number.isFinite(ms)) return DEFAULT_QUESTION_MS;
   return Math.min(Math.max(ms, 5_000), 60_000);
 }
 
-// The run always plays to the end; the summary copy reflects how well it went.
+// The run always plays to the end.
 function summaryFor(score: number, total: number): { title: string; message: string } {
   const pct = total > 0 ? score / total : 0;
   if (total > 0 && score === total) {
@@ -66,8 +61,7 @@ export default function TimedTriviaGame() {
   const { flash, fire } = useGameFlash();
   const { play } = useGameAudio();
 
-  // Paper p. 83 names "trivia response timers" as one of the three levers
-  // document mastery calibrates. Server-supplied; see gameDifficulty.ts.
+  // The trivia timer is a calibration lever (paper p. 83), supplied by the server.
   const questionMs = useMemo(() => clampQuestionMs(calibration?.questionMs), [calibration]);
 
   const [queue, setQueue] = useState<Question[]>([]);
@@ -82,7 +76,7 @@ export default function TimedTriviaGame() {
   const timers = useRef<number[]>([]);
   const startedAt = useRef(Date.now());
   const recorded = useRef(false);
-  // Per-question outcome log for the post-game review view.
+  // Per-question log for the review.
   const answerLog = useRef<TriviaReviewItem[]>([]);
 
   const clearTimers = useCallback(() => {
@@ -124,8 +118,7 @@ export default function TimedTriviaGame() {
   const answered = selected !== null;
   const timedOut = selected === TIMEOUT_SENTINEL;
 
-  // Advance to the next question, or end the run once the last one is answered.
-  // A miss no longer stops the run — it just breaks the streak and moves on.
+  // Next question, or end the run after the last. A miss just breaks the streak.
   const goNext = useCallback(() => {
     if (currentIdx < queue.length - 1) {
       setCurrentIdx((prev) => prev + 1);
@@ -136,7 +129,7 @@ export default function TimedTriviaGame() {
     }
   }, [currentIdx, queue.length, questionMs]);
 
-  // Countdown ticks in milliseconds so the ring sweeps smoothly.
+  // Millisecond ticks so the ring sweeps smoothly.
   useEffect(() => {
     if (finished || answered || queue.length === 0) return;
 
@@ -207,7 +200,7 @@ export default function TimedTriviaGame() {
     [selected, current, streak, fire, play, schedule, goNext]
   );
 
-  // Answer with A–D or 1–4 without reaching for the mouse.
+  // Answer with A–D or 1–4.
   useEffect(() => {
     if (finished || answered || !current) return;
 
@@ -228,24 +221,22 @@ export default function TimedTriviaGame() {
   }, [finished, answered, current, handleAnswer]);
 
   const secondsLeft = Math.ceil(timeLeftMs / 1000);
-  // Proportional, not a fixed 5s. At the advanced tier's 10-second clock a flat
-  // 5000ms threshold would leave the ring red for half of every question, which
-  // stops reading as urgency and starts reading as the default state.
+  // Urgent at a third of the clock, not a fixed 5s (which would be half of the advanced 10s clock).
   const isUrgent = timeLeftMs <= questionMs / 3 && !answered;
   const answeredWrong = answered && !timedOut && selected !== current?.correct;
 
-  // Clock tick on every second of a live question's countdown.
+  // Tick each second of a live countdown.
   useEffect(() => {
     if (finished || answered || queue.length === 0) return;
     if (secondsLeft > 0) play('tick');
   }, [secondsLeft, finished, answered, queue.length, play]);
 
-  // Victory sting when a run finishes flawlessly.
+  // Victory sting on a flawless run.
   useEffect(() => {
     if (finished && queue.length > 0 && score === queue.length) play('victory');
   }, [finished, score, queue.length, play]);
 
-  // Log the finished run once. Accuracy = correct / total.
+  // Log the run once. Accuracy = correct / total.
   useEffect(() => {
     if (!finished || recorded.current || queue.length === 0) return;
     recorded.current = true;
@@ -322,7 +313,7 @@ export default function TimedTriviaGame() {
       >
         {current && (
           <div className={clsx('space-y-8', (answeredWrong || timedOut) && 'animate-shake')}>
-            {/* Question header: ring + prompt */}
+            {/* Question header: ring and prompt */}
             <div className="flex flex-col sm:flex-row items-center gap-6">
               <TimerRing
                 progress={timeLeftMs / questionMs}
@@ -331,10 +322,7 @@ export default function TimedTriviaGame() {
               />
 
               <div className="flex-1 text-center sm:text-left">
-                {/* The per-question easy/medium/hard badge that used to sit here
-                    is gone. Difficulty is one tier per SESSION (paper p. 81), and
-                    it is stated once on the stage header — a "HARD" chip inside a
-                    Foundational game contradicted the calibration on screen. */}
+                {/* No per-question difficulty badge: difficulty is per session (paper p. 81), shown on the stage header. */}
                 <div className="flex items-center justify-center sm:justify-start gap-2 mb-3">
                   <span className="px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06] font-sans text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     {currentIdx + 1} / {queue.length}
@@ -362,8 +350,7 @@ export default function TimedTriviaGame() {
                     className={clsx(
                       'group relative flex items-center gap-3 rounded-2xl border p-4 text-left',
                       'font-sans text-sm font-medium transition-all duration-300 outline-none select-none',
-                      /* `outline-none` above strips the browser indicator and
-                         nothing replaced it — on the only control in this game. */
+                      /* A visible focus ring replaces the removed outline. */
                       'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]',
                       answered
                         ? isCorrect

@@ -1,14 +1,4 @@
-/**
- * The handful of style tokens shared by the study-space tabs.
- *
- * These lived in `cognitiveShared.tsx`, which is documented as belonging to the
- * Free Recall and Feynman tabs only. Test Mode needs the same card surface and
- * the same tone scale, and it already held a byte-identical copy of the three
- * class strings — a third copy is how two tabs stop looking like siblings.
- *
- * `cognitiveShared.tsx` re-exports everything here, so nothing that imported
- * these from there had to change.
- */
+/** Style tokens shared by the study-space tabs (re-exported by cognitiveShared.tsx). */
 
 /** The standard panel surface. */
 export const CARD = 'bg-surface-container-lowest/40 rounded-2xl';
@@ -19,11 +9,7 @@ export const LABEL = 'font-sans text-[11px] font-semibold text-slate-500 upperca
 /** A section heading inside a panel. */
 export const SECTION = 'font-sans text-xs font-semibold text-slate-400 uppercase tracking-widest';
 
-/**
- * `neutral` is the "no direction to report" tone — used where good/mid/poor
- * would each assert a judgement the data cannot support (a first attempt, a
- * change inside the measurement noise). It renders as ordinary body text.
- */
+/** `neutral`: no direction to report (e.g. a first attempt); renders as body text. */
 export type Tone = 'good' | 'mid' | 'poor' | 'neutral';
 
 export const toneText: Record<Tone, string> = {
@@ -41,13 +27,8 @@ export const toneBg: Record<Tone, string> = {
 };
 
 /**
- * 0–100 → tone. The single place the colour thresholds live.
- *
- * These cutoffs are ABSOLUTE, which makes them right for a test score (a
- * percentage of questions answered correctly means the same thing on any
- * material) and wrong for Free Recall's coverage ratio (whose denominator is
- * however finely the document happened to be split). Free Recall pins its ring
- * to a fixed tone for exactly that reason — do not "fix" it by wiring this in.
+ * 0–100 → tone; the one place these thresholds live. Absolute, so right for test scores and wrong for
+ * Free Recall coverage, which keeps a fixed tone. Don't wire this into it.
  */
 export function scoreTone(score: number): Tone {
   return score >= 80 ? 'good' : score >= 60 ? 'mid' : 'poor';

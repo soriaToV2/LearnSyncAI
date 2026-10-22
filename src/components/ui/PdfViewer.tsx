@@ -8,7 +8,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-// pdf.js runs parsing/rendering off the main thread via a web worker.
+// pdf.js parses and renders in a web worker.
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
 const ZOOM_STEP = 0.2;
@@ -26,13 +26,7 @@ interface PdfViewerProps {
   error?: string | null;
   /** Retry handler for the error state. */
   onRetry?: () => void;
-  /**
-   * A `data-tour` value for the onboarding spotlight, placed on the root element.
-   *
-   * A prop rather than a stray JSX attribute because this is a component, not a
-   * DOM node — an unknown attribute would be a type error and would never reach
-   * the DOM. Optional, so no other caller has to know the tour exists.
-   */
+  /** A `data-tour` value placed on the root (a prop, since this isn't a DOM node). */
   anchor?: string;
 }
 
@@ -69,11 +63,7 @@ function PdfPage({ page, scale }: { page: PDFPageProxy; scale: number }) {
   return <canvas ref={canvasRef} className="block bg-white rounded-sm shadow-lg max-w-full" />;
 }
 
-/**
- * In-app PDF reader. Fetches the document with pdf.js and renders each page to a
- * canvas styled to match the app, with its own toolbar (page navigation + zoom) —
- * so viewing feels native to LearnSyncAI rather than the browser's built-in PDF UI.
- */
+/** In-app PDF reader: pdf.js renders pages to canvases with the app's own toolbar. */
 export default function PdfViewer({ url, title, loading, error, onRetry, anchor }: PdfViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -85,7 +75,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry, anchor 
   const [docLoading, setDocLoading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
 
-  // ── Load the document whenever the URL changes ──────────────
+  // Load the document when the URL changes
   useEffect(() => {
     if (!url) {
       setPages([]);
@@ -128,7 +118,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry, anchor 
     };
   }, [url]);
 
-  // ── Fit-to-width scale (recomputed on container resize) ─────
+  // Fit-to-width scale, recomputed on resize
   const computeFit = useCallback(() => {
     const el = scrollRef.current;
     if (!el || pages.length === 0) return;
@@ -146,7 +136,7 @@ export default function PdfViewer({ url, title, loading, error, onRetry, anchor 
     return () => ro.disconnect();
   }, [computeFit]);
 
-  // ── Track the current page while scrolling ──────────────────
+  // Track the current page while scrolling
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;

@@ -2,43 +2,20 @@ import { supabaseAdmin } from './supabase';
 import type { ActivityType } from './activity';
 
 /**
- * The badge catalogue and its evaluator.
- *
- * ══ WHY THERE IS NO `badges` TABLE ══
- * `user_badges.badge_name` is bare TEXT by deliberate schema choice, so the
- * catalogue lives here. A table nobody can edit is a constant with extra steps,
- * and building an editor for it would repeat the `educator_assignments` mistake
- * — built, then removed as going beyond the specification. `UNIQUE (student_id,
- * badge_name)` is what makes awarding idempotent, so this module never needs to
- * read-then-write.
- *
- * ══ `name` IS THE IDENTITY. NEVER RENAME ONE. ══
- * The string is written into the database. Changing `streak_3` to `streak_three`
- * does not migrate anyone — it silently re-awards the badge to every student who
- * already held it, under a second name, and leaves the first one orphaned in
- * rows the client can no longer label. `label` and `description` are free to
- * change; `name` is not.
- *
- * ══ THRESHOLDS ARE SIZED TO THE STUDY ══
- * Streaks are 3 / 5 / 7 for a two-week study. A badge nobody can reach is worse
- * than no badge: it renders permanently grey and reads as a feature that does
- * not work. If the study lengthens, `STREAK_THRESHOLDS` is the one edit.
+ * Badge catalogue and evaluator. There is no `badges` table; `UNIQUE (student_id, badge_name)`
+ * makes awarding idempotent.
  */
 
-/** What a badge is awarded FOR. Drives grouping in the UI, nothing in the logic. */
+/** UI grouping only. */
 export type BadgeFamily = 'streak' | 'mastery' | 'first' | 'performance';
 
 export interface BadgeDef {
-  /** Written to `user_badges.badge_name`. NEVER change once live. */
+  /** Stored in `user_badges.badge_name`. Never rename: it would re-award under a new name. */
   name: string;
   label: string;
   description: string;
   family: BadgeFamily;
-  /**
-   * Which activity types can possibly unlock this badge. The evaluator only
-   * considers a rule when the activity just logged is in this list, so a
-   * flashcard rating never runs the "first adaptive test" check.
-   */
+  /** Activity types that can unlock this badge; other activities skip the rule. */
   triggers: ActivityType[];
 }
 
@@ -47,37 +24,21 @@ export interface AwardedBadge {
   awarded_at: string;
 }
 
-/** Mastery at or above this counts as "mastered" — the `advanced` tier threshold. */
+/** The `advanced` tier threshold. */
 const MASTERED_AT = 0.85;
 
-/**
- * Sized to a ~2-week study. 14 was considered and dropped: with a fortnight of
- * access it is unreachable, and an unearnable badge is a permanently grey tile
- * that reads as broken.
- */
+/** Sized to the ~2-week study; an unreachable badge reads as broken. */
 export const STREAK_THRESHOLDS = [3, 5, 7] as const;
 
 const MASTERY_THRESHOLDS = [1, 10, 25] as const;
 
-/** Reviewed-card count behind `cards_100`. */
 const CENTURY_AT = 100;
 
-/** Every activity type. Streak badges are unlocked by studying, whatever the form. */
 const ANY: ActivityType[] = ['flashcard', 'free_recall', 'feynman', 'adaptive_test', 'game', 'chat'];
 
-/**
- * The 14 badges.
- *
- * `chat` deliberately has no first-time badge. It counts toward a streak — the
- * `activity_type` enum committed to that, and a student whose only session that
- * day was the chatbot should not lose their run — but it is by far the cheapest
- * activity to farm, and rewarding one question with a permanent trophy invites
- * exactly that.
- */
+/** Chat counts toward streaks but has no first-time badge (too cheap to farm). */
 export const BADGES: readonly BadgeDef[] = [
-  // ── Streak ────────────────────────────────────────────────────────────────
-  // Read off gamification_profiles.longest_streak, which the DB trigger has
-  // already written by the time the evaluator runs. Zero extra queries.
+  // Streak (from gamification_profiles.longest_streak)
   {
     name: 'streak_3',
     label: 'Getting Started',
@@ -100,10 +61,7 @@ export const BADGES: readonly BadgeDef[] = [
     triggers: ANY,
   },
 
-  // ── First-time ────────────────────────────────────────────────────────────
-  // No query at all: the activity being logged IS the evidence, and the UNIQUE
-  // constraint makes the second attempt a no-op. These are the only badges a
-  // brand-new account can earn on day one, which matters for a short study.
+  // First-time: the activity being logged is the evidence.
   {
     name: 'first_flashcard',
     label: 'First Review',
@@ -140,10 +98,7 @@ export const BADGES: readonly BadgeDef[] = [
     triggers: ['game'],
   },
 
-  // ── Mastery ───────────────────────────────────────────────────────────────
-  // Triggered only by the two interaction modes permitted to MOVE mastery
-  // (paper p. 58). A game or a chat turn cannot change the count, so checking
-  // after one would be a query guaranteed to find nothing new.
+  // Mastery: only the two modes that can move mastery trigger these (paper p. 58).
   {
     name: 'mastery_1',
     label: 'First Mastery',
@@ -166,7 +121,7 @@ export const BADGES: readonly BadgeDef[] = [
     triggers: ['flashcard', 'adaptive_test'],
   },
 
-  // ── Performance ───────────────────────────────────────────────────────────
+  // Performance
   {
     name: 'perfect_test',
     label: 'Perfect Score',
@@ -192,12 +147,11 @@ export const BADGES: readonly BadgeDef[] = [
 
 const BY_NAME = new Map(BADGES.map((b) => [b.name, b]));
 
-/** Presentation lookup for anything server-side that needs a label. */
 export function badgeDef(name: string): BadgeDef | undefined {
   return BY_NAME.get(name);
 }
 
-/** Facts a rule may need, gathered lazily and at most once per evaluation. */
+/** Facts a rule may need, gathered at most once per evaluation. */
 interface Evidence {
   longestStreak: number | null;
   masteredCount: number | null;
@@ -205,19 +159,8 @@ interface Evidence {
 }
 
 /**
- * Every badge whose rule is "reach N", with the counter it reads.
- *
- * ══ ONE HOME PER THRESHOLD ══
- * Read by BOTH `satisfied()`, which decides whether a badge is earned, and
- * `badgeProgress()`, which tells a student how far off they are. These were
- * separate before the badge gallery existed, and a second copy of `100` or
- * `[1, 10, 25]` is exactly the drift that would let a progress bar read "99/100"
- * beside a badge the evaluator had already awarded.
- *
- * A badge absent from this table has no partial state — `first_*` is a single
- * act, and `perfect_test`/`flawless_game` are outcomes of one session. The
- * gallery shows those as criteria text with no bar, which is why membership
- * here is what decides whether a bar is drawn at all.
+ * Every "reach N" badge and its counter. The single source for both `satisfied()` and
+ * `badgeProgress()`; a badge not listed has no progress bar.
  */
 const COUNTABLE: Record<string, { target: number; of: (e: Evidence) => number | null }> = {
   streak_3: { target: STREAK_THRESHOLDS[0], of: (e) => e.longestStreak },
@@ -237,25 +180,9 @@ export interface EvaluateInput {
 }
 
 /**
- * Awards every badge whose rule the student now satisfies, and returns only the
- * ones that actually landed.
- *
- * ══ THE ORDER IS WHAT KEEPS THIS CHEAP ══
- * This runs after EVERY study interaction, including each individual flashcard
- * rating — thirty per deck in a normal session. So:
- *
- *   1. One indexed read of the badges already held.
- *   2. Narrow the catalogue to (not held) ∧ (triggered by this activity type).
- *   3. If nothing survives, RETURN. Zero further queries.
- *
- * Step 3 is the steady state. Once a student holds the badges reachable from an
- * activity, that activity costs exactly one indexed lookup forever after — and
- * every rule needing a COUNT stops running the moment its badge is earned.
- *
- * ══ NEVER THROWS ══
- * Same contract as `logActivity()`, which is its only caller. A badge is a
- * reward; failing to award one must never surface to the student, and there is
- * nothing they could do about it if it did.
+ * Awards newly satisfied badges and returns those that landed. Never throws.
+ * Runs after every activity, so it reads held badges first and returns before any other
+ * query when no candidate remains. Don't add a rule that queries before that filter.
  */
 export async function evaluateBadges(input: EvaluateInput): Promise<AwardedBadge[]> {
   const { studentId, type, outcome } = input;
@@ -274,7 +201,6 @@ export async function evaluateBadges(input: EvaluateInput): Promise<AwardedBadge
     const heldNames = new Set((held ?? []).map((row) => row.badge_name as string));
     const candidates = BADGES.filter((b) => !heldNames.has(b.name) && b.triggers.includes(type));
 
-    // The common case for an established student. Nothing below runs.
     if (candidates.length === 0) return [];
 
     const evidence = await gatherEvidence(studentId, candidates);
@@ -282,15 +208,7 @@ export async function evaluateBadges(input: EvaluateInput): Promise<AwardedBadge
 
     if (earned.length === 0) return [];
 
-    /*
-     * ON CONFLICT DO NOTHING via `ignoreDuplicates`, and `.select()` so the
-     * return value is what actually landed rather than what was attempted.
-     *
-     * The conflict is reachable in practice, not just in theory: two tabs, or a
-     * double-submitted answer, can evaluate the same rule concurrently and both
-     * read an empty `held` set. The UNIQUE constraint is the arbiter, which is
-     * why no read-then-write lock is needed here.
-     */
+    // ON CONFLICT DO NOTHING; the UNIQUE constraint settles concurrent awards. `.select()` returns what landed.
     const { data: inserted, error: insertError } = await supabaseAdmin
       .from('user_badges')
       .upsert(
@@ -317,10 +235,7 @@ export async function evaluateBadges(input: EvaluateInput): Promise<AwardedBadge
   }
 }
 
-/**
- * Fetches only the facts the surviving candidates actually need — at most three
- * reads, usually zero or one. A first-time or outcome-driven badge needs none.
- */
+/** Fetches only the facts the remaining candidates need. */
 async function gatherEvidence(studentId: string, candidates: readonly BadgeDef[]): Promise<Evidence> {
   const evidence: Evidence = { longestStreak: null, masteredCount: null, flashcardCount: null };
   const names = new Set(candidates.map((b) => b.name));
@@ -329,23 +244,12 @@ async function gatherEvidence(studentId: string, candidates: readonly BadgeDef[]
   const needsMastery = candidates.some((b) => b.family === 'mastery');
   const needsCards = names.has('cards_100');
 
-  // PromiseLike, not Promise: a Supabase query builder is a thenable, and
-  // calling .then() on one yields PromiseLike rather than a real Promise.
+  // Supabase builders are thenables, so .then() yields PromiseLike.
   const reads: PromiseLike<void>[] = [];
 
   if (needsStreak) {
-    /*
-     * `longest_streak`, NOT `day_streak`. A streak badge records a best-ever
-     * run, so it must be permanent. Reading `day_streak` would be equivalent
-     * today — badge rows are never deleted — but the rule and the badge would
-     * then disagree the moment anyone read them together, and a student who
-     * broke a 7-day run would see "Week Warrior" beside a current streak of 1
-     * with no way to tell which was lying.
-     *
-     * Safe to read immediately after the activity insert: trigger_update_streak
-     * is AFTER INSERT in the same transaction, so the profile is already
-     * updated by the time that insert resolves. It looks racy and is not.
-     */
+    // longest_streak, not day_streak: streak badges record a best-ever run.
+    // Not racy: the streak trigger has already run when the activity insert resolves.
     reads.push(
       supabaseAdmin
         .from('gamification_profiles')
@@ -372,13 +276,7 @@ async function gatherEvidence(studentId: string, candidates: readonly BadgeDef[]
   }
 
   if (needsCards) {
-    /*
-     * Counted over `activity_logs`, NOT `spaced_repetition_logs`. The latter
-     * gets no row for a practice rating on an un-due card, so the two tables
-     * disagree about what "reviewed" means — and the streak the student is
-     * looking at is built from activity_logs. One source for every "N times"
-     * rule.
-     */
+    // activity_logs is the single source for every "N times" rule.
     reads.push(
       supabaseAdmin
         .from('activity_logs')
@@ -395,16 +293,13 @@ async function gatherEvidence(studentId: string, candidates: readonly BadgeDef[]
   return evidence;
 }
 
-/** The rule for one badge. Anything it cannot verify is false, never assumed. */
+/** The rule for one badge. Anything unverifiable is false. */
 function satisfied(badge: BadgeDef, evidence: Evidence, outcome: EvaluateInput['outcome']): boolean {
-  // Every "reach N" rule — streaks, mastery counts and cards_100 — lives in one
-  // table so the threshold checked here is the threshold the gallery draws.
   const countable = COUNTABLE[badge.name];
   if (countable) return (countable.of(evidence) ?? 0) >= countable.target;
 
   switch (badge.name) {
-    // The activity itself is the evidence — it was just written, and the badge
-    // is not yet held, so this IS the first one.
+    // Not yet held, and the activity was just logged, so this is the first.
     case 'first_flashcard':
     case 'first_test':
     case 'first_recall':
@@ -412,9 +307,7 @@ function satisfied(badge: BadgeDef, evidence: Evidence, outcome: EvaluateInput['
     case 'first_game':
       return true;
 
-    // Strict equality on a server-computed ratio. `>= 1` would be identical
-    // today, but both are bounded at 1 by construction and a value above it is
-    // a bug that should not quietly award a trophy.
+    // Strict equality: a ratio above 1 is a bug and must not award a badge.
     case 'perfect_test':
       return outcome?.score === 1;
     case 'flawless_game':
@@ -425,33 +318,16 @@ function satisfied(badge: BadgeDef, evidence: Evidence, outcome: EvaluateInput['
   }
 }
 
-/** How far a student is from one unearned badge. Countable rules only. */
 export interface BadgeProgress {
   name: string;
-  /** Clamped to `target` — a locked badge must never read "12 / 10". */
+  /** Clamped to `target`. */
   current: number;
   target: number;
 }
 
 /**
- * Progress toward every COUNTABLE badge the student does not yet hold, for the
- * dashboard's badge gallery.
- *
- * ══ IT READS THE EVALUATOR'S SOURCES, NOT THE DASHBOARD'S ══
- * `gatherEvidence()` unchanged, so the number a student is shown is the number
- * the rule reads. That matters most for mastery: this counts EVERY `bkt_mastery`
- * row at or above 0.85, including concepts on materials since archived or
- * unlinked, whereas the dashboard's own "Concepts mastered" stat counts only
- * currently-visible ones. Feeding the gallery the visible figure would show
- * "8 / 10" beside a badge the rule already considers satisfied at 12.
- *
- * ══ SAME EARLY EXIT AS THE EVALUATOR ══
- * Once a student holds all seven countable badges this issues ZERO queries, so
- * an established account pays nothing for the feature on every dashboard load.
- *
- * ══ NEVER THROWS ══
- * Same contract as `evaluateBadges()`. A missing progress bar must never cost a
- * student their dashboard.
+ * Progress toward each unheld countable badge, for the gallery. Never throws.
+ * Reads the evaluator's sources (gatherEvidence), not the dashboard's, so the bar matches the rule.
  */
 export async function badgeProgress(
   studentId: string,

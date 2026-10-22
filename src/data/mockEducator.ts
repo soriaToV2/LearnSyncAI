@@ -1,47 +1,8 @@
-/* ------------------------------------------------------------------
-   Reference data and formatters shared by both portals.
-
-   ⚠️ THE NAME IS NOW WRONG AND THE INVENTED DATA IS GONE. This file used
-   to hold placeholder rows for the Educator Portal — one educator,
-   eighteen students, eight materials, and a `CONCEPT_MASTERY` table
-   generated from an FNV-1a hash of the student id. Every one of those
-   arrays has been deleted, because every screen that read them now reads
-   the database:
-
-     EducatorDashboard.tsx  -> GET /api/educator/overview
-     ClassPerformance.tsx   -> GET /api/educator/materials/:id/performance
-     MaterialsLibrary.tsx   -> GET /api/materials
-     MaterialDetail.tsx     -> GET /api/materials/:id
-     EducatorLayout.tsx     -> GET /api/auth/me (via AuthContext)
-     EducatorProfile.tsx    -> GET /api/auth/me (via AuthContext)
-
-   `formatDate` also has two STUDENT-side consumers now (the Profile
-   pages), which is the clearest argument yet for the rename below.
-
-   Leaving invented students in the tree after that is exactly the hazard
-   that produced the deleted roster pages and a Class Performance tab
-   whose lookup silently never matched: mock rows keyed on `'mat-sci-1'`
-   read against real UUIDs, so only the empty state ever rendered.
-
-   `SUBJECTS` AND `subjectName()` ARE GONE — they were the last thing here
-   that copied the database instead of reading it. `SUBJECTS` mirrored the
-   rows seeded into public.subjects by hand, and the copy drifted the first
-   time anyone edited the table: Christian Living was deleted in Supabase
-   and both subject pickers went on offering it, because nothing on the
-   client had ever read the table. The comment that used to sit here said
-   the server "re-validates the code on upload, so drift is a readable 400
-   rather than a crash" — which described the symptom rather than
-   preventing it. Both now come from `src/context/SubjectsContext.tsx`,
-   backed by `GET /api/subjects`.
-
-   WHAT REMAINS IS REAL. `ALL_GRADE_LEVELS` is the JHS range the
-   `materials_grade_levels_valid` CHECK allows, and the rest are display
-   formatters. Nothing here is a stand-in for data.
-
-   The file is due a rename to something like `src/data/reference.ts`;
-   that is nine mechanical import edits and deliberately not bundled with
-   this change.
-------------------------------------------------------------------- */
+/*
+ * Reference data and formatters shared by both portals. Despite the name, nothing here is mock data:
+ * ALL_GRADE_LEVELS is the range materials_grade_levels_valid allows, and the rest are formatters.
+ * Subjects come from SubjectsContext (GET /api/subjects); don't copy database rows into this file.
+ */
 
 /** Mirrors the `parsed_status` enum in schema.sql, and `ParsedStatus` in server/types/database.ts. */
 export type ParsedStatus = 'pending' | 'processing' | 'completed' | 'failed';
@@ -49,12 +10,7 @@ export type ParsedStatus = 'pending' | 'processing' | 'completed' | 'failed';
 /** Every JHS grade level. A material is published to exactly ONE of them. */
 export const ALL_GRADE_LEVELS = [7, 8, 9, 10];
 
-/**
- * A row of public.materials as the educator API returns it.
- *
- * Named for the portal that consumes it. `server/types/database.ts` holds the
- * server-side mirror; the two must agree.
- */
+/** A public.materials row as the educator API returns it. Must agree with server/types/database.ts. */
 export interface EducatorMaterial {
   id: string;
   educator_id: string;
@@ -74,9 +30,7 @@ export interface EducatorMaterial {
   updated_at: string;
 }
 
-// ─────────────────────────────────────────────────────────────
 // Formatting helpers
-// ─────────────────────────────────────────────────────────────
 
 export function formatFileSize(bytes: number | null): string {
   if (bytes === null) return '—';
@@ -86,18 +40,8 @@ export function formatFileSize(bytes: number | null): string {
 }
 
 /**
- * "3d ago" for a real timestamp.
- *
- * 🐛 This measured against a FROZEN `NOW` of 2026-07-23, which was correct while
- * every caller passed a mock `created_at` and wrong the moment `MaterialsLibrary`
- * started passing real ones. A material uploaded after that date produced a
- * negative difference, fell through the `mins < 1` branch, and printed **"Just
- * now" forever regardless of age** — for every material in the library.
- *
- * `relativeTime()` in `src/lib/mastery.ts` is the coarser sibling (today /
- * yesterday / N days ago, returning null for a null input); this one keeps
- * minute-level resolution because an upload that finished parsing two minutes ago
- * is worth distinguishing from one that finished two hours ago.
+ * "3d ago" for a real timestamp, measured against Date.now(). Minute-level, unlike relativeTime() in
+ * src/lib/mastery.ts, so a recent upload reads "2m ago" rather than "today".
  */
 export function formatRelativeTime(iso: string | null): string {
   if (!iso) return 'Never';

@@ -9,33 +9,13 @@ import {
 import { api } from './api';
 
 /**
- * Test Mode — the contract between the UI and the backend.
- *
- * Every type here mirrors a column or enum in `schema.sql`, so there is nothing
- * to reconcile between the shapes the components consume and the shapes
- * `server/routes/practice.routes.ts` returns.
- *
- * `allocateConcepts()` below is a MIRROR. `server/lib/testAllocation.ts` is
- * authoritative — it counts concepts itself and re-derives the allocation; this
- * copy only drives the setup preview. Same arrangement as
- * `src/lib/reviewSchedule.ts` ↔ `server/lib/reviewSchedule.ts`. Change one,
- * change the other.
+ * Test Mode types shared with server/routes/practice.routes.ts (they mirror schema.sql).
+ * `allocateConcepts()` mirrors server/lib/testAllocation.ts, which is authoritative; change both.
  */
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Formats
-// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Exactly the Postgres `question_type` enum. One spelling, app-wide.
- *
- * There were three incompatible spellings of these same five formats: the old
- * tab's `'multiple-choice'`, the generation prompt's `'true_false' |
- * 'short_answer'` (neither of which is a valid enum member), and the database's
- * own. `practice_telemetry.question_type` is `NOT NULL` and selects the P(G)
- * used by the BKT update, so a format id that cannot be written straight into
- * that column is a format id that silently costs the student their observation.
- */
+/** Matches the `question_type` enum; one spelling app-wide (it selects P(G), so a wrong id loses the observation). */
 export type QuestionFormat =
   | 'multiple_choice'
   | 'true_or_false'
@@ -43,15 +23,10 @@ export type QuestionFormat =
   | 'fill_in_the_blank'
   | 'matching_type';
 
-/** Exactly `practice_tests.difficulty_tier`'s CHECK, and `mastery_tier()` in schema.sql. */
+/** Matches `practice_tests.difficulty_tier` and `mastery_tier()`. */
 export type DifficultyTier = 'foundational' | 'intermediate' | 'advanced';
 
-/**
- * The single source of every format label, blurb and ordering in the app.
- *
- * `sectionOrder` is the traditional order of a Philippine exam paper and is what
- * assigns Test I..Test V. Nothing else may hardcode a format's display name.
- */
+/** The single source of format labels, blurbs and exam-paper order (Test I..V). */
 export const FORMAT_META: Record<
   QuestionFormat,
   { label: string; short: string; blurb: string; icon: LucideIcon; sectionOrder: number }
@@ -98,47 +73,22 @@ export const ALL_FORMATS: QuestionFormat[] = (
 ).sort((a, b) => FORMAT_META[a].sectionOrder - FORMAT_META[b].sectionOrder);
 
 /**
- * A matching block is 4 terms against 6 definitions. Paper p. 75:
- *
- *   "Matching Type (4 terms, 6 definitions): P(G_match) = 0.17. For any
- *    individual term, the probability of selecting the correct definition from
- *    the pool of six through random guessing is 1/6 ≈ 0.17, applied per
- *    matched item."
- *
- * Two separate rules, and they are load-bearing for different reasons:
- *
- * - SIX OPTIONS is the BKT rule. 1/6 is the guess probability the update
- *   applies, so an option pool of any other size makes the maths wrong.
- * - FOUR TERMS is a fidelity rule, NOT a BKT rule. "Applied per matched item"
- *   means each term is scored against the pool of six on its own, so a block of
- *   two terms would compute perfectly well — the term count never enters the
- *   formula. It is enforced because the paper and the `schema.sql` seed comment
- *   both state it, and code that quietly does otherwise misleads whoever reads
- *   the spec next.
- *
- * The priority follows from that: if these two ever conflict with something that
- * genuinely affects scoring, bend the term count, never the option count.
- *
- * `allocateConcepts()` is what enforces four — matching only ever receives a
- * multiple of 4, and leftovers go to the other sections.
+ * 4 terms vs 6 definitions (paper p. 75). Six options is what makes P(G_match) = 1/6; if the two ever
+ * conflict, bend the term count, never the option count.
  */
 export const MATCH_TERMS_PER_BLOCK = 4;
 export const MATCH_OPTIONS_PER_BLOCK = 6;
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
 
-/** The chosen formats in exam-paper order. */
+/** Formats in exam-paper order. */
 export function orderedFormats(formats: QuestionFormat[]): QuestionFormat[] {
   return [...new Set(formats)].sort(
     (a, b) => FORMAT_META[a].sectionOrder - FORMAT_META[b].sectionOrder
   );
 }
 
-/**
- * `'Test III'` — numbered across the formats the student actually chose, not
- * across all five. Picking MCQ and Matching gives Test I and Test II, so the
- * paper never has a gap in its numbering.
- */
+/** 'Test III' style labels, numbered across the chosen formats only. */
 export function sectionLabel(formats: QuestionFormat[], format: QuestionFormat): string {
   const idx = orderedFormats(formats).indexOf(format);
   return idx < 0 ? 'Test' : `Test ${ROMAN[idx] ?? idx + 1}`;
@@ -146,34 +96,15 @@ export function sectionLabel(formats: QuestionFormat[], format: QuestionFormat):
 
 export interface Allocation {
   items: { format: QuestionFormat; count: number }[];
-  /** Concepts that actually get a question. Equals `conceptCount` unless matching rounds down. */
+  /** Concepts that get a question; less than the total only when matching rounds down. */
   covered: number;
-  /** Matching was asked for but there was no room for a whole block of four. */
+  /** Matching requested but no room for a whole block. */
   matchingDropped: boolean;
 }
 
 /**
- * Which concept goes to which section. **This is the rule that decides how long
- * a test is: one question per concept, always.**
- *
- * The student does not choose a length. A length picker meant cycling concepts
- * to fill it, so a 40-item test on a 29-concept lesson asked about some concepts
- * three or four times in one sitting — and four back-to-back answers on one
- * concept are not four independent observations, which is precisely what BKT
- * assumes. It is the same trap the flashcard due-check exists to avoid. One
- * question per concept means exactly one BKT observation per concept per test,
- * and it makes `document_mastery()` (the mean over every concept in the
- * material) meaningful after a single test rather than mostly seed values.
- *
- * Matching is allocated FIRST and only in whole blocks of four, because
- * `MATCH_TERMS_PER_BLOCK` has to hold exactly. Whatever is left over goes to the
- * other sections. If matching is the only format chosen, the remainder simply
- * has no section to go to and those concepts are untested — `covered` reports
- * it so the UI can say so rather than the count silently disagreeing.
- *
- * PHASE 2: mirror this server-side. The server recounts `concepts` and
- * re-derives the allocation; this copy only drives the setup preview. The
- * precedent is `src/lib/reviewSchedule.ts` mirroring `server/lib/reviewSchedule.ts`.
+ * One question per concept, always, so each test gives BKT one independent observation per concept.
+ * Matching is allocated first in whole blocks. Mirror of the server copy, used only for the preview.
  */
 export function allocateConcepts(conceptCount: number, formats: QuestionFormat[]): Allocation {
   const ordered = orderedFormats(formats);
@@ -189,14 +120,7 @@ export function allocateConcepts(conceptCount: number, formats: QuestionFormat[]
   let matchingDropped = false;
 
   if (wantsMatching) {
-    // Every other section keeps at least one concept, so matching cannot eat a
-    // format the student explicitly asked for.
-    //
-    // The `< MATCH_OPTIONS_PER_BLOCK` test is the other half of the block
-    // invariant: four terms need six DISTINCT definitions to choose between, and
-    // a lesson with five concepts cannot supply them. Enforced here rather than
-    // in the caller so the rule travels with the rule it belongs to — Phase 2's
-    // server copy gets it without having to remember.
+    // Leave every other section at least one concept. A block needs six distinct definitions.
     const maxBlocks =
       n < MATCH_OPTIONS_PER_BLOCK ? 0 : Math.floor((n - others.length) / MATCH_TERMS_PER_BLOCK);
     if (maxBlocks < 1) {
@@ -226,16 +150,14 @@ export function allocateConcepts(conceptCount: number, formats: QuestionFormat[]
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Questions
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface QuestionBase {
   /** Position in the whole test. This is `practice_telemetry.question_index`. */
   index: number;
-  /** Server-validated against the concepts it sent the model — a wrong id corrupts BKT. */
+  /** Server-validated; a wrong id would corrupt BKT. */
   concept_id: string;
-  /** Shown in results only. Naming the concept during the test would give the answer away. */
+  /** Results only; showing it during the test gives the answer away. */
   concept_term: string;
   format: QuestionFormat;
   difficulty: DifficultyTier;
@@ -263,13 +185,7 @@ export type TestQuestion =
 
 export const BLANK_TOKEN = '____';
 
-/**
- * NOTE what is absent: there is no `correct_answer` and no `explanation` on a
- * `TestQuestion`. The answer key must never reach the browser during a test —
- * the old tab shipped it and then trusted a client-decided `is_correct`, which
- * let a student post arbitrary BKT evidence. Correctness arrives only in
- * `TestResult`, after the test is closed.
- */
+/** No answer key or explanation: those reach the browser only in TestResult, after submission. */
 export interface GeneratedTest {
   id: string;
   title: string;
@@ -284,9 +200,7 @@ export interface GeneratedTest {
   answers: Record<number, string>;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Results
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface QuestionResult {
   index: number;
@@ -308,19 +222,11 @@ export interface MissedConcept {
   asked: number;
 }
 
-/**
- * What this submission did to one concept's BKT mastery.
- *
- * Mirrors `MasteryChangeDto` in `server/routes/practice.routes.ts`.
- */
+/** What this submission did to one concept's mastery. Mirrors MasteryChangeDto on the server. */
 export interface MasteryChange {
   concept_id: string;
   term: string;
-  /**
-   * ⚠️ MEANINGLESS UNLESS `assessed_before` — it is exactly P(L₀) = 0.10 when
-   * this test was the concept's first evidence. Render "Not measured before",
-   * never "10%".
-   */
+  /** Meaningless unless `assessed_before` (it's P(L₀)); render "Not measured before". */
   before: number;
   after: number;
   /** Items in THIS test that asked about it. */
@@ -332,7 +238,7 @@ export interface MasteryChange {
 
 export interface TestResult {
   test: Omit<GeneratedTest, 'questions' | 'answers'>;
-  /** 0–1, correct / TOTAL. Never correct / answered — skipping must not raise a score. */
+  /** 0–1, correct / total; skipping never raises it. */
   score: number;
   correct: number;
   total: number;
@@ -341,18 +247,7 @@ export interface TestResult {
   missed_concepts: MissedConcept[];
   /** Sum of per-question latency, ms. */
   elapsed_ms: number;
-  /**
-   * Present ONLY on the response that actually completed the test.
-   *
-   * ⚠️ OPTIONAL BECAUSE THERE IS ONE `TestResult` AND TWO PRODUCERS.
-   * `testApi.complete()` can supply it; `testApi.fetchResult()` re-grades a past
-   * test and has no before/after to report, and a double-submit reaches
-   * `complete()` and gets nothing back either. Making it required would force a
-   * second type and a union on `activeResult` for a distinction the one consumer
-   * has to make at runtime regardless.
-   *
-   * Absent means "no claim", never "nothing moved". `[]` is the second of those.
-   */
+  /** Present only on the response that completed the test. Absent = "no claim"; `[]` = nothing moved. */
   mastery_changes?: MasteryChange[];
 }
 
@@ -369,19 +264,13 @@ export interface TestSummary {
   formats: QuestionFormat[];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Screens — how questions are paged through
-// ─────────────────────────────────────────────────────────────────────────────
+// Screens
 
 export type TestScreen =
   | { kind: 'single'; index: number; question: Exclude<TestQuestion, MatchingQuestion> }
   | { kind: 'matching'; index: number; blockId: string; options: string[]; questions: MatchingQuestion[] };
 
-/**
- * One question per screen — except matching, where the whole block of four
- * shares one screen because the six definitions are a single pool. The block
- * still emits four telemetry rows; it is one screen, not one question.
- */
+/** One question per screen, except a matching block (one shared pool), which still emits four rows. */
 export function buildScreens(questions: TestQuestion[]): TestScreen[] {
   const screens: TestScreen[] = [];
   const blockAt = new Map<string, number>();
@@ -419,16 +308,9 @@ export function screenFormat(screen: TestScreen): QuestionFormat {
   return screen.kind === 'single' ? screen.question.format : 'matching_type';
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Display helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * An answer is always a plain string on the wire — the option's text for a
- * choice, `'true'`/`'false'`, or what the student typed. Storing the text and
- * not an index means reordering options later cannot silently re-grade an
- * answered question.
- */
+/** Answers are plain strings (option text, 'true'/'false', or typed), never indices. */
 export function displayAnswer(format: QuestionFormat, raw: string | null | undefined): string {
   const value = (raw ?? '').trim();
   if (!value) return '—';
@@ -457,18 +339,9 @@ export function formatElapsed(ms: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The API seam
-// ─────────────────────────────────────────────────────────────────────────────
+// API
 
-/**
- * The sections the student chose, and nothing else.
- *
- * No length and no title. The server counts `concepts` itself and re-derives the
- * allocation with its own copy of `allocateConcepts()` — a client-supplied
- * length is a client-chosen test, and a student could ask for five questions
- * while still banking BKT evidence. The title comes from the material row.
- */
+/** Only the chosen sections: the server derives length and title. */
 export interface GenerateTestRequest {
   space_id: string;
   material_id: string;
@@ -479,7 +352,7 @@ export interface TestApi {
   /** Past tests for one space, newest first. */
   list(spaceId: string): Promise<TestSummary[]>;
   generate(req: GenerateTestRequest): Promise<GeneratedTest>;
-  /** Fire-and-forget from the UI's point of view; failures surface as a strip, not a block. */
+  /** Failures surface as a strip, not a block. */
   saveAnswer(testId: string, index: number, answer: string, latencyMs: number): Promise<void>;
   complete(testId: string): Promise<TestResult>;
   /** A finished test, for review from the overview list. */
@@ -488,18 +361,7 @@ export interface TestApi {
   resume(testId: string): Promise<GeneratedTest>;
 }
 
-/**
- * The real backend, `server/routes/practice.routes.ts`.
- *
- * Every response goes through the `{ data }` envelope `src/lib/api.ts` unwraps,
- * and `apiFetch` already throws `Error(message)` on a non-2xx — so a 429 from a
- * rate-limited question writer arrives here as its own sentence rather than a
- * generic failure, and the tab shows it verbatim.
- *
- * Note what is NOT here: nothing sends or receives an answer key during a test.
- * `GeneratedTest.questions` is `TestQuestion[]`, which has no `correct_answer`
- * field, and the server's `stripKey()` is what guarantees the wire matches.
- */
+/** The backend client. A non-2xx becomes Error(message), so quota messages show verbatim. No answer key is ever exchanged. */
 export const testApi: TestApi = {
   async list(spaceId) {
     const res = await api.get<TestSummary[]>(`/practice/space/${spaceId}`);

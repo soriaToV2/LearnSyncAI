@@ -8,23 +8,22 @@ export default function OrientationGate() {
     const checkOrientation = () => {
       const isLandscape = window.innerWidth > window.innerHeight;
       
-      // We block if it's a mobile/tablet screen dimension (width <= 1024px)
-      // or if it's touch device and width <= 1366px (like iPad Pro)
+      // Block on phone/tablet widths (≤ 1024px), or touch devices up to 1366px (iPad Pro).
       const isMobileTablet = window.innerWidth <= 1024 || (window.matchMedia('(pointer: coarse)').matches && window.innerWidth <= 1366);
       
-      // Check if SeatingGridModal is active in the DOM (marked by our custom data attribute)
+      // SeatingGridModal marks itself with a data attribute.
       const isSeatingGridOpen = !!document.querySelector('[data-seating-modal="true"]');
       
       if (isMobileTablet) {
         if (isSeatingGridOpen) {
-          // Inside Seating Grid layout, we REQUIRE landscape orientation.
+          // The seating grid requires landscape.
           if (!isLandscape) {
             setWarningType('landscape_required');
           } else {
             setWarningType(null);
           }
         } else {
-          // General application layout requires portrait orientation.
+          // Everything else requires portrait.
           if (isLandscape) {
             setWarningType('portrait_required');
           } else {
@@ -43,7 +42,7 @@ export default function OrientationGate() {
     window.addEventListener('resize', checkOrientation);
     window.addEventListener('orientationchange', checkOrientation);
 
-    // MutationObserver to react to DOM tree changes (opening/closing SeatingGridModal)
+    // Re-check when SeatingGridModal opens or closes.
     const observer = new MutationObserver(checkOrientation);
     observer.observe(document.body, { childList: true, subtree: true });
 
@@ -55,29 +54,17 @@ export default function OrientationGate() {
   }, []);
 
   const handleCloseSeatingGrid = () => {
-    // Close the SeatingGridModal by simulating Escape press
+    // Close SeatingGridModal by simulating Escape.
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   };
 
   if (!warningType) return null;
 
   return (
-    /* ⚠️ `bg-surface`, NOT `bg-[#0b1326]`. #0b1326 IS `--color-surface`'s dark
-       value, written out as a literal — so this overlay was the one surface in
-       the app that no theme could reach, and it stayed near-black over a light
-       page. The token is the same colour on every dark theme and follows the
-       light one. Reported from the running app.
-
-       This is also the second thing the `documentElement` fix bought: the gate
-       mounts at the App root, OUTSIDE all three themed layout wrappers, so
-       while `data-theme` lived only on those wrappers no `[data-theme="white"]`
-       rule could have corrected it even if the colour had been a class. */
+    /* bg-surface, not a literal colour, so the light theme reaches this root-level overlay. */
     <div className="fixed inset-0 z-[99999] bg-surface/95 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 text-white fade-in duration-200">
       <div className="max-w-md space-y-6 flex flex-col items-center animate-orientation-panel">
-        {/* The phone turns TOWARDS the orientation being asked for and rests
-            there — see `phoneToPortrait` / `phoneToLandscape` in `index.css`
-            for why the direction is the whole point. The ring behind it
-            expands on the same 3s cycle. */}
+        {/* The phone turns toward the requested orientation (see phoneToPortrait/phoneToLandscape in index.css). */}
         <div className="relative w-20 h-20 flex items-center justify-center bg-white/5 rounded-full border border-white/10 shadow-inner">
           <span
             aria-hidden="true"

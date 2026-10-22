@@ -1,18 +1,6 @@
 /**
- * Deterministic crossword layout builder.
- *
- * The LLM supplies candidate answer/clue pairs (see generateCrosswordWords in
- * lib/gameContent.ts) but never assigns coordinates — placing interlocking words on a
- * grid is a constraint-satisfaction problem that code solves reliably and models
- * do not. This module runs a backtracking-style greedy placement: the first word
- * anchors the grid, and each subsequent word is placed on the first valid
- * intersection with an already-placed word, respecting standard crossword
- * adjacency rules. Words that cannot be placed are skipped.
- *
- * Output matches the frontend contract:
- *   - crossword:      sparse list of filled cells { r, c, correctLetter, label? }
- *   - crosswordClues: { number, direction, clue }[]
- * Coordinates are normalized so the grid is anchored at (0,0).
+ * Deterministic crossword layout. The model supplies answer/clue pairs; code places them greedily
+ * on intersections, skipping words that don't fit. Output is anchored at (0,0).
  */
 
 export type CrosswordDirection = 'across' | 'down';
@@ -60,13 +48,8 @@ const step = (dir: CrosswordDirection): [number, number] => (dir === 'across' ? 
 const opposite = (dir: CrosswordDirection): CrosswordDirection => (dir === 'across' ? 'down' : 'across');
 
 /**
- * Checks whether `answer` can be placed at (r,c) going `direction` on the given
- * letter grid without violating crossword rules:
- *   - existing letters at overlapped cells must match,
- *   - the cell immediately before the start and after the end must be empty,
- *   - a NEW (non-overlapping) letter must not touch a parallel neighbour, which
- *     would create an unintended adjacent word.
- * Returns the number of overlaps (intersections) if valid, or -1 if invalid.
+ * Returns the number of intersections if `answer` fits at (r,c), else -1. Overlaps must match,
+ * both ends must be empty, and new letters must not touch a parallel neighbour.
  */
 function tryPlacement(
   answer: string,
@@ -109,10 +92,6 @@ function commit(word: PlacedWord, grid: Map<string, string>): void {
   }
 }
 
-/**
- * Attempts to place `answer` by intersecting it with any already-placed word.
- * Returns the placement with the most overlaps, or null if none fits.
- */
 /** Bounding box of every currently placed cell. */
 function currentBounds(placed: PlacedWord[]): { minR: number; minC: number; maxR: number; maxC: number } {
   let minR = Infinity;
@@ -133,12 +112,7 @@ function currentBounds(placed: PlacedWord[]): { minR: number; minC: number; maxR
   return { minR, minC, maxR, maxC };
 }
 
-/**
- * Finds the best placement for `answer` intersecting an already-placed word.
- * Scored by: more intersections first (denser interlock), then the most COMPACT
- * result (smallest overall bounding box) so the grid stays tight instead of
- * sprawling into an awkward, mostly-empty layout.
- */
+/** Best intersecting placement for `answer`: most overlaps, then smallest bounding box. Null if none fits. */
 function findPlacement(answer: string, placed: PlacedWord[], grid: Map<string, string>, size: number): PlacedWord | null {
   const bounds = currentBounds(placed);
   let best:
@@ -174,8 +148,7 @@ function findPlacement(answer: string, placed: PlacedWord[], grid: Map<string, s
         const nMaxR = Math.max(bounds.maxR, startR, endR);
         const nMaxC = Math.max(bounds.maxC, startC, endC);
 
-        // Keep the whole grid within `size` in both dimensions so it stays
-        // compact enough to render cleanly (not just each individual word).
+        // Keep the whole grid within `size` in both dimensions.
         if (nMaxR - nMinR + 1 > size || nMaxC - nMinC + 1 > size) continue;
 
         const area = (nMaxR - nMinR + 1) * (nMaxC - nMinC + 1);
@@ -192,14 +165,9 @@ function findPlacement(answer: string, placed: PlacedWord[], grid: Map<string, s
   return { answer, clue: '', r: best.r, c: best.c, direction: best.direction };
 }
 
-/**
- * Builds a crossword layout from candidate words. Deduplicates by answer, sorts
- * longest-first (long words interlock more easily), anchors the first word, then
- * greedily places the rest by best intersection.
- */
+/** Dedupes by answer, sorts longest-first, anchors the first word, then places the rest greedily. */
 export function buildCrossword(words: CrosswordInputWord[], options: BuildOptions = {}): CrosswordLayout {
-  // `size` caps the total grid in both dimensions (must exceed the longest
-  // answer, currently ≤10 letters) so it renders cleanly.
+  // Must exceed the longest answer (≤10 letters).
   const size = options.size ?? 13;
   const maxWords = options.maxWords ?? 10;
 
@@ -248,10 +216,7 @@ export function buildCrossword(words: CrosswordInputWord[], options: BuildOption
   return finalizeLayout(placed);
 }
 
-/**
- * Normalizes coordinates to (0,0), assigns standard crossword numbering, and
- * emits the sparse cell list + clue list the frontend expects.
- */
+/** Normalises to (0,0), numbers the start cells, and emits the frontend's cell and clue lists. */
 function finalizeLayout(placed: PlacedWord[]): CrosswordLayout {
   if (placed.length === 0) return { crossword: [], crosswordClues: [] };
 

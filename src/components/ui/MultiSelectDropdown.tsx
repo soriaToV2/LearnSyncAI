@@ -1,20 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 
-/**
- * One selectable row. `value` must be UNIQUE and stable — it is the React key, the
- * membership test and what `onChange` reports.
- *
- * It used to be a bare `string[]` of labels, which meant two options sharing a
- * label were indistinguishable: they collided as React keys, ticked together, and
- * only the first could ever be resolved back to a record. A material with three
- * concepts named "SECURE SOFTWARE DEVELOPMENT" made all three of those visible at
- * once. Pass an id as `value` and a label as `label`.
- */
+/** One row. `value` must be unique and stable (React key, membership, what onChange reports). */
 export interface DropdownOption {
   value: string;
   label: string;
-  /** Optional muted suffix, e.g. a count or a page number. */
+  /** Optional muted suffix (a count or page number). */
   hint?: string;
 }
 
@@ -72,8 +63,7 @@ export default function MultiSelectDropdown({
       ? `All ${itemNoun}s`
       : `${selectedValues.length} ${itemNoun}${selectedValues.length > 1 ? 's' : ''} selected`;
 
-  // w-fit stops a flex/grid parent from stretching the root, which would drag the
-  // panel with it — the panel is sized and positioned against this element.
+  // w-fit stops a flex/grid parent from stretching the root the panel is positioned against.
   return (
     <div className={`relative inline-block w-fit text-left font-sans ${className}`} ref={containerRef}>
       <div className="relative">
@@ -93,11 +83,7 @@ export default function MultiSelectDropdown({
       </div>
 
       {isOpen && (
-        // `left-0 w-full` pins the panel exactly under its trigger. See the same
-        // fix in SingleSelectDropdown: `right-0 w-64` against a `w-56` button
-        // made the panel overhang its own left edge by 32px, and wherever the
-        // control sat flush against a container edge that overhang was clipped,
-        // cutting the first characters off every option label.
+        // `left-0 w-full` pins the panel under its trigger (see SingleSelectDropdown).
         <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 dropdown-panel shadow-2xl focus:outline-none overflow-hidden fade-in z-[100]">
           <div className="py-1 max-h-68 overflow-y-auto scrollbar-none" role="none">
             {/* Select All toggle */}
@@ -129,9 +115,7 @@ export default function MultiSelectDropdown({
                       : 'text-slate-300 hover:bg-white/5 hover:text-white'
                   }`}
                   role="menuitem"
-                  // Concept terms run long — "SECURE SOFTWARE DEVELOPMENT LIFE
-                  // CYCLE (SSDLC)" truncates in a panel this wide, so the full
-                  // text stays reachable on hover.
+                  // Long terms truncate; keep the full text on hover.
                   title={option.label}
                 >
                   <div className="w-4 h-4 rounded border border-white/20 flex items-center justify-center mr-2.5 shrink-0 bg-white/5">

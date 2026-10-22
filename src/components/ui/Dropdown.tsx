@@ -42,27 +42,7 @@ export default function Dropdown({ value, onChange, options, className = '', ico
     setIsOpen(false);
   };
 
-  /*
-   * ⚠️ THE TRIGGER IS OPAQUE. It was the container tone at 60% alpha over
-   * whatever it happened to be sitting on — and that was reported as "a
-   * transparent dropdown" on the educator grade-access editor.
-   *
-   * The arithmetic, in light mode: the grade panel behind it renders about
-   * #eaeef2, and #f1f5f9 at 60% over that lands about #eef1f5 — a difference of
-   * roughly FOUR values per channel, with only a 10%-alpha border to say a
-   * control was there at all. `index.css` carries a light-theme correction for
-   * plain `.bg-surface-container` and none for the alpha variant, so nothing
-   * caught it.
-   *
-   * `surface-container-high` is the right token rather than a hand-picked
-   * colour: it is the app's "raised above the surface" step, it is what the
-   * MENU below already uses, and it is legible in both palettes — #222a3d on a
-   * near-black page, #ffffff on a near-white one.
-   *
-   * The same swap was applied to every form control that shared the old value
-   * (the two other dropdowns, four search inputs, a test-session field), so a
-   * search box does not sit beside a dropdown looking like a different material.
-   */
+  // Opaque trigger (surface-container-high): the old 60% alpha looked transparent in light mode.
   return (
     <div className={`relative inline-block text-left font-sans ${className}`} ref={containerRef}>
       <div className="relative">
@@ -84,24 +64,14 @@ export default function Dropdown({ value, onChange, options, className = '', ico
 
       {isOpen && (
         <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 dropdown-panel shadow-2xl focus:outline-none overflow-hidden fade-in z-[100]">
-          {/* Dead class dropped — see the twin note in SingleSelectDropdown. It
-              generated no CSS, so the scrollbar has always shown, and on a
-              scrolling option list that is the only cue more options exist. */}
+          {/* No dead no-scrollbar class: the scrollbar is the cue that more options exist. */}
           <div className="py-1 max-h-60 overflow-y-auto" role="none">
             {normalizedOptions.map((option, idx) => {
               const isSelected = option.value === value;
               return (
                 <button
                   key={idx}
-                  /*
-                   * REQUIRED. A <button> with no `type` defaults to
-                   * `type="submit"`, so picking an option inside a <form>
-                   * submitted that form — reaching the handler with the OLD
-                   * value, because the state update had only just been queued.
-                   * Both call sites in `UploadMaterialModal` sit inside
-                   * `<form onSubmit={handleSubmit}>`, as does the subject picker
-                   * in the student create-space modal.
-                   */
+                  /* Required: a button defaults to type="submit" and would submit the enclosing form. */
                   type="button"
                   onClick={() => handleSelect(option.value)}
                   className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${isSelected

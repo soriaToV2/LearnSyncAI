@@ -1,17 +1,9 @@
 /**
- * Which concept goes to which section of a practice test, and therefore how long
- * the test is.
- *
- * **This is the authoritative copy.** `src/lib/testMode.ts` holds a mirror that
- * drives the setup preview only; the server counts `concepts` itself and
- * re-derives the allocation, because a client-supplied length is a client-chosen
- * test — a student could ask for five questions and still bank BKT evidence.
- * Same arrangement as `server/lib/reviewSchedule.ts` ↔ `src/lib/reviewSchedule.ts`.
- *
- * The two copies must stay in step. If you change the rule here, change it there.
+ * Allocates concepts to test sections, which fixes the test length. Authoritative copy;
+ * `src/lib/testMode.ts` mirrors it for the setup preview. Change both together.
  */
 
-/** Exactly the Postgres `question_type` enum (schema.sql:39-45). */
+/** Matches the `question_type` enum. */
 export type QuestionFormat =
   | 'multiple_choice'
   | 'true_or_false'
@@ -19,7 +11,7 @@ export type QuestionFormat =
   | 'fill_in_the_blank'
   | 'matching_type';
 
-/** Exactly `practice_tests.difficulty_tier`'s CHECK, and `mastery_tier()` in schema.sql. */
+/** Matches `practice_tests.difficulty_tier` and `mastery_tier()`. */
 export type DifficultyTier = 'foundational' | 'intermediate' | 'advanced';
 
 export const ALL_FORMATS: QuestionFormat[] = [
@@ -39,15 +31,8 @@ const SECTION_ORDER: Record<QuestionFormat, number> = {
 };
 
 /**
- * Paper p. 75: "Matching Type (4 terms, 6 definitions): P(G_match) = 0.17 … the
- * probability of selecting the correct definition from the pool of six through
- * random guessing is 1/6 ≈ 0.17, applied per matched item."
- *
- * SIX OPTIONS is the BKT rule — 1/6 is the guess probability the update applies,
- * so any other pool size makes the maths wrong. FOUR TERMS is a fidelity rule:
- * "per matched item" means the term count never enters the formula, but the
- * paper and the `schema.sql` seed comment both state it, so a short trailing
- * block must never be produced.
+ * 4 terms vs 6 definitions (paper p. 75). Six options is what makes P(G_match) = 1/6;
+ * if the two ever conflict, bend the term count, never the option count.
  */
 export const MATCH_TERMS_PER_BLOCK = 4;
 export const MATCH_OPTIONS_PER_BLOCK = 6;
@@ -59,32 +44,20 @@ export interface AllocationItem {
 
 export interface Allocation {
   items: AllocationItem[];
-  /** Concepts that get a question. Equals `conceptCount` unless matching rounds down. */
+  /** Concepts that get a question; less than the total only when matching rounds down. */
   covered: number;
-  /** Matching was requested but there was no room for a whole block of four. */
+  /** Matching requested but no room for a whole block. */
   matchingDropped: boolean;
 }
 
-/** The chosen formats in exam-paper order. */
+/** Formats in exam-paper order. */
 export function orderedFormats(formats: QuestionFormat[]): QuestionFormat[] {
   return [...new Set(formats)].sort((a, b) => SECTION_ORDER[a] - SECTION_ORDER[b]);
 }
 
 /**
- * ONE QUESTION PER CONCEPT, always.
- *
- * The student does not choose a length. A length picker meant cycling concepts
- * to fill it, so a 40-item test on a 29-concept lesson asked about some concepts
- * three or four times in one sitting — and four back-to-back answers on one
- * concept are not four independent observations, which is exactly what BKT
- * assumes. Same trap the flashcard due-check exists to avoid. One question per
- * concept means one BKT observation per concept per test, and it makes
- * `document_mastery()` meaningful after a single test.
- *
- * Matching is allocated FIRST and only in whole blocks of four; the remainder
- * goes to the other sections. If matching is the only format chosen there is
- * nowhere for the remainder to go, so those concepts are untested — `covered`
- * reports it rather than the count silently disagreeing.
+ * One question per concept, always, so each test gives BKT one independent observation per concept.
+ * Matching is allocated first in whole blocks; the rest is split across the other formats.
  */
 export function allocateConcepts(conceptCount: number, formats: QuestionFormat[]): Allocation {
   const ordered = orderedFormats(formats);
@@ -100,12 +73,7 @@ export function allocateConcepts(conceptCount: number, formats: QuestionFormat[]
   let matchingDropped = false;
 
   if (wantsMatching) {
-    // Every other section keeps at least one concept, so matching cannot eat a
-    // format the student explicitly asked for.
-    //
-    // `n < MATCH_OPTIONS_PER_BLOCK` is the other half of the block invariant:
-    // four terms need six DISTINCT definitions to choose between, and a lesson
-    // with five concepts cannot supply them.
+    // Leave every other section at least one concept. A block needs six distinct definitions.
     const maxBlocks =
       n < MATCH_OPTIONS_PER_BLOCK ? 0 : Math.floor((n - others.length) / MATCH_TERMS_PER_BLOCK);
     if (maxBlocks < 1) {

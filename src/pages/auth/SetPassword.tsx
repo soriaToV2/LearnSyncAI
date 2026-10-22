@@ -9,21 +9,9 @@ import { signOut } from '../../lib/signOut';
 import { Field, StatusLine, messageOf, useSubmitLatch, type Status } from '../../components/common/formKit';
 
 /**
- * First login — replace the password an administrator gave you.
- *
- * ⚠️ MOUNTED OUTSIDE ALL THREE LAYOUTS, beside `/login`. `RequireRole` redirects
- * here whenever `must_change_password` is set; if this page lived inside a
- * guarded layout that redirect would fire again on arrival and loop forever.
- *
- * It carries its own `AuthProvider` for the same reason the layouts do — it needs
- * `GET /api/auth/me`, which is one of the two routes deliberately left outside
- * the server-side gate (the other is the change-password call below). Everything
- * else answers 403 until this form succeeds.
- *
- * The copy explains WHY rather than just demanding. A student who is told "you
- * must change your password" with no reason assumes the app is broken; told that
- * a teacher picked the password and can therefore sign in as them, they
- * understand the point immediately.
+ * First login: replace the password an administrator gave you. Mounted outside all layouts, or
+ * RequireRole's redirect here would loop. Carries its own AuthProvider (GET /me stays ungated). The
+ * copy explains why: whoever picked the password could sign in as you.
  */
 
 /* The rule lives in `src/lib/account.ts`, mirroring the server's `PasswordField`. */
@@ -41,11 +29,7 @@ function SetPasswordInner() {
   const homeFor = (role: string) =>
     role === 'admin' ? '/admin/dashboard' : role === 'educator' ? '/educator/dashboard' : '/student/dashboard';
 
-  /*
-   * Someone who lands here already activated — a bookmark, or a second tab open
-   * from before the change — should not be asked again. Sending them on is
-   * friendlier than showing a form that would be a no-op.
-   */
+  /* Already activated (bookmark, second tab)? Send them on. */
   useEffect(() => {
     if (!isLoading && user && !user.must_change_password) {
       navigate(homeFor(user.role), { replace: true });
@@ -70,11 +54,7 @@ function SetPasswordInner() {
     setStatus(null);
     try {
       await accountApi.changePassword(current, next);
-      /*
-       * The server cleared `must_change_password` as part of that call. Re-read
-       * before navigating, or `RequireRole` at the destination still sees the old
-       * value and bounces straight back here.
-       */
+      /* Re-read before navigating, or RequireRole still sees the old flag and bounces back here. */
       await refresh();
       navigate(homeFor(user.role), { replace: true });
     } catch (err) {
@@ -95,22 +75,7 @@ function SetPasswordInner() {
     }
   };
 
-  /*
-    ⚠️ THIS PAGE NOW USES `AuthShell`, WHICH IT WAS ALWAYS SUPPOSED TO — the
-    shell's own header says so ("SetPassword still hand-builds its own shell and
-    can adopt this unchanged"). It was the last screen carrying the 4rem
-    graph-paper grid that was removed from Login as reading like dashboard chrome
-    that had lost its content, plus its own tinted blur, its own card, its own
-    brand lockup and its own `applyThemeToElement` call.
-
-    That mattered more here than anywhere: this is the FIRST screen a student
-    ever reaches after signing in, arriving directly from Login — so the two
-    screens sitting one click apart looked like two different products.
-
-    `wrapperRef` and the theme effect are gone with it; `AuthShell` owns the
-    palette. The visitor picks it on `/login`, which is the only auth page
-    carrying the toggle; this page follows the stored choice.
-  */
+  /* AuthShell owns the palette (chosen on /login). */
   return (
     <AuthShell>
       <div className="flex flex-col items-center text-center mb-7">
@@ -169,15 +134,7 @@ function SetPasswordInner() {
               hint={mismatch ? 'These do not match.' : undefined}
             />
 
-            {/* ⚠️ THE ACCENT COMES FROM THE TOKENS, NOT FROM A JS CONSTANT. This
-                was an inline `backgroundColor: ACTIVE_THEME.accent` with
-                `inkOn()` for the ink — correct while every auth page was pinned
-                dark, and wrong the moment the shell gained a toggle: it painted
-                the dark palette's bright cyan onto a light page, next to a
-                heading and links already using the light accent. The same
-                `bg-primary-fixed-dim text-on-primary-fixed` pair `Login`'s submit
-                button uses follows whichever palette is applied, and `inkOn()`
-                exists precisely so nobody has to hardcode the ink. */}
+            {/* Accent from the tokens, not a JS constant, so it follows the light/dark palette. */}
             <button
               type="submit"
               disabled={!canSave}
@@ -194,10 +151,7 @@ function SetPasswordInner() {
             <StatusLine status={status} />
           </form>
 
-          {/* `flex-col` below `sm:`: the sentence and the escape hatch are
-              ~230px and ~70px, and side by side inside a 400px card minus its
-              padding they leave the sentence about 250px — it wrapped to three
-              lines beside a one-line button. */}
+          {/* flex-col below sm: so the sentence isn't squeezed beside the button. */}
           <div className="mt-6 pt-5 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <p className="font-sans text-[11px] text-slate-500 flex items-start gap-2 leading-relaxed">
               <ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-px" />

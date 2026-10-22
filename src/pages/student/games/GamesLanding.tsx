@@ -34,23 +34,9 @@ import { getCourseDisplayInfo } from './gamesData';
 import { SessionDetail } from './gameUi';
 
 /**
- * What the game about to be generated will be calibrated to.
- *
- * EQ(4) over the UNION of the selected materials — the same figure the server
- * will compute and store as `game_content.mastery_snapshot`. Reconstructed here
- * from the per-material numbers the summary endpoint already returns, because
- * `M_union = Σ(m_doc_i · n_i) / Σ n_i` and `by_material` carries both.
- *
- * ⚠️ FILTERED TO THE SELECTED IDS, never `mastery.overall`. `overall` is the
- * whole space; the server snapshots only the materials the game is built from.
- * Using it here is the likeliest way to make this preview disagree with the row
- * it is predicting.
- *
- * The per-material `m_doc` values are already rounded to 4dp by
- * `documentMastery()`, so this reconstruction can differ from the server's own
- * value by at most ~1e-4. That can only change the tier when the true M_doc lies
- * inside a ~2e-4 band around 0.50 or 0.85, and the stage header shows the
- * server's own tier a moment later either way.
+ * The tier the game will be calibrated to: EQ(4) over the selected materials (Σ m_doc·n / Σ n from
+ * by_material), never `mastery.overall`. Can differ from the server by ~1e-4; the game header shows
+ * the server's own tier.
  */
 function unionMastery(
   mastery: SpaceMastery | null,
@@ -73,14 +59,14 @@ function unionMastery(
 type GameTypeUi = 'matching' | 'crossword' | 'trivia';
 type GameTypeApi = 'term_matcher' | 'crossword' | 'timed_trivia';
 
-// Maps the UI game label to the backend game_type enum.
+// UI game label → backend game_type.
 const GAME_TYPE_API: Record<GameTypeUi, GameTypeApi> = {
   matching: 'term_matcher',
   crossword: 'crossword',
   trivia: 'timed_trivia',
 };
 
-// Per-game presentation, shared by the launch cards and the history list.
+// Per-game presentation for launch cards and history.
 const GAME_META: Record<
   GameTypeApi,
   { title: string; description: string; icon: LucideIcon; accent: string; iconWrap: string }
@@ -103,18 +89,13 @@ const GAME_META: Record<
     title: 'Timed Trivia',
     description: 'Answer rapid-fire questions against the clock and chase your best streak.',
     icon: Hourglass,
-    /* Violet, not cyan. `cyan-400` (#22d3ee) is a shade off `term_matcher`'s
-       `primary-fixed-dim` (#00daf3), so two of the three games read as the same
-       colour and the trio had only two identities. `violet-400` (#a78bfa) is the
-       `[data-theme="violet"]` accent, so it is a value the design system already
-       carries, and it is light enough to take `text-black` like amber does. */
+    /* Violet, not cyan (too close to term_matcher's accent); light enough for text-black. */
     accent: 'text-violet-400',
     iconWrap: 'bg-violet-400/10 border-violet-400/20 text-violet-400',
   },
 };
 
-// Per-tone hover treatment for the launch cards. Kept as full literal class
-// strings so Tailwind's JIT can see them (it can't scan built-up strings).
+// Full literal class strings so Tailwind can see them.
 const GAME_FX: Record<
   GameTypeApi,
   { cardHover: string; glow: string; playIdle: string; playHover: string }
@@ -132,8 +113,7 @@ const GAME_FX: Record<
     playHover: 'group-hover:bg-amber-400 group-hover:text-black',
   },
   timed_trivia: {
-    // rgba is violet-400 #a78bfa = rgb(167,139,250) — the shadow cannot take a
-    // Tailwind colour token, so it is the one place the hex has to be restated.
+    // violet-400 as rgba; shadows can't take a colour token.
     cardHover: 'hover:border-violet-400/40 hover:shadow-[0_14px_44px_-14px_rgba(167,139,250,0.45)]',
     glow: 'bg-violet-400/10 group-hover:bg-violet-400/25',
     playIdle: 'bg-violet-400/10 text-violet-400',
@@ -165,7 +145,7 @@ interface GameSession {
   materials: { title: string } | null;
 }
 
-/** Compact "2h ago" / "3d ago" formatting for the history list. */
+/** Compact "2h ago" / "3d ago". */
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
@@ -200,8 +180,7 @@ export default function GamesLanding() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [reviewSession, setReviewSession] = useState<GameSession | null>(null);
 
-  // Load recent game history on mount (refreshes whenever this page remounts,
-  // e.g. after returning from a finished game).
+  // Load game history on mount (fresh on return from a game).
   useEffect(() => {
     let cancelled = false;
     setHistoryLoading(true);
@@ -221,7 +200,7 @@ export default function GamesLanding() {
     };
   }, []);
 
-  // Load the student's study spaces once the modal is first opened.
+  // Load study spaces when the modal first opens.
   useEffect(() => {
     if (!isBuildModalOpen || spaces.length > 0) return;
 
@@ -246,15 +225,8 @@ export default function GamesLanding() {
     };
   }, [isBuildModalOpen, spaces.length]);
 
-  // Load materials whenever the selected space changes. Only parsed materials
-  // have extracted concepts, so those are the only ones eligible for generation.
-  // Nothing is pre-selected — the student picks what the game draws from.
-  //
-  // Mastery rides along in the same effect and shares the one loading flag, so
-  // the tier preview is in hand before the student has finished ticking boxes —
-  // no second spinner, no separate state machine. A failed mastery call becomes
-  // null and hides the sentence; it must never block generation, because the
-  // server computes the authoritative figure itself.
+  // Load materials when the space changes (only parsed ones have concepts; none preselected). Mastery
+  // loads alongside for the tier preview; a failure just hides the sentence and never blocks generation.
   useEffect(() => {
     if (!isBuildModalOpen || !selectedSpaceId) return;
 
@@ -345,25 +317,13 @@ export default function GamesLanding() {
                   'group relative overflow-hidden glass-card rounded-2xl border border-white/5 p-5 text-left flex flex-col gap-4',
                   'transition-all duration-300 ease-out will-change-transform',
                   'hover:-translate-y-1.5 active:translate-y-0 active:scale-[0.98]',
-                  /* `focus:outline-none` removes the browser's indicator, and what
-                     replaced it was `focus-visible:border-white/25` — a border
-                     going from 5% to 25% white on a card that already animates
-                     its border on hover. Effectively invisible, on the three
-                     primary actions of the page. Same defect as `INPUT_CLASS` in
-                     formKit.
-
-                     `ring-on-surface` rather than the usual accent: each card
-                     carries a DIFFERENT accent (cyan / amber / violet), so an
-                     accent ring would match one card's identity and mislabel the
-                     other two — and on the cyan card it would land accent-on-
-                     accent. A neutral max-contrast ring reads the same on all
-                     three. */
+                  /* Visible focus ring; ring-on-surface because each card has a different accent. */
                   'focus:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                   'fade-in',
                   fx.cardHover
                 )}
               >
-                {/* Corner glow — brightens on hover */}
+                {/* Corner glow, brighter on hover */}
                 <div
                   aria-hidden
                   className={clsx(
@@ -371,7 +331,7 @@ export default function GamesLanding() {
                     fx.glow
                   )}
                 />
-                {/* Light sheen that sweeps across on hover */}
+                {/* Sheen on hover */}
                 <div
                   aria-hidden
                   className="pointer-events-none absolute inset-0 -translate-x-[130%] group-hover:translate-x-[130%] transition-transform duration-[900ms] ease-out bg-gradient-to-r from-transparent via-white/[0.07] to-transparent"
@@ -434,11 +394,7 @@ export default function GamesLanding() {
               </p>
             </div>
           ) : (
-            /* ⚠️ WRAPPED IN A `divide-y` DIV, NOT JUST GIVEN A CLASS. The rows
-               were direct children of the card, which owns the `divide-y`
-               hairlines — so the wrapper has to carry that class too or every
-               separator between sessions disappears. Entrance on the loaded
-               rows; the spinner above must never animate in. */
+            /* The wrapper carries divide-y (the rows are its children), and the entrance. */
             <div className="divide-y divide-white/[0.04] animate-tab-in">
             {sessions.map((s) => {
               const meta = GAME_META[s.game_type];
@@ -453,9 +409,7 @@ export default function GamesLanding() {
                   onClick={() => reviewable && setReviewSession(s)}
                   className={clsx(
                     'w-full flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-3 text-left transition-colors',
-                    /* Inset ring: these rows sit in a `divide-y` list inside a
-                       `rounded-2xl` container, so an outward ring would bleed
-                       across the dividers and out of the rounded corners. */
+                    /* Inset ring so it doesn't bleed across dividers or rounded corners. */
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]',
                     reviewable ? 'hover:bg-white/[0.03] cursor-pointer' : 'cursor-default'
                   )}
@@ -479,17 +433,13 @@ export default function GamesLanding() {
                   {accuracyPct !== null && (
                     <div className="text-right shrink-0">
                       <p className="font-display text-sm font-bold text-white tabular-nums">{accuracyPct}%</p>
-                      {/* 9px is below the floor used anywhere else in the portal;
-                          10px is the uppercase-micro-label size. */}
+                      {/* 10px minimum for micro-labels. */}
                       <p className="font-sans text-[10px] uppercase tracking-widest text-slate-500">accuracy</p>
                     </div>
                   )}
 
                   {reviewable ? (
-                    /* The word drops below `sm:` and the chevron carries the
-                       affordance alone. At 375px the icon, accuracy block and
-                       this label leave the title and material name ~124px
-                       between them; "Review" alone is ~45px of that. */
+                    /* The word hides below sm:, leaving the chevron. */
                     <span className="flex items-center gap-1 shrink-0 font-sans text-[10px] font-bold uppercase tracking-widest text-slate-500">
                       <span className="hidden sm:inline">Review</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -505,24 +455,14 @@ export default function GamesLanding() {
         </div>
       </section>
 
-      {/* Game Build Modal */}
+      {/* Game build modal */}
       <Modal
         isOpen={isBuildModalOpen && !!selectedGameType}
         onClose={() => !generating && setIsBuildModalOpen(false)}
         title={selectedGameType ? `Build ${GAME_META[GAME_TYPE_API[selectedGameType]].title} Game` : 'Build Game'}
         maxWidth="max-w-lg"
       >
-      {/* ⚠️ THE ACTION ROW IS A SIBLING OF THE SCROLL BOX, NOT INSIDE IT. It used
-          to sit within the same `overflow-y-auto` element, so on a space with
-          several study spaces and a long material list the student had to scroll
-          the modal to reach "Build & Launch". `ImportAccountsModal` records the
-          same fix for the same reason.
-
-          Sized against the chrome (`85vh` minus the header, error line, action
-          row and gaps) rather than as a flat `vh` fraction — the chrome is a
-          constant pixel height, so a fraction tuned on a 1080px screen overflows
-          a 600px laptop. `Modal` itself has no max-height and centres with
-          `items-center`, so anything taller than the viewport loses both ends. */}
+      {/* The action row is a sibling of the scroll box so Build & Launch is always reachable. Height is sized against the chrome (Modal has no max-height). */}
       <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-6 max-h-[calc(85vh-15rem)] overflow-y-auto pr-1 no-scrollbar">
           <div className="flex items-start justify-between">
@@ -541,7 +481,7 @@ export default function GamesLanding() {
             </div>
           </div>
 
-          {/* Study Space Selector */}
+          {/* Study space selector */}
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-sans block">
               Target Space (Select 1)
@@ -596,7 +536,7 @@ export default function GamesLanding() {
             )}
           </div>
 
-          {/* Learning Materials Selector */}
+          {/* Learning materials selector */}
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-sans">
@@ -613,27 +553,8 @@ export default function GamesLanding() {
               )}
             </div>
 
-            {/* No `max-h-48 overflow-y-auto` here any more. It made this a scroll
-                region INSIDE the modal's own scroll region: you scrolled the
-                material list, hit its end, and then the modal began to move —
-                the nested-scrolling confusion already reported on the Free Recall
-                history. The modal has one scroll box now and this grows inside
-                it. The space list above was never capped either, so the inner cap
-                was not what bounded the modal's height. */}
-            {/* ⚠️ `bg-white/<opacity>`, NOT `bg-slate-950/50`, AND THE REASON IS
-                THE LIGHT THEME. `index.css` patches exactly three nested-tile
-                classes under `[data-theme="white"]` — `bg-white/[0.01]`,
-                `bg-white/[0.02]` and `bg-white/5` — remapping them to a slate-100
-                tile with a hairline border. A raw palette class gets no such
-                override: `--color-slate-950` is still `#020617` on the light
-                theme, so this well rendered as a near-black panel inside a pure
-                white modal. Latent rather than live only because `ThemeContext`
-                is currently pinned to `THEMES[0]`.
-
-                It also reads BETTER on the dark themes. `Modal`'s panel is
-                `surface-container-lowest` (#060e20), so a half-opacity slate-950
-                well resolved to ~#040a1b — a well that was very nearly invisible
-                against the surface it was meant to sit in. */}
+            {/* No inner max-height: the modal has one scroll box. */}
+            {/* bg-white/opacity, not bg-slate-950/50: the light theme remaps the white-alpha tiles only, and it also reads better on dark. */}
             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-2.5">
               {materialsLoading ? (
                 <div className="flex items-center gap-2 p-2 text-slate-500 font-sans text-xs">
@@ -645,10 +566,7 @@ export default function GamesLanding() {
                   <span>No processed materials in this space yet.</span>
                 </div>
               ) : (
-                /* `space-y-2.5` is repeated here because the rows are this
-                   div's children now, not the well's — without it the checkbox
-                   list collapses into an unspaced block. Entrance on the loaded
-                   rows, not on the spinner. */
+                /* space-y here: the rows are this div's children. Entrance on loaded rows only. */
                 <div className="space-y-2.5 animate-tab-in">
                 {materials.map((m) => {
                   const isChecked = selectedMaterialIds.includes(m.id);
@@ -690,16 +608,7 @@ export default function GamesLanding() {
               </div>
             )}
 
-            {/* The calibration, stated BEFORE anything is generated — which is what
-                makes the paper's p. 99 test case ("educational game generation and
-                difficulty calibration") observable without database access.
-
-                Shown only once something has been assessed, matching the identical
-                sentence in AdaptiveTestTab: at a cold start every student is
-                foundational, which says nothing, and every unassessed concept sits
-                at P(L₀) = 0.10, which must never be printed as a score. The tier
-                still reaches the student a moment later on the game's own header,
-                where it is the server's own value rather than a prediction. */}
+            {/* The calibration before generation (paper p. 99), shown once something is assessed. The game header later shows the server's own tier. */}
             {preview && preview.assessed > 0 && (
               <p className="font-sans text-xs text-slate-400 p-2.5">
                 Your mastery across{' '}
@@ -717,8 +626,7 @@ export default function GamesLanding() {
           </div>
         </div>
 
-        {/* Outside the scroll box too: a generation failure must be visible at
-            the moment the button that caused it is, not parked above the fold. */}
+        {/* Outside the scroll box, next to the button that caused it. */}
         {genError && (
           <div className="flex items-center gap-1.5 text-xs text-rose-400 bg-rose-500/5 border border-rose-500/10 p-2.5 rounded-xl">
             <AlertCircle className="w-4 h-4 shrink-0" />
@@ -739,8 +647,7 @@ export default function GamesLanding() {
               type="button"
               onClick={handleBuildAndLaunchGame}
               disabled={selectedMaterialIds.length === 0 || generating}
-              /* `ring-on-surface`, not the accent — this button's background is
-                 the accent, so an accent ring would be the same colour twice. */
+              /* ring-on-surface: the background is already the accent. */
               className="flex-1 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans font-bold text-sm hover:bg-primary-container transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-primary-fixed-dim/20 flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest"
             >
               {generating ? (
@@ -755,15 +662,13 @@ export default function GamesLanding() {
         </div>
       </Modal>
 
-      {/* Session Review Modal */}
+      {/* Session review modal */}
       <SessionReviewModal session={reviewSession} onClose={() => setReviewSession(null)} />
     </div>
   );
 }
 
-/* ---------------------------------------------------------------
-   Session review — per-item breakdown of a finished game
-   --------------------------------------------------------------- */
+// Session review: per-item breakdown of a finished game
 
 function SessionReviewModal({
   session,

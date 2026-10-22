@@ -8,25 +8,7 @@ import { logActivity } from '../lib/activity';
 const router = Router();
 router.use(authenticate, requireRole('student'));
 
-/**
- * GET /api/gamification/profile
- * The authenticated student's streak. Read by the PlayMe header.
- *
- * ══ IT NO LONGER INSERTS ON A GET ══
- * It used to create the row when one was missing. `handle_new_user()` already
- * writes a `gamification_profiles` row for every student, so the branch was
- * close to dead — but a GET that writes is a trap for the next caller, and
- * `GET /api/dashboard` now reads the same table under a documented
- * read-only-permanently rule. Two readers, one of which could write, is how
- * that rule gets broken by accident.
- *
- * A missing row answers as zeros, which is both true (no activity yet) and the
- * only answer a read is allowed to give.
- *
- * `total_study_hours` is returned because the column exists and this is the
- * profile endpoint — but NO SCREEN DISPLAYS IT, deliberately. Only games and
- * adaptive tests contribute a real duration; see `server/lib/activity.ts`.
- */
+/** GET /api/gamification/profile: the student's streak. Never inserts; a missing row reads as zeros. */
 router.get('/profile', async (req: Request, res: Response): Promise<void> => {
   const studentId = req.user!.id;
 
@@ -53,32 +35,9 @@ router.get('/profile', async (req: Request, res: Response): Promise<void> => {
 });
 
 /**
- * POST /api/gamification/session
- * Logs a completed game session.
- *
- * Body: { content_id, accuracy?, time_spent_ms?, detail? }
- *
- * ONLY THE OUTCOME COMES FROM THE CLIENT. `space_id`, `material_id`, `game_type`
- * and `mastery_snapshot` are read from the `game_content` row `content_id` names,
- * after confirming the caller owns it — the same principle as `SubmitAnswerSchema`
- * having no `is_correct`. `mastery_snapshot` in particular is the evidence the
- * paper's Difficulty Alignment check (p. 98) reads, so a client-supplied value
- * would be a client-chosen finding.
- *
- * The insert lists its fields explicitly. It used to be `{ ...parsed.data }`,
- * which silently binds the request shape to the table's columns — add a field to
- * the schema and the next insert fails with PGRST204, invisibly, because the
- * client swallows every error from this endpoint.
- *
- * STREAKS AND BADGES HANG OFF `logActivity()`, NOT OFF THIS INSERT. The
- * `trigger_update_streak` trigger fires on `activity_logs`, not on this table,
- * which is why the write below is followed by an explicit activity log rather
- * than relying on the session row. There is still no XP anywhere in the product.
- *
- * `accuracy` reaches the badge evaluator from `parsed.data`, but it is not a
- * client-chosen trophy for the same reason `mastery_snapshot` is not a
- * client-chosen finding: it is one number describing a game the server issued,
- * from content it owns, and `flawless_game` is the only rule that reads it.
+ * POST /api/gamification/session. Only the outcome comes from the client; space, material, game type
+ * and mastery snapshot come from the owner-checked game_content row. Fields are listed explicitly.
+ * Streaks come from logActivity(), not this insert.
  */
 router.post('/session', async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateGameSessionSchema.safeParse(req.body);
@@ -89,8 +48,7 @@ router.post('/session', async (req: Request, res: Response): Promise<void> => {
 
   const { content_id, accuracy, time_spent_ms, detail } = parsed.data;
 
-  // 404 rather than 403, matching GET /api/games/content/:id, so a student cannot
-  // probe which content ids exist.
+  // 404, never 403.
   const { data: content } = await supabaseAdmin
     .from('game_content')
     .select('id, space_id, material_ids, game_type, mastery_snapshot')
@@ -109,8 +67,7 @@ router.post('/session', async (req: Request, res: Response): Promise<void> => {
       student_id: req.user!.id,
       content_id: content.id,
       space_id: content.space_id,
-      // Nullable by design — a game may be generated from several materials, and
-      // this column exists only for the `materials(title)` join in GET /sessions.
+      // Nullable: a game may span several materials.
       material_id: (content.material_ids as string[] | null)?.[0] ?? null,
       game_type: content.game_type,
       mastery_snapshot: content.mastery_snapshot,
@@ -126,8 +83,7 @@ router.post('/session', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // Streak + badges. `space_id` and the material come from the owner-checked
-  // `game_content` row, exactly as the session insert above does.
+  // Streak + badges, using the owner-checked content row.
   await logActivity({
     studentId: req.user!.id,
     type: 'game',
@@ -140,11 +96,7 @@ router.post('/session', async (req: Request, res: Response): Promise<void> => {
   res.status(201).json({ data, message: 'Game session logged' });
 });
 
-/**
- * GET /api/gamification/sessions
- * Returns the authenticated student's most recent game sessions (newest first),
- * with the source material's title embedded for display.
- */
+/** GET /api/gamification/sessions: recent sessions with material titles. */
 router.get('/sessions', async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('game_sessions')
@@ -161,15 +113,7 @@ router.get('/sessions', async (req: Request, res: Response): Promise<void> => {
   res.json({ data });
 });
 
-/**
- * GET /api/gamification/badges
- * Every badge the authenticated student has earned, newest first.
- *
- * The catalogue itself lives in `server/lib/badges.ts` and is not served: a
- * client needs labels for the badges a student HOLDS, and `src/lib/badges.ts`
- * mirrors those. An unknown name must render with a fallback there rather than
- * crash, so the server can add a badge without a coordinated deploy.
- */
+/** GET /api/gamification/badges: earned badges, newest first. The client falls back for unknown names. */
 router.get('/badges', async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('user_badges')
@@ -182,15 +126,7 @@ router.get('/badges', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  /*
-   * Serialised as `{ name, awarded_at }`, matching the `gamification.badges`
-   * block on GET /api/dashboard exactly.
-   *
-   * This route used to `select('*')` and return the raw column name
-   * `badge_name`, which meant the client held two shapes for one concept. It had
-   * zero consumers at the time, so normalising cost nothing; `BadgeContext` is
-   * its first caller and reads the same shape the dashboard already gives it.
-   */
+  // Same `{ name, awarded_at }` shape as the dashboard.
   res.json({
     data: (data ?? []).map((b) => ({
       name: b.badge_name as string,

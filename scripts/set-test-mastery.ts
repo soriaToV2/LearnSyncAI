@@ -1,6 +1,6 @@
 /**
- * Forces a student's BKT mastery for one material, so Adaptive Test Mode can be
- * checked at each difficulty tier before the BKT engine exists.
+ * Forces a student's BKT mastery for one material, to check Adaptive Test Mode at each difficulty
+ * tier (Difficulty Alignment, paper p. 98).
  *
  *   npx tsx scripts/set-test-mastery.ts intermediate
  *   npx tsx scripts/set-test-mastery.ts advanced
@@ -9,21 +9,11 @@
  *   npx tsx scripts/set-test-mastery.ts reset             # delete the rows
  *   npx tsx scripts/set-test-mastery.ts advanced "6."     # a different material
  *
- * WHY THIS EXISTS. The paper's Difficulty Alignment check (p. 98) is:
- * "confirms that the adaptive calibration pipeline correctly passes the mastery
- * parameter to the generative AI prompt." Until Phase 3 writes real mastery,
- * every concept sits at P(L₀) = 0.10 and every test is foundational — so the
- * only way to exercise the other two tiers is to put the numbers there by hand.
+ * The tier is fixed when a test is generated, so generate a new test afterwards. Real answers
+ * overwrite what this sets, so `reset` before a genuine run.
  *
- * ⚠️ THE TIER IS BAKED IN WHEN A TEST IS GENERATED. Changing mastery does not
- * re-tier a test that already exists. Generate a NEW test after running this.
- *
- * ⚠️ WRITES TO THE CONFIGURED SUPABASE PROJECT. This is a development tool for
- * verification runs, not something to leave lying in a live study.
- *
- * `reset` removes only the rows this script created for that student+material,
- * returning them to the P(L₀) default — which is the correct "no evidence yet"
- * state, not zero.
+ * Writes to the configured Supabase project: a verification tool, not for a live study. `reset`
+ * removes only this script's rows, returning them to the P(L₀) default.
  */
 import { supabaseAdmin } from '../server/lib/supabase';
 import { masterySnapshot, masteryTier } from '../server/lib/testDifficulty';
@@ -54,7 +44,7 @@ async function main(): Promise<void> {
     usage(`"${rawTarget}" is neither a tier name nor a number between 0 and 1.`);
   }
 
-  // ── Student ───────────────────────────────────────────────────────────────
+  // Student
   const { data: students } = await supabaseAdmin
     .from('profiles')
     .select('id, first_name, last_name, grade_level')
@@ -69,7 +59,7 @@ async function main(): Promise<void> {
   }
   const student = students[0];
 
-  // ── Material ──────────────────────────────────────────────────────────────
+  // Material
   const { data: materials } = await supabaseAdmin
     .from('materials')
     .select('id, title')
@@ -94,7 +84,7 @@ async function main(): Promise<void> {
   console.log(`\nStudent : ${student.first_name} ${student.last_name} (grade ${student.grade_level})`);
   console.log(`Material: ${material.title} — ${conceptIds.length} concepts`);
 
-  // ── Write ─────────────────────────────────────────────────────────────────
+  // Write
   if (isReset) {
     const { error } = await supabaseAdmin
       .from('bkt_mastery')
@@ -117,7 +107,7 @@ async function main(): Promise<void> {
     console.log(`Action  : set every concept to ${value}`);
   }
 
-  // ── Verify by reading it back the way the route does ──────────────────────
+  // Verify by reading it back the way the route does
   const { snapshot } = await masterySnapshot(student.id, conceptIds);
   const tier = masteryTier(snapshot);
 

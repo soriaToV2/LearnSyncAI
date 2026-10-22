@@ -6,7 +6,7 @@ import { useBadges } from '../../../context/BadgeContext';
 import { useOnboarding } from '../../../context/OnboardingContext';
 import type { EaseRating } from '../../../lib/reviewSchedule';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Types
 
 interface Flashcard {
   id: number | string;
@@ -20,17 +20,8 @@ interface CardSession {
   cardId: number | string;
   rating: EaseRating;
   /**
-   * What the server did with the rating; `undefined` while it is in flight.
-   *
-   * `'unchanged'` means the server answered `counted: false` — the card was no
-   * longer due, which inside a due-only session means it was reviewed in
-   * another tab first. `'failed'` means the request itself failed.
-   *
-   * ⚠️ ALL THREE ARE RECORDED, NOT JUST `'counted'`. Only the counted case used
-   * to be written, so the last card's reply — which routinely lands after the
-   * results screen opens — read as "not counted" for a moment and the screen
-   * flashed a false sentence about it. The results panel now waits until
-   * nothing is pending.
+   * What the server did with the rating; undefined while in flight. 'unchanged' = not counted (reviewed in
+   * another tab first). All three are recorded, and the results panel waits until none are pending.
    */
   saved?: 'counted' | 'unchanged' | 'failed';
 }
@@ -40,35 +31,15 @@ interface FlashcardStudyViewProps {
   deckTitle: string;
   onExit: () => void;
   /**
-   * The deck's `answer_first` setting: show the definition first and ask for the
-   * term, rather than the other way round.
-   *
-   * ⚠️ IT IS A PROP RATHER THAN A SWAP DONE BY THE CALLER, AND THAT IS
-   * DELIBERATE. Exchanging `front` and `back` in the array handed to this
-   * component would be invisible here and wrong twice: the faces are labelled
-   * "Question" and "Answer" as literal strings, and `faceTypeClass()` runs a
-   * different size curve per side because a prompt is short and a definition is
-   * a passage. A silent string swap would label a definition "Question" and set
-   * it at term size. `front`/`back` therefore keep one meaning everywhere —
-   * front is always the term or generated question, back is always the
-   * educator's definition — and only rendering reacts to this flag.
+   * The deck's answer_first setting. A prop, not a front/back swap by the caller: the labels and type
+   * curve must follow the text. front is always the term/question, back always the definition.
    */
   answerFirst?: boolean;
-  /**
-   * What the `front` of these cards holds, named for the student: "Term" for a
-   * term-format deck, "Question" for one generated in question format. The back
-   * is always "Definition", so only this half varies.
-   *
-   * Passed in rather than derived here because the deck's format is a property
-   * of the whole deck, and this component only ever sees the cards of one
-   * session — which in a 'due' round can be a handful of them.
-   */
+  /** What the front holds ("Term" or "Question"); passed in because format is a deck property. */
   frontNoun?: string;
 }
 
-// ─── Spaced Repetition Config ─────────────────────────────────────────────────
-// Leitner tiers, matching REVIEW_INTERVALS in server/lib/reviewSchedule.ts and
-// the interval_days CHECK constraint. Easy = 7, Medium = 3, Hard = 1.
+// Spaced repetition config. Must match REVIEW_INTERVALS on the server and the interval_days CHECK.
 
 const RATING_CONFIG: Record<EaseRating, {
   label: string;
@@ -120,35 +91,12 @@ const RATING_CONFIG: Record<EaseRating, {
   },
 };
 
-// ─── Card face typography ─────────────────────────────────────────────────────
+// Card face typography
 
 /**
- * Type size and alignment for a card face, derived from how much text it holds.
- *
- * The back is the educator's stored definition VERBATIM — never truncated,
- * never summarised — so the card has to adapt to the text rather than the
- * reverse. Measured over the concepts table: 162-character median and a 267
- * p90, but a term the document explains on two pages folds into one row and
- * reaches 643. One fixed size cannot serve both ends of that range. On the
- * current data 44 of 57 definitions land in the middle band and render exactly
- * as they did before; 6 short ones gain a size and 7 long ones lose one.
- *
- * Alignment flips independently of size and matters just as much. Centred text
- * is comfortable for two or three lines and hard to read past that, because
- * every line starts at a different x-position — and the longest definitions run
- * to fifteen lines on a phone.
- *
- * The two kinds of content need different curves, which is why `kind` exists
- * rather than one shared table. A definition is a PASSAGE; a term (23 characters
- * on average, 96 at the longest) or a one-sentence generated question is a
- * PROMPT. Running a prompt down the passage curve would shrink a perfectly
- * ordinary question to passage size in a card with room to spare.
- *
- * ⚠️ `kind` DESCRIBES THE TEXT, NOT WHICH FACE IT SITS ON. It was `'front' |
- * 'back'`, which was the same thing right up until decks gained `answer_first`
- * — with that on, the definition is the FIRST face, and keying the curve to
- * position would blow a 162-character-median definition up to headline size.
- * Call sites pass the nature of the string they are rendering.
+ * Type size and alignment for a face, by text length. The back is the educator's definition verbatim
+ * (never truncated), so the card adapts to the text; long text left-aligns. `kind` describes the text
+ * (prompt vs passage), not the face it sits on, since answer_first can swap them.
  */
 function faceTypeClass(text: string, kind: 'prompt' | 'passage'): string {
   const len = text.length;
@@ -165,29 +113,15 @@ function faceTypeClass(text: string, kind: 'prompt' | 'passage'): string {
   return 'text-sm leading-snug text-left';
 }
 
-/** Softens the bottom edge so text visibly runs on rather than stopping dead. */
+/** Fades the bottom edge so overflowing text visibly runs on. */
 const FADE_MASK: React.CSSProperties = {
   maskImage: 'linear-gradient(to bottom, black calc(100% - 2.5rem), transparent)',
   WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 2.5rem), transparent)',
 };
 
 /**
- * Tracks whether a scrolling box still has content below its bottom edge, so a
- * face can fade its lower margin only while that is true.
- *
- * Measured rather than inferred from text length: whether a definition
- * overflows depends on viewport width and on the size faceTypeClass() picked,
- * so the same 300 characters fit on a laptop and overflow on a phone. A length
- * threshold would fade text that is entirely visible.
- *
- * It also has to follow scrolling, not just overflow. A fade that stayed on
- * once the student reached the end would wash out the last line of the answer —
- * the one part of a long definition they had to work to reach.
- *
- * `content` re-runs the effect when the card changes, which is also where the
- * box is scrolled back to the top: the DOM node is reused between cards, so
- * without that a long answer followed by another long answer would open
- * halfway down.
+ * Whether a scroll box still has content below its edge, measured live (overflow depends on viewport
+ * and type size) and updated on scroll so the last line isn't faded. Resets scroll when `content` changes.
  */
 function useMoreBelow(content: string): [React.RefObject<HTMLDivElement | null>, boolean] {
   const ref = useRef<HTMLDivElement>(null);
@@ -197,8 +131,7 @@ function useMoreBelow(content: string): [React.RefObject<HTMLDivElement | null>,
     const el = ref.current;
     if (!el) return;
 
-    // 1px of slack — sub-pixel line heights leave a fractional remainder on
-    // text that visually fits exactly.
+    // 1px slack for sub-pixel line heights.
     const measure = () => setMoreBelow(el.scrollHeight - el.scrollTop - el.clientHeight > 1);
 
     el.scrollTop = 0;
@@ -216,7 +149,7 @@ function useMoreBelow(content: string): [React.RefObject<HTMLDivElement | null>,
   return [ref, moreBelow];
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// Component
 
 export default function FlashcardStudyView({
   cards,
@@ -227,9 +160,7 @@ export default function FlashcardStudyView({
 }: FlashcardStudyViewProps) {
   const { celebrate } = useBadges();
 
-  /* A study session replaces the whole tab body, so the Flashcards walkthrough
-     could not reach the card or the rating buttons. This runs on first entry to
-     a session instead, where both are on screen and mean something. */
+  /* The session walkthrough runs on first entry, when the card and rating buttons are on screen. */
   const { startTour } = useOnboarding();
   useEffect(() => {
     const t = setTimeout(() => startTour('tool_flashcards_study'), 700);
@@ -241,62 +172,37 @@ export default function FlashcardStudyView({
   const [isFinished, setIsFinished] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null);
-  // Snapshotted at mount. The caller derives `cards` from due-ness on every
-  // render, so reading the prop live would let a refresh mid-session shrink the
-  // list under `currentIndex`.
+  // Snapshot at mount so a mid-session refresh can't shrink the list under currentIndex.
   const [studyCards] = useState<Flashcard[]>(cards);
   const [isSaving, setIsSaving] = useState(false);
-  // Track which rating was chosen on current card for animation feedback
+  // The rating chosen on the current card, for animation feedback
   const [selectedRating, setSelectedRating] = useState<EaseRating | null>(null);
 
-  /*
-   * Badge check, at the END of the session rather than per rating.
-   *
-   * Two reasons. The rating POST is deliberately un-awaited, so a per-card check
-   * would open a modal over whatever card the student had already moved on to.
-   * And a thirty-card session would fire thirty requests to answer a question
-   * that only changes at the end.
-   */
+  // Badge check at the end of the session, not per rating (ratings aren't awaited).
   useEffect(() => {
     if (isFinished) celebrate();
   }, [isFinished, celebrate]);
-  // A rating the server refused. Shown to the student rather than swallowed —
-  // silently dropping it would leave them believing the card was scheduled.
+  // A rating the server refused; shown, not swallowed.
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // The card on screen. Hoisted above the results-screen return further down so
-  // the face hooks below can read it — a hook cannot run after an early return.
+  // Hoisted above the results-screen return so the hooks below can read it.
   const currentCard = studyCards[currentIndex];
 
-  /*
-   * Which string goes on which face, and what each one IS.
-   *
-   * `front`/`back` never change meaning — front is the term or generated
-   * question, back is the educator's definition. `answerFirst` only decides
-   * which of them the student meets first. The two `*Kind` values travel with
-   * the text so `faceTypeClass()` sizes a definition as a passage wherever it
-   * lands, and the labels swap with it so a definition is never called a
-   * "Question".
-   */
+  // Which string goes on which face. answerFirst only decides which the student meets first; the *Kind
+  // values and labels travel with the text.
   const promptText = answerFirst ? (currentCard?.back ?? '') : (currentCard?.front ?? '');
   const answerText = answerFirst ? (currentCard?.front ?? '') : (currentCard?.back ?? '');
   const promptKind = answerFirst ? 'passage' : 'prompt';
   const answerKind = answerFirst ? 'prompt' : 'passage';
-  /*
-   * ⚠️ THE FACES ARE NAMED FOR WHAT THEY HOLD. They were the fixed strings
-   * "Question" and "Answer", which said nothing about which side was which once
-   * a deck could be reversed — and left the study view using different words
-   * from the toggle that set it ("Definition" there, "Answer" here).
-   */
+  // Faces are labelled for what they hold (Term/Question/Definition).
   const promptLabel = answerFirst ? 'Definition' : frontNoun;
   const answerLabel = answerFirst ? frontNoun : 'Definition';
 
-  // Each face fades its bottom edge while it still has text below the fold.
-  // Keyed on the text itself, so flipping the deck's sides re-measures for free.
+  // Each face fades while text remains below; keyed on the text so flipping sides re-measures.
   const [frontScrollRef, frontOverflows] = useMoreBelow(promptText);
   const [backScrollRef, backOverflows] = useMoreBelow(answerText);
 
-  // ── Rating handler ──────────────────────────────────────────────────────────
+  // Rating handler
 
   const handleRate = useCallback(async (rating: EaseRating) => {
     if (isAnimating || isFinished || !isFlipped) return;
@@ -308,11 +214,7 @@ export default function FlashcardStudyView({
 
     const card = studyCards[currentIndex];
 
-    // The session holds only due cards, but the server still owns the decision
-    // and answers `counted` — the client only reports it.
-    //
-    // Not awaited — the card advances immediately either way, so a slow network
-    // never stalls the session. The student is told if it did not save.
+    // The server decides whether it counts. Not awaited, so the session never stalls; failures are shown.
     const settle = (saved: NonNullable<CardSession['saved']>) =>
       setSessionResults(prev =>
         prev.map(r => (r.cardId === card.id && r.saved === undefined ? { ...r, saved } : r))
@@ -327,10 +229,10 @@ export default function FlashcardStudyView({
       setSaveError(err.message ?? 'That rating could not be saved.');
     });
 
-    // Record session result. `saved` is filled in when the server replies.
+    // Record the result; `saved` fills in when the server replies.
     setSessionResults(prev => [...prev, { cardId: card.id, rating }]);
 
-    // Slide animation based on rating
+    // Slide animation by rating
     const direction = rating === 'easy' ? 'right' : rating === 'hard' ? 'left' : null;
     if (direction) setSlideDirection(direction);
 
@@ -349,14 +251,14 @@ export default function FlashcardStudyView({
     }, 380);
   }, [isAnimating, isFinished, isFlipped, currentIndex, studyCards]);
 
-  // ── Flip handler ────────────────────────────────────────────────────────────
+  // Flip handler
 
   const handleFlip = useCallback(() => {
     if (isAnimating || isFinished) return;
     setIsFlipped(prev => !prev);
   }, [isAnimating, isFinished]);
 
-  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+  // Keyboard shortcuts
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -374,28 +276,23 @@ export default function FlashcardStudyView({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleFlip, handleRate, isFlipped]);
 
-  // ── Derived stats ───────────────────────────────────────────────────────────
+  // Derived stats
 
   const easyCount = sessionResults.filter(r => r.rating === 'easy').length;
   const mediumCount = sessionResults.filter(r => r.rating === 'medium').length;
   const hardCount = sessionResults.filter(r => r.rating === 'hard').length;
-  // How this session went — NOT BKT mastery. BKT mastery is a per-concept
-  // probability owned by the backend; this is a tally of self-ratings, so it is
-  // labelled "Session Score" wherever it appears.
+  // A session tally of self-ratings, labelled "Session Score"; not BKT mastery.
   const sessionScore =
     studyCards.length > 0
       ? Math.round(((easyCount + mediumCount * 0.5) / studyCards.length) * 100)
       : 0;
-  // What the server did with each rating. Nothing is claimed about the
-  // schedule until `pendingCount` reaches zero.
+  // Nothing is claimed about the schedule until pendingCount reaches zero.
   const countedCount = sessionResults.filter(r => r.saved === 'counted').length;
   const unchangedCount = sessionResults.filter(r => r.saved === 'unchanged').length;
   const failedCount = sessionResults.filter(r => r.saved === 'failed').length;
   const pendingCount = sessionResults.filter(r => r.saved === undefined).length;
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // RESULTS SCREEN
-  // ════════════════════════════════════════════════════════════════════════════
+  // Results screen
 
   if (isFinished) {
     const circumference = 2 * Math.PI * 54;
@@ -457,9 +354,7 @@ export default function FlashcardStudyView({
             <p className="font-sans text-sm text-slate-300 mb-8">{getGradeMessage()}</p>
 
             {/* Rating breakdown */}
-            {/* `text-[9px]` on the interval line was unreadable, and at three
-                columns on a 320px phone `p-4` left the numbers touching their
-                borders. Padding steps up instead of starting large. */}
+            {/* Readable interval text and padding that steps up from small screens. */}
             <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-8">
               {/* Hard */}
               <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 sm:p-4">
@@ -490,8 +385,7 @@ export default function FlashcardStudyView({
               </div>
             </div>
 
-            {/* What the schedule actually did — reported from the server's
-                replies, never asserted, and only once every reply is in. */}
+            {/* What the schedule did, from the server's replies, once all are in. */}
             <div className={`flex items-start gap-3 rounded-xl p-4 mb-8 text-left border ${
               pendingCount === 0 && countedCount > 0
                 ? 'bg-primary-fixed-dim/5 border-primary-fixed-dim/15'
@@ -517,8 +411,7 @@ export default function FlashcardStudyView({
                     ) : (
                       <span className="text-slate-200 font-semibold">Nothing was rescheduled.</span>
                     )}
-                    {/* Inside a due-only session, a card the server did not
-                        count can only have been reviewed in another tab first. */}
+                    {/* In a due-only session, an uncounted card was reviewed in another tab first. */}
                     {unchangedCount > 0 && (
                       <>
                         {' '}
@@ -537,9 +430,7 @@ export default function FlashcardStudyView({
               </p>
             </div>
 
-            {/* One way out. There is no "drill again" or "restart": those cards
-                were rated seconds ago, so they are not due, and a session holds
-                only due cards. The schedule brings them back. */}
+            {/* One way out: no drill or restart (those cards aren't due any more). */}
             <button
               onClick={onExit}
               className="w-full px-5 py-3 bg-gradient-to-r from-primary-fixed-dim to-primary text-on-primary-fixed rounded-xl font-sans text-sm font-bold shadow-[0_0_20px] shadow-primary-fixed-dim/20 hover:shadow-[0_0_30px] shadow-primary-fixed-dim/35 transition-all flex items-center justify-center gap-2"
@@ -553,16 +444,14 @@ export default function FlashcardStudyView({
     );
   }
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // STUDY VIEW
-  // ════════════════════════════════════════════════════════════════════════════
+  // Study view
 
   const ratingOrder: EaseRating[] = ['hard', 'medium', 'easy'];
 
   return (
     <div className="fade-in duration-300 flex flex-col items-center">
 
-      {/* ── Progress header ─────────────────────────────────────────── */}
+      {/* Progress header */}
       <div className="w-full max-w-3xl mb-5">
         <div className="flex items-center justify-between gap-3 mb-3">
           <button
@@ -577,14 +466,7 @@ export default function FlashcardStudyView({
           </span>
 
           <div className="flex items-center gap-2.5 sm:gap-4 shrink-0">
-            {/*
-              * Visible on phones now. It was `hidden sm:flex`, and since the deck
-              * title is `hidden md:block`, a phone was left with nothing in this
-              * row but "3 / 12" — the running tally of how the session is actually
-              * going disappeared on the smallest screen, which is where the card
-              * itself already shows the least context. Three icon+number pairs
-              * cost ~90px, which fits beside Exit and the counter at 375px.
-              */}
+            {/* Visible on phones too: it's the session tally. */}
             <div className="flex items-center gap-1.5 sm:gap-2">
               <span className="flex items-center gap-1 font-sans text-xs text-red-400">
                 <AlertTriangle className="w-3 h-3" />
@@ -624,16 +506,9 @@ export default function FlashcardStudyView({
         </div>
       </div>
 
-      {/* ── Flashcard ───────────────────────────────────────────────── */}
+      {/* Flashcard */}
       <div className="w-full max-w-3xl mb-6">
-        {/*
-          * `role="button"` + `tabIndex` give the card a focus stop and screen-reader
-          * semantics it had none of — but deliberately NO `onKeyDown`. Space is
-          * already bound window-wide in the effect above, so a key handler here
-          * would fire alongside it and flip the card twice, i.e. not at all. Enter
-          * is therefore unbound on purpose; Space is the documented shortcut and it
-          * works whether or not this element holds focus.
-          */}
+        {/* role="button" and tabIndex, but no onKeyDown: Space is bound window-wide and would flip twice. */}
         <div
           role="button"
           tabIndex={0}
@@ -673,18 +548,13 @@ export default function FlashcardStudyView({
                   </span>
                 )}
               </div>
-              {/* Scrolls rather than clipping — some definitions run long.
-                  `my-auto` on the text, NOT `items-center` here: see the back
-                  face below for why that distinction is the whole fix. */}
+              {/* Scrolls rather than clipping. my-auto on the text, not items-center (see the back face). */}
               <div
                 ref={frontScrollRef}
                 className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex flex-col"
                 style={frontOverflows ? FADE_MASK : undefined}
               >
-                {/* Font family and colour stay with the FACE, not the content:
-                    the first face is the "before you flip" face and should look
-                    like it whichever string it holds. Only size and alignment
-                    follow the text, via the kind above. */}
+                {/* Font and colour stay with the face; size and alignment follow the text. */}
                 <p className={`my-auto font-display text-on-surface ${faceTypeClass(promptText, promptKind)}`}>
                   {promptText}
                 </p>
@@ -697,17 +567,7 @@ export default function FlashcardStudyView({
               </div>
             </div>
 
-            {/* Back face.
-
-                ⚠️ SAME FIX AS THE DECK-GRID CARD, DIFFERENT SHAPE OF THE SAME
-                BUG. This was `bg-gradient-to-br from-surface-container-lowest
-                to-primary-fixed-dim/5`: opaque at the top-left corner and 95%
-                TRANSPARENT at the bottom-right, so the answer card faded into
-                the page across its own diagonal. Now the surface is an opaque
-                `background-color` and the cyan is a `background-image` over it,
-                which keeps the original look and stops the card disappearing.
-                Keep the gradient's direction — the tint deepening toward the
-                bottom-right is what distinguishes this face from the front. */}
+            {/* Back face. Opaque background-color with the cyan as a background-image over it; keep the gradient direction. */}
             <div
               className="absolute inset-0 rounded-3xl border border-primary-fixed-dim/20 bg-surface-container-lowest bg-gradient-to-br from-primary-fixed-dim/[0.02] to-primary-fixed-dim/[0.08] flex flex-col shadow-2xl shadow-primary-fixed-dim/5 overflow-hidden"
               style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
@@ -722,17 +582,7 @@ export default function FlashcardStudyView({
                   </span>
                 )}
               </div>
-              {/* The answer is the educator's definition verbatim and can run to
-                  ~800 characters, so this face has to scroll.
-
-                  `my-auto` on the text rather than `items-center` here is not a
-                  style preference — it is the fix for a real bug. A CENTRED flex
-                  item taller than its container overflows both edges, and the
-                  overflow past the TOP is outside the scrollable region, so no
-                  scrolling reaches it. Long answers silently began mid-sentence
-                  with the scrollbar already at its top. An auto margin centres
-                  identically when there is room and collapses to 0 when there is
-                  not, clipping nothing. Do not put `items-center` back. */}
+              {/* The definition can be long, so this scrolls. my-auto, never items-center: a centred overflowing item spills past the top, out of scroll reach. */}
               <div
                 ref={backScrollRef}
                 className="flex-1 overflow-y-auto px-6 md:px-12 py-4 flex flex-col"
@@ -753,9 +603,7 @@ export default function FlashcardStudyView({
         </div>
       </div>
 
-      {/* ── Rating buttons ──────────────────────────────────────────────
-          Always rendered, disabled until the card is flipped. Swapping them in
-          on flip made the whole page jump on every single card. */}
+      {/* Rating buttons: always rendered, disabled until flipped, so the layout never jumps. */}
       <div className="w-full max-w-3xl">
         <p className="text-center font-sans text-xs text-slate-500 uppercase tracking-widest mb-4 font-semibold transition-colors">
           {isFlipped ? 'Rate your recall' : 'Flip the card to rate it'}
@@ -804,7 +652,7 @@ export default function FlashcardStudyView({
           })}
         </div>
 
-        {/* Keyboard hints — laptop only, there is no keyboard on a phone. */}
+        {/* Keyboard hints, laptop only. */}
         <div className="hidden sm:flex items-center justify-center gap-6 mt-4">
           <div className="flex items-center gap-1.5">
             <span className="inline-block px-2 h-5 rounded bg-white/5 border border-white/10 text-center leading-5 font-mono text-[9px] text-slate-600">Space</span>
@@ -819,17 +667,14 @@ export default function FlashcardStudyView({
 
       {/* Saving indicator */}
       {isSaving && !saveError && (
-        /* Was a hand-rolled `border-t-transparent` ring — the app's THIRD
-           spinner design, on a screen a student sees on every card. See
-           `components/ui/Spinner.tsx`. */
+        /* The shared Spinner. */
         <div className="mt-4 flex items-center gap-2 text-slate-600">
           <Spinner className="w-3 h-3" label="Saving your rating" />
           <span className="font-sans text-[10px] uppercase tracking-widest">Saving...</span>
         </div>
       )}
 
-      {/* A rating that did not reach the server. The session continues — losing
-          one schedule update must not cost the student their place. */}
+      {/* A rating that didn't reach the server. The session continues. */}
       {saveError && (
         <div className="mt-4 w-full max-w-3xl flex items-start gap-2.5 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 fade-in duration-200">
           <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />

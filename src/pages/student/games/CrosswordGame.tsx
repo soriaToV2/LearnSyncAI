@@ -43,56 +43,18 @@ const keyOf = (r: number, c: number) => `${r}-${c}`;
 const sameCoord = (a: Coord, b: Coord) => a.r === b.r && a.c === b.c;
 
 /**
- * How many pixels of the layout viewport are currently covered at the bottom —
- * in practice, the on-screen keyboard.
- *
- * ⚠️ THIS EXISTS BECAUSE `position: fixed; bottom: 0` IS NOT ENOUGH ON iOS.
- * iOS Safari does not shrink the LAYOUT viewport when the keyboard opens, so a
- * bottom-fixed element stays pinned to the bottom of the page and ends up
- * *behind* the keyboard — which for the solving bar means the clue disappears at
- * exactly the moment the student starts typing the answer to it.
- *
- * `window.visualViewport` reports the part of the page actually visible.
- * `innerHeight - (vv.height + vv.offsetTop)` is therefore the occluded strip,
- * and offsetting the bar by it lifts it to sit directly on top of the keyboard.
- *
- * The same expression is correct on Android/Chrome, where the keyboard shrinks
- * the visual viewport too, and it degrades to 0 on any desktop browser — so
- * there is no platform sniffing and no branch to get wrong. `visualViewport` is
- * absent on very old browsers; there the hook stays at 0 and the bar behaves
- * exactly as it did before.
- *
- * Listens to `scroll` as well as `resize`: iOS shifts `offsetTop` when the
- * keyboard pushes the page, and that moves the strip without changing its size.
+ * Pixels covered at the bottom of the layout viewport (the on-screen keyboard). Needed because iOS
+ * doesn't shrink the layout viewport, so a bottom-fixed bar ends up behind the keyboard.
+ * innerHeight - (vv.height + vv.offsetTop) works on iOS and Android and is 0 on desktop. Listens to
+ * scroll as well as resize.
  */
-/**
- * Breathing room between the last thing on the page and the top of the pinned
- * solving bar. Purely visual — without it the AI Assist / Reset row scrolls to
- * sit flush against the bar's border.
- */
+/** Gap between the page's last element and the pinned solving bar. */
 const BAR_GAP_PX = 16;
 
 /**
- * How much space the page must reserve below itself so that nothing ends up
- * permanently trapped behind the pinned solving bar.
- *
- * ⚠️ THIS IS MEASURED, NOT A CONSTANT, AND A CONSTANT IS WHAT WAS BROKEN.
- * It was a static `pb-24` (96px), chosen against a bar showing a short clue.
- * But the bar's height is the CLUE'S height, and a clue is a free-form sentence
- * from the model — three lines of `text-sm` puts the bar at ~124px, so the last
- * ~28px of the page (which is `GameStage`'s footer, i.e. the AI Assist and Reset
- * buttons) sat under the bar with no scroll left to lift it clear. The buttons
- * were visible, half-covered and unclickable.
- *
- * Measuring the element removes the guess entirely: any clue length, the
- * iPhone home indicator (`env(safe-area-inset-bottom)`, which is inside
- * `offsetHeight`) and any future control added to the bar are all accounted for.
- *
- * ⚠️ IT READS THE COMPUTED `position` RATHER THAN A BREAKPOINT. From `sm:` up
- * the bar is `static` and already occupies its own space in flow, so reserving
- * more would be the dead-space bug over again. Asking the browser where the
- * element actually is keeps the `sm:` boundary defined in exactly one place —
- * the className — instead of duplicating `640` into JS where it can drift.
+ * Space the page reserves below itself so nothing is trapped behind the pinned solving bar. Measured
+ * (the bar's height follows the clue length and safe-area inset), and zero when the bar is static
+ * (read from computed `position`, so the sm: breakpoint lives in one place).
  */
 function useBarClearance(el: HTMLElement | null): number {
   const [clearance, setClearance] = useState(0);
@@ -109,8 +71,7 @@ function useBarClearance(el: HTMLElement | null): number {
     };
 
     update();
-    // Catches a clue changing length; the width change when the viewport
-    // crosses `sm:` fires it too, which is when `position` flips.
+    // Fires on clue length changes and when crossing sm: (where position flips).
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
     ro?.observe(el);
     window.addEventListener('resize', update);
@@ -133,8 +94,7 @@ function useKeyboardInset(): number {
 
     const update = () => {
       const covered = window.innerHeight - (vv.height + vv.offsetTop);
-      // Round to whole pixels: iOS reports fractional heights mid-animation and
-      // an unrounded value re-renders on every frame of the keyboard transition.
+      // Whole pixels, or iOS re-renders every frame of the keyboard animation.
       setInset(Math.max(0, Math.round(covered)));
     };
 
@@ -156,7 +116,7 @@ export default function CrosswordGame() {
   const cells = useMemo(() => targetData?.crossword ?? [], [targetData]);
   const crosswordClues = useMemo(() => targetData?.crosswordClues ?? [], [targetData]);
 
-  // Grid extent adapts to the generated layout (no longer a fixed 5×5).
+  // Grid extent follows the generated layout.
   const gridSize = useMemo(
     () => cells.reduce((max, cell) => Math.max(max, cell.r + 1, cell.c + 1), 1),
     [cells]
@@ -165,9 +125,7 @@ export default function CrosswordGame() {
   const { flash, fire } = useGameFlash();
   const { play } = useGameAudio();
   const keyboardInset = useKeyboardInset();
-  /* A state-backed ref, not `useRef`: the bar does not exist on the loading or
-     victory branches, so the measuring effect has to re-run when it mounts.
-     A `useRef` would still hold null from the first render and never observe. */
+  /* State-backed ref so the measuring effect re-runs when the bar mounts (it's absent while loading). */
   const [solvingBar, setSolvingBar] = useState<HTMLDivElement | null>(null);
   const barClearance = useBarClearance(solvingBar);
 
@@ -179,15 +137,14 @@ export default function CrosswordGame() {
   const [poppedKey, setPoppedKey] = useState<string | null>(null);
   const [active, setActive] = useState<Coord>({ r: 0, c: 0 });
   const [direction, setDirection] = useState<Direction>('across');
-  /* Mobile only — the full Across/Down list is ~12 rows and pushed the grid and
-     the Check button off a phone screen. Always open from `sm:` up. */
+  /* Mobile only (the full clue list pushed the grid off screen); always open from sm: up. */
   const [showAllClues, setShowAllClues] = useState(false);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const popTimer = useRef<number | null>(null);
   const startedAt = useRef(Date.now());
   const recorded = useRef(false);
-  // Cell keys the student revealed via AI Assist, for the post-game review.
+  // Cells revealed via AI Assist, for the review.
   const hintedCells = useRef<Set<string>>(new Set());
 
   const cellMap = useMemo(() => {
@@ -196,7 +153,7 @@ export default function CrosswordGame() {
     return map;
   }, [cells]);
 
-  /** Walks to the start of a word, then collects every cell along its direction. */
+  /** Walks to the start of a word, then collects its cells. */
   const collectWord = useCallback(
     (r: number, c: number, dir: Direction): Coord[] => {
       const [dr, dc] = dir === 'across' ? [0, 1] : [1, 0];
@@ -241,8 +198,7 @@ export default function CrosswordGame() {
   const clues = useMemo(() => {
     const entries: Clue[] = [];
 
-    // Each derived word starts at a numbered cell; match it to its clue by
-    // (number, direction) so the layout can be any shape, not the fixed template.
+    // Match each derived word to its clue by (number, direction).
     words.forEach((word) => {
       const start = word.cells[0];
       const label = cellMap.get(keyOf(start.r, start.c))?.label;
@@ -257,7 +213,7 @@ export default function CrosswordGame() {
     return entries.sort((a, b) => a.num - b.num || (a.dir === b.dir ? 0 : a.dir === 'across' ? -1 : 1));
   }, [words, cellMap, crosswordClues]);
 
-  /** The word the cursor sits in; falls back to the perpendicular word for single-cell runs. */
+  /** The word under the cursor, or the perpendicular one for single-cell runs. */
   const activeWord = useMemo(() => {
     const primary = collectWord(active.r, active.c, direction);
     if (primary.length > 1) return primary;
@@ -300,20 +256,8 @@ export default function CrosswordGame() {
     []
   );
 
-  /*
-   * ── SIZING IS DERIVED FROM THE COLUMN COUNT, NOT FROM THE VIEWPORT ──
-   *
-   * The grid always fits the screen (no horizontal scroll), so a cell's real
-   * width is `available / gridSize` — which a `sm:`/`md:` breakpoint cannot see.
-   * `buildCrossword()` caps the layout at 13 columns, and at 13 a phone gives
-   * ~23px per cell, so the gap, the letter and the clue number all have to come
-   * down with it. A media query would size a 5-column grid and a 13-column grid
-   * identically, which is exactly the case that breaks.
-   *
-   * 23px at 13 columns is the same cell size the NYT app ships a 15×15 grid at
-   * on a phone, so this is the standard trade rather than a compromise: the
-   * whole puzzle stays visible, which is most of what a crossword is.
-   */
+  // Sizing follows the column count, not the viewport: the grid always fits (up to 13 columns, ~23px
+  // cells on a phone), so gap, letter and number scale down with it.
   const dense = gridSize >= 11;
   const cellGap = dense ? 'gap-0.5 sm:gap-1' : 'gap-1 sm:gap-1.5';
   const cellText =
@@ -322,14 +266,9 @@ export default function CrosswordGame() {
       : gridSize <= 10
         ? 'text-base md:text-lg'
         : 'text-xs sm:text-sm md:text-base';
-  /* The clue number is functional — it maps a square to the clue list — so it is
-     never dropped. At 11+ columns it takes 9px because the cell is ~23px and
-     there is genuinely no room for more; that is the cost of showing the whole
-     grid, chosen deliberately over clipping columns away. */
+  /* The clue number is never dropped; 9px at 11+ columns. */
   const labelText = dense ? 'text-[9px]' : 'text-[10px]';
-  /* Caps cell growth at the old desktop 3.5rem so a 5-column puzzle does not
-     stretch into giant squares on a wide screen. `1.5rem` is the `sm:p-3`
-     padding, `0.375rem` the `sm:gap-1.5`. */
+  /* Caps cells at 3.5rem on wide screens (1.5rem = sm:p-3 padding, 0.375rem = sm:gap-1.5). */
   const gridMaxWidth = `calc(${gridSize} * 3.5rem + ${Math.max(0, gridSize - 1)} * 0.375rem + 1.5rem)`;
 
   const filledCount = cells.filter((cell) => answers[keyOf(cell.r, cell.c)]).length;
@@ -344,9 +283,7 @@ export default function CrosswordGame() {
     }
   }, [isComplete, victory, fire, play]);
 
-  // Log the solved grid once. Accuracy = squares solved unaided (fewer hints →
-  // higher). The review lists each word's answer and how many letters were
-  // revealed via AI Assist.
+  // Log the solved grid once. Accuracy = squares solved without hints.
   useEffect(() => {
     if (!victory || recorded.current || cells.length === 0) return;
     recorded.current = true;
@@ -378,7 +315,7 @@ export default function CrosswordGame() {
     popTimer.current = window.setTimeout(() => setPoppedKey(null), 200);
   };
 
-  /** Moves the cursor to the next existing cell in a direction, skipping blocked squares. */
+  /** Moves to the next existing cell in a direction, skipping blocked squares. */
   const step = (from: Coord, dr: number, dc: number): Coord | null => {
     let { r, c } = from;
     for (let i = 0; i < gridSize; i++) {
@@ -469,7 +406,7 @@ export default function CrosswordGame() {
   };
 
   const useHint = () => {
-    // Prefer filling a gap in the word the student is currently working on.
+    // Prefer a gap in the current word.
     const candidates = [...activeWord, ...cells.map((cell) => ({ r: cell.r, c: cell.c }))];
     const target = candidates.find((coord) => {
       const cell = cellMap.get(keyOf(coord.r, coord.c))!;
@@ -539,17 +476,7 @@ export default function CrosswordGame() {
   }
 
   return (
-    /* ⚠️ THE CLEARANCE FOR THE FIXED SOLVING BAR BELONGS HERE, BELOW THE WHOLE
-       CARD — NOT INSIDE THE PLAYFIELD. It was `pb-28` on the playfield column,
-       which inserted 112px of dead space *inside* the stage, between the clue
-       toggle and the materials footer, while still leaving the footer itself
-       sitting under the bar. On the outer wrapper it does the one job it is for:
-       lets the page scroll far enough that nothing is permanently hidden behind
-       the bar.
-
-       It is an inline style rather than a `pb-*` class because the value is the
-       bar's MEASURED height — see `useBarClearance()` for why a constant could
-       not work here. It is 0 from `sm:` up, where the bar is back in flow. */
+    /* Clearance for the fixed solving bar, on the outer wrapper (not inside the playfield), using its measured height. 0 from sm: up. */
     <div
       style={{ paddingBottom: barClearance }}
       className="max-w-4xl mx-auto fade-in duration-300"
@@ -578,19 +505,8 @@ export default function CrosswordGame() {
           <>
             <button
               onClick={useHint}
-              /* Amber-soft, not cyan. Cyan belonged to no game even before Timed
-                 Trivia became violet — it was an orphan accent inside the amber
-                 game. Soft-vs-solid now carries the hierarchy: "Check Answers"
-                 is solid amber (primary), this is soft amber (optional, and it
-                 costs accuracy), Reset is neutral. It also matches the amber the
-                 hint badge already uses in the post-game review. */
-              /* ⚠️ `hidden sm:flex` — THERE IS A SECOND HINT BUTTON BESIDE
-                 "CHECK ANSWERS" FOR MOBILE, AND EXACTLY ONE OF THE TWO IS EVER
-                 VISIBLE. `GameStage` puts `actions` in its footer, which on a
-                 phone is below the grid, the Check button and the clue toggle —
-                 a long scroll away from the square you are stuck on. `display:
-                 none` also removes an element from the tab order, so this costs
-                 no duplicate keyboard stop. */
+              /* Soft amber: optional and costs accuracy (Check Answers is solid amber, Reset neutral). */
+              /* hidden sm:flex: a mobile twin sits by Check Answers; exactly one is ever visible. */
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400/10 border border-amber-400/25 text-amber-400 hover:bg-amber-400/20 transition-all font-sans text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
             >
               <Sparkles className="w-3.5 h-3.5" /> AI Assist
@@ -605,36 +521,14 @@ export default function CrosswordGame() {
         }
       >
         <div className="flex flex-col items-center gap-6">
-          {/*
-            ── THE SOLVING BAR ──
-            On mobile this is PINNED TO THE VIEWPORT BOTTOM, where a thumb is and
-            where the on-screen keyboard pushes content. Above the grid it scrolls
-            away the moment you reach the squares you are filling, so you end up
-            typing into a puzzle whose clue you can no longer read.
-
-            `fixed`, not `sticky`: `GameStage`'s section is `overflow-hidden`,
-            which makes it a scrollport that never scrolls, so a sticky child
-            would be inert. A fixed child is not clipped by ancestor overflow —
-            only by a transformed/filtered ancestor, and there is none here
-            (`animate-page-fade` and `fade-in` are opacity-only, and
-            `` emits no CSS in this build).
-
-            `bottom` is driven by `useKeyboardInset()` so the bar rides ON TOP of
-            the on-screen keyboard instead of behind it — see that hook for why
-            `bottom-0` alone is wrong on iOS. The inline style is safe at every
-            width: from `sm:` up the element is `position: static`, which ignores
-            `bottom` outright.
-
-            From `sm:` up it returns to normal flow at the top of the playfield.
-          */}
+          {/* The solving bar: pinned to the viewport bottom on mobile, riding above the keyboard via useKeyboardInset(). fixed, not sticky (an overflow-hidden ancestor makes sticky inert). In flow from sm: up. */}
           <div
             ref={setSolvingBar}
             style={{ bottom: keyboardInset }}
             className={clsx(
               'flex items-stretch gap-2',
               'fixed inset-x-0 z-30 px-3 pt-3 bg-surface-container-lowest/95 backdrop-blur border-t border-white/10',
-              // Clears the iPhone home indicator when the keyboard is closed; it
-              // collapses to the plain 0.75rem everywhere else.
+              // Clears the iPhone home indicator when the keyboard is closed.
               'pb-[calc(0.75rem+env(safe-area-inset-bottom))]',
               'sm:static sm:z-auto sm:w-full sm:max-w-xl sm:p-0 sm:bg-transparent sm:backdrop-blur-none sm:border-0'
             )}
@@ -665,27 +559,8 @@ export default function CrosswordGame() {
             </button>
           </div>
 
-          {/*
-            ⚠️ THE GRID ALWAYS FITS THE SCREEN. IT MUST NEVER SCROLL SIDEWAYS.
-
-            `buildCrossword()` caps the layout at `size = 13` (server/lib/
-            crossword.ts) and answers run to 10 letters, so `gridSize` genuinely
-            reaches 13. With the original fixed `w-12` + `gap-1.5` that is
-            13×48 + 12×6 + 24 = 696px of grid inside the ~287px a 375px phone
-            has — and `GameStage`'s section is `overflow-hidden`, so the
-            right-hand columns were CLIPPED AND UNREACHABLE rather than merely
-            cramped. Anything past ~5 columns was unplayable on a phone.
-
-            Horizontal scroll was the first fix and was the wrong one: a
-            crossword is a grid of INTERSECTIONS, so a view that shows six
-            columns at a time removes the only thing that makes it solvable.
-            Fluid cells (`w-full aspect-square` in `1fr` tracks) keep the whole
-            puzzle on screen at every column count; the sizing constants above
-            shrink the gap, the letter and the clue number to pay for it.
-          */}
-          {/* FULL-BLEED ON MOBILE. `-mx-4` cancels the playfield's own `px-4`,
-              which is 32px — nearly a whole extra column at 13 wide. It stops at
-              `sm:` where the width is no longer the binding constraint. */}
+          {/* The grid always fits the screen and never scrolls sideways: a crossword needs all its intersections visible. Fluid square cells in 1fr tracks. */}
+          {/* Full-bleed on mobile: -mx-4 recovers almost a column. */}
           <div className="w-full -mx-4 sm:mx-0 px-0 flex justify-center">
             <div
               className={clsx(
@@ -705,9 +580,7 @@ export default function CrosswordGame() {
 
                   if (!cellData) {
                     return (
-                      /* `aspect-square` + `w-full`: the cell fills whatever the
-                         1fr column resolves to, so it shrinks with the grid
-                         instead of forcing an overflow. */
+                      /* Fills the 1fr column so the grid shrinks instead of overflowing. */
                       <div key={key} className="w-full aspect-square rounded bg-white/[0.015]" />
                     );
                   }
@@ -737,9 +610,7 @@ export default function CrosswordGame() {
                       )}
                     >
                       {cellData.label && (
-                        /* The clue number is functional — it is how a square is
-                           matched to the clue list — so it does not stay at 8px,
-                           the smallest type in the app. */
+                        /* The clue number is functional, so it isn't shrunk to 8px. */
                         <span
                           className={clsx(
                             'absolute top-0 left-0.5 sm:top-0.5 sm:left-1 font-sans leading-none font-bold text-slate-400 pointer-events-none',
@@ -778,7 +649,7 @@ export default function CrosswordGame() {
             </div>
           </div>
 
-          {/* Status / controls */}
+          {/* Status and controls */}
           <div className="w-full max-w-xl space-y-4">
             {status && (
               <div className="flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 font-sans text-xs font-medium text-rose-300">
@@ -787,23 +658,17 @@ export default function CrosswordGame() {
               </div>
             )}
 
-            {/* Soft-vs-solid carries the hierarchy exactly as it does in the
-                footer: Check Answers is the primary and keeps the solid fill,
-                the hint is optional and costs accuracy, so it stays soft. */}
+            {/* Check Answers is solid (primary); the hint stays soft. */}
             <div className="flex items-stretch gap-2">
               <button
                 onClick={checkAnswers}
-                /* `ring-on-surface` — the button's fill is the accent, so an accent
-                   ring would be the same colour twice. */
+                /* ring-on-surface: the fill is already the accent. */
                 className="flex-1 py-3 rounded-xl bg-amber-400 text-black font-sans font-bold text-sm hover:bg-amber-300 transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest"
               >
                 Check Answers
               </button>
 
-              {/* The mobile half of the pair described on the footer's AI Assist
-                  button. Directly under the grid, which is where a stuck solver
-                  is looking — and in normal flow, so it does not crowd the
-                  pinned solving bar or make it taller. */}
+              {/* Mobile AI Assist, right under the grid and in normal flow. */}
               <button
                 onClick={useHint}
                 className="sm:hidden shrink-0 flex items-center gap-1.5 px-4 rounded-xl bg-amber-400/10 border border-amber-400/25 text-amber-400 font-sans text-sm font-bold hover:bg-amber-400/20 transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]"
@@ -812,9 +677,7 @@ export default function CrosswordGame() {
               </button>
             </div>
 
-            {/* `hidden sm:block`: these shortcuts need a physical keyboard, and on
-                a phone the line is three pieces of advice nobody can act on —
-                the same treatment `FlashcardStudyView` gives its key hints. */}
+            {/* Keyboard shortcuts: hidden on phones. */}
             <p className="hidden sm:block text-center font-sans text-[11px] text-slate-500">
               <kbd className="font-bold text-slate-400">Arrows</kbd> move ·{' '}
               <kbd className="font-bold text-slate-400">Space</kbd> flips direction ·{' '}
@@ -822,10 +685,7 @@ export default function CrosswordGame() {
             </p>
           </div>
 
-          {/* Full clue list — collapsed on mobile.
-              Twelve-odd rows of Across/Down pushed the grid and the Check button
-              off a phone screen, and the solving bar already surfaces the clue
-              that matters. Always open from `sm:` up, where there is room. */}
+          {/* Full clue list, collapsed on mobile (the solving bar shows the current clue). */}
           <button
             type="button"
             onClick={() => setShowAllClues((prev) => !prev)}

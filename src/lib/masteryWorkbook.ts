@@ -1,35 +1,18 @@
 /**
- * The mastery-evidence export, as a workbook that SHOWS ITS WORKING.
- *
- * ══ WHY THIS REPLACED A CSV ══
- * The CSV carried fifteen finished numbers per student and no way to check any of
- * them. A reader asked to trust `growth = 0.2391` had nothing to recompute it
- * from. This workbook ships the per-concept rows every figure is a mean OVER, and
- * rebuilds each summary column as a live formula against them — so every number
- * on the Summary sheet can be traced to the rows that produced it by clicking one
- * cell.
- *
- * ══ ⚠️ THE APP'S OWN NUMBERS ARE SHIPPED BESIDE THE FORMULAS, ON PURPOSE ══
- * Columns R-U hold what the server computed; K-N hold what Excel computes from
- * the raw rows. Column V compares them. That pairing is the point of the file: if
- * the platform's aggregation ever drifts from its own evidence, this column says
- * so in the educator's hands, without anyone running a script. Do not "tidy" the
- * duplicate columns away.
- *
- * ══ ⚠️ THE TOLERANCE IS 1e-4 AND THAT IS NOT SLOPPINESS ══
- * `meanOrNull()` on the server rounds to 4 decimal places; Excel averages at full
- * double precision. A correct pair therefore differs by up to 5e-5. Tightening
- * this to 1e-9 would flag every healthy row.
+ * Mastery-evidence export as a workbook that shows its working: per-concept rows plus summary columns
+ * as live formulas over them.
+ * Columns R-U carry the server's numbers beside the formulas (K-N); column V compares them. Keep both.
+ * Tolerance 1e-4: the server rounds means to 4dp, Excel doesn't.
  */
 
 import type { MasteryEvidence } from './educatorAnalytics';
 import { buildXlsxBlob, downloadBlob, type XlsxCell, type XlsxSheet } from './xlsx';
 
-/** Header on row 4, body from row 5 — leaves room for a title and a note. */
+/** Header on row 4, body from row 5. */
 const HEADER_ROW = 4;
 const FIRST_DATA = HEADER_ROW + 1;
 
-/** Server rounds means to 4dp; Excel does not. See the module header. */
+/** Server means are rounded to 4dp; Excel's aren't. */
 const TOLERANCE = 0.0001;
 
 const P_L0 = 0.1;
@@ -53,14 +36,12 @@ function slug(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'material';
 }
 
-/**
- * Build the workbook. Pure — takes the API payload, returns a Blob.
- */
+/** Builds the workbook from the API payload. Pure. */
 export async function buildMasteryWorkbook(data: MasteryEvidence): Promise<Blob> {
   const detail = data.concept_rows;
   const students = data.students;
 
-  // ── ConceptDetail: the raw rows every formula reads ─────────────────────
+  // ConceptDetail: the raw rows every formula reads
   const detailRows: XlsxCell[][] = [
     [{ value: 'Per-concept evidence — the rows every summary figure averages', style: 'title' }],
     [{
@@ -97,7 +78,7 @@ export async function buildMasteryWorkbook(data: MasteryEvidence): Promise<Blob>
 
   const detailLast = HEADER_ROW + detail.length;
 
-  // ── Summary: one row per student, every figure a formula ────────────────
+  // Summary: one row per student, every figure a formula
   const summaryRows: XlsxCell[][] = [
     [{ value: `Mastery evidence — ${data.material.title}`, style: 'title' }],
     [{
@@ -116,8 +97,7 @@ export async function buildMasteryWorkbook(data: MasteryEvidence): Promise<Blob>
     ]),
   ];
 
-  // Group the raw rows once, so each cached value comes from the same inputs
-  // the formula beside it reads.
+  // Group once so each cached value uses the same inputs as its formula.
   const byStudent = new Map<string, typeof detail>();
   for (const row of detail) {
     const list = byStudent.get(row.student_id);
@@ -201,8 +181,7 @@ export async function buildMasteryWorkbook(data: MasteryEvidence): Promise<Blob>
       { value: student.growth, style: 'app4' },
       { value: student.m_doc, style: 'app4' },
       {
-        // N() reads a blank or text as 0, so "both absent" agrees and
-        // "one absent" does not — without a nest of ISNUMBER guards.
+        // N() treats blank/text as 0, so "both absent" matches and "one absent" doesn't.
         formula:
           `IF(NOT(ISNUMBER($N${r})),"not started",` +
           `IF(AND(ABS(N($K${r})-N($R${r}))<${TOLERANCE},` +
@@ -217,7 +196,7 @@ export async function buildMasteryWorkbook(data: MasteryEvidence): Promise<Blob>
   const summaryLast = HEADER_ROW + students.length;
   const sumRange = (col: string) => `Summary!$${col}$${FIRST_DATA}:$${col}$${Math.max(summaryLast, FIRST_DATA)}`;
 
-  // ── Class: the same figures one level up ────────────────────────────────
+  // Class: the same figures one level up
   const startedRows = students.filter((s) => s.m_doc !== null);
   const classStart = mean(startedRows.flatMap((s) => (s.start_mastery === null ? [] : [s.start_mastery])));
   const classEnd = mean(startedRows.flatMap((s) => (s.end_mastery === null ? [] : [s.end_mastery])));
@@ -287,7 +266,7 @@ export async function buildMasteryWorkbook(data: MasteryEvidence): Promise<Blob>
     ],
   ];
 
-  // ── Parameters ──────────────────────────────────────────────────────────
+  // Parameters
   const paramRows: XlsxCell[][] = [
     [{ value: 'Parameters', style: 'title' }],
     [{ value: 'Named cells. Every formula in this workbook reads these — change one and the file recomputes.', style: 'note' }],
@@ -313,7 +292,7 @@ export async function buildMasteryWorkbook(data: MasteryEvidence): Promise<Blob>
     [{ value: 'growth  = ROUND(end_mastery, 4) - ROUND(start_mastery, 4)', style: 'bold' }],
   ];
 
-  // ── README ──────────────────────────────────────────────────────────────
+  // README
   const grades = data.material.grade_levels.join(', ');
   const readmeRows: XlsxCell[][] = [
     [{ value: 'Mastery evidence', style: 'title' }],
@@ -403,7 +382,7 @@ export async function buildMasteryWorkbook(data: MasteryEvidence): Promise<Blob>
   });
 }
 
-/** Build and hand it to the browser. */
+/** Builds and downloads it. */
 export async function downloadMasteryWorkbook(data: MasteryEvidence): Promise<void> {
   const blob = await buildMasteryWorkbook(data);
   const today = new Date().toISOString().slice(0, 10);

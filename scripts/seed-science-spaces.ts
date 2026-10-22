@@ -1,39 +1,19 @@
 /**
- * Creates the Science study space for every study student, pre-filled with the
- * material published to their own grade level.
+ * Creates the Science study space for every study student, pre-filled with the material published to
+ * their grade, so nobody starts on an empty list.
  *
  *   npx tsx scripts/seed-science-spaces.ts           # dry run, writes nothing
  *   npx tsx scripts/seed-science-spaces.ts --apply   # performs it
  *
- * WHY THIS EXISTS. A student who signs in with nothing seeded lands on an empty
- * Study Spaces list and has to press New Space, choose "Science" and name it
- * before a single lesson appears. Across 98 students that is class time spent on
- * setup, and it produces inconsistent results — wrong subject, ad-hoc titles, or
- * students who never get there at all. This does it for them, once.
+ * Reuses publishedMaterialIds(), the function POST /api/spaces calls, so a seeded space matches a
+ * hand-made one; don't re-derive the rule here.
  *
- * ⚠️ IT REUSES `publishedMaterialIds()` RATHER THAN RE-DERIVING WHICH MATERIALS
- * BELONG TO A GRADE. That is the exact function `POST /api/spaces` calls, so a
- * space seeded here is indistinguishable from one a student created by hand. A
- * second copy of the "not archived, published to this grade" rule is how the
- * script and the app drift apart, and the failure is invisible: the space would
- * hold link rows the Resources tab then filters straight back out, leaving a
- * lesson the student can see in no view at all.
+ * study_spaces has no unique (student_id, subject), so the work is two idempotent halves
+ * (create-if-missing, then link-if-missing). Re-running repairs a partial failure and pushes newly
+ * uploaded materials instead of duplicating spaces.
  *
- * ⚠️ `study_spaces` HAS NO UNIQUE CONSTRAINT ON (student_id, subject), so a
- * careless re-run would hand every student a SECOND Science space. The work is
- * therefore split into two independent halves — create-if-missing, then
- * link-if-missing — each of which checks the live state first. That is also what
- * makes a partial failure recoverable: if the link step dies after the spaces are
- * inserted, re-running repairs it instead of duplicating, and re-running after a
- * new material is uploaded pushes it to all 98 rather than asking each student to
- * press Sync.
- *
- * ⚠️ WRITES TO THE CONFIGURED SUPABASE PROJECT — the same one the deployed app
- * uses. Run the dry form first and read the report.
- *
- * Unlike `scripts/set-unified-password.ts`, this batches its writes. That script
- * is sequential because Supabase rate-limits the *auth admin API* by source IP;
- * these are ordinary PostgREST table writes, which carry no such limit.
+ * Writes to the configured Supabase project, the same one the deployed app uses. Dry-run first.
+ * Batched writes are fine here: these are table writes, not the rate-limited auth admin API.
  */
 import { supabaseAdmin } from '../server/lib/supabase';
 import { publishedMaterialIds } from '../server/lib/materialAccess';
@@ -42,14 +22,7 @@ import { publishedMaterialIds } from '../server/lib/materialAccess';
 const SUBJECT = 'SCI';
 const SPACE_TITLE = 'Science';
 
-/**
- * The test accounts used for building and demonstrating the app. They keep
- * whatever spaces, decks and mastery rows they already hold — several carry
- * deliberate test state that this must not disturb.
- *
- * Listed as literals with the username beside each so the exclusion can be
- * audited by reading this file, rather than trusted because a query said so.
- */
+/** Test accounts to leave alone (they hold deliberate test state). Literals, so the exclusion can be audited by reading. */
 const EXCLUDED_IDS = [
   '0c4ea02a-1711-4ca6-95f5-ee22123a0630', // student      — Jhon Osa
   '57f9268d-265e-452a-b7dc-3c68771264f5', // apok.tinola  — Apok Tinola
@@ -85,13 +58,7 @@ async function loadStudents(): Promise<Student[]> {
   return (data ?? []) as Student[];
 }
 
-/**
- * Existing `SUBJECT` spaces for the given students, as student_id → space_id.
- *
- * Ordered oldest-first and written into the map without overwriting, so if a
- * student somehow holds two the earliest wins and the later one is reported
- * rather than silently used.
- */
+/** Existing SUBJECT spaces, student_id → space_id. Oldest wins if a student has two; the extra is reported. */
 async function loadExistingSpaces(
   studentIds: string[]
 ): Promise<{ byStudent: Map<string, string>; duplicates: string[] }> {
@@ -122,7 +89,7 @@ async function loadMaterialsByGrade(grades: number[]): Promise<Map<number, strin
   return byGrade;
 }
 
-/** Titles for the report only — the linking itself works purely on ids. */
+/** Titles for the report only; linking works on ids. */
 async function loadMaterialTitles(ids: string[]): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
   const { data } = await supabaseAdmin.from('materials').select('id, title').in('id', ids);
@@ -224,8 +191,7 @@ async function main(): Promise<void> {
   const materialsByGrade = await loadMaterialsByGrade(grades);
   const titles = await loadMaterialTitles([...materialsByGrade.values()].flat());
 
-  // Reported against the CURRENT spaces. After the create step the number grows;
-  // the dry run below adds the links the not-yet-created spaces will want.
+  // Against the current spaces; the dry run below adds links for spaces not yet created.
   const pendingLinks = await missingLinks(spaceByStudent, students, materialsByGrade);
   const linksForNewSpaces = students
     .filter((s) => !spaceByStudent.has(s.id) && s.grade_level !== null)
@@ -245,11 +211,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ── 1. Create the spaces that do not exist ──────────────
-  //
-  // Only students with no SUBJECT space at all. A student who already has one
-  // keeps it, whatever it is called — re-titling somebody's own space would be a
-  // surprise, and the link step below fills it either way.
+  // 1. Create the missing spaces. A student who already has one keeps it, whatever it's called.
   const needSpace = students.filter((s) => !spaceByStudent.has(s.id) && s.grade_level !== null);
 
   if (needSpace.length > 0) {
@@ -273,10 +235,7 @@ async function main(): Promise<void> {
     console.log('\nEvery student already has a space; nothing to create.');
   }
 
-  // ── 2. Link the missing materials ───────────────────────
-  //
-  // Recomputed against the spaces as they now stand, so this covers both the
-  // ones just created and any that already existed but were short a material.
+  // 2. Link missing materials, recomputed against the spaces as they now stand.
   const toLink = await missingLinks(spaceByStudent, students, materialsByGrade);
 
   if (toLink.length > 0) {

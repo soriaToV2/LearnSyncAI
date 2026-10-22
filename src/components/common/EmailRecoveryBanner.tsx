@@ -4,40 +4,15 @@ import { MailWarning, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 /**
- * "Add an email address so you can reset your own password."
- *
- * ⚠️ THIS IS THE ONLY THING THAT MOVES AN ACCOUNT FROM TIER 2 TO TIER 1. Password
- * recovery has two lanes: a student with a deliverable address resets themselves
- * with a mailed code, and everyone else asks an administrator
- * (`POST /api/admin/accounts/:userId/password`). The second lane is the guaranteed
- * floor and is never removed — but an account only reaches the first lane by
- * volunteering an address, and nothing else in the product ever asks for one.
- *
- * ⚠️ GATED ON `email_can_receive`, NEVER `email_is_placeholder`. The placeholder
- * flag tests only the `@pca.invalid` suffix, so it is FALSE for `admin` and
- * `educ1` — the bare words migration 0021 left in `auth.users.email`. Keying the
- * banner off it would hide this from the administrator, whose lockout is the one
- * with no recovery path above it. See `canReceiveMail()`.
- *
- * SHOWN TO ALL THREE ROLES for that reason. It is not a student-only nag.
- *
- * DISMISSIBLE, AND ONLY FOR THE SESSION. A student who genuinely has no address —
- * which is an ordinary situation here, since CSV import leaves the column
- * optional — must not be nagged on every page load forever. Returning at the next
- * sign-in is enough pressure. `sessionStorage` rather than `localStorage` is what
- * makes "the session" mean the session; a permanent dismissal would silently
- * strand the account in Tier 2 with no reminder it had ever been offered a way
- * out.
+ * "Add an email address so you can reset your own password." The only prompt that moves an account
+ * from admin-only resets to self-service recovery.
+ * Gated on email_can_receive (not the placeholder flag), shown to all roles, and dismissible for the
+ * session only (sessionStorage), so it returns at the next sign-in.
  */
 
 const DISMISS_KEY = 'lsai.emailBanner.dismissed';
 
-/**
- * ⚠️ WRAPPED, BECAUSE THE ACCESSOR ITSELF THROWS. A private window or a browser
- * set to block site data raises on `sessionStorage` rather than returning null,
- * so an unguarded read takes the whole portal shell down with it. Failing to
- * "not dismissed" is the right default — the banner reappearing is harmless.
- */
+/** Wrapped: sessionStorage throws in private windows. Defaults to not dismissed. */
 function readDismissed(): boolean {
   try {
     return sessionStorage.getItem(DISMISS_KEY) === '1';
@@ -58,18 +33,10 @@ export default function EmailRecoveryBanner({ accent }: { accent: string }) {
   const { user } = useAuth();
   const [dismissed, setDismissed] = useState(readDismissed);
 
-  /*
-   * `user` is null while `AuthProvider` is still fetching. Rendering nothing is
-   * correct: a banner that flashes in and out on every cold load reads as a
-   * glitch, and the answer arrives within one request anyway.
-   */
+  // Render nothing while the profile loads.
   if (!user || user.email_can_receive || dismissed) return null;
 
-  /*
-   * Each portal owns its own Profile route, and the three forms behind them are
-   * the same `AccountForms` component — so the link lands on a working email
-   * field whichever role is signed in.
-   */
+  // Each portal's Profile route renders the same AccountForms.
   const profilePath =
     user.role === 'admin'
       ? '/admin/profile'
@@ -82,18 +49,8 @@ export default function EmailRecoveryBanner({ accent }: { accent: string }) {
     setDismissed(true);
   };
 
-  /*
-   * ⚠️ IT CARRIES ITS OWN PADDING AND MAX-WIDTH, and that is not decoration. It
-   * renders ABOVE each page's `<main>`, which is where the app's padded container
-   * normally lives — so without this it would sit flush against the viewport edge
-   * and align with nothing. Matching the page container's own
-   * `max-w-[1200px] / px-4 sm:px-6 md:px-8` is what lines it up with the heading
-   * underneath.
-   *
-   * The wrapper is INSIDE the early return above, never outside it: a wrapper that
-   * always rendered would leave a band of dead padding on every page for the
-   * majority of accounts, which already have a usable address.
-   */
+  // Own padding and max-width to align with the page container (it renders above <main>). Inside the
+  // early return, so most pages get no extra band.
   return (
     <div className="px-4 pt-4 sm:px-6 sm:pt-6 md:px-8">
       <div className="mx-auto max-w-[1200px]">
@@ -108,12 +65,7 @@ export default function EmailRecoveryBanner({ accent }: { accent: string }) {
             <p className="font-sans text-sm font-semibold text-white">
               Add an email address so you can reset your own password.
             </p>
-            {/*
-              It states the consequence rather than warning vaguely, because the
-              consequence is the entire argument for doing it — and it must not
-              overpromise: without an address the administrator route still works, so
-              nobody is being told they will be locked out.
-            */}
+            {/* States the consequence without overpromising: admin resets still work without an address. */}
             <p className="mt-0.5 font-sans text-xs leading-relaxed text-slate-400">
               Without one, only a school administrator can get you back into your account.{' '}
               <Link

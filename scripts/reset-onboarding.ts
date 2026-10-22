@@ -1,23 +1,13 @@
 /**
- * Clears a student's onboarding progress so the first-run tour and the six
- * study-tool panels all appear again.
+ * Clears a student's onboarding progress so the first-run tour and the six study-tool panels appear
+ * again (progress lives in onboarding_seen, not the browser).
  *
  *   npx tsx scripts/reset-onboarding.ts student          # by username
  *   npx tsx scripts/reset-onboarding.ts student tour     # just the tour
  *   npx tsx scripts/reset-onboarding.ts --list           # who has seen what
  *
- * WHY THIS EXISTS. Onboarding is remembered per account in `onboarding_seen`,
- * which is exactly what makes it work on a shared school computer — and exactly
- * what makes it impossible to test twice without either a fresh account or this
- * script. Clearing site data does nothing, because nothing is stored in the
- * browser.
- *
- * ⚠️ THIS IS WHY THERE IS NO DELETE ENDPOINT. Resetting is a developer action.
- * A route a student could reach would let them clear a record whose only purpose
- * is to stop the app pestering them.
- *
- * ⚠️ WRITES TO THE CONFIGURED SUPABASE PROJECT. A verification tool, not
- * something to run during the live study.
+ * A developer action, which is why there's no delete endpoint. Writes to the configured Supabase
+ * project; not for the live study.
  */
 import { supabaseAdmin } from '../server/lib/supabase';
 
@@ -106,8 +96,7 @@ async function main(): Promise<void> {
 
   let query = supabaseAdmin.from('onboarding_seen').delete().eq('student_id', profile.id);
 
-  // `tour_v1` and any future `tour_v2` share the prefix, so a scoped reset does
-  // not need updating when the tour is versioned.
+  // tour_v1 and any later version share the prefix, so a scoped reset survives re-versioning.
   if (scope === 'tour') query = query.like('step_key', 'tour%');
   if (scope === 'tools') query = query.like('step_key', 'tool_%');
 

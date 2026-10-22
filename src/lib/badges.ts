@@ -14,80 +14,33 @@ import {
 import type { LucideIcon } from 'lucide-react';
 
 /**
- * How a badge LOOKS. The server decides which badges exist and who holds one.
- *
- * ══ THE SPLIT IS DELIBERATE ══
- * `server/lib/badges.ts` owns the catalogue and every rule; this file owns
- * labels, icons and colours. The server never ships presentation, and this file
- * never decides eligibility — a client that could would be a client that awards
- * its own trophies.
- *
- * ══ AN UNKNOWN NAME MUST NOT CRASH ══
- * `badgeStyle()` falls back rather than indexing blind, so the server can add a
- * badge and award it before this file knows the name. The student sees a generic
- * medal with the raw identifier instead of a blank screen, and the next deploy
- * fixes the label. Never replace this with `BADGE_STYLES[name]`.
- *
- * ══ THE DASHBOARD CARD SHOWS EARNED BADGES ONLY. THE GALLERY IS OPT-IN. ══
- * This file used to say no unearned badge is ever rendered, because a permanent
- * greyed-out rail on a two-week study reads as a list of things you failed to do.
- * That still holds for the CARD, which is always on screen and still shows only
- * what the student holds.
- *
- * `BadgeGalleryModal` is the narrow exception, and the distinction is consent: a
- * student opens it having asked what is left to earn, which is a different act
- * from being shown a wall of grey on every visit. The other half of the old
- * objection — "it would need the criteria text" — is answered by `criteria`
- * below. The one nudge that does reach the card is a single row for the badge
- * closest to completion, and only once real progress exists; a "0 / 100" bar is
- * the thing the original rule was protecting against.
- *
- * `GET /api/dashboard` still ships only what the student holds, plus a distance
- * for each unearned COUNTABLE badge. The catalogue is not served — `BADGE_STYLES`
- * below is the client's own copy, so a badge the server adds and awards will show
- * in the earned list (via the fallback) but not in the locked list until this file
- * learns its name. That is the same trade `badgeStyle()` already makes.
+ * Badge presentation only (labels, icons, colours); the server decides which badges exist and who
+ * holds them. badgeStyle() falls back for unknown names; never index BADGE_STYLES directly.
+ * The dashboard card shows earned badges only; the gallery (opt-in) also lists locked ones.
  */
 
 export interface BadgeStyle {
   label: string;
-  /**
-   * One sentence naming what was done to earn it. Shown only in the
-   * badge-earned modal, and only when a single badge was awarded.
-   *
-   * This DUPLICATES the server catalogue's `description`, as `label` already
-   * does, because the catalogue is never shipped to the client — the server
-   * sends which badges a student holds, not what they are. The duplication is
-   * the price of not shipping a catalogue endpoint nobody else needs; the only
-   * field that must never drift is `name`, which is the database identity.
-   */
+  /** What was done to earn it (past tense), for the earned modal. Duplicates the server description. */
   description: string;
   icon: LucideIcon;
-  /** Text colour. Paired with `ring` for the tile border. */
+  /** Text colour; paired with `ring`. */
   color: string;
   bg: string;
   ring: string;
-  /**
-   * Raw colour for the celebration halo, which is drawn with `color-mix()` in
-   * CSS and so cannot take a Tailwind class the way the fields above do.
-   */
+  /** Raw colour for the celebration halo (used in CSS color-mix()). */
   glow: string;
 }
 
-/** Mirrors `BadgeFamily` in `server/lib/badges.ts`. Groups the gallery, nothing else. */
+/** Mirrors BadgeFamily on the server; groups the gallery. */
 export type BadgeFamily = 'streak' | 'mastery' | 'first' | 'performance';
 
-/** One catalogue row: how a badge looks, plus what it takes to get it. */
+/** How a badge looks, plus how to earn it. */
 export interface BadgeCatalogueEntry extends BadgeStyle {
-  /** The database identity. Never changes. */
+  /** The database identity; never changes. */
   name: string;
   family: BadgeFamily;
-  /**
-   * How to EARN it, imperative and present tense — "Study on three days in a
-   * row." This is not `description`, which is past tense because the celebration
-   * modal is congratulating someone who already did it. Both exist because a
-   * badge is read in two opposite situations and one sentence cannot serve both.
-   */
+  /** How to earn it, imperative and present tense (unlike `description`). */
   criteria: string;
 }
 
@@ -122,7 +75,7 @@ const PERFORMANCE: Palette = {
   glow: '#fbbf24',
 };
 
-/** Keys mirror `BADGES` in `server/lib/badges.ts`. Labels may drift; keys may not. */
+/** Keys mirror BADGES in server/lib/badges.ts. Labels may change; keys may not. */
 const BADGE_STYLES: Record<string, Omit<BadgeCatalogueEntry, 'name'>> = {
   streak_3: {
     label: 'Getting Started',
@@ -238,14 +191,7 @@ const BADGE_STYLES: Record<string, Omit<BadgeCatalogueEntry, 'name'>> = {
   },
 };
 
-/**
- * Every badge this build knows about, for the gallery.
- *
- * Derived from `BADGE_STYLES` rather than written out again — a second list would
- * be one more thing to keep in step with the server's. `BADGE_FAMILY_ORDER`
- * carries the display order, so the object literal's key order above is
- * presentation-irrelevant.
- */
+/** Every badge this build knows, for the gallery, derived from BADGE_STYLES in BADGE_FAMILY_ORDER. */
 export const BADGE_CATALOGUE: readonly BadgeCatalogueEntry[] = Object.entries(BADGE_STYLES).map(
   ([name, body]) => ({ name, ...body })
 );
@@ -257,29 +203,14 @@ export const BADGE_FAMILY_ORDER: readonly BadgeFamily[] = [
   'performance',
 ];
 
-/**
- * The "N of M" figure, for the dashboard card and the gallery alike.
- *
- * `total` counts held badges this build has never heard of, because the server
- * can add one and award it before the client knows its name — see `badgeStyle()`.
- * Without that, a student holding such a badge would read "3 / 14" while only two
- * of the fourteen listed were actually theirs. Both screens call this so they
- * cannot answer the same question differently.
- */
+/** The "N of M" figure for card and gallery. Counts held badges this build doesn't know yet. */
 export function badgeTotals(earned: readonly { name: string }[]): { held: number; total: number } {
   const known = new Set(BADGE_CATALOGUE.map((b) => b.name));
   const unknown = earned.filter((b) => !known.has(b.name)).length;
   return { held: earned.length, total: BADGE_CATALOGUE.length + unknown };
 }
 
-/**
- * Section headings for the gallery.
- *
- * `note` states the rule a student cannot infer from the badges themselves. The
- * mastery one matters most: mastery moves through flashcards and adaptive tests
- * ONLY (paper p. 58), so without it a student can reasonably grind games trying
- * to shift a bar that cannot move.
- */
+/** Gallery section headings. `note` states rules a student can't infer (mastery moves only via flashcards and tests). */
 export const BADGE_FAMILY: Record<BadgeFamily, { label: string; note?: string }> = {
   streak: { label: 'Study streak', note: 'Any study activity counts, including the chatbot.' },
   first: { label: 'First steps' },
@@ -287,13 +218,12 @@ export const BADGE_FAMILY: Record<BadgeFamily, { label: string; note?: string }>
   performance: { label: 'Performance' },
 };
 
-/** Never throws and never returns undefined — see the file header. */
+/** Never throws, never returns undefined. */
 export function badgeStyle(name: string): BadgeStyle {
   return (
     BADGE_STYLES[name] ?? {
       label: name,
-      // Deliberately generic: the server knows what this badge is for and this
-      // build does not, so anything more specific would be invented.
+      // Generic on purpose: this build doesn't know what the badge is for.
       description: 'A new achievement.',
       icon: Award,
       color: 'text-slate-300',

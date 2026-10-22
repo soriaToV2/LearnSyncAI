@@ -7,11 +7,9 @@ import Modal from '../../../components/ui/Modal';
 import Dropdown from '../../../components/ui/Dropdown';
 import DueBadge from '../../../components/ui/DueBadge';
 import { api } from '../../../lib/api';
-// Shared with StudySpace, which counts due cards for the tab badge. One copy of
-// the rule on the client; the server stays authoritative.
+// Shared with StudySpace (tab badge). The server stays authoritative.
 import { isDue } from '../../../lib/reviewSchedule';
 import type { EaseRating } from '../../../lib/reviewSchedule';
-// Lifted out of TermMatchingGame when this grid needed one too.
 import { shuffle } from '../../../lib/shuffle';
 import type { StudyIntent } from '../../../lib/studySpace';
 
@@ -19,12 +17,7 @@ interface Flashcard {
   id: string;
   front: string;
   back: string;
-  /**
-   * The concept this card assesses — how a test result finds its card.
-   *
-   * ⚠️ NULLABLE. `flashcards.concept_id` is `ON DELETE SET NULL`, so a card
-   * whose concept a re-upload removed still works as a card and matches nothing.
-   */
+  /** The concept this card assesses. Nullable (ON DELETE SET NULL), so it may match nothing. */
   conceptId?: string | null;
   /** The material this card was generated from. Drives "already in this deck". */
   sourceMaterialId?: string | null;
@@ -32,34 +25,14 @@ interface Flashcard {
   nextReviewAt?: string | null;
   /** The model wrote this card's front, so it is a question, not the term. */
   isAiGenerated?: boolean;
-  /**
-   * The student's last self-rating, or null for a card never rated while due.
-   * See the fuller note on the same field in `StudySpace.tsx`: only a rating on
-   * a DUE card writes it, so null is common and must never be read as "easy".
-   */
+  /** Last self-rating, or null if never rated while due. Null never means "easy". */
   easeRating?: EaseRating | null;
 }
 
 /**
- * How the deck's cards are ordered on screen and in the session that starts
- * from here.
- *
- * ⚠️ `shuffled` IS A VALUE HERE BUT NOT AN OPTION IN THE MENU. Shuffle and the
- * sort both decide one thing — the order — so two pieces of state would let the
- * UI claim "Hardest first" over a shuffled grid. The menu is for SORTING and
- * the button is for scrambling; they are mutually exclusive, and choosing
- * either clears the other.
- *
- * That leaves one hazard to handle at the call site: `Dropdown` falls back to
- * its first option when `value` matches nothing, so passing `shuffled` straight
- * to it would silently render "Default" over a shuffled grid. The trigger is
- * therefore fed a mapped value, and the shuffled state is shown on the button
- * instead, via `aria-pressed` and an active tone.
- *
- * A `due` option was tried and removed: `next_review_at` is set FROM the last
- * rating (Hard 1 day, Medium 3, Easy 7), so on a deck reviewed in one sitting
- * it reproduces "Hardest first" almost exactly. The two diverge only across
- * ratings given on different days, which is not worth a near-duplicate entry.
+ * Card order for the grid and the session started from it. `shuffled` is an order but not a menu
+ * option: the menu sorts, the button scrambles, and choosing either clears the other. Map it before
+ * passing to Dropdown, which renders its first option for unknown values.
  */
 type OrderKey = 'deck' | 'hardest' | 'easiest' | 'shuffled';
 
@@ -74,16 +47,7 @@ const ORDER_OPTIONS: Array<{ label: string; value: OrderKey }> = [
 
 /** Hard is the thing worth working on, so it sorts first. */
 const RATING_RANK: Record<EaseRating, number> = { hard: 0, medium: 1, easy: 2 };
-/**
- * ⚠️ UNRATED SORTS LAST IN *BOTH* DIRECTIONS, which is why "Easiest first" is
- * not a plain reverse of "Hardest first". Reversing the whole list would float
- * every never-rated card to the top of a list labelled "Easiest", asserting
- * something false about cards nobody has been tested on. The two orders differ
- * only in the part their labels describe; the unknowns stay parked at the end.
- *
- * Same rule the Analytics tab and educator Class Performance already follow for
- * unassessed concepts: partition first, never rank an unknown among the known.
- */
+/** Unrated cards sort last in both directions, so "Easiest first" isn't a plain reverse. */
 const UNRATED_RANK = 3;
 
 /** Sort position of one card under a rating order. Lower comes first. */
@@ -94,14 +58,7 @@ function ratingRank(card: Flashcard, easiestFirst: boolean): number {
 }
 
 
-/**
- * Tone for the rating chip on a card.
- *
- * ⚠️ THE PALETTE'S SOURCE OF TRUTH IS `RATING_CONFIG` IN
- * `FlashcardStudyView.tsx` — the rating buttons are where a student learns that
- * Hard is red — so keep these three in step with it. Three colour strings do
- * not yet justify a shared module; lift them if a third consumer appears.
- */
+/** Rating chip tone. Keep in step with RATING_CONFIG in FlashcardStudyView.tsx. */
 const RATING_CHIP: Record<EaseRating, { label: string; className: string }> = {
   hard: { label: 'Hard', className: 'text-red-400' },
   medium: { label: 'Medium', className: 'text-amber-400' },
@@ -131,32 +88,19 @@ interface FlashcardSet {
   description?: string;
   cardCount: number;
   cards: Flashcard[];
-  /** Show the definition first and ask for the term. Deck row, migration 0027. */
+  /** Show the definition first and ask for the term. */
   answerFirst: boolean;
 }
 
 /**
- * Type size and alignment for a face in the DECK GRID, from how much text it
- * holds — the small-card cousin of `faceTypeClass()` in `FlashcardStudyView`.
- *
- * ⚠️ IT EXISTS BECAUSE `answer_first` CHANGED WHAT A FACE CAN HOLD. The front
- * was always a term (23 characters on average) and was fixed at `text-lg`;
- * reversed, it holds a definition with a 162-character median that reaches 643,
- * in a 256px-tall box. One size cannot serve both.
- *
- * ⚠️ DO NOT IMPORT `faceTypeClass` INSTEAD. Its bands are measured against the
- * study card, which is `h-72` to `23rem` tall and twice as wide; its shortest
- * band alone runs to 260 characters, which is most of a definition.
- *
- * Size and alignment only. Font family and colour belong to the face — the back
- * stays cyan and `font-sans` whatever it holds — so they are not set here.
+ * Type size and alignment for a face in the deck grid, by text length (answer_first can put a long
+ * definition on the front). Not faceTypeClass(): its bands are sized for the larger study card.
  */
 function gridFaceClass(text: string): string {
   const len = text.length;
   if (len <= 120) return 'text-lg leading-snug text-center';
   if (len <= 300) return 'text-base leading-snug text-center';
-  // Past roughly four lines, centring hurts: every line starts at a different
-  // x-position. Same reasoning as the study view's own curve.
+  // Past about four lines, left-align: centred long text is hard to read.
   return 'text-sm leading-relaxed text-left';
 }
 
@@ -166,22 +110,13 @@ interface SpaceMaterial {
   concept_count: number;
 }
 
-/**
- * What goes on the FRONT of a generated card. The back is the educator's
- * definition in both cases — the model never writes an answer.
- */
+/** What goes on a generated card's front. The back is always the educator's definition. */
 type CardFormat = 'term' | 'question';
 
 /**
- * A deck is the student's own folder — they create, rename and delete decks to
- * organise their lessons. The CARDS inside are not theirs to write: every card
- * assesses a concept an educator uploaded and vetted, so cards arrive only by
- * generating against a selected material. There is deliberately no add-card,
- * edit-card or delete-card control here, and the routes behind them are gone.
- *
- * Layout note: Study is on the deck tile itself, so opening the tab and starting
- * a session is one click. The deck view still exists, but for browsing cards and
- * managing the deck — it is no longer a step you pass through to reach studying.
+ * Students own decks but not cards: cards arrive only by generating against a material, so there is no
+ * add/edit/delete card control. Study starts from the deck tile in one click; the deck view is for
+ * browsing and managing.
  */
 interface FlashcardsTabProps {
   spaceId: string;
@@ -190,15 +125,7 @@ interface FlashcardsTabProps {
   setSelectedSetContent: (id: string | null) => void;
   onRefresh: () => void;
   availableResources: SpaceMaterial[];
-  /**
-   * A recommendation's destination — in practice, "Review its deck" on the test
-   * results screen.
-   *
-   * `materialId` picks the deck; `conceptIds` are the concepts the student got
-   * wrong, which this tab MARKS rather than selects. This tab was the only
-   * intent target never handed one, so the button was a dead end: the tab opened
-   * on the plain deck list and the intent was silently dropped.
-   */
+  /** From "Review its deck": `materialId` picks the deck; `conceptIds` (missed in the test) are marked, not selected. */
   preselect: StudyIntent | null;
   onPreselectConsumed: () => void;
 }
@@ -214,27 +141,16 @@ export default function FlashcardsTab({
   onPreselectConsumed,
 }: FlashcardsTabProps) {
   const [isStudying, setIsStudying] = useState(false);
-  /**
-   * 'due' opens with the deck's due cards; 'marked' with the due cards a test
-   * result flagged.
-   *
-   * ⚠️ BOTH ARE DUE-ONLY, AND THERE IS NO PRACTICE MODE. A session over cards
-   * that are not due used to exist ("Practice all", "Restart Entire Set", the
-   * hard-card drill). The server ignored those ratings, but the practice still
-   * spoiled the NEXT rating that did count: a card seen on Wednesday, Friday and
-   * Sunday is easy on its due Monday, and that Easy moves mastery on the
-   * strength of yesterday's look rather than a week's retention. The gap is the
-   * mechanism, so it must not come back.
-   *
-   * `'marked'` is a card filter, not a new rule — every rating is still posted,
-   * and the server still decides whether it counts by the same due-check.
-   */
+/**
+ * 'due' opens with the deck's due cards; 'marked' with the due cards a test flagged.
+ * Both are due-only. There is no practice mode, and it must not come back: practising between reviews
+ * inflates the next rating that does count. See CLAUDE.md § Flashcards.
+ */
   const [studyMode, setStudyMode] = useState<StudyMode>('due');
   const [flippedCardId, setFlippedCardId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Every failed action lands here and is rendered. Writing failures to the
-  // console only would leave a student assuming the action worked.
+  // Every failed action is shown, never just logged.
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Create deck
@@ -261,24 +177,11 @@ export default function FlashcardsTab({
     { material: SpaceMaterial; message: string; currentFormat: CardFormat } | null
   >(null);
 
-  /**
-   * How the cards below are ordered. One piece of state for one decision.
-   *
-   * Deliberately NOT persisted, unlike `answer_first`: a saved sort is a deck
-   * that silently opens reordered weeks later with nothing on screen saying
-   * why. It resets when the student opens a different deck.
-   */
+  /** Card order. Not persisted (a deck reopening reordered weeks later would be confusing); resets per deck. */
   const [order, setOrder] = useState<OrderKey>('deck');
-  /**
-   * Bumped on every press of Shuffle so pressing it again re-rolls. A counter
-   * rather than a stored array of ids: the order is derived, so nothing has to
-   * be reconciled when the card list changes underneath it.
-   */
+  /** Bumped on each Shuffle press so pressing again re-rolls. */
   const [shuffleNonce, setShuffleNonce] = useState(0);
-  /**
-   * Optimistic half of the answer-first toggle. Null means "no local opinion,
-   * use what the server sent". Reverted if the write fails.
-   */
+  /** Optimistic answer-first value; null means use the server's. Reverted on failure. */
   const [answerFirstDraft, setAnswerFirstDraft] = useState<boolean | null>(null);
 
   const toggleFlip = (cardId: string) => {
@@ -289,23 +192,9 @@ export default function FlashcardsTab({
   const hasMaterials = availableResources.length > 0;
 
   /**
-   * What a test result asked this tab to mark.
-   *
-   * ⚠️ IT CARRIES ITS OWN `deckId` AND IS READ THROUGH `marking` BELOW, WHICH IS
-   * WHAT AVOIDS THE ORDERING BUG. Landing on a deck changes
-   * `selectedSetContent`, which fires the reset effect below — so a marking set
-   * in the same tick as the deck would be wiped by it. Rather than sequencing
-   * two effects, the value simply states which deck it belongs to and is ignored
-   * everywhere else. The reset effect then needs no knowledge of it at all.
-   *
-   * Card ids rather than concept ids, so the grid and the session test
-   * membership directly. `missing` counts concepts the test flagged that this
-   * deck has no card for.
-   *
-   * ⚠️ VISIT-SCOPED ON PURPOSE. `<main key={activeTab}>` remounts this tab on
-   * entry, so the marking disappears when the student leaves — right, because it
-   * describes one test rather than a property of the deck. The deck selection
-   * lives in the parent and correctly outlives it.
+   * Cards a test result asked to mark. Carries its own deckId and is read through `marking`, so the
+   * deck-change reset can't wipe it. Card ids, plus `missing` (flagged concepts with no card here).
+   * Visit-scoped: the tab remounts on entry.
    */
   const [markingState, setMarkingState] = useState<{
     deckId: string;
@@ -316,9 +205,7 @@ export default function FlashcardsTab({
 
   const marking = markingState?.deckId === selectedSetContent ? markingState : null;
 
-  // Opening a different deck starts clean: its own saved side, its own order,
-  // and no card left showing its answer. The marking guards itself, so it is
-  // deliberately not in here.
+  // Opening a different deck starts clean (side, order, flips). The marking guards itself.
   useEffect(() => {
     setOrder('deck');
     setShuffleNonce(0);
@@ -326,13 +213,7 @@ export default function FlashcardsTab({
     setFlippedCardId(null);
   }, [selectedSetContent]);
 
-  /**
-   * Change the order. Always clears the flip, because a card showing its answer
-   * that then jumps position is disorienting.
-   *
-   * Pressing Shuffle again re-rolls rather than being a no-op, which is why the
-   * nonce is bumped even when `shuffled` is already the current order.
-   */
+  /** Change the order and clear flips. Shuffle always bumps the nonce, so pressing again re-rolls. */
   const chooseOrder = (next: OrderKey) => {
     setOrder(next);
     if (next === 'shuffled') setShuffleNonce(n => n + 1);
@@ -341,39 +222,13 @@ export default function FlashcardsTab({
 
   const answerFirst = answerFirstDraft ?? selectedSet?.answerFirst ?? false;
 
-  /**
-   * What the open deck's cards hold on their `front`, named for the student.
-   * The back is the educator's definition in both formats, so only this half
-   * varies.
-   *
-   * ⚠️ IT IS NOT ALWAYS "TERM", WHICH IS WHY THIS IS DERIVED RATHER THAN A
-   * CONSTANT. Cards generated in `question` format have a model-written question
-   * on the front ("What does the term CYBERSECURITY refer to…?"), and labelling
-   * that "Term" would be plainly wrong on screen.
-   *
-   * `.some()` mirrors how the server derives `currentFormat` in
-   * `studyspaces.routes.ts` — a deck may gather several materials and so mix the
-   * two formats, and of the two words the broader one is the safer label.
-   */
+  /** Label for the cards' front: "Term", or "Question" if any card was generated in question format (matches the server). */
   const frontNoun = selectedSet?.cards.some(c => c.isAiGenerated) ? 'Question' : 'Term';
 
   /**
-   * The deck's cards in the order they should be shown — in the grid and in the
-   * session that starts from it.
-   *
-   * ⚠️ THE DEPENDENCY IS `selectedSet?.cards`, AND ITS STABILITY IS THE WHOLE
-   * POINT. `selectedSet` is recomputed by `.find()` on every render, but
-   * `.cards` is the same array instance held in `StudySpace`'s state, so
-   * flipping a card does not reshuffle the grid underneath the student. It does
-   * reshuffle once `onRefresh()` replaces the array — that is, on returning from
-   * a session — which is a fresh visit rather than a surprise.
-   *
-   * Every branch returns a NEW array; `selectedSet.cards` belongs to
-   * `StudySpace`'s state and must never be sorted in place.
-   *
-   * `Array.prototype.sort` is stable (guaranteed since ES2019), so ties keep
-   * deck order — three cards all rated Hard stay in the order they were
-   * generated rather than reshuffling themselves on every render.
+   * Cards in display order for grid and session. Depends on `selectedSet?.cards`, which is stable across
+   * renders, so flipping doesn't reshuffle. Always returns a new array (never sort state in place).
+   * The sort is stable, so ties keep deck order.
    */
   const orderedCards = useMemo(() => {
     const cards = selectedSet?.cards ?? [];
@@ -390,18 +245,7 @@ export default function FlashcardsTab({
       }
     })();
 
-    /*
-     * Marked cards float to the top.
-     *
-     * ⚠️ A PARTITION, NOT A FIFTH `OrderKey`. The header note above says shuffle
-     * and the sort both decide one thing — the order — so two pieces of state
-     * would let the dropdown claim "Hardest first" over a grid that is not. A
-     * `'missed'` order would inherit that, plus the `Dropdown` hazard where an
-     * unrecognised value silently renders the first option. Partitioning instead
-     * COMPOSES: "Hardest first" still holds inside each group.
-     *
-     * The sort is stable, so both groups keep whatever order was just chosen.
-     */
+    // Marked cards first. A partition rather than another OrderKey, so the chosen order still holds inside each group.
     if (!marking || marking.cardIds.size === 0) return sorted;
     const marked = sorted.filter(c => marking.cardIds.has(c.id));
     const rest = sorted.filter(c => !marking.cardIds.has(c.id));
@@ -435,15 +279,8 @@ export default function FlashcardsTab({
   const ratedCount = (selectedSet?.cards ?? []).filter(c => c.easeRating).length;
 
   /**
-   * Persist which face the open deck opens on.
-   *
-   * Local first so the cards turn over instantly, then one narrow PUT. On
-   * failure it reverts and reports — `actionError` exists precisely so a write
-   * that failed is not left looking like it worked.
-   *
-   * It does NOT call `onRefresh()`: that refetches every deck AND every card in
-   * the space, one request per deck, which is far too much for a display switch.
-   * `answerFirstDraft` is what keeps the screen honest until the next real load.
+   * Persist the open deck's answer_first: local first, then one PUT; revert and report on failure.
+   * No onRefresh(): that refetches every deck for a display switch.
    */
   const setAnswerFirst = async (next: boolean) => {
     if (!selectedSet || next === answerFirst) return;
@@ -462,27 +299,15 @@ export default function FlashcardsTab({
   const materialTitle = (id: string | null | undefined): string | null =>
     availableResources.find(m => m.id === id)?.title ?? null;
 
-  // ── Following "Review its deck" from a test result ─────────────────────────
+  // Following "Review its deck" from a test result
 
-  /**
-   * The intent as it stood at MOUNT.
-   *
-   * Held out of the resolving effect's deps: reading the live prop there would
-   * re-run it the moment the intent is consumed and the prop flips to null.
-   * Cleared as soon as it is acted on, so it cannot become a stale second source.
-   */
+  /** The intent at mount; kept out of effect deps and cleared once acted on. */
   const preselectRef = React.useRef<StudyIntent | null>(preselect);
   React.useEffect(() => {
     if (preselect) preselectRef.current = preselect;
   }, [preselect]);
 
-  /**
-   * A deck we just built, waiting for `onRefresh()` to deliver its cards, and
-   * the concepts to mark once they arrive.
-   *
-   * Parked in refs because the intent that carried them is consumed the instant
-   * it is acted on, and the cards do not exist yet at that point.
-   */
+  /** A just-built deck awaiting its cards, and the concepts to mark once they arrive. */
   const pendingBuildRef = React.useRef<{ deckId: string; materialId: string } | null>(null);
   const buildConceptsRef = React.useRef<string[]>([]);
 
@@ -490,17 +315,7 @@ export default function FlashcardsTab({
   const [needsDeckFor, setNeedsDeckFor] = useState<SpaceMaterial | null>(null);
   const [buildingDeck, setBuildingDeck] = useState(false);
 
-  /**
-   * Which deck holds a lesson.
-   *
-   * ⚠️ "THE DECK" IS NOT A THING — MORE THAN ONE CAN HOLD THE SAME MATERIAL.
-   * Nothing constrains it: `flashcard_decks` has no material column, and the 409
-   * "already generated" guard on the generate route is scoped to a single
-   * `deck_id`, so generating a lesson into a second deck is supported and
-   * unremarked. Rather than asking, pick deterministically — most cards from that
-   * lesson, then earliest created (decks arrive in `created_at` order, and
-   * `find`-style reduction keeps the first on a tie).
-   */
+  /** The deck holding a lesson. Several can; pick the one with most cards from it, then the earliest. */
   const deckHolding = (materialId: string): FlashcardSet | null => {
     let best: FlashcardSet | null = null;
     let bestCount = 0;
@@ -517,8 +332,7 @@ export default function FlashcardsTab({
   /** Turn a set of concept ids into the marking for one deck. */
   const markingFor = (set: FlashcardSet, materialId: string | null, conceptIds: string[]) => {
     const wanted = new Set(conceptIds);
-    // `conceptId` is nullable — a card whose concept a re-upload removed matches
-    // nothing, which is correct.
+    // conceptId is nullable; such cards match nothing.
     const cardIds = new Set(
       set.cards.filter(c => c.conceptId && wanted.has(c.conceptId)).map(c => c.id)
     );
@@ -533,12 +347,7 @@ export default function FlashcardsTab({
     };
   };
 
-  /*
-   * Apply the intent: open the deck that holds the lesson and mark what the test
-   * caught. Consumed in every branch, including the ones that resolve nothing —
-   * an intent the parent still holds would be re-applied on the next remount and
-   * would yank the student off a deck they had since picked by hand.
-   */
+  // Apply the intent and consume it in every branch, or it would re-apply on the next remount.
   useEffect(() => {
     const intent = preselectRef.current;
     if (!intent) return;
@@ -552,9 +361,7 @@ export default function FlashcardsTab({
       setMarkingState(markingFor(set, materialId, intent.conceptIds));
       setNeedsDeckFor(null);
     } else if (materialId) {
-      // No deck covers it yet — offer to build one rather than dead-ending. Shown
-      // on the deck list, so send them there. The concepts are parked for the
-      // marking that follows if they take the offer.
+      // No deck covers it: offer to build one (on the deck list). Concepts are parked for marking.
       buildConceptsRef.current = intent.conceptIds;
       setSelectedSetContent(null);
       setNeedsDeckFor(availableResources.find(m => m.id === materialId) ?? null);
@@ -567,14 +374,7 @@ export default function FlashcardsTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselect, flashcardSets, availableResources, onPreselectConsumed]);
 
-  /**
-   * Build the missing deck in one click: create it, fill it, land on it.
-   *
-   * ⚠️ `format: 'term'` — NEVER `'question'`. The term path has no model in it at
-   * all, so this is instant and free; the question path is a Gemini call against
-   * a bucket one adaptive test already takes five of, and a recommender that
-   * generates on a button press is a quota amplifier by construction.
-   */
+  /** Build the missing deck in one click. format: 'term', never 'question' (no model call, no quota). */
   const buildDeckFor = async (material: SpaceMaterial) => {
     setBuildingDeck(true);
     setActionError(null);
@@ -590,16 +390,13 @@ export default function FlashcardsTab({
         format: 'term',
       });
 
-      // The marking is applied once the refreshed cards arrive — see the effect
-      // below, which is why the wanted concepts are parked rather than resolved
-      // here against cards that do not exist yet.
+      // Marking is applied once the refreshed cards arrive (see the effect below).
       pendingBuildRef.current = { deckId, materialId: material.id };
       setNeedsDeckFor(null);
       setSelectedSetContent(deckId);
       onRefresh();
     } catch (err: any) {
-      // The manual path stays open: a created-but-empty deck renders the existing
-      // "This deck is empty" card with its Add Cards button.
+      // A created-but-empty deck still shows the manual Add Cards path.
       setActionError(err?.message ?? 'That deck could not be built. Please try again.');
     } finally {
       setBuildingDeck(false);
@@ -642,24 +439,13 @@ export default function FlashcardsTab({
     return upcoming[0] ?? null;
   };
 
-  /**
-   * The one-line summary under a deck name: its size, nothing else.
-   *
-   * Deliberately carries neither "· N due" nor the next review date. A due tile
-   * already states its count twice — on the badge and on the "Review N" button —
-   * and a caught-up tile states its date on the status bar where the button
-   * would be (the deck view says it in the caught-up banner). A second copy of
-   * either on one small tile reads as noise rather than emphasis.
-   */
+/** A deck's summary line: its size only (due counts and dates appear elsewhere on the tile). */
   const deckSummary = (set: FlashcardSet): string => {
     if (set.cardCount === 0) return 'Empty — no cards yet';
     return `${set.cardCount} card${set.cardCount === 1 ? '' : 's'}`;
   };
 
-  /**
-   * Where a deck's cards came from. Kept off the tile — the tile's one line is
-   * spent on what to do next — and shown in the deck view, which has the room.
-   */
+/** Where a deck's cards came from; shown in the deck view, not on the tile. */
   const deckSourceLine = (set: FlashcardSet): string | null => {
     const sources = deckSources(set);
     if (sources.length === 0) return null;
@@ -675,17 +461,8 @@ export default function FlashcardsTab({
   );
 
   /**
-   * Material id → the title of the OTHER deck that already holds it.
-   *
-   * ⚠️ A LESSON LIVES IN ONE DECK PER SPACE, and the server enforces it — this
-   * is the courtesy half, so the student is told before pressing rather than by
-   * a 409 afterwards. The rule is a BKT integrity guard: a second deck would
-   * mint new card rows that are all born due, and each one is another
-   * observation on a concept already assessed (0.10 → 0.7231 → 0.9824 on two
-   * Easy ratings, against the eight days an honest schedule takes).
-   *
-   * Free to compute — `StudySpace` already fetches every deck with every card,
-   * so this is a scan of state in hand rather than a request.
+   * Material id → the other deck already holding it. A lesson lives in one deck per space (the server
+   * enforces it as a BKT integrity guard); this warns before the 409.
    */
   const deckHoldingMaterial = new Map<string, string>();
   for (const set of flashcardSets) {
@@ -711,10 +488,7 @@ export default function FlashcardsTab({
     setIsStudying(true);
   };
 
-  /**
-   * Leaving a session refreshes the deck list, so the counts the student just
-   * changed are correct the moment they land back on it.
-   */
+  /** Leaving a session refreshes the deck list so counts are current. */
   const exitStudy = () => {
     setIsStudying(false);
     onRefresh();
@@ -776,11 +550,7 @@ export default function FlashcardsTab({
     }
   };
 
-  /**
-   * Fills the open deck from one material. Without `replace` the server answers
-   * 409 when the material is already here; that is surfaced as a Refresh
-   * confirmation rather than an error, because nothing went wrong.
-   */
+  /** Fill the open deck from one material. A 409 without `replace` becomes a Refresh prompt, not an error. */
   const handleGenerate = async (material: SpaceMaterial, replace = false, format = cardFormat) => {
     if (!selectedSet || generatingId) return;
     setGeneratingId(material.id);
@@ -805,20 +575,12 @@ export default function FlashcardsTab({
       onRefresh();
     } catch (err: any) {
       const message: string = err?.message ?? 'Those cards could not be added. Please try again.';
-      /*
-       * ⚠️ THE CODE IS CHECKED FIRST, AND IT HAS TO BE. Two different 409s reach
-       * here with near-identical prose — both start "This material is already
-       * in …". The per-deck one is an invitation to Refresh; the cross-deck one
-       * is a refusal, and offering a Refresh for it would send `replace: true`
-       * straight back into the guard that just rejected it. `api.ts` attaches
-       * `code` precisely so a caller never has to tell them apart by wording.
-       */
+      // Check the code first: two 409s have near-identical wording, and the cross-deck one must not
+      // offer a Refresh (it would be refused again).
       if (err?.code === 'MATERIAL_IN_ANOTHER_DECK') {
         setGenerateError(message);
       } else if (/already/i.test(message)) {
-        // Names this deck and the existing count, so it reads as a prompt rather
-        // than a failure. A refresh keeps the deck's existing style unless the
-        // student deliberately picks the other one.
+        // A prompt, not a failure. Refresh keeps the deck's current style.
         setConfirmRefresh({ material, message, currentFormat: cardFormat });
       } else {
         setGenerateError(message);
@@ -842,17 +604,9 @@ export default function FlashcardsTab({
     </div>
   );
 
-  // Render study view if active.
-  //
-  // Every session is due-only — that is what makes the schedule mean anything.
-  // A 'marked' session narrows it further to the cards a test flagged. If
-  // nothing qualifies (the cards were reviewed in another tab meanwhile) this
-  // falls through to the deck view, which says when they come back.
+  // Study view. Sessions are due-only ('marked' narrows further); if nothing qualifies, fall through to the deck view.
   if (isStudying && selectedSet && selectedSet.cards.length > 0) {
-    // Built from `orderedCards`, so a shuffled grid opens a shuffled session.
-    // Starting from a deck TILE always gives the deck's own order, because
-    // changing decks resets the nonce — correct, since the student never saw a
-    // shuffled grid for that deck.
+    // From orderedCards, so a shuffled grid opens a shuffled session.
     const sessionCards = orderedCards.filter(
       c => isDue(c.nextReviewAt) && (studyMode === 'due' || (marking?.cardIds.has(c.id) ?? false))
     );
@@ -860,9 +614,7 @@ export default function FlashcardsTab({
       return (
         <div className="fade-in duration-300">
           <FlashcardStudyView
-            /* `front`/`back` are handed over unswapped on purpose — the view
-               takes `answerFirst` and does the swap at render, so it can move
-               the "Question"/"Answer" labels and the type curve with it. */
+            /* front/back stay unswapped; the view applies answerFirst at render (labels and type curve follow). */
             cards={sessionCards.map(c => ({
               id: c.id,
               front: c.front,
@@ -881,7 +633,7 @@ export default function FlashcardsTab({
 
   return (
     <div className="fade-in duration-300">
-      {/* ══ Deck list ══════════════════════════════════════════════════ */}
+      {/* Deck list */}
       {selectedSetContent === null ? (
         <div key="deck-list" className="fade-in duration-500">
           <div data-tour="fc-header" className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
@@ -903,14 +655,7 @@ export default function FlashcardsTab({
 
           {errorBanner}
 
-          {/* ── "Review its deck" arrived, but no deck holds that lesson ─────
-              Reachable and probably common early on: a student can take a test
-              on a lesson they have never made cards from. Without this the step
-              dead-ends on a deck list that says nothing about why they are here.
-
-              Rendered ONLY when an intent asked for it — never as a standing
-              nag, which is what it would become if it keyed off "some material
-              has no deck". */}
+          {/* "Review its deck" for a lesson no deck holds yet. Shown only when an intent asked for it. */}
           {needsDeckFor && (
             <div className="mb-6 flex items-start gap-3 px-4 py-4 rounded-xl bg-amber-400/5 border border-amber-400/20">
               <Target className="w-4 h-4 text-amber-400/80 shrink-0 mt-0.5" />
@@ -982,12 +727,7 @@ export default function FlashcardsTab({
                 const isEmpty = set.cardCount === 0;
                 const due = dueCards(set).length;
                 return (
-                  /* A deck with work waiting now LOOKS different, not just
-                     badged. Every tile was the same grey regardless of state, so
-                     "which deck do I owe something to" was a counting task
-                     against a small badge; the accent border and soft glow make
-                     it a glance. Caught-up decks stay deliberately neutral —
-                     if every tile glowed, none would. */
+                  /* Decks with due cards get an accent border and glow; caught-up decks stay neutral. */
                   <div
                     key={set.id}
                     className={`relative bg-surface-container-lowest rounded-2xl border p-6 hover:-translate-y-1 focus-within:-translate-y-1 transition-all duration-300 group hover:shadow-lg flex flex-col ${
@@ -996,22 +736,14 @@ export default function FlashcardsTab({
                         : 'border-white/5 hover:border-white/15 hover:shadow-black/20'
                     }`}
                   >
-                    {/* The badge rides the icon rather than the title: scanning
-                        a grid of six decks for "which one has work waiting" is a
-                        visual job, and the icons form the column the eye follows. */}
+                    {/* The badge sits on the icon, the column the eye scans. */}
                     <div className="relative w-12 h-12 rounded-xl bg-surface-container border border-white/5 flex items-center justify-center group-hover:bg-primary-fixed-dim/20 group-hover:border-primary-fixed-dim/30 transition-colors mb-5">
                       <Layers className="w-6 h-6 text-slate-400 group-hover:text-primary-fixed-dim transition-colors" />
                       <DueBadge count={due} className="absolute -top-1.5 -right-1.5 ring-2 ring-surface-container-lowest" />
                     </div>
 
                     <div className="flex-1 mb-5">
-                      {/* The tile was a bare `<div onClick>` — no Tab stop, no
-                          focus ring, so the deck grid could not be navigated by
-                          keyboard at all. The title is a real button whose
-                          `::after` stretches over the card, keeping the whole
-                          surface mouse-clickable while giving the tile ONE focus
-                          stop. Its action button below carries `relative z-10` to
-                          stay clickable through that overlay. */}
+                      {/* The title is a real button whose ::after covers the tile: one focus stop, whole card clickable. The action button uses relative z-10 to stay clickable. */}
                       <h3 className="font-display text-xl font-medium text-white mb-1.5 group-hover:text-primary-fixed-dim transition-colors">
                         <button
                           onClick={() => setSelectedSetContent(set.id)}
@@ -1026,8 +758,7 @@ export default function FlashcardsTab({
                       <p className="font-sans text-xs text-slate-400">{deckSummary(set)}</p>
                     </div>
 
-                    {/* One clear action per tile. Studying is one click from
-                        here — the deck view is no longer on the way. */}
+                    {/* One action per tile; studying is one click. */}
                     {isEmpty ? (
                       <button
                         onClick={e => { e.stopPropagation(); setSelectedSetContent(set.id); openAddCards(); }}
@@ -1046,13 +777,7 @@ export default function FlashcardsTab({
                         Review {due}
                       </button>
                     ) : (
-                      /* Nothing due: a STATUS, not a button. There is no
-                         practice session to offer — see `studyMode`. Same height
-                         as the buttons so a row of tiles stays aligned, and NOT
-                         `relative z-10`, so a click here falls through to the
-                         title's stretched overlay and opens the deck to browse.
-                         Sentence case on purpose: every uppercase pill on a tile
-                         is something to press. */
+                      /* Nothing due: a status, not a button (no practice mode). Same height as buttons; clicks fall through to open the deck. */
                       <div className="w-full px-4 py-2.5 bg-emerald-500/5 border border-emerald-500/15 rounded-xl font-sans text-xs font-semibold text-slate-300 flex items-center justify-center gap-2">
                         <CalendarCheck className="w-4 h-4 text-emerald-400/80 shrink-0" />
                         <span className="truncate">
@@ -1068,7 +793,7 @@ export default function FlashcardsTab({
           )}
         </div>
       ) : (
-        /* ══ Inside a deck — browsing and managing, not a step to studying ══ */
+        /* Inside a deck: browsing and managing */
         <div key="selected-deck" className="fade-in duration-500">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5 mb-8">
             <div className="min-w-0">
@@ -1096,8 +821,7 @@ export default function FlashcardsTab({
 
             {selectedSet && (
               <div className="flex flex-col sm:flex-row gap-3 shrink-0">
-                {/* Only when something is due. A caught-up deck has no study
-                    button at all; the banner below says when it comes back. */}
+                {/* Only when something is due. */}
                 {dueCards(selectedSet).length > 0 && (
                   <button
                     onClick={() => studyDeck(selectedSet.id, 'due')}
@@ -1155,17 +879,8 @@ export default function FlashcardsTab({
             </div>
           )}
 
-          {/* Caught up. Said explicitly so an inactive Review button reads as
-              success rather than something being broken. */}
-          {/* ── What the last test caught ──────────────────────────────────
-              ⚠️ THE DUE SPLIT IS STATED BEFORE THEY START, and that is the whole
-              point of this banner. Only DUE cards can be reviewed — a session
-              is due-only (see `studyMode`) and `POST /flashcards/rate` ignores
-              anything else. So a student who cleared this deck yesterday, then
-              missed five concepts in a test, has nothing to review here until
-              those cards come back. The button that sent them here carries a
-              "moves mastery" chip, so the honest thing is to say when that
-              becomes true rather than offer a drill that changes nothing. */}
+          {/* Caught up, said explicitly so a missing Review button reads as success. */}
+          {/* What the last test caught. States how many marked cards are due now and when the rest return: only due cards can be reviewed. */}
           {marking && marking.cardIds.size > 0 && (
             <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-400/5 border border-amber-400/20">
               <Target className="w-4 h-4 text-amber-400/80 shrink-0 mt-0.5" />
@@ -1192,13 +907,10 @@ export default function FlashcardsTab({
                     </>
                   )}
                 </p>
-                {/* Counts the DUE marked cards, because that is exactly what
-                    the session will hold. */}
+                {/* Counts due marked cards: what the session will hold. */}
                 {markedDueCount > 0 && (
                   <button
-                    // `marking.deckId`, not `selectedSet!.id` — the two are equal
-                    // by the guard above, but `selectedSet` is briefly null in the
-                    // window after a deck is built and before its cards arrive.
+                    // marking.deckId, not selectedSet!.id: selectedSet is briefly null right after a deck is built.
                     onClick={() => studyDeck(marking.deckId, 'marked')}
                     className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400/10 border border-amber-400/25 hover:bg-amber-400/15 font-sans text-xs font-semibold text-amber-200 transition-colors"
                   >
@@ -1224,7 +936,7 @@ export default function FlashcardsTab({
             </div>
           )}
 
-          {/* Empty state — a new deck is empty by design, so it names the next step. */}
+          {/* Empty state: a new deck is empty by design. */}
           {selectedSet && selectedSet.cards.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 md:py-24 px-6 text-center bg-surface-container-lowest/40 border border-white/5 rounded-2xl">
               <div className="w-16 h-16 rounded-2xl bg-surface-container border border-white/5 flex items-center justify-center mb-6">
@@ -1255,35 +967,14 @@ export default function FlashcardsTab({
             </div>
           )}
 
-          {/*
-            View controls for the grid below.
-
-            ⚠️ NOT IN THE HEADER CLUSTER ABOVE. That row holds deck ACTIONS —
-            study, add cards, rename, delete — and already carries four buttons.
-            These change how the cards below are shown and belong next to them.
-
-            ⚠️ THE SIDES ARE NAMED FOR WHAT THEY HOLD, NOT "QUESTION"/"ANSWER".
-            Those two were the study view's existing face labels and read as
-            vague here — "Answer" never tells a student it means the definition.
-            The first side is `frontNoun`, which is "Term" for a term-format deck
-            and "Question" for one built in question format; the second is always
-            "Definition", because the back is the educator's definition verbatim
-            whichever format the deck was generated in.
-
-            The right-hand pair is ONE decision, not two. Shuffle and the sort
-            both set the order, so they share `order` — three separate controls
-            (Shuffle / Original order / Sort) could have contradicted each other
-            on screen. Choosing a sort clears the shuffle and vice versa.
-          */}
+          {/* View controls for the grid (deck actions live in the header). Sides are named Term/Question and Definition. Sort and Shuffle share one `order`. */}
           {selectedSet && selectedSet.cards.length > 0 && (
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5 min-w-0">
                 <span className="font-sans text-[10px] uppercase tracking-widest text-slate-500 font-bold shrink-0">
                   Show in front
                 </span>
-                {/* A segmented pair, not one toggle. A single button whose label
-                    is its current state is ambiguous — nobody can tell whether
-                    it names what you have or what you would get. */}
+                {/* A segmented pair: a single toggle labelled with its state is ambiguous. */}
                 <div
                   role="group"
                   aria-label="Which side of the card to show in front"
@@ -1309,16 +1000,10 @@ export default function FlashcardsTab({
                 </div>
               </div>
 
-              {/* The menu sorts, the button scrambles, and only one can be in
-                  effect. "Original order" used to be a third control here and is
-                  now the menu's `Default`. */}
+              {/* The menu sorts, the button scrambles; only one applies. */}
               <div className="flex items-center gap-2">
                 <Dropdown
-                  /* ⚠️ MAPPED, NOT PASSED THROUGH. `shuffled` is a real order but
-                     not an option, and `Dropdown` renders its first option for
-                     any value it does not recognise — so passing it raw would
-                     read "Default" over a shuffled grid. Shuffling genuinely is
-                     "no sort applied", and the button below is what shows it. */
+                  /* Mapped: Dropdown would show its first option for `shuffled`. */
                   value={order === 'shuffled' ? 'deck' : order}
                   onChange={v => chooseOrder(v as OrderKey)}
                   options={ORDER_OPTIONS}
@@ -1343,13 +1028,7 @@ export default function FlashcardsTab({
             </div>
           )}
 
-          {/*
-            ⚠️ THE COMMON CASE, NOT AN EDGE CASE. `ease_rating` is written only
-            when a rating counted, so a deck nobody has reviewed while due has
-            no ratings at all — which is every new deck. Sorting it by rating
-            correctly changes nothing, and without this line the first thing a
-            student tries looks broken.
-          */}
+          {/* Common case: unreviewed decks have no ratings, so sorting by rating changes nothing. Say so. */}
           {selectedSet && selectedSet.cards.length > 0 && ratedCount === 0 &&
             (order === 'hardest' || order === 'easiest') && (
             <div className="mb-5 flex items-start gap-3 px-4 py-3 rounded-xl bg-surface-container-lowest/60 border border-white/5">
@@ -1361,24 +1040,18 @@ export default function FlashcardsTab({
             </div>
           )}
 
-          {/* Card grid — for reviewing what is in the deck. No controls on cards. */}
+          {/* Card grid for browsing; no controls on cards. */}
           {selectedSet && selectedSet.cards.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
               {orderedCards.map((card) => {
                 const source = materialTitle(card.sourceMaterialId);
                 const flipped = flippedCardId === card.id;
                 const isMarked = marking?.cardIds.has(card.id) ?? false;
-                /* `front`/`back` keep one meaning everywhere — front is the term
-                   or generated question, back is the educator's definition. Only
-                   which one the student meets first changes here. */
+                /* front/back keep one meaning; only which side shows first changes. */
                 const prompt = answerFirst ? card.back : card.front;
                 const answer = answerFirst ? card.front : card.back;
                 return (
-                  /* Focus, role and the key handler live on the OUTER box, not on
-                     the rotating inner one: a focus ring on the flipping element
-                     rotates away with it. There is no global key handler on this
-                     grid (unlike the study view, where Space is already bound
-                     window-wide), so Enter/Space are wired here. */
+                  /* Focus, role and keys live on the outer box (a ring on the flipping element would rotate away). Enter/Space wired here. */
                   <div
                     key={card.id}
                     role="button"
@@ -1398,26 +1071,15 @@ export default function FlashcardsTab({
                       className={`relative w-full h-full transition-transform duration-500 [transform-style:preserve-3d] ${flipped ? '[transform:rotateY(180deg)]' : ''}`}
                     >
                       {/* Front */}
-                      {/* ⚠️ THE MARK IS ON BOTH FACES, not on the card root. The
-                          root carries the focus ring, so a ring there would be
-                          indistinguishable from keyboard focus; and the back is
-                          a separate element, so a front-only border vanishes the
-                          moment the card is flipped. Amber is carried over from
-                          the results screen's own "Concepts to revisit" chips so
-                          the two screens read as one action. */}
+                      {/* The mark is on both faces, not the root (the root's ring means keyboard focus). Amber matches the results screen. */}
                       <div
                         className={`absolute inset-0 [backface-visibility:hidden] rounded-2xl border bg-surface-container flex flex-col shadow-lg overflow-hidden ${
                           isMarked ? 'border-amber-400/40' : 'border-white/10'
                         }`}
                       >
-                        {/* The grid always shows every card — it is for browsing
-                            a lesson. Scheduled cards are marked, never hidden. */}
+                        {/* The grid shows every card; scheduled ones are marked, never hidden. */}
                         <div className="shrink-0 flex items-baseline justify-between gap-2 px-5 pt-4">
-                          {/* `[11px]`/`slate-500`, not `[10px]`/`slate-600`: this
-                              is a lesson TITLE, not an uppercase micro-label, and
-                              10px at the lowest slate on a dark card is the least
-                              legible text in the tab. `[10px]` stays correct for
-                              the tracking-widest labels below. */}
+                          {/* 11px slate-500: a title, more legible than the 10px micro-labels. */}
                           <p className="font-sans text-[11px] text-slate-500 truncate min-w-0">{source ?? ''}</p>
                           <span className="shrink-0 flex items-baseline gap-1.5 font-sans text-[11px]">
                             {isMarked && (
@@ -1426,11 +1088,7 @@ export default function FlashcardsTab({
                                 <span className="text-slate-700">·</span>
                               </>
                             )}
-                            {/* Rated cards only. A card nobody has reviewed shows
-                                nothing at all — no "Unrated" pill, no neutral
-                                dot. Sorting by rating is invisible without this,
-                                but inventing a value for an untested card is the
-                                mistake the rule against it exists to prevent. */}
+                            {/* Rated cards only; an untested card shows nothing rather than an invented value. */}
                             {card.easeRating && (
                               <>
                                 <span className={RATING_CHIP[card.easeRating].className}>
@@ -1446,38 +1104,16 @@ export default function FlashcardsTab({
                             </span>
                           </span>
                         </div>
-                        {/* `my-auto` on the text, never `items-center` here — a
-                            centred flex item taller than its box overflows past
-                            the TOP edge, which is outside the scrollable region
-                            and unreachable. An auto margin centres the same way
-                            when it fits and clips nothing when it does not. */}
+                        {/* my-auto on the text, never items-center on the scroll box (that clips overflow past the top). */}
                         <div className="flex-1 overflow-y-auto px-5 py-3 flex flex-col">
-                          {/* Font family and colour belong to the FACE — this is
-                              the "before you flip" side and should read like it
-                              whichever string it holds. Only size and alignment
-                              follow the text, via `gridFaceClass`. */}
+                          {/* Font and colour belong to the face; size and alignment follow the text via gridFaceClass. */}
                           <p className={`my-auto font-display text-on-surface ${gridFaceClass(prompt)}`}>{prompt}</p>
                         </div>
                         <span className="shrink-0 pb-4 text-[10px] uppercase tracking-widest text-slate-500 flex items-center justify-center gap-1 font-semibold">
                           <RefreshCw className="w-3 h-3" /> Click to Flip
                         </span>
                       </div>
-                      {/* Back.
-
-                          ⚠️ THE OPAQUE SURFACE IS THE BASE AND THE CYAN IS A WASH
-                          OVER IT. This face was `bg-primary-fixed-dim/5` and
-                          nothing else — a 5% tint, meaning 95% TRANSPARENT — so
-                          flipping a card revealed the page behind it rather than
-                          the back of the card. It went unnoticed on the dark
-                          theme, where a faint cyan wash over a near-black page
-                          still reads as a dark card; in light mode the card
-                          vanished under its own cyan text.
-
-                          `background-color` and `background-image` compose, so
-                          the opaque surface sits beneath the gradient and the
-                          tint survives unchanged. Do not collapse this back to a
-                          single `bg-<colour>/<opacity>` — an opacity modifier on
-                          the only background is what caused this. */}
+                      {/* Back. An opaque surface with the cyan as a gradient wash over it. Don't collapse it to one bg-colour/opacity (the card turned see-through). */}
                       <div
                         className={`absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl border bg-surface-container bg-gradient-to-br from-primary-fixed-dim/[0.08] to-primary-fixed-dim/[0.02] flex flex-col shadow-[0_0_30px] shadow-primary-fixed-dim/10 overflow-hidden ${
                           isMarked ? 'border-amber-400/40' : 'border-primary-fixed-dim/30'
@@ -1496,7 +1132,7 @@ export default function FlashcardsTab({
         </div>
       )}
 
-      {/* Saving indicator overlay */}
+      {/* Saving indicator */}
       {isSaving && createPortal(
         <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-md flex items-center justify-center">
           <div className="bg-surface-container border border-white/10 px-6 py-4 rounded-xl flex items-center gap-3 text-white">
@@ -1670,12 +1306,7 @@ export default function FlashcardsTab({
                       </span>
                       <span className="font-sans text-xs font-bold text-slate-200">{option.label}</span>
                     </div>
-                    {/* `ml-5.5` generated NO CSS and the indent silently never
-                        applied — Tailwind v4 invents dynamic spacing for whole
-                        numbers (`max-h-68` compiles) but not for arbitrary
-                        fractions. Written as an explicit length instead: the
-                        w-3.5 radio (0.875rem) plus its gap-2 (0.5rem) is exactly
-                        1.375rem, which aligns this under the label text. */}
+                    {/* An explicit 1.375rem indent (radio width + gap); fractional ml-5.5 generates no CSS. */}
                     <p className="font-sans text-[11px] text-slate-400 mb-1.5 ml-[1.375rem]">{option.blurb}</p>
                     <p className="font-sans text-[11px] text-slate-500 italic leading-snug line-clamp-2">
                       “{option.example}”
@@ -1693,7 +1324,7 @@ export default function FlashcardsTab({
             </div>
           )}
 
-          {/* Already here — a prompt, not a failure. */}
+          {/* Already here: a prompt, not a failure. */}
           {confirmRefresh && (
             <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-3">
               <p className="font-sans text-xs text-amber-200 leading-relaxed">
@@ -1761,9 +1392,7 @@ export default function FlashcardsTab({
                         <Check className="w-3 h-3" /> In deck
                       </span>
                     )}
-                    {/* Amber, not emerald: this one is a refusal, not a
-                        confirmation. The deck is named so the student knows
-                        where to go rather than being told only "no". */}
+                    {/* Amber: a refusal. Names the deck that holds it. */}
                     {otherDeck && !isBusy && (
                       <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-400/10 border border-amber-400/25 text-amber-400 font-sans text-[10px] font-bold uppercase tracking-wider shrink-0 max-w-[45%]">
                         <AlertCircle className="w-3 h-3 shrink-0" />
@@ -1790,12 +1419,7 @@ export default function FlashcardsTab({
             <Trash2 className="w-5 h-5" />
           </div>
 
-          {/* ⚠️ IT USED TO END "You can generate them again from the same
-              material", which advertised the one mastery-reset path the
-              cross-deck guard leaves open — and said nothing about the cost.
-              Deleting cascades `spaced_repetition_logs`, so the review dates and
-              ratings go with them; `bkt_mastery` is keyed on (student, concept)
-              and does not. Say both. */}
+          {/* States the cost: review history is deleted with the cards, while mastery (keyed by concept) is kept. */}
           <p className="font-sans text-xs text-slate-400 leading-relaxed">
             Are you sure you want to delete <span className="font-semibold text-white">"{selectedSet?.title}"</span>?
             This removes the deck and the {selectedSet?.cardCount ?? 0} card{selectedSet?.cardCount === 1 ? '' : 's'} inside it,

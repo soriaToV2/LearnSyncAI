@@ -26,26 +26,12 @@ function EducatorLayoutInner() {
   const { theme } = useEducatorTheme();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  /*
-   * The real signed-in profile, not `mockEducator.EDUCATOR` — which rendered
-   * "Liza Mendoza / liza.mendoza@pca.edu.ph" to every educator. `profiles` carries
-   * NO EMAIL COLUMN and no avatar, so the subtitle is the role (`subtitleFor()`
-   * returns "Educator" for a null `grade_level`) and the avatar is a monogram.
-   * Nothing here may be invented.
-   */
+  // The real profile. No email or avatar columns: the subtitle is the role, the avatar a monogram.
   const educatorName = fullName(user);
   const monogram = initials(user);
   const subtitle = subtitleFor(user);
 
-  /*
-   * `replace: true` is load-bearing: without it the browser Back button returns
-   * to the portal shell, which is exactly the "still signed in" impression this
-   * change exists to remove.
-   *
-   * The redirect happens even if `signOut()` throws. Being stranded inside the
-   * account on a network blip is the worse failure of the two, and the local
-   * session is cleared before the network call in the Supabase client anyway.
-   */
+  // `replace: true` so Back can't return to the portal. Redirect even if signOut() throws.
   const handleSignOut = async () => {
     if (isSigningOut) return;
     setIsSigningOut(true);
@@ -88,12 +74,7 @@ function EducatorLayoutInner() {
   const collapsedNavClass = (collapsed: boolean) =>
     collapsed ? 'justify-center px-0 gap-0' : '';
 
-  /*
-   * `Students` was removed with the roster pages it pointed at. Student
-   * performance is reached through Materials → a material → Class Performance,
-   * where it is scoped to real concepts and real mastery rather than the
-   * eighteen invented students that page rendered.
-   */
+  // Student performance is reached via Materials → a material → Class Performance.
   const NAV_ITEMS = [
     { to: '/educator/dashboard', label: 'Dashboard', icon: Home },
     { to: '/educator/materials', label: 'Materials', icon: FileText },
@@ -119,17 +100,7 @@ function EducatorLayoutInner() {
     </div>
   );
 
-  /*
-   * Logout, then the identity card — nothing else. Profile is a destination like
-   * Dashboard and Materials, so it lives with them in `NAV_ITEMS` above; the
-   * footer is for the one control that ends the session.
-   *
-   * LOGOUT IS ALWAYS RENDERED. It used to appear only after clicking the identity
-   * card, which nothing indicated was a toggle — the most important control in the
-   * app was invisible until you guessed. That toggle was the card's only job, so
-   * the card is now a plain `<div>`: leaving a hover affordance on a dead element
-   * is worse than removing it.
-   */
+  // Footer: Logout (always rendered) above the identity card, nothing else.
   const renderFooter = (collapsed = false) => (
     <div className="mt-auto flex flex-col gap-2">
       {/* A <button>, not a NavLink — it ends the session before it navigates. */}
@@ -143,11 +114,7 @@ function EducatorLayoutInner() {
         {!collapsed && (isSigningOut ? 'Signing out…' : 'Logout')}
       </button>
 
-      {/* Collapsed: no card chrome, smaller avatar. The collapsed rail is
-          w-20 with p-6, so its inner width is 32px — a 40px avatar inside a
-          bordered `p-3` box had a 6px slot and overflowed through the border.
-          See `StudentLayout` for the full arithmetic; all three sidebars
-          shipped the same block. */}
+      {/* Collapsed: no card chrome and a smaller avatar (the collapsed rail has 32px inner width). */}
       <div
         title={educatorName}
         className={`flex items-center gap-3 w-full text-left ${
@@ -323,8 +290,7 @@ function EducatorLayoutInner() {
         className={`flex-1 flex flex-col min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'
           }`}
       >
-        {/* Above the keyed div so it does not replay its entrance animation on
-            every navigation — it is one standing notice, not a new alert per page. */}
+        {/* Outside the keyed div so it doesn't replay its entrance on every navigation. */}
         <EmailRecoveryBanner accent={theme.accent} />
         <div key={location.pathname} className="flex-1 flex flex-col animate-page-fade">
           <Outlet />
@@ -334,27 +300,14 @@ function EducatorLayoutInner() {
   );
 }
 
-/**
- * `AuthProvider` is mounted HERE, not at the App root — the same placement, and the
- * same reason, as `StudentLayout`: at the root it would fire `GET /api/auth/me` on
- * `/login` and `/register`, where there is no session, giving a 401 on every cold
- * page load. Mounted on the layout it runs once per portal entry, on routes that
- * already require a signed-in user. Nothing in the provider is student-specific.
- */
+/** AuthProvider is mounted per layout, not at the root, so /login never calls /auth/me. */
 export default function EducatorLayout() {
   return (
     <AuthProvider>
       <EducatorThemeProvider>
-        {/* See the matching note in `StudentLayout` — the first-login gate is why
-            this guard is no longer optional. */}
+        {/* RequireRole: see StudentLayout. */}
         <RequireRole allow={['educator']}>
-          {/*
-            Reference data, not identity, so it is its own provider rather than a
-            field on `AuthContext`. INSIDE `RequireRole` for the same reason as
-            the guard above: `GET /api/subjects` is `requireRole`-gated, so a
-            signed-out, un-activated or wrong-role visitor would collect a 401/403
-            for nothing.
-          */}
+          {/* Reference data, its own provider. Inside RequireRole (the route is gated). */}
           <SubjectsProvider>
             <EducatorLayoutInner />
           </SubjectsProvider>

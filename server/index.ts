@@ -6,11 +6,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-// Resolve __dirname in ESM context — same idiom as server/lib/supabase.ts.
+// Resolve __dirname in ESM.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Note: dotenv is loaded inside server/lib/supabase.ts which is imported below.
-// No need to call dotenv.config() here.
+// dotenv is loaded by server/lib/supabase.ts, imported below.
 
 // Route imports
 import authRoutes from './routes/auth.routes';
@@ -33,31 +32,11 @@ import { verifyGeminiCredential } from './lib/gemini';
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ─────────────────────────────────────────────
-// Global Middleware
-// ─────────────────────────────────────────────
-/*
- * ⚠️ A BARE `helmet()` BLOCKS SUPABASE, WHICH BREAKS LOGIN AND EVERY LESSON PDF.
- *
- * Helmet's default Content-Security-Policy sets `default-src 'self'`, and
- * `connect-src` is NOT one of the directives it names explicitly — so it inherits
- * `'self'` and the browser refuses every request to an origin that is not ours.
- * Two things in this app talk straight to Supabase from the browser, and both fail
- * silently, with nothing in the server log:
- *
- *   - `supabase.auth.signInWithPassword()` in `src/lib/supabase.ts` — nobody can
- *     sign in, and the login form reports no error because the request never left.
- *   - `PdfViewer`, which is handed a Supabase Storage signed URL by
- *     `GET /api/materials/:id/view` and fetches it with pdf.js — no lesson opens.
- *
- * ⚠️ NEITHER IS REPRODUCIBLE IN DEVELOPMENT. Vite serves index.html on :3000 and
- * this header never reaches the document, so the policy is only ever applied once
- * Express serves the app itself — i.e. only in production. Do not "simplify" this
- * back to `helmet()` after testing locally and finding no difference.
- *
- * `worker-src` is listed because `PdfViewer` sets `GlobalWorkerOptions.workerSrc`
- * to a bundled same-origin worker; `blob:` covers pdf.js's fallback path.
- */
+// Global middleware
+
+// A bare helmet() blocks the browser's direct calls to Supabase (sign-in, PDF signed URLs) via CSP
+// connect-src. Only visible in production, where Express serves index.html. Don't simplify it.
+// worker-src covers pdf.js's bundled worker and its blob: fallback.
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -71,20 +50,7 @@ app.use(
   })
 );
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000' }));
-/*
- * Request logging — but NOT the health check, which is polled every 5 seconds.
- *
- * Render calls `/api/health` continuously to decide whether the service is alive.
- * Logged unconditionally that is ~17,000 lines a day of `GET /api/health 200`,
- * which buries every real error above it and makes the deploy log useless for the
- * one job it has. The production log is the only window into a running server, so
- * noise here has a direct cost.
- *
- * ⚠️ SKIP ONLY WHEN IT SUCCEEDED. A health check that starts answering 500 is
- * exactly the event worth seeing — that is Render about to cycle the instance — so
- * the status test keeps failures loud while silencing the steady hum. Do not
- * simplify this to a bare path comparison.
- */
+// Skip logging successful health checks (polled constantly); failures still log.
 app.use(
   morgan('dev', {
     skip: (req, res) => req.path === '/api/health' && res.statusCode < 400,
@@ -93,16 +59,12 @@ app.use(
 app.use(express.json());                   // Parse JSON request bodies
 app.use(express.urlencoded({ extended: true }));
 
-// ─────────────────────────────────────────────
-// Health Check (public — no auth required)
-// ─────────────────────────────────────────────
+// Health check (public)
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ─────────────────────────────────────────────
-// API Routes
-// ─────────────────────────────────────────────
+// API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/materials', materialRoutes);
 app.use('/api/spaces', studySpaceRoutes);
@@ -114,95 +76,18 @@ app.use('/api/games', gamesRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/educator', educatorRoutes);
-/*
- * `/api/subjects` is the `public.subjects` catalogue, read-only, for the two
- * portals that render a subject. It exists because both pickers used to map over
- * a hand-kept copy of the seeded rows and went on offering a subject after it was
- * deleted from the table. Students and educators only — the admin portal renders
- * no subject, and the catalogue is edited from the Supabase dashboard.
- */
+// Subject catalogue, read-only. Students and educators only.
 app.use('/api/subjects', subjectRoutes);
-/*
- * `/api/onboarding` records which first-run steps a student has been shown — the
- * guided tour and the panel on each study tool. Student-only; the other two
- * portals have no onboarding.
- *
- * ⚠️ IT GATES NOTHING. No middleware reads it and no route refuses on it, unlike
- * `profiles.must_change_password`. A failed read costs a student a repeated tour
- * step, never their access, which is why both client call sites swallow errors.
- */
+// First-run onboarding state. Gates nothing; a failed read only repeats a tour step.
 app.use('/api/onboarding', onboardingRoutes);
-/*
- * `/api/admin` is the third endpoint shape, and the narrowest in what it reads.
- * Per-space (`requireOwnedSpace`) is the student default; `/api/educator` is
- * scoped by a material the caller uploaded; this one is scoped by nothing but the
- * role, because administering every account is what the role is.
- *
- * It touches `profiles` and `auth.users` and NO LEARNING TABLE AT ALL — no
- * materials, no concepts, no mastery. That is the line all four scope statements
- * draw (ARCHITECTURE.md:14, README.md:191, CLAUDE.md:14, schema.sql:13), and the
- * line `educator_assignments` was removed for crossing.
- */
+// Admin: accounts only; touches no learning table.
 app.use('/api/admin', adminRoutes);
 
-/*
- * `/api/bkt` is gone, and should not come back.
- *
- * It exposed a `POST /recalculate` that proxied to a Python pyBKT microservice
- * with parameters contradicting the paper — P(S) = 0.1 instead of 0.15, and a
- * single flat P(G) = 0.2 in place of the eight context-sensitive values. Nothing
- * ever called it. BKT now runs in-process (`server/lib/bkt.ts`) at the only two
- * moments the paper permits: completing an adaptive test and rating a due
- * flashcard.
- *
- * Mastery is read back in exactly two shapes, and both are read-only:
- *
- *   - per space, via `GET /api/practice/space/:spaceId/mastery`, gated by
- *     `requireOwnedSpace()`. This is the default and every feature uses it.
- *   - globally, via `GET /api/dashboard` — the documented exception, because a
- *     dashboard is by definition about all of a student's spaces at once, and
- *     fanning out client-side would cost 1 + N requests.
- *
- * The global route is safe for a reason worth stating: it accepts NO body, NO
- * query and NO path parameter, so every set it reads is derived from the caller's
- * own id. It cannot be pointed at another student's data because there is nothing
- * to point with. Any future global read should meet the same bar.
- *
- * `/api/educator` is the third shape and the only one that reads ACROSS students,
- * because a class-level dashboard (paper p. 61, p. 90) is by definition about a
- * set of them. It is scoped by a material the caller uploaded rather than by the
- * caller's own id, so ownership is a check rather than a construction:
- * `requireOwnedMaterial()` 404s on anyone else's material, and the one route that
- * names a student in its path re-derives that student's role, status and grade
- * membership through `rosterStudent()` instead of trusting the id. Read-only —
- * mastery still has exactly two writers, both on the student side.
- */
+// No /api/bkt: mastery updates only on test completion and due flashcard ratings, and is read
+// per space, globally via /api/dashboard (accepts no input), or by educators per owned material.
 
-// ─────────────────────────────────────────────
-// Static Frontend — one origin in production
-// ─────────────────────────────────────────────
-/*
- * In development two processes run side by side: Vite serves the app on :3000 and
- * proxies `/api` here. In production there is only this one, so Express serves the
- * built app itself.
- *
- * That is a deliberate deployment choice, not a convenience. `apiFetch()` in
- * `src/lib/api.ts` calls `fetch('/api' + endpoint)` — a RELATIVE path with no
- * configurable base URL — and `ResourcesTab`'s SSE call does the same. Serving both
- * halves from one origin is what makes those work untouched, and it removes the
- * CORS preflight a split origin would add to every request.
- *
- * ⚠️ THE SPA FALLBACK IS NOT OPTIONAL. React Router owns paths like
- * `/admin/accounts` and `/student/space/:id`, which exist only in the browser. A
- * refresh on any route but `/` would otherwise fall through to the 404 handler
- * below and return `{"error":"Route not found"}` instead of the app.
- *
- * Guarded on `dist/index.html` existing so a machine that has never run
- * `npm run build` behaves exactly as it does today rather than throwing on
- * `sendFile`. The `/api/` test keeps unknown API routes answering JSON — without
- * it, a typo'd endpoint would return the HTML shell and surface as a JSON parse
- * error in the client.
- */
+// Static frontend: in production Express serves the built app from one origin (api.ts uses relative
+// paths). The SPA fallback is required for client routes; /api/ paths still 404 as JSON.
 const clientDist = path.resolve(__dirname, '../dist');
 const clientIndex = path.join(clientDist, 'index.html');
 
@@ -223,32 +108,24 @@ if (fs.existsSync(clientIndex)) {
   );
 }
 
-// ─────────────────────────────────────────────
-// 404 Handler (must come after all routes)
-// ─────────────────────────────────────────────
+// 404 handler (after all routes)
 app.use((_req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-// ─────────────────────────────────────────────
-// Global Error Handler
-// ─────────────────────────────────────────────
+// Global error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[Server Error]', err.message);
   res.status(500).json({ error: 'Internal server error', message: err.message });
 });
 
-// ─────────────────────────────────────────────
-// Start Server
-// ─────────────────────────────────────────────
+// Start server
 app.listen(PORT, () => {
   console.log(`\n🚀 LearnSyncAI API server running on http://localhost:${PORT}`);
   console.log(`   Health check: http://localhost:${PORT}/api/health`);
   console.log(`   Environment: ${process.env.NODE_ENV || 'development'}\n`);
 
-  // Warm the BKT parameter cache so the first student to finish a test does not
-  // pay the round trip, and — more usefully — so a missing or malformed row in
-  // `bkt_parameters` shows up in the boot log rather than mid-assessment.
+  // Warm the BKT parameter cache so a bad row shows in the boot log.
   void loadBktParameters()
     .then((p) => {
       console.log(
@@ -258,14 +135,7 @@ app.listen(PORT, () => {
     })
     .catch((err) => console.error('[BKT] Parameter warm-up failed:', err));
 
-  // Same reasoning as the warm-up above, for the other piece of configuration
-  // that is invisible until it is needed: `gemini.ts` only warned when the key was
-  // MISSING, so a key that was present but unusable stayed silent until an
-  // educator uploaded a PDF and extraction 401'd. One free metadata call at boot
-  // turns that into a line an operator reads before anyone tries to use the app.
-  //
-  // Non-blocking, exactly like the warm-up: a slow or unreachable Google must
-  // never delay startup, and this check must never be able to take the API down.
+  // Check the Gemini key with a free metadata call. Non-blocking: it must never delay or break startup.
   void verifyGeminiCredential()
     .then(() => console.log('   Gemini: credential OK\n'))
     .catch((err) => {

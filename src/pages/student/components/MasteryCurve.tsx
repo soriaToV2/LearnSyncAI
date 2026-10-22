@@ -2,29 +2,9 @@ import { masteryPercent } from '../../../lib/mastery';
 import type { CurvePoint } from '../../../lib/dashboard';
 
 /**
- * The mastery curve — EQ(4) document mastery over the student's history.
- *
- * Hand-rolled SVG. This codebase has no chart library and does not want one; the
- * precedent is the progress `Ring` in `cognitiveShared.tsx`.
- *
- * ══ THE X AXIS IS AN EVENT INDEX, NOT TIME ══
- * Each point is one learning opportunity, evenly spaced. Two reasons, and the
- * first is fatal on its own:
- *
- *   1. Every BKT update inside one study session shares a timestamp to the
- *      millisecond, so a real study day plots as a VERTICAL LINE on a time axis.
- *   2. BKT has no forgetting term. A two-week gap is a perfectly flat segment,
- *      which reads to a student as "you stalled" when the model is incapable of
- *      moving without evidence. That is the chart lying about the model.
- *
- * The paper's own time index is the learning opportunity `t`. Dates go under the
- * axis as text, where they inform without positioning anything.
- *
- * ══ THE Y AXIS IS FIXED 0–100 AND MUST STAY THAT WAY ══
- * Auto-scaling to the data's own range is the single most common way a chart
- * lies: a 10% → 24% climb would fill the box and read as mastery of everything.
- * Fixed bounds also make the 50 and 85 tier lines meaningful, so the shape is
- * read against the same thresholds as the number and the tier label beside it.
+ * EQ(4) mastery over the student's history, as hand-rolled SVG.
+ * X is a learning-opportunity index, not time (sessions share timestamps; BKT has no forgetting).
+ * Y is fixed 0–100: auto-scaling would exaggerate small gains.
  */
 
 interface MasteryCurveProps {
@@ -49,27 +29,15 @@ export default function MasteryCurve({
   const x = (i: number) => (i / (points.length - 1)) * W;
 
   const line = points.map((p, i) => `${x(i).toFixed(2)},${y(p.m_doc).toFixed(2)}`).join(' ');
-  // Closed back along the baseline so the area can be tinted under the line.
+  // Closed along the baseline so the area under the line can be tinted.
   const area = `0,${H} ${line} ${W},${H}`;
 
   const first = masteryPercent(points[0].m_doc);
   const last = masteryPercent(points[points.length - 1].m_doc);
 
   return (
-    /*
-     * ══ THE THRESHOLD LABELS LIVE IN HTML, IN A GUTTER — NOT IN THE SVG ══
-     * Two reasons, both consequences of `preserveAspectRatio="none"`:
-     *
-     *   1. It scales x and y by different factors, so `<text>` inside would be
-     *      stretched horizontally by whatever the container width happens to be —
-     *      unreadable at one width and merely wrong at every other.
-     *   2. Even undistorted, a label at the right edge would land on top of the
-     *      end-point marker, and one at the left edge on the first data point.
-     *
-     * So the plot gives up `pr-8` and the labels own that strip. They are
-     * positioned from the threshold value itself (`top: 100 - t`), so changing
-     * `thresholds` moves them correctly with no second constant to keep in sync.
-     */
+    // Threshold labels are HTML in a gutter, not SVG text: preserveAspectRatio="none" would stretch them,
+    // and they'd collide with the end points. Positioned from the threshold value.
     <div className="relative">
       <div className="pr-8">
         <svg
@@ -80,19 +48,14 @@ export default function MasteryCurve({
           aria-label={`Mastery went from ${first}% to ${last}% over ${points.length - 1} learning opportunities.`}
         >
           <defs>
-            {/* `currentColor` in a stop resolves against the stop's own inherited
-                colour, which comes from the <svg> carrying `toneClass` — so the
-                fill tracks the tier tone without the tone being passed twice. */}
+            {/* currentColor in a stop inherits the svg's toneClass, so the fill tracks the tier. */}
             <linearGradient id="masteryCurveFill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="currentColor" stopOpacity="0.22" />
               <stop offset="100%" stopColor="currentColor" stopOpacity="0.01" />
             </linearGradient>
           </defs>
 
-          {/* Drawn in white rather than `currentColor`: these are the axis, not the
-              data. Tinting them with the tier colour made them read as part of the
-              line, and at the opacity that suited a mid-tone they vanished entirely
-              against a foundational one. */}
+          {/* Axis lines in white, not currentColor, so they don't read as data. */}
           {thresholds.map((t) => (
             <line
               key={t}
@@ -110,8 +73,7 @@ export default function MasteryCurve({
 
           <polygon points={area} fill="url(#masteryCurveFill)" />
 
-          {/* `vectorEffect` is required: preserveAspectRatio="none" scales x and y by
-              different factors, which would otherwise squash the stroke width too. */}
+          {/* vectorEffect keeps the stroke width unscaled under preserveAspectRatio="none". */}
           <polyline
             points={line}
             fill="none"
@@ -132,8 +94,7 @@ export default function MasteryCurve({
         </svg>
       </div>
 
-      {/* `aria-hidden`: the SVG's own label already states the range, and reading
-          "85% 50%" out of context would say nothing about this student. */}
+      {/* aria-hidden: the SVG's label already states the range. */}
       <div aria-hidden="true">
         {thresholds.map((t) => (
           <span

@@ -19,111 +19,35 @@ import { suggestUsername } from '../lib/usernameSuggest';
 import { canReceiveMail, isPlaceholderEmail, placeholderEmailFor } from '../lib/placeholderEmail';
 
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- * ADMIN — ACCOUNT ADMINISTRATION, AND NOTHING ELSE
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * Four independent sources scope this role identically — `ARCHITECTURE.md:14`,
- * `README.md:182-191`, `CLAUDE.md:14` and `schema.sql:13`: create, edit and
- * disable accounts for educators and students, and **no learning content, study
- * activities or analytics**. There is precedent for holding that line: an
- * `educator_assignments` table (admin assigns teachers their subjects and grades)
- * was built and then removed as going *"beyond the specification, which scopes
- * the admin to 'creating, editing, disabling accounts'"*.
- *
- * So nothing in this file reads `materials`, `concepts`, `bkt_mastery` or any
- * other learning table. The only tables it touches are `profiles` and, through
- * the Supabase admin API, `auth.users`.
- *
- * ⚠️ THERE IS NO DELETE ROUTE, AND ONE MUST NOT BE ADDED CASUALLY.
- * Thirteen tables CASCADE from `profiles` — `study_spaces`, `bkt_mastery`,
- * `bkt_update_logs`, `practice_tests`, `practice_telemetry`, `cognitive_logs`,
- * `chatbot_logs`, `spaced_repetition_logs`, `gamification_profiles`,
- * `game_content`, `game_sessions`, `user_badges`, `activity_logs`. Deleting one
- * student destroys their entire measured history irrecoverably, which for a
- * 50-student study is the research data itself. `schema.sql` states the intended
- * idiom on the column: *"Set to disabled by an admin to revoke access without
- * deleting the account."* `POST /accounts/:userId/status` is that mechanism, and
- * it is already honoured by `requireRole`, `POST /api/auth/login`,
- * `private.auth_role()` and `rosterForGrades()`.
- *
- * (Deletion is also the one operation the schema fights: `materials.educator_id`
- * is `ON DELETE RESTRICT`, the only non-CASCADE FK in the database, so deleting a
- * publishing educator fails as an opaque Supabase Auth error rather than a
- * readable refusal.)
+ * Admin: account administration only. Never read a learning table here.
+ * There is deliberately no delete route: 13 tables cascade from `profiles`, so deleting a student
+ * destroys their study data. Disable instead.
  */
 
 const router = Router();
 
 router.use(authenticate, requireRole('admin'));
 
-/**
- * Mirrors `PROFILE_COLUMNS` in auth.routes.ts. Explicit so the client can type
- * against it.
- *
- * ⚠️ `must_change_password` IS LOAD-BEARING HERE AND WAS MISSING ONCE.
- * `accountState()` on the client derives the "Not activated" pill from it, and an
- * absent field reads as `false` — so every account in the list showed **Active**
- * however freshly created, while the dashboard (which selects the column in its
- * own query) counted them correctly. Two screens quietly disagreeing.
- *
- * A column added to `profiles` that any screen renders must be added here too;
- * the list, the detail view and both writers all serialise through this string.
- */
+/** Every column a screen renders must be listed here (a missing must_change_password showed every account Active). */
 const ACCOUNT_COLUMNS =
   'id, role, username, first_name, last_name, grade_level, status, must_change_password, created_at, updated_at';
 
-/** Raised by `ux_profiles_username_lower`; case-insensitive, so `Juan` collides with `juan`. */
+/** Raised by the case-insensitive `ux_profiles_username_lower`. */
 const UNIQUE_VIOLATION = '23505';
 
 const PAGE_SIZE = 25;
 
-/**
- * Ids per `.in()` list in `POST /import/precheck`, matching the 200 the mastery
- * readers chunk at. The list goes into the query string, so an unbounded one is
- * how that URL gets too long.
- */
+/** Chunk size for `.in()` lists, which go into the query string. */
 const USERNAME_CHECK_CHUNK = 200;
 
-/**
- * Paging for `emailOwners()` below — the only thing that still sweeps
- * `auth.users`, because addresses are not reachable any other way.
- * A school fits in a single page; the cap is a runaway guard, not a limit.
- */
+/** Paging for emailOwners(); addresses are only reachable by sweeping auth.users. The cap is a runaway guard. */
 const AUTH_PAGE_SIZE = 1000;
 const AUTH_MAX_PAGES = 20;
 
-/*
- * The placeholder-address helpers moved to `../lib/placeholderEmail` when the
- * self-service profile page needed the same "is this real?" test — see that file
- * for why `.invalid` and why only bulk import produces them now.
- */
-
 /**
- * ⚠️ A PASSWORD AN ADMINISTRATOR READS ALOUD TO A CLASS — `brave-otter-93`.
- *
- * This replaced a random 10-character string (`xK7mPq2Rtv`) which was strictly
- * stronger and unusable in practice: it cannot be dictated to a room of Grade 7
- * students, and every transcription error is indistinguishable from a forgotten
- * password. The proposal it heads off was making the password equal the username,
- * which would mean anyone who knows a student's NAME can sign in as them, since
- * usernames here are generated from names.
- *
- * THE ENTROPY TRADE, STATED HONESTLY:
- *
- *   username-as-password   1 guess
- *   this generator         ~128 x 128 x 90  =  ~1.5 million
- *   the 10-char random     ~55^10           =  ~2.5 x 10^17
- *
- * ⚠️ 1.5 million is only acceptable because of the two things that now surround
- * it, and IT MUST BE REVERTED IF EITHER IS REMOVED:
- *   1. the password is SINGLE-USE — `must_change_password` forces a replacement
- *      at first login, so it protects one sign-in, not an account for a year;
- *   2. Supabase rate-limits sign-in attempts by source IP, so an online guessing
- *      run against 1.5 million candidates is not available.
- *
- * The word lists are chosen so no pairing reads as an insult — these are printed
- * and handed to children.
+ * Memorable initial passwords (`brave-otter-93`, ~1.5M combinations), readable aloud to a class.
+ * Acceptable only because they are single-use (forced change at first login) and sign-in is
+ * rate-limited. Revert to random passwords if either stops holding.
  */
 const PASSWORD_ADJECTIVES = [
   'able', 'active', 'agile', 'alert', 'amber', 'ample', 'atomic', 'autumn',
@@ -163,7 +87,7 @@ const PASSWORD_NOUNS = [
   'temple', 'thistle', 'tiger', 'tulip', 'turtle', 'valley', 'walnut', 'willow',
 ] as const;
 
-/** Uniform over `max`, rejecting the biased tail — `% max` favours low values. */
+/** Uniform over `max` (rejection sampling; plain `% max` is biased). */
 function randomBelow(max: number): number {
   const limit = Math.floor(0xffffffff / max) * max;
   for (;;) {
@@ -175,20 +99,12 @@ function randomBelow(max: number): number {
 function generatePassword(): string {
   const adjective = PASSWORD_ADJECTIVES[randomBelow(PASSWORD_ADJECTIVES.length)];
   const noun = PASSWORD_NOUNS[randomBelow(PASSWORD_NOUNS.length)];
-  // 10-99, so the length never varies and there is no leading zero to lose.
+  // 10-99: fixed length, no leading zero.
   const number = 10 + randomBelow(90);
   return `${adjective}-${noun}-${number}`;
 }
 
-
-/**
- * Is this username already taken? Case-insensitive, matching the unique index.
- *
- * This is the *friendly* path only — it answers 409 before anything is written.
- * It is NOT the guarantee: two admins importing at once can both pass it. The
- * unique index is the real arbiter and `createAccount()` below handles losing
- * that race.
- */
+/** Case-insensitive pre-check for a friendly 409. The unique index is the real guarantee. */
 async function usernameTaken(username: string, exceptId?: string): Promise<boolean> {
   let query = supabaseAdmin.from('profiles').select('id').ilike('username', username);
   if (exceptId) query = query.neq('id', exceptId);
@@ -208,15 +124,7 @@ type AccountRow = {
   updated_at: string;
 };
 
-/**
- * The outcome of one creation attempt.
- *
- * `error` is always present and nullable rather than this being a discriminated
- * union on an `ok` flag: `tsconfig.json` does not enable `strict`, so a
- * `{ ok: true } | { ok: false }` union does not narrow at the call site and every
- * field access is an error. Checking `if (outcome.error)` needs no narrowing at
- * all.
- */
+/** Nullable `error` rather than a discriminated union, which doesn't narrow without `strict`. */
 type CreateOutcome = {
   error: { status: number; message: string } | null;
   /** Non-null exactly when `error` is null. */
@@ -233,25 +141,9 @@ const fail = (status: number, message: string): CreateOutcome => ({
 });
 
 /**
- * Create one account, end to end.
- *
- * ⚠️ THE VERIFY STEP IS NOT OPTIONAL, AND IT IS WHY THIS IS A FUNCTION.
- *
- * `handle_new_user()` fires on the `auth.users` INSERT and takes the username
- * from `raw_user_meta_data`. When that username is malformed or already taken it
- * **degrades to NULL rather than raising** — deliberately, because an exception
- * inside that trigger aborts the INSERT and surfaces as an opaque Supabase Auth
- * failure. The consequence here is that the naive implementation reports
- * "Account created" for an account that **cannot sign in at all**, with no error
- * anywhere.
- *
- * So: pre-check (friendly 409, nothing written) → create → **re-read the row and
- * confirm the username actually stuck** → on NULL, one targeted UPDATE, whose
- * `23505` is the authoritative answer → on collision, delete the auth user and
- * report the conflict rather than leaving an unusable account behind.
- *
- * The returned row is the re-read one. Never build a response from the request
- * body here: the body is what was asked for, the row is what happened.
+ * Creates one account. handle_new_user() silently NULLs a bad username, so: pre-check → create →
+ * re-read and confirm the username stuck → repair once → on collision delete and 409.
+ * Always respond from the re-read row, never the request body.
  */
 async function createAccount(input: CreateAccountInput): Promise<CreateOutcome> {
   const { role, first_name, last_name, username, grade_level } = input;
@@ -261,19 +153,7 @@ async function createAccount(input: CreateAccountInput): Promise<CreateOutcome> 
   }
 
   const password = input.password ?? generatePassword();
-  /*
-   * ⚠️ REACHABLE FROM BOTH CREATION PATHS, and Supabase is the reason it exists at
-   * all: `auth.users` requires an identity on every account, so "no email" cannot
-   * be stored as no email. `@pca.invalid` is RFC 2606's reserved TLD — it can
-   * never resolve, so it cannot be mistaken for deliverable or accidentally
-   * mailed. Every screen that prints an address must therefore filter it; see
-   * `isPlaceholderEmail()` / `canReceiveMail()`.
-   *
-   * The single-account form fed this only from 2026-09-09; before then
-   * `CreateAccountSchema` required an address. It does not any more — an admin
-   * creating an account for a student who has not given one should not be blocked,
-   * and the account is fully usable without it (the username is the credential).
-   */
+  // auth.users needs an identity, so a missing email becomes a placeholder.
   const email = input.email ?? placeholderEmailFor(username);
 
   const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -287,15 +167,7 @@ async function createAccount(input: CreateAccountInput): Promise<CreateOutcome> 
       last_name,
       username,
       ...(role === 'student' ? { grade_level } : {}),
-      /*
-       * ⚠️ EVERY ACCOUNT BORN HERE IS BORN UN-ACTIVATED, whether the password was
-       * generated or typed by the admin — in both cases the admin knows it, and
-       * for a bulk import so does everyone who saw the credentials table.
-       *
-       * Passed through metadata so `handle_new_user()` writes it in the same
-       * INSERT as the rest of the row. A follow-up UPDATE from here would leave a
-       * window in which the account exists, is usable, and is not gated.
-       */
+      // Born un-activated (the admin knows the password). Via metadata so there's no ungated window.
       must_change_password: true,
     },
   });
@@ -309,8 +181,7 @@ async function createAccount(input: CreateAccountInput): Promise<CreateOutcome> 
 
   const userId = created.user.id;
 
-  // The trigger has already inserted `profiles` (and `gamification_profiles` for
-  // a student). Read it back — this is the verification step described above.
+  // The trigger has inserted the profile; read it back to verify.
   let { data: account } = await supabaseAdmin
     .from('profiles')
     .select(ACCOUNT_COLUMNS)
@@ -323,8 +194,7 @@ async function createAccount(input: CreateAccountInput): Promise<CreateOutcome> 
   }
 
   if (account.username === null) {
-    // Lost the race, or the trigger disagreed with us about the format. One
-    // attempt against the unique index settles which.
+    // Lost a race or failed the trigger's format check; one UPDATE against the unique index settles it.
     const { data: repaired, error: repairError } = await supabaseAdmin
       .from('profiles')
       .update({ username })
@@ -345,17 +215,7 @@ async function createAccount(input: CreateAccountInput): Promise<CreateOutcome> 
   return { error: null, account, password, email };
 }
 
-/**
- * GET /api/admin/overview
- *
- * The counts on the admin dashboard. Accepts NOTHING — no body, no query, no path
- * parameter — so it has zero IDOR surface and needs no Zod schema, the same bar
- * `GET /api/dashboard` and `GET /api/educator/overview` are held to.
- *
- * ⚠️ ACCOUNTS ONLY. No mastery, no scores, no material counts — see the scope
- * note at the top of this file. Every figure here is a count of rows in
- * `profiles`, plus one fact from `auth.users` (see below).
- */
+/** GET /api/admin/overview: account counts only. Accepts no input, so no schema. */
 router.get('/overview', async (_req: Request, res: Response): Promise<void> => {
   const { data: rows, error } = await supabaseAdmin
     .from('profiles')
@@ -369,18 +229,6 @@ router.get('/overview', async (_req: Request, res: Response): Promise<void> => {
   const all = rows ?? [];
   const students = all.filter((r) => r.role === 'student');
 
-  /*
-   * ⚠️ THIS ROUTE NO LONGER TOUCHES `auth.users` AT ALL.
-   *
-   * It used to page `listUsers()` (50 per call) purely to compute "never signed
-   * in" from `last_sign_in_at`. `must_change_password` answers a better question
-   * from a plain column: "never signed in" only says the app was not opened,
-   * whereas "not activated" says the holder has not taken ownership of the
-   * account — which is the thing an admin acts on, and a superset of the other.
-   *
-   * `last_sign_in_at` is still shown on the account detail page, where it is one
-   * `getUserById` for one account rather than a paged sweep of the directory.
-   */
   const cannotSignIn = all.filter((r) => r.username === null);
   const notActivated = all.filter((r) => r.status === 'active' && r.must_change_password);
 
@@ -394,23 +242,15 @@ router.get('/overview', async (_req: Request, res: Response): Promise<void> => {
         active: all.filter((r) => r.status === 'active').length,
         disabled: all.filter((r) => r.status === 'disabled').length,
       },
-      /** Students per grade, 7–10. Educators and admins have no grade by constraint. */
       by_grade: [7, 8, 9, 10].map((grade) => ({
         grade,
         count: students.filter((s) => s.grade_level === grade).length,
       })),
-      /*
-       * The operational signals, mirroring the educator dashboard's `attention`:
-       * a list the UI renders only when non-empty. A permanent "all clear" card is
-       * a widget that reports nothing.
-       */
+      /** Rendered only when non-empty. */
       attention: {
-        /** `username IS NULL` — the `handle_new_user()` degradation. These accounts cannot log in. */
+        /** `username IS NULL`: these accounts cannot sign in. */
         cannot_sign_in: cannotSignIn.length,
-        /**
-         * Created and handed out, but the holder has not replaced the password the
-         * administrator set — so it is still known to more people than its owner.
-         */
+        /** Still holding the admin-set password. */
         not_activated: notActivated.length,
         disabled: all.filter((r) => r.status === 'disabled').length,
       },
@@ -418,16 +258,7 @@ router.get('/overview', async (_req: Request, res: Response): Promise<void> => {
   });
 });
 
-/**
- * GET /api/admin/accounts
- *
- * The account list. Filters map onto `idx_profiles_role_grade`, which already
- * exists.
- *
- * ⚠️ DELIBERATELY DOES NOT FETCH EMAILS. `profiles` has no email column, so one
- * would cost a `getUserById` per row — 50+ round trips to render a list whose
- * identifier is the username anyway. The detail route below fetches exactly one.
- */
+/** GET /api/admin/accounts. No emails: they'd cost one getUserById per row. */
 router.get('/accounts', async (req: Request, res: Response): Promise<void> => {
   const parsed = ListAccountsQuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -450,8 +281,7 @@ router.get('/accounts', async (req: Request, res: Response): Promise<void> => {
   if (grade !== undefined) query = query.eq('grade_level', grade);
   if (status) query = query.eq('status', status);
   if (q) {
-    // Commas separate the OR terms in PostgREST, so a comma in the search string
-    // would be read as syntax. Nothing else here is a metacharacter for `ilike`.
+    // Commas are PostgREST OR syntax.
     const term = q.replace(/[,]/g, ' ');
     query = query.or(
       `first_name.ilike.%${term}%,last_name.ilike.%${term}%,username.ilike.%${term}%`
@@ -475,19 +305,7 @@ router.get('/accounts', async (req: Request, res: Response): Promise<void> => {
   });
 });
 
-/**
- * GET /api/admin/accounts/:userId
- *
- * One account, plus the two facts that live on `auth.users` rather than
- * `profiles`: the contact email and `last_sign_in_at`.
- *
- * A user id in the path is correct HERE and is not the pattern `GET /api/dashboard`
- * and `GET /api/educator/overview` avoid. Those derive everything from
- * `req.user!.id` because a *student's* id in a URL is an IDOR surface for a
- * student-facing route. Administering every account is this role's entire job;
- * `requireRole('admin')` is the authorisation, and there is nothing narrower to
- * scope to.
- */
+/** GET /api/admin/accounts/:userId: the profile plus email and last sign-in from auth.users. */
 router.get('/accounts/:userId', async (req: Request, res: Response): Promise<void> => {
   const { data: account } = await supabaseAdmin
     .from('profiles')
@@ -506,15 +324,8 @@ router.get('/accounts/:userId', async (req: Request, res: Response): Promise<voi
     data: {
       ...account,
       email: authUser?.user?.email ?? null,
-      /** True when the address is a `.invalid` placeholder — the client shows "None". */
       email_is_placeholder: isPlaceholderEmail(authUser?.user?.email),
-      /**
-       * ⚠️ WIDER, AND IT IS THIS ONE THE UI PRINTS BY. The flag above is false for
-       * `admin` and `educ1`, whose addresses are bare words left behind by
-       * migration 0021 — so keying the display off it showed an administrator the
-       * word `admin` as their own contact address. It also decides whether this
-       * account could recover its own password by email.
-       */
+      /** Wider than the placeholder flag; the UI displays by this one. */
       email_can_receive: canReceiveMail(authUser?.user?.email),
       last_sign_in_at: authUser?.user?.last_sign_in_at ?? null,
     },
@@ -522,23 +333,8 @@ router.get('/accounts/:userId', async (req: Request, res: Response): Promise<voi
 });
 
 /**
- * POST /api/admin/username-suggestion
- *
- * `{ first_name, last_name }` → `{ username }`, guaranteed free at the moment of
- * the call. Backs the Generate button beside the username field.
- *
- * ⚠️ THIS IS THE ENDPOINT THE CODEBASE DELIBERATELY DOES NOT HAVE, AND IT IS SAFE
- * ONLY BECAUSE OF `requireRole('admin')` ABOVE. A username-availability check that
- * an unauthenticated caller could reach is an enumeration oracle: someone could
- * work through plausible Filipino names and learn which children attend this one
- * named school. That is the same reasoning that makes `POST /api/auth/login`
- * return one identical message for every failure, and why no such lookup exists
- * for the sign-up page.
- *
- * An administrator can already read the entire account list, so this discloses
- * nothing they cannot see by scrolling. **If anyone ever proposes reusing it for
- * self-registration, that reasoning collapses — do not move it out from behind
- * the admin role.**
+ * POST /api/admin/username-suggestion: a currently free username for a name.
+ * An enumeration oracle, safe only behind the admin role. Never reuse it for sign-up.
  */
 router.post('/username-suggestion', async (req: Request, res: Response): Promise<void> => {
   const parsed = SuggestUsernameSchema.safeParse(req.body);
@@ -561,28 +357,8 @@ router.post('/username-suggestion', async (req: Request, res: Response): Promise
 });
 
 /**
- * POST /api/admin/import/precheck
- *
- * `{ usernames, emails }` → `{ taken_usernames, taken_emails }`. Backs the
- * bulk-import review screen, so anything already belonging to an account is
- * flagged beside the row's other problems **before** anything is written.
- *
- * ⚠️ SAME ENUMERATION ORACLE AS `/username-suggestion` ABOVE, SAFE FOR THE SAME
- * REASON AND ONLY THAT REASON — `requireRole('admin')`. See that route's JSDoc;
- * everything it says applies here, and the email half is worse if ever leaked
- * because it confirms a real address for a named child.
- *
- * ⚠️ THIS IS A COURTESY, NOT THE GUARANTEE. Two admins importing overlapping
- * files can both pass it, and an account can be created in the seconds between
- * this call and the import. `usernameTaken()` inside `createAccount()`, the
- * `ux_profiles_username_lower` unique index and Supabase's own
- * `users_email_partial_key` remain the real arbiters, and the per-row 409 stays
- * reachable. What this buys is that the *common* case — a file re-uploaded after
- * a partial import, or siblings sharing a parent's address — is caught on the
- * review screen instead of halfway through creating a class.
- *
- * Both halves in one call: they are needed at the same instant for the same
- * decision, and splitting them would let one succeed while the other failed.
+ * POST /api/admin/import/precheck: which usernames/emails already exist, flagged before import.
+ * Admin-only oracle. A courtesy, not the guarantee; the unique indexes and per-row 409 still apply.
  */
 router.post('/import/precheck', async (req: Request, res: Response): Promise<void> => {
   const parsed = ImportPrecheckSchema.safeParse(req.body);
@@ -591,14 +367,7 @@ router.post('/import/precheck', async (req: Request, res: Response): Promise<voi
     return;
   }
 
-  /*
-   * Usernames live on `profiles`, so this is a plain lookup.
-   * `profiles_username_format` permits lowercase only and `UsernameField`
-   * lowercases before validating, so `.in()` is already case-insensitive in
-   * effect and needs no `ilike` fan-out. Chunked at the same 200 the mastery
-   * readers use — the list goes into the query string, and an unbounded one is
-   * how that URL gets too long.
-   */
+  // Usernames are always lowercase, so a plain `.in()` is case-insensitive in effect.
   const wantedUsernames = [...new Set(parsed.data.usernames)];
   const taken_usernames: string[] = [];
 
@@ -618,8 +387,6 @@ router.post('/import/precheck', async (req: Request, res: Response): Promise<voi
     }
   }
 
-  // The sweep lives in `emailOwners()` — see there for why `auth.users` can only
-  // be reached this way. This caller wants the addresses, not who holds them.
   let taken_emails: string[];
   try {
     taken_emails = [...(await emailOwners(new Set(parsed.data.emails))).keys()];
@@ -634,13 +401,7 @@ router.post('/import/precheck', async (req: Request, res: Response): Promise<voi
   res.json({ data: { taken_usernames, taken_emails } });
 });
 
-/**
- * POST /api/admin/accounts
- *
- * Create one student or educator. The response carries the password **once** —
- * it is not stored anywhere in readable form and cannot be retrieved later, only
- * reset.
- */
+/** POST /api/admin/accounts. The response carries the password once; it can only be reset later. */
 router.post('/accounts', async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateAccountSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -670,22 +431,8 @@ router.post('/accounts', async (req: Request, res: Response): Promise<void> => {
 });
 
 /**
- * Which of these addresses already belong to an account, and to whom.
- *
- * ⚠️ THE ONLY ROUTE TO THIS FACT. Addresses live on `auth.users`, which is not
- * reachable through PostgREST — there is no `.from('users')` for it and no
- * `getUserByEmail` in the admin SDK — so paging `listUsers()` and intersecting in
- * memory is the whole available mechanism.
- *
- * `GET /overview` deliberately STOPPED doing this, and that is not a
- * contradiction: it swept every page on every dashboard load to answer a question
- * a plain column read answered better. Both callers here need a fact that has no
- * other source, and each runs once, on an explicit admin action — a file upload,
- * or classifying a failed email change.
- *
- * At 1000 per page a school is one request. The page cap is a runaway guard, not
- * an expected limit. Throws on a sweep failure; both callers decide what that
- * means for them.
+ * Address → owner id for the wanted addresses. auth.users isn't reachable via PostgREST and the SDK
+ * has no getUserByEmail, so this pages listUsers(). Run only on explicit admin actions. Throws on failure.
  */
 async function emailOwners(wanted: Set<string>): Promise<Map<string, string>> {
   const owners = new Map<string, string>();
@@ -703,7 +450,7 @@ async function emailOwners(wanted: Set<string>): Promise<Map<string, string>> {
       const email = user.email?.toLowerCase();
       if (email && wanted.has(email)) owners.set(email, user.id);
     }
-    // A short page is the last page. Without this the loop always runs the cap.
+    // A short page is the last page.
     if (users.length < AUTH_PAGE_SIZE) break;
   }
 
@@ -711,15 +458,8 @@ async function emailOwners(wanted: Set<string>): Promise<Map<string, string>> {
 }
 
 /**
- * PATCH /api/admin/accounts/:userId
- *
- * Names, username, role and grade level. `status` has its own route; password has
- * its own route.
- *
- * ⚠️ `UpdateAccountSchema` IS THE ONLY THING STOPPING A ROLE ESCALATION HERE.
- * `enforce_profile_immutables()` looks like a second line of defence and is not —
- * `auth.uid()` is NULL for the service role Express holds, so the trigger returns
- * early for every request that reaches this file.
+ * PATCH /api/admin/accounts/:userId: names, username, role, grade.
+ * UpdateAccountSchema is the only guard against role escalation (the trigger is inert here).
  */
 router.patch('/accounts/:userId', async (req: Request, res: Response): Promise<void> => {
   const parsed = UpdateAccountSchema.safeParse(req.body);
@@ -742,11 +482,7 @@ router.patch('/accounts/:userId', async (req: Request, res: Response): Promise<v
     return;
   }
 
-  /*
-   * ⚠️ SELF-LOCKOUT GUARD. There is exactly one admin account on this deployment.
-   * An admin who changed their own role would lock every administrator out of the
-   * system permanently, with no way back short of the Supabase dashboard.
-   */
+  // Self-lockout guard: there is one admin account.
   if (patch.role && targetId === req.user!.id) {
     res.status(400).json({
       error: 'Not allowed',
@@ -755,12 +491,7 @@ router.patch('/accounts/:userId', async (req: Request, res: Response): Promise<v
     return;
   }
 
-  /*
-   * An existing admin is not demotable through this portal either — `role` is
-   * typed `student | educator`, so this is the *target's* current role, not the
-   * requested one. Editing another admin's name is fine; changing what they are
-   * is not something a peer should do from a web form.
-   */
+  // An existing admin's role can't be changed here (checks the target's current role).
   if (patch.role && current.role === 'admin') {
     res.status(400).json({
       error: 'Not allowed',
@@ -769,15 +500,7 @@ router.patch('/accounts/:userId', async (req: Request, res: Response): Promise<v
     return;
   }
 
-  /*
-   * ⚠️ ROLE AND GRADE MOVE TOGETHER, AND THE SCHEMA CANNOT SEE THE WHOLE RULE.
-   *
-   * `profiles_student_needs_grade` is `CHECK (role <> 'student' OR grade_level IS
-   * NOT NULL)`. A partial PATCH does not know the resulting role without the row,
-   * so Zod validates what it can (role+grade sent together) and the resolved pair
-   * is checked here. Without this a `{ role: 'student' }` on an educator reaches
-   * Postgres and comes back as a raw constraint name.
-   */
+  // Check the resolved role/grade pair (profiles_student_needs_grade); Zod can't see the current row.
   const nextRole = patch.role ?? current.role;
   const nextGrade =
     patch.grade_level !== undefined ? patch.grade_level : current.grade_level;
@@ -790,8 +513,7 @@ router.patch('/accounts/:userId', async (req: Request, res: Response): Promise<v
     return;
   }
 
-  // An educator carrying a stale grade renders as "Grade 9" in the sidebar via
-  // `subtitleFor()`, so student → educator clears it rather than leaving it.
+  // Student → educator clears the grade.
   const clearGrade = nextRole !== 'student' && nextGrade !== null;
 
   if (patch.username && (await usernameTaken(patch.username, targetId))) {
@@ -826,16 +548,8 @@ router.patch('/accounts/:userId', async (req: Request, res: Response): Promise<v
 });
 
 /**
- * POST /api/admin/accounts/:userId/status
- *
- * Enable or disable. This is the portal's replacement for deletion, and the
- * reason there is no delete route — see the file header.
- *
- * Disabling takes effect **immediately and completely**: `requireRole` re-reads
- * `status` on every single request, so a live JWT stops working at once, and
- * `POST /api/auth/login` refuses a new session with the same generic message
- * every other failure returns. Nothing is destroyed — re-enabling restores the
- * account exactly as it was, with every study space and mastery row intact.
+ * POST /api/admin/accounts/:userId/status: enable/disable, in place of deletion.
+ * Takes effect on the next request (requireRole re-reads status). Fully reversible.
  */
 router.post('/accounts/:userId/status', async (req: Request, res: Response): Promise<void> => {
   const parsed = SetAccountStatusSchema.safeParse(req.body);
@@ -846,11 +560,7 @@ router.post('/accounts/:userId/status', async (req: Request, res: Response): Pro
 
   const targetId = req.params.userId;
 
-  /*
-   * ⚠️ SELF-LOCKOUT GUARD — the other half of the one in PATCH above. An admin
-   * disabling themselves is locked out by `requireRole` on their very next
-   * request, including the request that would undo it.
-   */
+  // Self-lockout guard.
   if (targetId === req.user!.id) {
     res.status(400).json({
       error: 'Not allowed',
@@ -881,44 +591,9 @@ router.post('/accounts/:userId/status', async (req: Request, res: Response): Pro
 });
 
 /**
- * POST /api/admin/accounts/:userId/password
- *
- * ⚠️ THIS IS THE PASSWORD-RECOVERY PATH THAT ALWAYS WORKS — TIER 2 OF TWO, AND
- * THE ONE THAT NEVER FAILS TO BE AVAILABLE.
- *
- * `POST /api/auth/forgot-password` now covers accounts that have a deliverable
- * address on file, but that is opt-in and most accounts do not: CSV import leaves
- * the email column optional and generates a `@pca.invalid` placeholder, and the
- * accounts predating migration 0021 hold bare words (`admin`, `educ1`). For every
- * one of those, this route is still the only way back in — so it must never be
- * removed on the grounds that self-service reset exists.
- *
- * ⚠️ IT RE-ARMS `must_change_password`; THE SELF-SERVICE RESET CLEARS IT. The rule
- * is who has seen the password. An admin choosing one has seen it — and after a
- * bulk import so has everyone who saw the credentials table — so the holder must
- * replace it. A student who set their own through a mailed code has not exposed
- * it to anybody, so the gate is already satisfied.
- *
- * It takes no current password: the admin is not the account holder and cannot
- * know it. `requireRole('admin')` is the authorisation — which is precisely why
- * the self-lockout guards above matter.
- *
- * ✅ IT DOES REVOKE THE TARGET'S OPEN SESSIONS. Measured 2026-08-15 against this
- * project: after `updateUserById({ password })`, an access token issued moments
- * earlier answers **401**, and its refresh token is rejected outright with
- * "Refresh Token Not Found". So a reset genuinely locks out a device the student
- * left signed in, and the UI says so.
- *
- * ⚠️ THAT PROPERTY DEPENDS ON `authenticate` CALLING `supabaseAdmin.auth.getUser(token)`.
- * That is a round trip to the auth server, not a local signature check, which is
- * what lets a revoked session be noticed at all. Verifying the JWT locally is the
- * obvious way to save a hop off every request — and doing so would silently turn
- * every already-open session into one that survives a password reset until it
- * expires. Do not make that change without revisiting this route and the copy on
- * the account page.
- *
- * `supabaseAdmin.auth.admin.signOut(jwt, scope)` is NOT usable here regardless:
- * it identifies sessions by JWT and we hold the admin's, not the target's.
+ * POST /api/admin/accounts/:userId/password: the recovery path that always works; never remove it.
+ * Re-arms must_change_password. Open sessions are revoked only because `authenticate` checks tokens
+ * with the auth server; verifying JWTs locally would break that.
  */
 router.post('/accounts/:userId/password', async (req: Request, res: Response): Promise<void> => {
   const parsed = ResetAccountPasswordSchema.safeParse(req.body);
@@ -947,19 +622,7 @@ router.post('/accounts/:userId/password', async (req: Request, res: Response): P
     return;
   }
 
-  /*
-   * ⚠️ RE-ARM THE ACTIVATION GATE. The admin just chose this password and knows
-   * it, which is the same condition a newly created account is in — so the same
-   * rule applies: a password an administrator has seen never stays in use.
-   *
-   * This is the SECOND of the two call sites that arm the flag (creation is the
-   * other). Missing it would mean a forgotten-password reset quietly downgrades
-   * an account from "only its owner knows the password" back to "the admin knows
-   * it too", permanently.
-   *
-   * After the reset, never before — see the same ordering note in
-   * `POST /api/auth/change-password`.
-   */
+  // Re-arm the activation gate (the admin knows this password). After the reset, never before.
   const { error: flagError } = await supabaseAdmin
     .from('profiles')
     .update({ must_change_password: true, updated_at: new Date().toISOString() })
@@ -973,7 +636,7 @@ router.post('/accounts/:userId/password', async (req: Request, res: Response): P
     data: {
       id: account.id,
       username: account.username,
-      /** False means the reset password will be usable indefinitely — say so. */
+      /** False means the gate wasn't re-armed. */
       must_change_password: !flagError,
     },
     message: 'Password reset',
@@ -981,36 +644,8 @@ router.post('/accounts/:userId/password', async (req: Request, res: Response): P
 });
 
 /**
- * POST /api/admin/accounts/:userId/email
- *
- * Replace an account's contact address. The fix for an address entered wrongly at
- * creation, and the only way an imported student ever gets off the
- * `<username>@pca.invalid` placeholder that `canReceiveMail()` rejects — without
- * this, such an account can never reach Tier 1 password recovery at all, because
- * `EmailRecoveryBanner` is the only other route to an address and it asks the
- * holder, who cannot see that theirs is undeliverable.
- *
- * ⚠️ IT APPLIES IMMEDIATELY. `admin.updateUserById({ email })` is precisely the
- * call `POST /api/auth/change-email` was rewritten to STOP using, so the contrast
- * matters: that route is driven by whoever holds a live session, which on a shared
- * school computer is not proof of anything, so it proves the destination with a
- * mailed code. This route is driven by `requireRole('admin')`, and an admin can
- * satisfy neither proof for somebody else — no password, no mailbox. It also grants
- * them nothing new, since the same role already holds
- * `POST /accounts/:userId/password`. See `SetAccountEmailSchema`.
- *
- * ⚠️ SERVICE-ROLE ADMIN API, SO THE "Secure email change" DASHBOARD SETTING DOES
- * NOT APPLY. That setting governs the user-scoped `updateUser({ email })` the
- * self-service route uses; this one mails nothing and needs no confirmation from
- * either address. `email_confirm: true` for the same reason `createUser()` sets it
- * above — no SMTP is configured, so an unconfirmed address could never be confirmed.
- *
- * It deliberately does NOT re-arm `must_change_password` and does NOT revoke
- * sessions: an email is not a credential on this platform. Sign-in is unaffected —
- * `POST /api/auth/login` re-resolves `username -> profiles.id -> getUserById` on
- * every request, so the student keeps the username and password they already have.
- * The `email` claim in an already-issued JWT goes stale until it refreshes; nothing
- * authorises on it.
+ * POST /api/admin/accounts/:userId/email: replace an account's contact address (e.g. a placeholder).
+ * Applies immediately with no code. Email isn't a credential, so no gate re-arm or session revoke.
  */
 router.post('/accounts/:userId/email', async (req: Request, res: Response): Promise<void> => {
   const parsed = SetAccountEmailSchema.safeParse(req.body);
@@ -1036,26 +671,13 @@ router.post('/accounts/:userId/email', async (req: Request, res: Response): Prom
   });
 
   if (error) {
-    /*
-     * ⚠️ `updateUserById` REPORTS A DUPLICATE ADDRESS AS AN OPAQUE 500, AND THERE
-     * IS NOTHING IN IT TO PARSE. Measured against this project 2026-09-04: an
-     * `AuthRetryableFetchError` whose `message` is the literal two-character
-     * string `{}`, with no `code` and no body — quite unlike `createUser`, which
-     * says "already been registered" and is why `createAccount()` and
-     * `POST /api/auth/change-email` can both string-match their collisions.
-     * Copying that match here compiles, reads correctly, and silently reports
-     * every duplicate as a generic 400.
-     *
-     * So the collision is classified by ASKING who owns the address instead of by
-     * reading the answer. Only on the failure path — the happy path stays a single
-     * call and never sweeps.
-     */
+    // updateUserById reports a duplicate as an opaque `{}` error, so don't string-match it:
+    // ask who owns the address instead (failure path only).
     let owner: string | undefined;
     try {
       owner = (await emailOwners(new Set([parsed.data.email]))).get(parsed.data.email);
     } catch {
-      // Diagnosis, not the operation. A failed sweep must not change what is
-      // reported about a write that has already failed.
+      // Diagnosis only; a failed sweep doesn't change the outcome.
     }
 
     if (owner && owner !== account.id) {
@@ -1066,11 +688,7 @@ router.post('/accounts/:userId/email', async (req: Request, res: Response): Prom
       return;
     }
 
-    /*
-     * A readable upstream complaint is about the address itself, so it is the
-     * admin's to see and act on. The opaque `{}` is not — it would render as
-     * literal braces on the account page.
-     */
+    // Show a readable upstream message; never the opaque `{}`.
     const detail = (error.message ?? '').trim();
     const readable = detail && detail !== '{}';
     res.status(readable ? 400 : 500).json({
@@ -1080,8 +698,7 @@ router.post('/accounts/:userId/email', async (req: Request, res: Response): Prom
     return;
   }
 
-  // Read the address back off the updated user, not the request body — the same
-  // "row, not what was asked for" rule `createAccount()` follows.
+  // From the updated user, not the request body.
   const email = updated?.user?.email ?? parsed.data.email;
 
   res.json({
@@ -1089,7 +706,6 @@ router.post('/accounts/:userId/email', async (req: Request, res: Response): Prom
       id: account.id,
       email,
       email_is_placeholder: isPlaceholderEmail(email),
-      /** The one the UI prints by — see `lib/placeholderEmail.ts`. */
       email_can_receive: canReceiveMail(email),
     },
     message: 'Email updated',
@@ -1097,24 +713,8 @@ router.post('/accounts/:userId/email', async (req: Request, res: Response): Prom
 });
 
 /**
- * POST /api/admin/accounts/import
- *
- * Bulk creation for the paper's 50-student study — the alternative is fifty trips
- * through one form.
- *
- * Every row goes through the same `createAccount()` as the single-account route,
- * so a bulk-created account is subject to identical rules; in particular a student
- * still cannot be created without a deliberate grade level.
- *
- * ⚠️ SEQUENTIAL, NOT `Promise.all`. Supabase rate-limits the auth admin API by
- * source IP, and every one of these calls shares the server's — the same
- * constraint already recorded for the login route. Fifty parallel creations is a
- * throttle, not a speed-up.
- *
- * Rows are reported individually rather than the whole import failing: the file
- * is validated up front (including within-file duplicates, in
- * `ImportAccountsSchema`), so a failure this late is a genuine race for a
- * username, and 49 good accounts should not be discarded for it.
+ * POST /api/admin/accounts/import: bulk creation through createAccount().
+ * Sequential, never Promise.all (Supabase rate-limits the auth admin API by IP). Rows report individually.
  */
 router.post('/accounts/import', async (req: Request, res: Response): Promise<void> => {
   const parsed = ImportAccountsSchema.safeParse(req.body);
@@ -1123,14 +723,7 @@ router.post('/accounts/import', async (req: Request, res: Response): Promise<voi
     return;
   }
 
-  /*
-   * ⚠️ THE NAME IS PART OF THE RESULT, NOT DECORATION. The credentials the admin
-   * downloads are handed out to fifty children, and a file of usernames and
-   * passwords with no names attached cannot be handed to anyone — there is no way
-   * to tell whose row is whose. The client must never re-derive it by index
-   * against the request it sent: a row can drop out (a name that yields no
-   * username `continue`s below), so the two arrays are not guaranteed to align.
-   */
+  // Names are part of each result so the client never matches rows by index (rows can drop out).
   const results: Array<{
     row: number;
     username: string;
@@ -1142,23 +735,14 @@ router.post('/accounts/import', async (req: Request, res: Response): Promise<voi
     id?: string;
   }> = [];
 
-  /*
-   * Names claimed earlier in THIS batch. `suggestUsername()` checks the database,
-   * but rows are created one at a time — so without this, a file containing two
-   * students called Maria Santos would be handed `maria.santos` twice and the
-   * second row would fail on the unique index halfway through the import.
-   */
+  // Usernames claimed earlier in this batch but not yet written.
   const claimed = new Set<string>();
   for (const row of parsed.data.rows) {
     if (row.username) claimed.add(row.username.toLowerCase());
   }
 
   for (const [index, row] of parsed.data.rows.entries()) {
-    /*
-     * A blank username column is filled from the name. Fifty students should not
-     * need fifty hand-written usernames, and the same rules apply either way —
-     * `CreateAccountSchema` has already validated any username that WAS supplied.
-     */
+    // A blank username is generated from the name.
     let account = row;
     if (!row.username) {
       const generated = await suggestUsername(row.first_name, row.last_name, claimed);
@@ -1178,9 +762,7 @@ router.post('/accounts/import', async (req: Request, res: Response): Promise<voi
     }
 
     const result = await createAccount(account);
-    // `account.username`, not `row.username` — the latter is blank on any row
-    // whose username was generated above, and the admin needs the real one to
-    // hand out.
+    // account.username, not row.username, which is blank when generated.
     results.push(
       result.error
         ? {
@@ -1194,9 +776,7 @@ router.post('/accounts/import', async (req: Request, res: Response): Promise<voi
         : {
             row: index + 1,
             username: account.username,
-            // From the RE-READ profile row, not the request body — the same rule
-            // `createAccount()` follows for the username. The body is what was
-            // asked for; the row is what exists.
+            // From the re-read row, not the request body.
             first_name: result.account!.first_name,
             last_name: result.account!.last_name,
             ok: true,

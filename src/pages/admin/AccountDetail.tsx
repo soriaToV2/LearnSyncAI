@@ -25,36 +25,19 @@ import {
 import { CannotSignInPill, ErrorBanner, formatWhen, RolePill, StatusPill } from './components/accountUi';
 
 /**
- * One account, and everything an administrator may do to it.
- *
- * ⚠️ THREE FORMS, NOT ONE — the same split, for the same reason, as the
- * self-service Profile page. Details, password and status are three actions with
- * three different consequences: a rejected password must not roll back a saved
- * name, and disabling an account is not something to bundle behind a Save that
- * also fixes a typo in a surname.
- *
- * A user id in the URL is correct here and is NOT the pattern the student and
- * educator dashboards avoid. Those derive everything from `req.user!.id` because
- * a student's id in a URL is an IDOR surface on a student-facing route.
- * Administering every account is what this role IS; `requireRole('admin')` on the
- * server is the authorisation, and there is nothing narrower to scope to.
+ * One account and every admin action on it, as separate forms (details, email, password, status) so
+ * one rejected change never rolls back another. A user id in the URL is fine here: requireRole('admin')
+ * is the authorisation.
  */
 
 const GRADES = [7, 8, 9, 10];
 /* The password rule lives in `src/lib/account.ts`, mirroring the server. */
 
-/**
- * ⚠️ `ring-inset`, matching the rest of the admin portal. Several of these
- * controls are segmented pickers spaced `gap-2` — the four grade buttons are 8px
- * apart — so an outward ring plus an offset overlaps the neighbour it sits
- * beside. The page had NO focus indicator on anything: not the back link, not
- * the role or grade pickers, not the copy button, and not the three buttons that
- * disable an account.
- */
+/** ring-inset: the segmented pickers sit 8px apart, so an outward ring overlaps the neighbour. */
 const FOCUS =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
-// ── details: names, username, role, grade ───────────────────────────────────
+// Details: names, username, role, grade
 
 function DetailsForm({
   account,
@@ -84,12 +67,7 @@ function DetailsForm({
     setGrade(account.grade_level);
   }, [account]);
 
-  /*
-   * An existing admin's role is not editable here, and neither is your own — both
-   * are refused by the server (400). Rendering the control anyway would be a form
-   * that looks functional and cannot save, which is the failure mode this codebase
-   * keeps removing.
-   */
+  /* The server refuses role changes for an existing admin or yourself (400), so don't render the control. */
   const roleEditable = account.role !== 'admin' && !isSelf;
 
   const trimmed = {
@@ -108,8 +86,7 @@ function DetailsForm({
     role !== account.role ||
     grade !== account.grade_level;
 
-  // A student must end up with a grade; `profiles_student_needs_grade` enforces
-  // it in the database and the server re-checks the resolved pair.
+  // A student must have a grade (profiles_student_needs_grade); the server re-checks the resolved pair.
   const gradeOk = role !== 'student' || grade !== null;
   const canSave =
     dirty && trimmed.first.length > 0 && trimmed.last.length > 0 && !usernameError && gradeOk && !busy;
@@ -125,8 +102,7 @@ function DetailsForm({
         ...(trimmed.last !== account.last_name ? { last_name: trimmed.last } : {}),
         ...(trimmed.username !== (account.username ?? '') ? { username: trimmed.username } : {}),
         ...(role !== account.role ? { role: role as AssignableRole } : {}),
-        // Role and grade travel together: student → educator must clear it in the
-        // same request or the DB CHECK fires.
+        // Role and grade travel together: student → educator clears it in the same request.
         ...(grade !== account.grade_level || role !== account.role
           ? { grade_level: role === 'student' ? grade : null }
           : {}),
@@ -192,11 +168,7 @@ function DetailsForm({
               ))}
             </div>
             {role !== account.role && (
-              /*
-               * Worth stating plainly: nothing cascades on a role change, so it is
-               * fully reversible — the same property archiving a material relies
-               * on. Without saying so, an admin reasonably assumes it is not.
-               */
+              /* Nothing cascades, so a role change is fully reversible. Say so. */
               <p className="font-sans text-[11px] text-amber-300/90 leading-relaxed animate-swap-in">
                 Changing the role changes which portal they land in. Nothing is deleted — their
                 study spaces and progress stay exactly as they are, and switching back restores
@@ -245,32 +217,12 @@ function DetailsForm({
   );
 }
 
-// -- email address -----------------------------------------------------------
+// Email address
 
 /**
- * The fourth form, and the one that was missing: an admin could fix a wrong name,
- * role, grade, password and status, but never a wrong address.
- *
- * THE ONLY WAY AN ACCOUNT EVER LEAVES A `@pca.invalid` PLACEHOLDER, AND SO THE
- * ONLY WAY MOST ACCOUNTS REACH TIER 1 PASSWORD RECOVERY AT ALL. CSV import leaves
- * the email column optional and generates one; the holder cannot fix that for
- * themselves, because nothing tells a student their stored address is
- * undeliverable, and `EmailRecoveryBanner` is the only other route to an address
- * anywhere in the product.
- *
- * IT CONFIRMS BEFORE APPLYING, BECAUSE NOTHING VERIFIES THE ADDRESS. The route
- * applies it outright: an admin can prove neither the account (no password) nor
- * the destination (no mailbox), which is exactly the proof the self-service
- * `POST /api/auth/change-email` demands and an administrator can never supply. A
- * typo landing in a real stranger inbox would quietly send that child future
- * reset codes, so the confirmation echoes the address back first.
- *
- * The confirmation renders IN PLACE, replacing the action row -- never a nested
- * `Modal`, matching `StatusForm` below.
- *
- * A separate form rather than a field on Details, for the reason the others are
- * separate: this one writes `auth.users` while Details writes `profiles`, so a
- * shared Save could store a surname and reject an address in the same click.
+ * The only way an account leaves a placeholder address, and so reaches self-service recovery. The
+ * route applies the address unverified, so confirm (in place, not a nested Modal) by echoing it back.
+ * Separate from Details because it writes auth.users, not profiles.
  */
 function EmailForm({
   account,
@@ -281,8 +233,7 @@ function EmailForm({
   accent: string;
   onSaved: () => void;
 }) {
-  /* Seeded from the stored address only when it is real. A placeholder must never
-     be printed, so it seeds an empty field rather than `juan@pca.invalid`. */
+  /* Seed only a real address; a placeholder is never printed. */
   const seed = account.email_can_receive ? (account.email ?? '') : '';
   const [email, setEmail] = useState(seed);
   const [busy, setBusy] = useState(false);
@@ -299,7 +250,7 @@ function EmailForm({
   const emailError = emailProblem(email);
   const canSave = isEmailValid(email) && trimmed !== seed.toLowerCase() && !busy;
 
-  // The first click only asks. `apply` is what sends it.
+  // First click asks; `apply` sends.
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSave) return;
@@ -314,7 +265,7 @@ function EmailForm({
     try {
       await adminApi.setEmail(account.id, trimmed);
       setConfirming(false);
-      // Refetches the account, which re-seeds this field through the effect above.
+      // Refetching re-seeds this field via the effect above.
       onSaved();
       setStatus({ kind: 'ok', text: 'Email address updated.' });
     } catch (err) {
@@ -337,8 +288,7 @@ function EmailForm({
           <span className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
             Currently
           </span>
-          {/* `contactEmail()` renders a placeholder as "None set" -- see
-              `lib/placeholderEmail.ts` on why one is never printed. */}
+          {/* contactEmail() renders a placeholder as "None set". */}
           <span className="font-mono text-sm text-slate-200 break-all">{contactEmail(account)}</span>
         </div>
 
@@ -393,7 +343,7 @@ function EmailForm({
   );
 }
 
-// ── password reset ──────────────────────────────────────────────────────────
+// Password reset
 
 function PasswordForm({ account, accent }: { account: AdminAccountDetail; accent: string }) {
   const [next, setNext] = useState('');
@@ -452,8 +402,7 @@ function PasswordForm({ account, accent }: { account: AdminAccountDetail; accent
           }
         />
 
-        {/* The one moment the new password exists in readable form, so it arrives
-            with an entrance rather than appearing without acknowledgement. */}
+        {/* The one moment the new password is readable. */}
         {issued && (
           <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 flex flex-col gap-2 animate-swap-in">
             <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
@@ -478,19 +427,8 @@ function PasswordForm({ account, accent }: { account: AdminAccountDetail; accent
           <StatusLine status={status} />
         </div>
 
-        {/*
-          Measured, not assumed: after an admin password change Supabase rejects
-          both the existing access token (401) and its refresh token, so a device
-          left signed in really is cut off. That holds because `authenticate`
-          validates every request against the auth server rather than checking the
-          JWT signature locally — see the route's JSDoc before changing either.
-        */}
-        {/*
-          The one an admin needs BEFORE clicking: a reset re-arms
-          `must_change_password`, so the account returns to "Not activated" and is
-          gated again until the student chooses their own. Without this the status
-          flipping backwards would look like a bug.
-        */}
+        {/* A reset cuts off signed-in devices because authenticate checks every token with the auth server, not locally. */}
+        {/* A reset re-arms must_change_password, so the account returns to "Not activated". */}
         <p className="font-sans text-[11px] text-slate-500 leading-relaxed">
           They will be asked to choose their own password again the next time they sign in — this
           one is only meant to get them back in.
@@ -500,7 +438,7 @@ function PasswordForm({ account, accent }: { account: AdminAccountDetail; accent
   );
 }
 
-// ── status ──────────────────────────────────────────────────────────────────
+// Status
 
 function StatusForm({
   account,
@@ -544,13 +482,7 @@ function StatusForm({
       description="Disabling revokes access immediately and deletes nothing. This is what to use when someone leaves — their work is kept, and enabling brings it all back."
     >
       {isSelf ? (
-        /*
-         * ⚠️ SELF-LOCKOUT. There is one admin account on this deployment; an admin
-         * who disabled themselves would be refused by `requireRole` on their very
-         * next request, including the one that would undo it. The server returns
-         * 400 for this — the control is absent here so it is never discovered as
-         * a failure.
-         */
+        /* Self-lockout: disabling yourself would block the request that undoes it. The server 400s; hide the control. */
         <p className="font-sans text-sm text-slate-400 leading-relaxed">
           This is your own account. You cannot disable it — if you could, you would be locked out of
           the portal with no way back in.
@@ -575,9 +507,7 @@ function StatusForm({
                 everything immediately. Nothing is deleted — you can enable the account again at any
                 time and it returns exactly as it is now.
               </p>
-              {/* Equal halves on a phone: two content-fitted buttons here are
-                  ~130px and ~90px, and the confirming one being visibly the
-                  smaller of a destructive pair is the wrong way round. */}
+              {/* Equal halves on a phone, so the confirming button isn't the smaller of a destructive pair. */}
               <div className="flex gap-3">
                 <button
                   onClick={apply}
@@ -617,7 +547,7 @@ function StatusForm({
   );
 }
 
-// ── page ────────────────────────────────────────────────────────────────────
+// Page
 
 export default function AccountDetail() {
   const { userId } = useParams<{ userId: string }>();
@@ -664,14 +594,10 @@ export default function AccountDetail() {
           </div>
         )}
 
-        {/* Entrance on the loaded body, not the wrapper — the wrapper's own fade
-            fires while the spinner is the only thing on screen. */}
+        {/* Animate the loaded body, not the wrapper (which fades in around the spinner). */}
         {account && (
           <div className="flex flex-col gap-6 animate-tab-in">
-            {/*
-              Rendered only while it is true, and it says what to DO about it —
-              a banner that appears on every account would stop being read.
-            */}
+            {/* Only while true, with what to do about it. */}
             {account.must_change_password && account.status === 'active' && (
               <div className="flex items-start gap-3 px-4 sm:px-5 py-4 rounded-2xl bg-amber-500/[0.07] border border-amber-500/20">
                 <Hourglass className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -686,15 +612,9 @@ export default function AccountDetail() {
               </div>
             )}
 
-            {/* ⚠️ MATCHES `Section`'s SURFACE EXACTLY — `shadow-lg shadow-black/20`
-                and `p-5 sm:p-6`. This card had neither, so the page opened with a
-                flat identity block sitting above three raised forms, which read as
-                the top card having failed to render rather than as a deliberate
-                difference. */}
+            {/* Same surface as Section (shadow-lg shadow-black/20, p-5 sm:p-6). */}
             <section className="rounded-2xl bg-white/[0.02] border border-white/5 shadow-lg shadow-black/20 p-5 sm:p-6">
-              {/* `items-start` below `sm:`, not `items-center`: the pill row wraps
-                  to two lines on a phone, and centring a 56px monogram against a
-                  three-line block leaves it floating in the middle of the name. */}
+              {/* items-start below sm:: the pill row wraps, and a centred monogram would float. */}
               <div className="flex items-start sm:items-center gap-3.5 sm:gap-4 mb-6">
                 <div
                   className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl border flex items-center justify-center shrink-0 font-display text-lg sm:text-xl font-bold select-none"
@@ -707,10 +627,7 @@ export default function AccountDetail() {
                   {(account.first_name[0] ?? '') + (account.last_name[0] ?? '') || '?'}
                 </div>
                 <div className="min-w-0">
-                  {/* `break-words`, not `truncate`. A truncated NAME on the page
-                      whose entire subject is that one person is the wrong thing to
-                      cut — "Maria Cristina Villanueva-Santos" became "Maria Cristi…"
-                      at 375px with a whole line of empty space beneath it. */}
+                  {/* break-words, not truncate: the name is this page's subject. */}
                   <h1 className="font-display text-lg sm:text-xl font-semibold text-white break-words">
                     {account.first_name} {account.last_name}
                     {isSelf && <span className="text-slate-500 font-sans text-sm ml-2">(you)</span>}

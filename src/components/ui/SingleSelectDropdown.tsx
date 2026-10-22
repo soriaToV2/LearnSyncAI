@@ -13,16 +13,8 @@ interface SingleSelectDropdownProps {
 }
 
 /**
- * Picks exactly one option. Radio semantics: choosing replaces the previous choice
- * and closes the menu — there is no "Select All" and no way to end up with two.
- *
- * Used for the Material choice in Free Recall and Feynman. Those evaluate a
- * submission against one lesson, and the constraint is enforced server-side too
- * (`material_ids` is capped at 1 in both Zod schemas) — this control makes the rule
- * visible rather than being the thing that enforces it.
- *
- * Selection is by `value` (a material id), never by label, so two materials sharing
- * a title stay distinguishable.
+ * Single-choice picker (radio semantics), used for the material in Free Recall and Feynman (the
+ * server also caps it at one). Selection is by value, so same-titled materials stay distinct.
  */
 export default function SingleSelectDropdown({
   selectedValue,
@@ -48,13 +40,12 @@ export default function SingleSelectDropdown({
   const selected = options.find((o) => o.value === selectedValue) ?? null;
 
   const handleSelect = (value: string) => {
-    // Re-picking the current one clears it, so a choice is not a trap.
+    // Re-picking the current option clears it.
     onChange(value === selectedValue ? null : value);
     setIsOpen(false);
   };
 
-  // w-fit stops a flex/grid parent from stretching the root, which would drag the
-  // panel with it — the panel is sized and positioned against this element.
+  // w-fit stops a flex/grid parent from stretching the root the panel is positioned against.
   return (
     <div className={`relative inline-block w-fit text-left font-sans ${className}`} ref={containerRef}>
       <div className="relative">
@@ -74,24 +65,9 @@ export default function SingleSelectDropdown({
       </div>
 
       {isOpen && (
-        // `left-0 w-full` pins the panel exactly under its trigger.
-        //
-        // It was `right-0 w-64` against a `w-56` button — 32px wider than the
-        // trigger and anchored to the trigger's RIGHT edge, so the panel hung
-        // 32px past its left. Wherever the control sits flush against a
-        // container edge (Free Recall's composer aligns it left), that overhang
-        // was clipped and took the start of every label with it: "6. Information
-        // Security" rendered as "Information Security".
-        //
-        // w-full rather than a repeated w-56 so the panel tracks the button if
-        // its width is ever changed.
+        // `left-0 w-full` pins the panel under its trigger; a wider right-anchored panel clipped label starts.
         <div className="absolute left-0 mt-2 w-full origin-top-left rounded-xl border border-white/10 dropdown-panel shadow-2xl focus:outline-none overflow-hidden fade-in z-[100]">
-          {/* `scrollbar-none` removed, NOT swapped for `no-scrollbar`. Verified
-              against the built CSS: it generated zero rules, so the panel has
-              always shown its scrollbar — and for a scrolling option list that
-              scrollbar is the only cue that more options exist below. Activating
-              the author's original intent would delete a useful affordance, so
-              this drops the dead class and leaves behaviour exactly as it is. */}
+          {/* No dead scrollbar-none class: the scrollbar is the cue that more options exist. */}
           <div className="py-1 max-h-68 overflow-y-auto" role="listbox">
             {options.map((option) => {
               const isSelected = option.value === selectedValue;
@@ -102,8 +78,7 @@ export default function SingleSelectDropdown({
                   role="option"
                   aria-selected={isSelected}
                   onClick={() => handleSelect(option.value)}
-                  // Material titles truncate in a panel this wide; keep the full
-                  // one reachable on hover.
+                  // Titles truncate; keep the full one on hover.
                   title={option.label}
                   className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${
                     isSelected

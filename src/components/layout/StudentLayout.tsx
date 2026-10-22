@@ -13,15 +13,7 @@ import EmailRecoveryBanner from '../common/EmailRecoveryBanner';
 
 const SIDEBAR_COLLAPSED_KEY = 'learnsyncai-sidebar-collapsed';
 
-/**
- * The avatar. `profiles` carries no image column and no email, so there is
- * nothing to fetch and nothing may be invented — this replaced three `<img>`
- * tags pointing at an Unsplash URL that lived in mock data.
- *
- * Renders an empty tinted circle while the profile is loading rather than a
- * spinner: the sidebar is persistent chrome and should not flash on every
- * navigation. It is tinted with the live theme accent, matching the logo bubble.
- */
+/** Initials monogram (profiles has no avatar). An empty tinted circle while loading, not a spinner. */
 function Monogram({
   user,
   size,
@@ -56,30 +48,11 @@ function StudentLayoutInner() {
   const { navRequested } = useOnboarding();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  /*
-   * The drawer is open when the student opened it, OR while the tour is on one
-   * of the four steps that explain these very buttons.
-   *
-   * ⚠️ DERIVED, NOT A `setIsMobileMenuOpen(true)` CALL. The student's own toggle
-   * stays entirely independent, so there is no previous value to restore and a
-   * tour that ends mid-step — Escape, a route change — cannot strand the drawer
-   * open. `TourOverlay` clears the request in an effect cleanup for that reason;
-   * this is the half that makes the clearing sufficient.
-   *
-   * On a desktop it changes nothing: this `<aside>` is `md:hidden`, so the tour
-   * finds the real sidebar and the request goes nowhere visible.
-   */
+  // Open when the student opened it, or while a tour step explains these buttons. Derived rather than
+  // set, so a tour that ends can't strand it open.
   const drawerOpen = isMobileMenuOpen || navRequested;
 
-  /*
-   * `replace: true` is load-bearing: without it the browser Back button returns
-   * to the portal shell, which is exactly the "still signed in" impression this
-   * change exists to remove.
-   *
-   * The redirect happens even if `signOut()` throws. Being stranded inside the
-   * account on a network blip is the worse failure of the two, and the local
-   * session is cleared before the network call in the Supabase client anyway.
-   */
+  // `replace: true` so Back can't return to the portal. Redirect even if signOut() throws.
   const handleSignOut = async () => {
     if (isSigningOut) return;
     setIsSigningOut(true);
@@ -124,18 +97,8 @@ function StudentLayoutInner() {
   const collapsedNavClass = (collapsed: boolean) =>
     collapsed ? 'justify-center px-0 gap-0' : '';
 
-  /*
-   * ⚠️ THE `data-tour` ATTRIBUTES ARE TOUR ANCHORS, NOT STYLING HOOKS.
-   * `TourOverlay` finds a step's target with `[data-tour="…"]`; a step whose
-   * anchor is absent is skipped rather than pointing at nothing, so removing one
-   * silently shortens the tour instead of breaking it. Renaming one has the same
-   * effect, so keep them in step with `TOUR_STEPS` in `src/lib/onboarding.ts`.
-   *
-   * ⚠️ THIS FUNCTION IS CALLED TWICE — once for the desktop sidebar and once for
-   * the mobile drawer — so every anchor below exists twice in the DOM at all
-   * times. `TourOverlay` resolves the first VISIBLE match (`offsetParent`), not
-   * the first in source order, which is why that matters.
-   */
+  // `data-tour` attributes are tour anchors: keep them in step with TOUR_STEPS. This renders twice
+  // (sidebar and drawer), so each anchor exists twice; TourOverlay picks the visible one.
   const renderNavLinks = (collapsed = false) => (
     <div data-tour="nav" className="flex flex-col gap-2 font-display text-sm tracking-wide">
       <NavLink
@@ -189,15 +152,8 @@ function StudentLayoutInner() {
         {!collapsed && 'Profile'}
       </NavLink>
 
-      {/*
-        Help is a destination like the four above it, so it belongs in this list.
-        ⚠️ NOT IN THE FOOTER: that holds Logout and the identity card and nothing
-        else — one control that ends the session, above the account it ends.
-
-        `LifeBuoy` because the two obvious icons are taken elsewhere in this
-        portal: `BookOpen` is the Learning Resources tab, and `HelpCircle` is
-        both the Crossword game and the chat's "Quiz Me" action.
-      */}
+      {/* Help is a destination, so it lives in the nav list, not the footer. LifeBuoy because BookOpen
+          and HelpCircle are used elsewhere. */}
       <NavLink
         to="/student/help"
         title="How to use"
@@ -211,17 +167,7 @@ function StudentLayoutInner() {
     </div>
   );
 
-  /*
-   * Logout, then the identity card — nothing else. Profile is a destination like
-   * Dashboard and Spaces, so it lives with them in the nav list above; the footer
-   * is for the one control that ends the session.
-   *
-   * LOGOUT IS ALWAYS RENDERED. It used to appear only after clicking the identity
-   * card, which nothing indicated was a toggle — the most important control in the
-   * app was invisible until you guessed. That toggle was the card's only job, so
-   * the card is now a plain `<div>`: leaving a hover affordance on a dead element
-   * is worse than removing it.
-   */
+  // Footer: Logout (always rendered) above the identity card, nothing else.
   const renderFooter = (collapsed = false) => (
     <div className="mt-auto flex flex-col gap-2">
       {/* A <button>, not a NavLink — it ends the session before it navigates. */}
@@ -235,23 +181,8 @@ function StudentLayoutInner() {
         {!collapsed && (isSigningOut ? 'Signing out…' : 'Logout')}
       </button>
 
-      {/*
-       * ⚠️ THE CARD SHEDS ITS PADDING AND BORDER WHEN COLLAPSED, AND THE
-       * MONOGRAM DROPS A SIZE. THE ARITHMETIC IS WHY, NOT TASTE:
-       *
-       *   collapsed nav   w-20 (80px) − p-6 (24px × 2)          = 32px inner
-       *   this card       − border (1px × 2) − p-3 (12px × 2)   =  6px content
-       *   monogram        size="lg" → w-10                      = 40px
-       *
-       * A 40px `shrink-0` avatar in a 6px box overflows 17px each side, straight
-       * through the card's own border — which is what it looked like. `p-1` would
-       * not have been enough either; at 32px of inner width the only thing that
-       * fits a 32px avatar is no chrome at all. That reads correctly anyway: a
-       * bordered box drawn tight around an avatar that fills it adds nothing.
-       *
-       * The expanded state is untouched — 64px of inner width is plenty for the
-       * lg monogram plus the name and grade beside it.
-       */}
+      {/* Collapsed, the card drops its padding/border and the monogram a size: the collapsed nav has only
+          32px of inner width. */}
       <div
         title={fullName(user)}
         className={`flex items-center gap-3 w-full text-left ${
@@ -312,14 +243,7 @@ function StudentLayoutInner() {
         </NavLink>
       </header>
 
-      {/*
-        Mobile Drawer Backdrop.
-
-        ⚠️ GATED ON `isMobileMenuOpen`, NOT `drawerOpen`. When the tour opens the
-        drawer it paints its own dimming and blocks its own clicks from `z-[100]`,
-        so this would sit unreachable underneath it — a second scrim whose only
-        effect would be to darken the button the tour is trying to highlight.
-      */}
+      {/* Mobile drawer backdrop. Gated on isMobileMenuOpen, not drawerOpen: the tour paints its own scrim. */}
       {isMobileMenuOpen && (
         <div
           onClick={() => setIsMobileMenuOpen(false)}
@@ -417,25 +341,12 @@ function StudentLayoutInner() {
       </nav>
 
       {/* Main Content Area */}
-      {/*
-        * `transition-[margin]`, not `transition-all`.
-        *
-        * The only thing here that is MEANT to animate is the left margin tracking
-        * the sidebar collapse (`md:ml-64` ↔ `md:ml-20`). `transition-all` animated
-        * every animatable property of the box that holds every page — so any width
-        * change originating elsewhere got replayed as a smooth 300ms horizontal
-        * slide. That is what made a scrollbar appearing inside a child read as the
-        * layout deliberately compressing itself.
-        *
-        * Scoped to margin, the intended sidebar animation is unchanged and
-        * unrelated reflows land instantly instead of being dramatised.
-        */}
+      {/* transition-[margin], not transition-all, so only the sidebar collapse animates. */}
       <div
         className={`flex-1 flex flex-col min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden transition-[margin] duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'
           }`}
       >
-        {/* Above the keyed div so it does not replay its entrance animation on
-            every navigation — it is one standing notice, not a new alert per page. */}
+        {/* Outside the keyed div so it doesn't replay its entrance on every navigation. */}
         <EmailRecoveryBanner accent={theme.accent} />
         <div key={location.pathname} className="flex-1 flex flex-col animate-page-fade">
           <Outlet />
@@ -445,55 +356,18 @@ function StudentLayoutInner() {
   );
 }
 
-/**
- * `AuthProvider` is mounted HERE, not at the App root.
- *
- * At the root it would fire `GET /api/auth/me` on `/login` and `/register`,
- * where there is no session — a 401 on every cold page load, and an error state
- * the login screen would have to know to ignore. Mounted on the layout, it runs
- * exactly once per portal entry, on routes that already require a signed-in user.
- * `EducatorLayout` can adopt the same provider unchanged; nothing in it is
- * student-specific.
- */
+/** AuthProvider is mounted per layout, not at the root, so /login never calls /auth/me. */
 export default function StudentLayout() {
   return (
     <AuthProvider>
       <StudentThemeProvider>
-        {/*
-          `RequireRole` was added for the admin portal and deferred here, because
-          it changes redirect behaviour on routes that had already shipped. The
-          first-login gate made it necessary: an un-activated account would
-          otherwise render this whole shell and then 403 on every request, with
-          nothing on screen explaining why. It also sends a signed-in educator or
-          admin to their own portal instead of a student page whose calls refuse
-          them.
-        */}
+        {/* RequireRole: un-activated accounts go to /set-password and other roles to their own portal. */}
         <RequireRole allow={['student']}>
-          {/*
-            INSIDE `RequireRole`, deliberately. The provider fetches the badges
-            the student already holds on mount, to seed the baseline it diffs
-            against — so it must never run for a signed-out, un-activated or
-            wrong-role visitor, who would get a 401/403 for nothing.
-          */}
+          {/* Inside RequireRole so the badge baseline fetch never runs for the wrong visitor. */}
           <BadgeProvider>
-            {/*
-              Reference data, not identity, so it is its own provider rather than
-              a field on `AuthContext`. Sits inside `RequireRole` for the same
-              reason `BadgeProvider` does — `GET /api/subjects` is
-              `requireRole`-gated.
-            */}
+            {/* Reference data, its own provider. Inside RequireRole (the route is gated). */}
             <SubjectsProvider>
-              {/*
-                Inside `RequireRole` for the same reason as the two above —
-                `GET /api/onboarding` is `requireRole('student')`-gated, so
-                mounting it any higher would 401 a signed-out visitor for
-                nothing. Innermost of the three because it is the only one that
-                reads the router: it starts the first-run tour on arrival at the
-                dashboard, and renders the overlay itself.
-
-                ⚠️ It gates NOTHING. A failed read here costs a student a
-                repeated tour step, never their access to the portal.
-              */}
+              {/* Innermost: it reads the router (starts the tour on the dashboard). Gates nothing. */}
               <OnboardingProvider>
                 <StudentLayoutInner />
               </OnboardingProvider>

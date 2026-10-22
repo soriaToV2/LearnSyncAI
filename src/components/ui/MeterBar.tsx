@@ -1,13 +1,7 @@
 import { toneBg, type Tone } from './surfaces';
 
 interface MeterBarProps {
-  /**
-   * 0–1, or **null for "there is no value"**.
-   *
-   * Never pass 0 to mean "not assessed yet": 0 asserts a measurement of zero,
-   * which is a different claim from having no measurement. `null` renders the
-   * empty track so a not-started row keeps the same height as its neighbours.
-   */
+  /** 0–1, or null for "no value" (never 0 for not assessed). null renders an empty track. */
   value: number | null;
   tone?: Tone;
   /** Accessible name, e.g. "Mastery of SQL Injection". */
@@ -15,28 +9,9 @@ interface MeterBarProps {
   className?: string;
 }
 
-/**
- * The shared progress meter.
- *
- * Five hand-rolled copies of this existed before it — in `cognitiveShared`,
- * `TestResultsView`, `StudentDashboard` and both session views — all agreeing on
- * `h-1.5 rounded-full bg-white/5` and diverging on colour. This is also the first
- * consumer of `toneBg`, which had been exported and unused; `cognitiveShared`
- * inlines a ternary that is exactly `toneBg` minus `neutral`.
- *
- * `components/educator/MasteryBar.tsx` is GONE, and the reason it was never reused
- * is worth keeping: it took a bare `number`, so it could not express "not
- * assessed" — the one distinction this component exists for. Its last consumer was
- * the educator dashboard while that page still ran on mock data, where every
- * student had a mastery value because the mock invented one. On real data the
- * common case is having no measurement at all.
- */
+/** The shared progress meter. Takes null for "not assessed", which a bare number can't express. */
 export default function MeterBar({ value, tone = 'neutral', label, className = '' }: MeterBarProps) {
-  /*
-   * No value → no meter semantics. `role="meter"` without `aria-valuenow` is
-   * invalid, and announcing "0" would be a lie; the adjacent "Not started" text
-   * is what carries the meaning to a screen reader.
-   */
+  // No value, no meter semantics (role="meter" needs aria-valuenow); adjacent text carries the meaning.
   if (value === null) {
     return (
       <div

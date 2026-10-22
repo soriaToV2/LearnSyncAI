@@ -1,23 +1,18 @@
 import { z } from 'zod';
 
-// ============================================================
-// STANDARD API RESPONSE WRAPPERS
-// ============================================================
+// Response envelopes
 
-/** Standard success response envelope */
 export interface ApiResponse<T = unknown> {
   data: T;
   message?: string;
 }
 
-/** Standard error response envelope */
 export interface ApiError {
   error: string;
   message: string;
   details?: unknown;
 }
 
-/** Paginated list response */
 export interface PaginatedResponse<T> {
   data: T[];
   total: number;
@@ -25,30 +20,19 @@ export interface PaginatedResponse<T> {
   pageSize: number;
 }
 
-// ============================================================
-// ZOD VALIDATION SCHEMAS — Request Body Validators
-// ============================================================
+// Request body schemas
 
-// ── Auth ──────────────────────────────────────────────────
+// Auth
 
 export const RegisterSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   first_name: z.string().min(1),
   last_name: z.string().min(1),
-  // role is always 'student' — no instructor role
 });
 export type RegisterInput = z.infer<typeof RegisterSchema>;
 
-/**
- * Mirrors `profiles_username_format` in schema.sql — 3–30 chars, lowercase
- * alphanumerics plus dot and underscore, never opening or closing on
- * punctuation. Lowercased before validation so `Juan` is accepted and stored as
- * `juan`; `ux_profiles_username_lower` makes the two the same account either way.
- *
- * No `@`, deliberately: a username that looks like an email invites the very
- * confusion migration 0021 removed.
- */
+/** Mirrors `profiles_username_format`. Lowercased before validation. No `@`, so it never looks like an email. */
 export const UsernameField = z
   .string()
   .trim()
@@ -58,7 +42,7 @@ export const UsernameField = z
     '3–30 characters: letters, numbers, dots and underscores, starting and ending with a letter or number'
   );
 
-/** Sign-in. The username is resolved to an email server-side — never client-side. */
+/** The username is resolved to an email server-side, never client-side. */
 export const LoginSchema = z.object({
   username: UsernameField,
   password: z.string().min(1),
@@ -66,22 +50,8 @@ export const LoginSchema = z.object({
 export type LoginInput = z.infer<typeof LoginSchema>;
 
 /**
- * The ONLY writer for a user's own profile, and it accepts exactly three fields.
- *
- * ⚠️ `role`, `status` and `grade_level` are OMITTED ON PURPOSE, and this schema
- * is the only thing enforcing that. `enforce_profile_immutables()` looks like it
- * covers them, but its first branch is `IF auth.uid() IS NULL … RETURN NEW` and
- * `auth.uid()` is NULL for the service role — which is what Express holds, so the
- * trigger is inert for every request that reaches the API.
- *
- * `grade_level` is the load-bearing one: `materialAccess.ts` gates every student
- * read on `grade_levels @> [caller.gradeLevel]`, so a student who could PATCH
- * their own grade would read another year's materials. Same rule as
- * `UpdateMaterialSchema` — one writer, nothing else accepted.
- *
- * `.strict()` so an unknown key is a 400 rather than being silently dropped:
- * a client sending `grade_level` should be told it was refused, not left to
- * believe a 200 meant it applied.
+ * Self-edit accepts only these three fields. This schema is the only guard on role/status/grade_level:
+ * the immutables trigger is inert under the service role. `.strict()` so refused keys are a 400.
  */
 export const UpdateProfileSchema = z
   .object({
@@ -94,30 +64,9 @@ export const UpdateProfileSchema = z
 export type UpdateProfileInput = z.infer<typeof UpdateProfileSchema>;
 
 /**
- * ⚠️ THE ONE PASSWORD RULE — 8 CHARACTERS AND AT LEAST ONE NON-ALPHANUMERIC.
- *
- * Every place a password is SET goes through this: first-login activation, the
- * self-service change, an admin reset, an admin-typed password on creation, and
- * the optional `password` column in a CSV import. `src/lib/account.ts` holds the
- * client-side mirror (`passwordProblem()`), which exists to answer before a round
- * trip — this is authoritative.
- *
- * "Not a letter or a digit" rather than a fixed list of symbols: it is the
- * simplest rule to state to a child ("one character that isn't a letter or a
- * number"), and it accepts `-`, `_`, `!`, `?` and everything else without the UI
- * having to enumerate an allowed set. It also means the generated initial
- * password (`brave-otter-93`) satisfies the same rule its holder will be held to.
- *
- * ⚠️ Applied to passwords ENTERED, never to existing ones — the three live
- * accounts predate it and keep working until they next change their password.
- *
- * A NOTE ON WHAT THIS DOES AND DOES NOT BUY, so nobody over-trusts it: NIST
- * SP 800-63B advises against composition rules, because they mostly produce
- * `Password1!` — a capital in front and a symbol at the end, which is exactly
- * what an attacker's wordlist expects. The rule was requested deliberately and is
- * implemented faithfully, but what would actually move the needle here is
- * blocking common passwords and raising the length floor. Do not stack more
- * composition rules on top; they compound the predictability, not the strength.
+ * The one password rule for every path that sets a password: 8+ characters with at least one
+ * non-alphanumeric. Client mirror: passwordProblem() in src/lib/account.ts. Don't add more
+ * composition rules.
  */
 const HAS_SPECIAL = /[^A-Za-z0-9]/;
 
@@ -126,11 +75,7 @@ const PasswordField = z
   .min(8, 'Use at least 8 characters')
   .regex(HAS_SPECIAL, 'Include at least one special character, for example ! ? # - or _');
 
-/**
- * Both credential changes re-verify the current password first.
- * `supabase.auth.updateUser()` does not check it, so without this a session left
- * open on a shared school computer is a permanent account takeover.
- */
+/** Credential changes re-verify the current password; Supabase's updateUser() does not. */
 export const ChangePasswordSchema = z.object({
   current_password: z.string().min(1),
   new_password: PasswordField,
@@ -143,28 +88,13 @@ export const ChangeEmailSchema = z.object({
 });
 export type ChangeEmailInput = z.infer<typeof ChangeEmailSchema>;
 
-/**
- * A six-digit emailed code. Supabase issues these for both `recovery` and
- * `email_change`, and its own default length is 6.
- *
- * `.trim()` because the overwhelmingly common way to enter one is to copy it out
- * of a mail client, which brings a trailing space with it about as often as not.
- * Rejecting that would produce "invalid code" for a code the user read correctly.
- */
+/** Six-digit emailed code; trimmed because codes are usually pasted from a mail client. */
 const OtpCodeField = z
   .string()
   .trim()
   .regex(/^\d{6}$/, 'Enter the 6-digit code from your email');
 
-/**
- * Step 2 of the email change: the address is re-sent by the client rather than
- * held server-side between the two calls.
- *
- * The user typed it moments ago, so echoing it back discloses nothing they do not
- * already have, and it saves a table whose only job would be to remember one
- * string for fifteen minutes. Supabase is the authority either way — the code was
- * minted against a specific address and `verifyOtp` fails if this does not match.
- */
+/** Email change step 2. The client re-sends the address; verifyOtp fails if it doesn't match. */
 export const ConfirmEmailChangeSchema = z
   .object({
     new_email: z.string().trim().toLowerCase().email(),
@@ -173,25 +103,11 @@ export const ConfirmEmailChangeSchema = z
   .strict();
 export type ConfirmEmailChangeInput = z.infer<typeof ConfirmEmailChangeSchema>;
 
-/**
- * `POST /api/auth/forgot-password` — UNAUTHENTICATED.
- *
- * A username and nothing else. It deliberately does NOT take an email address:
- * asking for one would let a stranger test whether a given address belongs to a
- * given child, and the route resolves the address server-side for the same reason
- * `POST /login` does.
- */
+/** Unauthenticated. Username only; never accept an email here, or it becomes an address oracle. */
 export const ForgotPasswordSchema = z.object({ username: UsernameField }).strict();
 export type ForgotPasswordInput = z.infer<typeof ForgotPasswordSchema>;
 
-/**
- * `POST /api/auth/reset-password` — UNAUTHENTICATED.
- *
- * `PasswordField` is reused here, which makes this the FOURTH path that sets a
- * password (first-login activation, self-service change, admin reset, and now
- * recovery). One rule, one message, four routes — a recovery flow that accepted a
- * weaker password than the change form would be the obvious way around the rule.
- */
+/** Unauthenticated. Uses the same PasswordField as every other path. */
 export const ResetPasswordSchema = z
   .object({
     username: UsernameField,
@@ -201,79 +117,35 @@ export const ResetPasswordSchema = z
   .strict();
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
 
-// ── Admin — account administration ────────────────────────
+// Admin: account administration
 
-/**
- * ⚠️ THE ROLES AN ADMIN MAY ASSIGN ARE `student` AND `educator`. NEVER `admin`.
- *
- * README.md's admin module names exactly those two ("Assign appropriate roles
- * (educator or student)"), and it is also the privilege-escalation surface: this
- * is the one place in the app where one account writes another account's `role`.
- * Further admins are made from the Supabase dashboard, which is where the current
- * one came from.
- */
+/** Roles an admin may assign. Never `admin`: further admins come from the Supabase dashboard. */
 export const AssignableRole = z.enum(['student', 'educator']);
 
-/** 7–10, mirroring `profiles_grade_level_range`. Students only. */
+/** Mirrors `profiles_grade_level_range`. Students only. */
 const GradeLevelField = z.coerce.number().int().min(7).max(10);
 
 /**
- * ⚠️ `grade_level` IS REQUIRED FOR A STUDENT, AND THIS REFINE IS WHAT ENFORCES IT.
- *
- * `handle_new_user()` defaults a student with no grade to **Grade 7** silently
- * (`IF v_role = 'student' AND v_grade IS NULL THEN v_grade := 7`). That default
- * decides which year's materials the account can read for the rest of its life,
- * and it would be invisible — the account is created successfully either way. So
- * the grade must be a deliberate choice made here, never inherited from a trigger.
- *
- * The mirror rule — an educator must NOT carry a grade — keeps
- * `profiles_student_needs_grade` and `subtitleFor()` honest; a stale grade on an
- * educator renders as "Grade 9" in the sidebar.
+ * A student must have a grade here: `handle_new_user()` would silently default it to 7.
+ * An educator must not have one.
  */
 export const CreateAccountSchema = z
   .object({
     role: AssignableRole,
     first_name: z.string().trim().min(1).max(60),
     last_name: z.string().trim().min(1).max(60),
-    /**
-     * Required here, OPTIONAL for a bulk-import row — see `ImportAccountRowSchema`
-     * below, where a blank column is filled from the name by `suggestUsername()`.
-     * A single-account form has a Generate button and no excuse for omitting it.
-     */
+    /** Required here; optional only on import rows. */
     username: UsernameField,
     grade_level: GradeLevelField.nullable().optional(),
     /**
-     * ⚠️ OPTIONAL, AS IT IS FOR A BULK-IMPORT ROW. It was required here until
-     * 2026-09-09, on the reasoning that an administrator entering one account at a
-     * time has the address in front of them. That is often true and is not a rule:
-     * accounts are created one at a time for a student who has not yet given an
-     * address, or whose address the school is still confirming, and refusing to
-     * create the account at all is the wrong answer to a missing phone number.
-     * When it is absent the route falls back to `placeholderEmailFor()`, exactly
-     * as import does.
-     *
-     * Contact information, never a credential — they sign in with the username, so
-     * an account with no address is fully usable. What it loses is **self-service**
-     * password recovery: `POST /auth/forgot-password` needs a deliverable address
-     * (`canReceiveMail()`), so until one is added the account is Tier 2 and its
-     * password can only be reset by an admin. `EmailRecoveryBanner` and
-     * `POST /admin/accounts/:userId/email` are the two ways back.
-     *
-     * ⚠️ AN EMPTY STRING IS TREATED AS ABSENT, NOT REJECTED. A text input that the
-     * admin deliberately left blank sends `''`, and answering that with "Enter a
-     * valid email address" reads as a broken form rather than as an accepted
-     * omission. `UsernameField.optional()` has the opposite convention and its
-     * caller must omit the key — the difference is that a blank username is filled
-     * from the name, so `''` there is a client bug worth surfacing.
-     *
-     * Supabase enforces a UNIQUE index on `auth.users.email`, so two accounts can
-     * never share one — siblings cannot both use a parent's address.
+     * Optional contact address (not a credential); absent means a placeholder and admin-only resets.
+     * `''` is read as absent. Must be unique across accounts.
      */
     email: z.preprocess(
       (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
       z.string().trim().toLowerCase().email('Enter a valid email address').optional()
     ),
-    /** Generated by the route when absent, and shown to the admin exactly once. */
+    /** Generated when absent and shown to the admin once. */
     password: PasswordField.optional(),
   })
   .strict()
@@ -296,23 +168,8 @@ export const CreateAccountSchema = z
 export type CreateAccountInput = z.infer<typeof CreateAccountSchema>;
 
 /**
- * The admin's profile writer — the counterpart of `UpdateProfileSchema`, and the
- * deliberate inverse of it: this one DOES accept `role` and `grade_level`,
- * because assigning them is the whole point of the role.
- *
- * ⚠️ THAT MAKES THIS SCHEMA LOAD-BEARING SECURITY, NOT VALIDATION.
- * `enforce_profile_immutables()` does not back it up — its first branch is
- * `IF auth.uid() IS NULL … RETURN NEW`, and `auth.uid()` is NULL for the service
- * role Express holds, so the trigger is inert for every request that reaches us.
- *
- * `status` is NOT here: it has its own route, so that the self-lockout guard has
- * one home rather than being a branch inside a general row editor. `id` is not
- * here either — the target comes from the path.
- *
- * The role/grade coupling that Zod can see is enforced below; the rest cannot be,
- * because a partial update does not know the resulting role without reading the
- * row. The route resolves `role ?? current.role` and re-checks. See
- * `profiles_student_needs_grade`.
+ * Admin profile edit. Load-bearing security: the immutables trigger is inert under the service role.
+ * `status` has its own route. The route re-checks role/grade against the current row.
  */
 export const UpdateAccountSchema = z
   .object({
@@ -320,7 +177,7 @@ export const UpdateAccountSchema = z
     last_name: z.string().trim().min(1).max(60).optional(),
     username: UsernameField.optional(),
     role: AssignableRole.optional(),
-    /** Explicitly nullable: student → educator must clear it in the same request. */
+    /** Nullable so student → educator can clear it in the same request. */
     grade_level: GradeLevelField.nullable().optional(),
   })
   .strict()
@@ -343,56 +200,21 @@ export const UpdateAccountSchema = z
   });
 export type UpdateAccountInput = z.infer<typeof UpdateAccountSchema>;
 
-/**
- * Its own route, because disabling is the only thing in this portal that takes
- * access away — and because an admin disabling themselves would lock every
- * administrator out of the system permanently. That guard needs one home.
- */
+/** Own route so the self-lockout guard has one home. */
 export const SetAccountStatusSchema = z
   .object({ status: z.enum(['active', 'disabled']) })
   .strict();
 export type SetAccountStatusInput = z.infer<typeof SetAccountStatusSchema>;
 
-/**
- * An admin reset takes NO current password — the admin is not the account holder
- * and could not know it. `requireRole('admin')` is the authorisation.
- *
- * ⚠️ This is the password-recovery path that ALWAYS works, and for most accounts
- * it is still the only one. `POST /api/auth/forgot-password` covers accounts with
- * a deliverable address on file; CSV import leaves the column optional, so an
- * imported student carries a `@pca.invalid` placeholder and reaches nothing. See
- * `POST /api/auth/change-email` for the same constraint.
- */
+/** Admin reset; no current password. The recovery path that always works. */
 export const ResetAccountPasswordSchema = z
   .object({ new_password: PasswordField })
   .strict();
 export type ResetAccountPasswordInput = z.infer<typeof ResetAccountPasswordSchema>;
 
 /**
- * The admin's email writer, and the ONLY one — `UpdateAccountSchema` above has no
- * `email` key and is `.strict()`, so a PATCH carrying one is a 400. Its own route
- * because the address lives on `auth.users` while the profile row lives on
- * `profiles`: a single handler writing both has no atomicity, and a saved surname
- * followed by a rejected address is exactly the half-applied Save the three-form
- * split on the account page exists to prevent.
- *
- * ⚠️ CONTACT INFORMATION, NEVER A CREDENTIAL. They sign in with `profiles.username`,
- * which `POST /api/auth/login` resolves to an address server-side on every request
- * — so changing this never changes how anybody signs in.
- *
- * ⚠️ IT APPLIES IMMEDIATELY, WITH NO CONFIRMATION, AND THAT IS CORRECT HERE. The
- * self-service `POST /api/auth/change-email` mails a 6-digit code to the new
- * address and applies nothing until it is redeemed, because a session left open on
- * a shared school computer must not be enough to repoint an account. An admin can
- * satisfy neither half of that proof — they cannot read a student's mailbox, and
- * the addresses most in need of fixing are `@pca.invalid` placeholders that can
- * never receive anything. Nor would the proof buy anything: `requireRole('admin')`
- * already grants `POST /accounts/:userId/password`, so an unverified address hands
- * an administrator no access they do not already hold.
- *
- * ⚠️ Supabase enforces a UNIQUE index on `auth.users.email`
- * (`users_email_partial_key`), so two accounts can never share an address —
- * siblings cannot both be given a parent's. The route maps that collision to a 409.
+ * The only admin email writer (a separate table from profiles, so its own route). Applies
+ * immediately with no code, unlike self-service. Duplicates map to 409.
  */
 export const SetAccountEmailSchema = z
   .object({ email: z.string().trim().toLowerCase().email('Enter a valid email address') })
@@ -400,17 +222,8 @@ export const SetAccountEmailSchema = z
 export type SetAccountEmailInput = z.infer<typeof SetAccountEmailSchema>;
 
 /**
- * One row of a bulk import.
- *
- * Identical to `CreateAccountSchema` except that **`username` is optional**: a
- * blank column is filled from the name by `suggestUsername()` in the route, so a
- * class of fifty does not need fifty hand-written usernames. Every other rule is
- * the same — in particular a student still cannot be created without a deliberate
- * grade level, because `handle_new_user()` would silently make them Grade 7.
- *
- * The `.superRefine` is duplicated rather than shared because `CreateAccountSchema`
- * is a `ZodEffects` once refined and can no longer be `.extend()`ed. Keep the two
- * in step: they encode one rule about roles and grade levels.
+ * One import row: CreateAccountSchema with optional username (generated from the name).
+ * The refine is duplicated because a refined schema can't be extended; keep the two in step.
  */
 export const ImportAccountRowSchema = z
   .object({
@@ -440,26 +253,14 @@ export const ImportAccountRowSchema = z
     }
   });
 
-/**
- * Bulk creation for the paper's 50-student study.
- *
- * The cap is a rate-limit guard, not a schema preference: Supabase throttles the
- * auth admin API and the route creates accounts one at a time.
- */
+/** Bulk creation. The cap guards Supabase's auth admin rate limit. */
 export const ImportAccountsSchema = z
   .object({
     rows: z.array(ImportAccountRowSchema).min(1).max(100),
   })
   .strict()
   .superRefine((v, ctx) => {
-    /*
-     * Within-file duplicates would otherwise surface as a mid-import 409 with some
-     * rows already created. Case-insensitive, matching ux_profiles_username_lower.
-     *
-     * Rows with NO username are skipped here — theirs is generated in the route,
-     * which passes the names claimed so far so that two students with the same
-     * name cannot both be handed `maria.santos`.
-     */
+    // Catch within-file duplicate usernames before any account is created. Case-insensitive.
     const seen = new Map<string, number>();
     v.rows.forEach((row, i) => {
       if (!row.username) return;
@@ -476,18 +277,7 @@ export const ImportAccountsSchema = z
       }
     });
 
-    /*
-     * The same rule for addresses, and it is a hard constraint rather than a
-     * courtesy: Supabase enforces a unique index on `auth.users.email`
-     * (`users_email_partial_key`), so two accounts can never share one. Siblings
-     * handed the same parent's address is how a real class file hits this, and
-     * without the check the second of them fails mid-import with the first
-     * already created.
-     *
-     * A blank email is skipped — it is optional here (unlike the create form) and
-     * the route generates a `<username>@pca.invalid` placeholder, which is unique
-     * by construction.
-     */
+    // Same for emails, which must be unique in auth.users. Blank ones get unique placeholders.
     const seenEmails = new Map<string, number>();
     v.rows.forEach((row, i) => {
       if (!row.email) return;
@@ -506,10 +296,7 @@ export const ImportAccountsSchema = z
   });
 export type ImportAccountsInput = z.infer<typeof ImportAccountsSchema>;
 
-/**
- * Names in, a free username out. Admin-only — see the route's JSDoc for why that
- * restriction is the whole reason this endpoint may exist at all.
- */
+/** Names in, a free username out. Admin-only: it is a username-availability oracle. */
 export const SuggestUsernameSchema = z
   .object({
     first_name: z.string().trim().max(60),
@@ -522,25 +309,8 @@ export const SuggestUsernameSchema = z
 export type SuggestUsernameInput = z.infer<typeof SuggestUsernameSchema>;
 
 /**
- * Which of these usernames and addresses already belong to an account?
- * Admin-only, for the bulk-import review screen.
- *
- * Both in one call because they are needed at the same instant for the same
- * decision — whether this file is safe to import — and two round trips would let
- * one half succeed and the other fail.
- *
- * ⚠️ THIS IS THE SAME ENUMERATION ORACLE AS `SuggestUsernameSchema`, AND IT IS
- * SAFE FOR THE SAME REASON AND ONLY THAT REASON: `requireRole('admin')`. A
- * caller who can ask "does `juan.delacruz` exist?" can work through plausible
- * names and learn which children attend one named school — which is precisely
- * why `POST /auth/login` returns one identical message for every failure. The
- * email half is strictly worse if leaked, since it confirms a real address for a
- * named child. An admin already sees the whole account list.
- * **Never expose it to sign-up, and never move it out from behind the role.**
- *
- * Both caps match `ImportAccountsSchema.rows` — this exists to check one import
- * file, not to sweep the table. Both default to empty so a file with no typed
- * usernames, or none with addresses, needs no special-casing at the call site.
+ * Which of these usernames/emails already exist, for the import review screen.
+ * An enumeration oracle, safe only behind requireRole('admin'). Never expose it elsewhere.
  */
 export const ImportPrecheckSchema = z
   .object({
@@ -550,7 +320,7 @@ export const ImportPrecheckSchema = z
   .strict();
 export type ImportPrecheckInput = z.infer<typeof ImportPrecheckSchema>;
 
-/** Query filters for the account list. Every field optional; absent means "any". */
+/** Account list filters; absent means "any". */
 export const ListAccountsQuerySchema = z
   .object({
     role: z.enum(['student', 'educator', 'admin']).optional(),
@@ -563,28 +333,14 @@ export const ListAccountsQuerySchema = z
   .strict();
 export type ListAccountsQuery = z.infer<typeof ListAccountsQuerySchema>;
 
-// ── Materials ─────────────────────────────────────────────
+// Materials
 
-/**
- * A material is published to EXACTLY ONE grade level.
- *
- * Mirrors `materials_grade_levels_valid`, which is
- * `grade_levels <@ ARRAY[7,8,9,10] AND array_length(grade_levels, 1) = 1`.
- * The column stays SMALLINT[] because every grade-access path in the app is
- * built on the array form — `@>` in `materialAccess.ts`, `= ANY(...)` in five
- * RLS policies and `v_grade_level_mastery`, `unnest()` in
- * `private.auth_assigned_grades()`, and a GIN index. The single-element rule is
- * the CHECK's job, not the column type's.
- */
+/** Exactly one grade, mirroring `materials_grade_levels_valid`. Stays an array; don't assume a scalar. */
 const GradeLevelsField = z
   .array(z.coerce.number().int().min(7).max(10))
   .length(1, 'A material is published to exactly one grade level');
 
-/**
- * Validates an educator's material upload. The file itself is handled by multer;
- * this guards the accompanying form fields. `grade_levels` arrives as a multipart
- * string (e.g. "[8]"), so it is JSON-parsed before the array is validated.
- */
+/** Upload form fields (multer handles the file). `grade_levels` arrives as a JSON string. */
 export const CreateMaterialSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
   subject: z.string().trim().min(1, 'Subject is required'),
@@ -604,29 +360,8 @@ export const CreateMaterialSchema = z.object({
 export type CreateMaterialInput = z.infer<typeof CreateMaterialSchema>;
 
 /**
- * What an educator may change about a material after upload: archive, grade
- * access, title and subject.
- *
- * ⚠️ EVERYTHING ELSE IS DELIBERATELY ABSENT, and this is not an oversight to be
- * filled in later:
- *
- *  - `parsed_status` / `parse_error` / `is_scanned` / `page_count` — owned by the
- *    ingest pipeline. Accepting them would let an educator mark a failed material
- *    Ready and push a concept-less material into students' study spaces.
- *  - `description` — no UI asks for it, and this must not become a general row
- *    editor.
- *
- * `subject` WAS excluded until 2026-10-12 on the theory that re-pointing it would
- * strand the material in every space holding it. It does not strand anything:
- * it is the same mechanism as a grade change. `spaceMaterialIds()` intersects the
- * stored `study_space_materials` list against the live (subject, grade) published
- * set, so the material leaves old-subject spaces on their next read, appears as
- * "available" in new-subject ones, and link rows and `bkt_mastery` survive — so
- * setting the subject back restores exactly what was there. The code is
- * re-checked against `public.subjects` in the route, as on upload.
- *
- * At least one field must be present, or the request is a no-op that would still
- * bump `updated_at`. `.strict()` so a refused field is a 400, not a silent drop.
+ * The only post-upload material edit: archive, grade, title, subject. Ingest-owned fields
+ * (parsed_status, parse_error, is_scanned, page_count) must never be accepted. `.strict()`.
  */
 export const UpdateMaterialSchema = z
   .object({
@@ -646,12 +381,7 @@ export const FetchConceptsBatchSchema = z.object({
 });
 export type FetchConceptsBatchInput = z.infer<typeof FetchConceptsBatchSchema>;
 
-/**
- * An educator manually adding a concept the extractor missed. The definition is
- * embedded server-side (gemini-embedding-001) so the concept behaves exactly like
- * an extracted one in Free Recall, the chatbot, and generated assessments.
- * `source_pages` is optional — a hand-added concept may have no page provenance.
- */
+/** Educator-added concept; embedded server-side like an extracted one. */
 export const CreateConceptSchema = z.object({
   term: z.string().trim().min(1, 'Term is required'),
   definition: z.string().trim().min(1, 'Definition is required'),
@@ -659,7 +389,7 @@ export const CreateConceptSchema = z.object({
 });
 export type CreateConceptInput = z.infer<typeof CreateConceptSchema>;
 
-/** Editing a concept. Any subset of fields; at least one must be present. */
+/** At least one field required. */
 export const UpdateConceptSchema = z
   .object({
     term: z.string().trim().min(1, 'Term cannot be empty').optional(),
@@ -671,14 +401,9 @@ export const UpdateConceptSchema = z
   });
 export type UpdateConceptInput = z.infer<typeof UpdateConceptSchema>;
 
-// ── Study Spaces ──────────────────────────────────────────
+// Study spaces
 
-/**
- * A study space covers exactly one subject. The subject is what makes the space's
- * contents derivable — every non-archived material published to that subject at
- * the student's grade level — so it is required, not optional.
- * The code is re-checked against public.subjects in the route.
- */
+/** One subject per space, required; the route re-checks it against public.subjects. */
 export const CreateStudySpaceSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
   description: z.string().optional().nullable(),
@@ -686,30 +411,18 @@ export const CreateStudySpaceSchema = z.object({
 });
 export type CreateStudySpaceInput = z.infer<typeof CreateStudySpaceSchema>;
 
-/**
- * `subject` is deliberately absent: a space's decks, practice tests and mastery
- * are all built from its materials, so re-pointing it at another subject would
- * strand that work. Create a second space instead.
- */
+/** No `subject`: a space's subject is fixed at creation. */
 export const UpdateStudySpaceSchema = z.object({
   title: z.string().trim().min(1).optional(),
   description: z.string().optional().nullable(),
 });
 export type UpdateStudySpaceInput = z.infer<typeof UpdateStudySpaceSchema>;
 
-/**
- * Pulling newly published materials into a space. The set to add is derived
- * server-side from (space.subject, student's grade level) — a client cannot name
- * which materials to attach — so the body carries nothing. Validated anyway so
- * the endpoint follows the same rule as every other POST.
- */
+/** Empty body: the materials to add are derived server-side. */
 export const SyncSpaceMaterialsSchema = z.object({}).passthrough();
 export type SyncSpaceMaterialsInput = z.infer<typeof SyncSpaceMaterialsSchema>;
 
-// A deck is the student's own filing system — they name it, rename it and throw
-// it away. Its CONTENTS are not theirs to write: there is no create/update/delete
-// schema for a flashcard, because every card assesses a concept an educator
-// uploaded and vetted. Cards enter a deck through generation only.
+// Students own decks but not cards; cards enter a deck only through generation.
 
 export const CreateDeckSchema = z.object({
   title: z.string().min(1).max(120),
@@ -718,26 +431,14 @@ export const CreateDeckSchema = z.object({
 export type CreateDeckInput = z.infer<typeof CreateDeckSchema>;
 
 /**
- * Renaming, re-describing, and which face a deck opens on. Nothing else — a
- * student does not own the cards inside, so there is nothing else to set.
- *
- * ⚠️ EVERY FIELD IS OPTIONAL AND THE HANDLER WRITES ONLY THE KEYS IT RECEIVES.
- * This was `title` required plus an unconditional `description ?? null`, so a
- * title-only update silently blanked the description — harmless while the rename
- * modal was the only caller and always sent both, and a live bug the moment a
- * second caller existed. The display toggle is that second caller: it sends
- * `answer_first` alone, and under the old shape a later rename would have reset
- * it. Partial-write is the fix; `superRefine` is what keeps an empty body a 400
- * rather than a no-op 200.
- *
- * `undefined` and `null` are deliberately different for `description`: absent
- * means "leave it alone", explicit null means "clear it".
+ * Partial update; the handler writes only the keys it receives. For `description`, absent means
+ * leave it and null means clear it.
  */
 export const UpdateDeckSchema = z
   .object({
     title: z.string().min(1).max(120).optional(),
     description: z.string().max(500).optional().nullable(),
-    /** Display only. True shows the definition first — see migration 0027. */
+    /** Display only: show the definition first. */
     answer_first: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
@@ -750,29 +451,18 @@ export const UpdateDeckSchema = z
   });
 export type UpdateDeckInput = z.infer<typeof UpdateDeckSchema>;
 
-// ── AI Flashcard Generation ───────────────────────────────
+// Flashcard generation
 
-/**
- * Filling a deck from one of the space's materials.
- *
- * One material per call, not an array: a deck gathers materials one lesson at a
- * time, and "is this material already in this deck?" is only answerable per
- * material. `replace` is the student's explicit answer to the 409 they get when
- * it already is.
- */
+/** One material per call. `replace` answers the 409 when the material is already in the deck. */
 export const GenerateDeckCardsSchema = z.object({
   material_id: z.string().uuid(),
   replace: z.boolean().default(false),
-  /**
-   * 'term'     — front is the concept's term, verbatim. No model involved.
-   * 'question' — front is an AI-written question. The BACK is the educator's
-   *              definition either way; the model never writes the answer.
-   */
+  /** Front: the term, or a model-written question. The back is always the educator's definition. */
   format: z.enum(['term', 'question']).default('term'),
 });
 export type GenerateDeckCardsInput = z.infer<typeof GenerateDeckCardsSchema>;
 
-// ── Spaced Repetition ────────────────────────────────────
+// Spaced repetition
 
 export const RateFlashcardSchema = z.object({
   flashcard_id: z.string().uuid(),
@@ -780,19 +470,11 @@ export const RateFlashcardSchema = z.object({
 });
 export type RateFlashcardInput = z.infer<typeof RateFlashcardSchema>;
 
-// ── Cognitive Review ──────────────────────────────────────
+// Cognitive review
 
 export const FreeRecallSchema = z.object({
   space_id: z.string().uuid(),
-  /**
-   * Exactly one material. The score is a coverage ratio over every concept in the
-   * selection, so spanning two lessons doubles the denominator and reports a
-   * student who recalled one of them well as having recalled little.
-   *
-   * Stays an ARRAY despite the cap: `cognitive_logs.material_ids` is `UUID[]` and
-   * older attempts genuinely hold several, which History must keep rendering.
-   * Only new submissions are capped.
-   */
+  /** Exactly one material (coverage is over all its concepts). An array because older rows hold several. */
   material_ids: z
     .array(z.string().uuid())
     .min(1, 'A material must be selected')
@@ -801,100 +483,37 @@ export const FreeRecallSchema = z.object({
 });
 export type FreeRecallInput = z.infer<typeof FreeRecallSchema>;
 
-/**
- * Written coaching on a Free Recall attempt, nested inside the `ai_feedback`
- * JSON string as `written_feedback`.
- *
- * Optional everywhere it is read: generation is allowed to fail without taking
- * the score down with it, and attempts logged before this shipped have none.
- */
+/** Written coaching, stored as `ai_feedback.written_feedback`. Optional: it may fail or predate this. */
 export interface FreeRecallWrittenFeedback {
   /**
-   * The whole written response: what landed, what did not, and — as its closing
-   * sentence — one concrete thing to do next, naming the page it is on.
-   *
-   * ONE field, arrived at by removing two. It was `strengths`/`gaps`/`next_steps`,
-   * where the model had to fill three slots from one set of observations and ran
-   * out: in every logged attempt `next_steps` merely paraphrased `gaps`. Merging
-   * the first two fixed that. The remaining split was then kept on the theory
-   * that a concrete action is the hardest sentence to write and would be crowded
-   * out of a free passage — **that was measured and disproved.** Run on two
-   * stored submissions, including a 28/28 attempt with no obvious gap to point
-   * at, the merged prompt still closed with "try reviewing Injection on page 24"
-   * and "review security headers on page 39". Do not split it again on that
-   * reasoning.
-   *
-   * It describes COVERAGE, never certifies correctness. Coverage is decided by
-   * cosine similarity, which measures whether the student wrote ABOUT a concept,
-   * not whether they were right — a sentence calling RA 10175 the Data Privacy
-   * Act scored 0.7175 and counted as covered. Contradictions belong in
-   * `corrections`, which is checked against the lesson's own definitions.
+   * One passage weaving what landed with what didn't, closing with a page-anchored action.
+   * Don't split it into fields. It describes coverage and never certifies correctness.
    */
   feedback: string;
-  /**
-   * Statements that contradict the lesson's own definitions, quoted back in the
-   * student's words. Empty string when nothing conflicts.
-   *
-   * Prose only — this NEVER moves `similarity_score`. Coverage stays a pure
-   * cosine computation, which keeps the score deterministic given the
-   * extraction and keeps this call on GEMINI_UTILITY_MODEL under the rule in
-   * CLAUDE.md: the model's judgement here becomes words, not a number.
-   *
-   * Optional: attempts logged before this shipped carry none.
-   */
+  /** Statements contradicting the lesson, quoted back; '' when none. Never moves the score. */
   corrections?: string;
 }
 
-/** Full payload stored in `cognitive_logs.ai_feedback` for a Free Recall attempt. */
+/** `cognitive_logs.ai_feedback` for a Free Recall attempt. */
 export interface FreeRecallFeedback {
   missed_concepts: string[];
-  /**
-   * Retained as DATA, no longer shown to the student.
-   *
-   * It was derived from fixed thresholds (>= 0.30 strong, >= 0.15 partial) tuned
-   * against a 78-concept lesson, but the denominator is whichever material was
-   * selected. On a 29-concept material an 86% answer and a 36% answer containing
-   * two factual errors both came back "strong", so the label carried no
-   * information. The UI now leads with the covered/total count and the student's
-   * own progress on that same material.
-   *
-   * Still computed and stored so the payload shape is unchanged and the
-   * distribution stays available for later analysis.
-   */
+  /** Stored for analysis only; never displayed (fixed thresholds are meaningless across materials). */
   overall_verdict: 'strong' | 'partial' | 'needs_review';
   written_feedback: FreeRecallWrittenFeedback | null;
-  /**
-   * Stored so a past attempt can say "covered 15 of 78" without recomputing.
-   * Optional: attempts logged before this shipped carry neither.
-   */
+  /** Optional: older attempts lack them. */
   covered_count?: number;
   total_concepts?: number;
 }
 
-// ── Feynman Technique ─────────────────────────────────────
+// Feynman technique
 
-/**
- * The paper specifies exactly one audience — "a 10-year-old child" — so the
- * rubric is fixed. Kept as a single-value enum rather than dropped entirely:
- * every stored `ai_feedback` payload records which rubric graded it, so a
- * future audience is one entry here plus one rubric, not a data migration.
- */
+/** The paper specifies one audience; kept as an enum so stored payloads record the rubric. */
 export const FEYNMAN_AUDIENCES = ['10yr_old'] as const;
 
-/**
- * A Feynman submission explains one or more concepts to the target audience.
- * Only `concept_id` is accepted — the authoritative `term` and `definition`
- * are looked up server-side so a client cannot grade itself against a
- * definition it invented.
- */
+/** Only concept ids are accepted; term and definition are looked up server-side. */
 export const FeynmanEvaluationSchema = z.object({
   space_id: z.string().uuid(),
-  /**
-   * Exactly one material — see the note on FreeRecallSchema. Here it also keeps
-   * term grouping honest: the same term in two materials is two different lessons'
-   * definitions, and grading an explanation against both would be judging the
-   * student on a lesson they did not choose.
-   */
+  /** Exactly one material, as for Free Recall. */
   material_ids: z
     .array(z.string().uuid())
     .min(1, 'A material must be selected')
@@ -914,7 +533,7 @@ export type FeynmanEvaluationInput = z.infer<typeof FeynmanEvaluationSchema>;
 export type FeynmanAudience = (typeof FEYNMAN_AUDIENCES)[number];
 export type FeynmanVerdict = 'correct' | 'needs_improvement' | 'incorrect';
 
-/** Per-concept grading result, nested inside the `ai_feedback` JSON string. */
+/** Per-concept result inside `ai_feedback`. */
 export interface FeynmanConceptResult {
   concept_id: string;
   term: string;
@@ -924,19 +543,15 @@ export interface FeynmanConceptResult {
   jargon_found: string[];
   feedback: string;
 
-  // ── Analogy Verification (pipeline step 2) ──────────────────────────────
-  // Using an everyday comparison already moved `simplicity_score`, because the
-  // rubric tells the model to reward one. These three fields make that visible:
-  // the student is told whether they used one, which one, and whether it lands.
-  /** Did the student's own explanation contain an everyday comparison? */
+  // Analogy verification
   analogy_used: boolean;
-  /** The student's comparison in their own words. Empty when none was used. */
+  /** The student's comparison, or '' if none. */
   analogy_quote: string;
-  /** Verdict on their analogy, or — when none was used — one they could try. */
+  /** Verdict on their analogy, or one to try if none was used. */
   analogy_idea: string;
 }
 
-/** Full payload stored in `cognitive_logs.ai_feedback` (as a JSON string). */
+/** `cognitive_logs.ai_feedback` (stored as a JSON string). */
 export interface FeynmanFeedback {
   audience: FeynmanAudience;
   accuracy_score: number;    // mean across concepts
@@ -947,9 +562,9 @@ export interface FeynmanFeedback {
 }
 
 
-// ── Practice Tests ────────────────────────────────────────
+// Practice tests
 
-/** The five formats, spelled exactly as the Postgres `question_type` enum. */
+/** Matches the `question_type` enum. */
 export const QUESTION_FORMATS = [
   'multiple_choice',
   'true_or_false',
@@ -958,16 +573,7 @@ export const QUESTION_FORMATS = [
   'matching_type',
 ] as const;
 
-/**
- * Building a practice test.
- *
- * ONE MATERIAL, and NO LENGTH. The test is one question per concept in that
- * material, and the count is derived server-side by `allocateConcepts()` — a
- * client-supplied length is a client-chosen test, and a student could ask for
- * five questions while still banking BKT evidence. The title is likewise derived
- * from the material rather than accepted, so it cannot disagree with the row it
- * describes.
- */
+/** One material and no length: the server derives one question per concept, and the title. */
 export const CreatePracticeTestSchema = z.object({
   space_id: z.string().uuid(),
   material_id: z.string().uuid(),
@@ -976,15 +582,8 @@ export const CreatePracticeTestSchema = z.object({
 export type CreatePracticeTestInput = z.infer<typeof CreatePracticeTestSchema>;
 
 /**
- * Recording one answer as the student works.
- *
- * `is_correct` and `concept_id` USED TO BE HERE AND MUST NOT COME BACK. Both are
- * derivable from `questions_payload[question_index]`, and accepting them let a
- * student post arbitrary correctness for any concept — the write RLS exists to
- * make impossible from a browser, handed over by the API instead.
- *
- * `answer` is the option text, `'true'`/`'false'`, or what the student typed;
- * capped because it lands in a JSONB column that grows with the test.
+ * One answer. Never add `is_correct` or `concept_id`: both are derived server-side.
+ * `answer` is option text, 'true'/'false', or typed text.
  */
 export const SubmitAnswerSchema = z.object({
   question_index: z.number().int().nonnegative(),
@@ -993,14 +592,7 @@ export const SubmitAnswerSchema = z.object({
 });
 export type SubmitAnswerInput = z.infer<typeof SubmitAnswerSchema>;
 
-/**
- * A question as stored in `practice_tests.questions_payload`.
- *
- * `answer` and `explanation` are the answer key. They are stripped by
- * `stripKey()` in `practice.routes.ts`, which is the ONLY function permitted to
- * serialise a question toward a browser — so adding a field here cannot leak it
- * by accident.
- */
+/** Stored question. `answer`/`explanation` are the key; only stripKey() may serialise questions to a browser. */
 export interface StoredTestQuestion {
   index: number;
   concept_id: string;
@@ -1014,11 +606,10 @@ export interface StoredTestQuestion {
   explanation: string;
 }
 
-/** The envelope `questions_payload` actually holds. Versioned for future shape changes. */
 export interface StoredTestPayload {
   version: 1;
   questions: StoredTestQuestion[];
-  /** Items whose text came from a template because the model skipped them. */
+  /** Items that fell back to a template. */
   fallback_count?: number;
 }
 
@@ -1028,33 +619,17 @@ export interface StoredAnswer {
   latency_ms: number;
 }
 
-// ── Gamification ──────────────────────────────────────────
+// Gamification
 
-// Per-item response log stored on the session for post-game review. Shape
-// varies by game (trivia questions / matched pairs / crossword words), so it's
-// validated loosely as { type, items[] } and rendered by the frontend.
+// Per-item review log; shape varies by game, so validated loosely.
 export const GameSessionDetailSchema = z.object({
   type: z.enum(['trivia', 'term_matcher', 'crossword']),
   items: z.array(z.record(z.string(), z.unknown())),
 });
 
 /**
- * A finished game. XP was removed as a feature (not in the official spec).
- *
- * EVERYTHING IDENTIFYING WHAT WAS PLAYED COMES FROM THE `game_content` ROW, not
- * from the client — `space_id`, `material_id`, `game_type` and `mastery_snapshot`
- * are all read server-side from the row `content_id` names, after checking the
- * caller owns it. Same principle as `SubmitAnswerSchema` deliberately carrying no
- * `is_correct`: a client-asserted mastery snapshot is a client-chosen one, and
- * this one is the evidence the paper's Difficulty Alignment check (p. 98) reads.
- *
- * `material_id` used to be here as a bare uuid gated by nothing, which CLAUDE.md's
- * "every student-reachable route that takes a material ID must gate it" forbids.
- *
- * `content_id` is REQUIRED, not optional. Mock mode is not a counter-argument —
- * `recordSession()` already returns early when there is no content id, so it has
- * never reached this endpoint. Optional would let a real caller forget it and
- * silently write an uncalibrated row.
+ * A finished game. Space, material, game type and mastery snapshot are read server-side from
+ * the owner-checked `game_content` row, never from the client. `content_id` is required.
  */
 export const CreateGameSessionSchema = z.object({
   content_id: z.string().uuid(),
@@ -1064,17 +639,7 @@ export const CreateGameSessionSchema = z.object({
 });
 export type CreateGameSessionInput = z.infer<typeof CreateGameSessionSchema>;
 
-/**
- * AI generation of game content from a study space's materials.
- *
- * THERE IS DELIBERATELY NO `difficulty` FIELD. It is derived server-side from the
- * student's M_doc over the selected materials (paper p. 83), because a
- * client-supplied difficulty is a client-chosen difficulty and would defeat the
- * calibration entirely — the same reasoning as `testAllocation.ts` re-deriving
- * test length rather than accepting one. A stale client still sending `difficulty`
- * has it silently stripped, which is correct; verify by reading the stored row,
- * not the response code.
- */
+/** No `difficulty` field: the server derives it from M_doc (paper p. 83). A sent one is stripped. */
 export const GenerateGameContentSchema = z.object({
   space_id: z.string().uuid(),
   material_ids: z.array(z.string().uuid()).min(1, 'At least one material must be selected'),
@@ -1082,17 +647,9 @@ export const GenerateGameContentSchema = z.object({
 });
 export type GenerateGameContentInput = z.infer<typeof GenerateGameContentSchema>;
 
-/*
- * There is deliberately no BKT request schema.
- *
- * `BktRecalculateSchema` lived here for a `POST /api/bkt/recalculate` that
- * proxied to a pyBKT microservice. BKT is not something a client asks for — it
- * is a consequence of completing a test or rating a due flashcard, and both of
- * those already validate their own bodies. A recalculate endpoint would also be
- * a third mastery writer, which paper p. 58 does not allow.
- */
+// No BKT request schema: mastery updates only as a side effect of tests and due flashcards.
 
-// ── Chat (Study Assistant) ────────────────────────────────
+// Chat
 
 export const ChatMessageSchema = z.object({
   role: z.enum(['user', 'assistant']),
@@ -1110,19 +667,9 @@ export const ChatRequestSchema = z.object({
 });
 export type ChatRequestInput = z.infer<typeof ChatRequestSchema>;
 
-// ── Onboarding (student first-run) ────────────────────────
+// Onboarding
 
-/**
- * ⚠️ MIRRORS `OnboardingKey` IN `src/lib/onboarding.ts`, WHICH IS THE CATALOGUE.
- * Adding a step means editing both files, deliberately: an enum here rather than
- * `z.string()` is what stops a stale or hand-rolled client writing junk keys into
- * `onboarding_seen`, where nothing would ever read them and nothing would clean
- * them up.
- *
- * The strings are identities, not labels. Renaming one re-shows that step to
- * every student who had already dismissed it and orphans the row that recorded
- * they had — the same rule `user_badges.badge_name` carries.
- */
+/** Mirrors `OnboardingKey` in src/lib/onboarding.ts; edit both. Keys are identities: never rename one. */
 export const OnboardingStepKeySchema = z.enum([
   'tour_v1',
   'tool_resources',
@@ -1137,11 +684,6 @@ export const OnboardingStepKeySchema = z.enum([
 ]);
 export type OnboardingStepKey = z.infer<typeof OnboardingStepKeySchema>;
 
-/**
- * `.strict()` so an unknown key is a 400 rather than a silent drop, matching
- * `UpdateProfileSchema`. There is no matching schema for `GET /api/onboarding`
- * because it accepts nothing at all — no body, no query, no path parameter.
- */
 export const MarkOnboardingSeenSchema = z
   .object({
     step_key: OnboardingStepKeySchema,

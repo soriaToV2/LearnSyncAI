@@ -1,41 +1,13 @@
 /**
- * The `--live` half of the ICR harness. Not run directly — see `bkt-verify.ts`.
+ * The --live half of the ICR harness (run via bkt-verify.ts): proves the arithmetic is wired to the
+ * flashcard and test endpoints, paper p. 96.
  *
- * Paper p. 96: "Each test case is executed in the live application, and the
- * system-generated mastery value is compared against the manually computed
- * expected value." The offline sections prove the arithmetic; this proves the
- * arithmetic is actually WIRED to the two buttons a student presses. Offline
- * checks could all pass while the engine is never called — which is exactly the
- * class of defect that hid in the telemetry insert for months.
+ * Creates a throwaway student (space, deck, four cards on real concepts), signs in with a normal
+ * Bearer token so requests pass authenticate and requireRole exactly as the browser's do, and deletes
+ * the account in a finally (--keep leaves it). A fresh student has no mastery rows, so the expected
+ * posteriors are the same hand-computed literals as the offline sections.
  *
- * ── IT BUILDS ITS OWN STUDENT, THEN DELETES THEM ─────────────────────────────
- *
- * Rather than borrowing a real account, the run creates a throwaway student with
- * a study space, a deck and four flashcards pointing at real concepts, exercises
- * the endpoints, prints its evidence, and removes the account in a `finally`.
- * Everything else cascades from `profiles.id`, so nothing is left behind and the
- * harness is safely re-runnable. Pass `--keep` to leave the account for
- * inspection.
- *
- * That also means it signs in with a password it set itself, and sends a normal
- * Bearer token — so the run traverses `authenticate` and `requireRole('student')`
- * exactly as the browser does. It deliberately does NOT mint a service-role JWT,
- * which would skip the middleware this is meant to exercise.
- *
- * ── WHY IT FORCES THE PRIOR ──────────────────────────────────────────────────
- *
- * A live posterior depends on live state, so a run that just reads back whatever
- * the server produced can only show the row is self-consistent. That is an
- * INTEGRATION claim wearing a correctness claim's clothes. A fresh student has no
- * `bkt_mastery` rows at all, which is both the true cold start and a test of the
- * "missing row means 0.10, not 0" rule — so the expected posterior is the same
- * hand-computed literal the offline sections use.
- *
- * ⚠️ `--live-test` spends FIVE `gemini-3.6-flash` requests — one per question
- * format, issued in parallel. On the free tier that is the entire per-minute
- * allowance in one go, and a quarter of the 20-per-day bucket that concept
- * extraction, Feynman grading, flashcard fronts and games all share. Roughly
- * four such runs a day; the 50-student study needs the paid key.
+ * --live-test spends five gemini-3.6-flash requests, one per question format, in parallel.
  */
 
 import { supabaseAdmin, supabaseAnon } from '../server/lib/supabase';
@@ -46,7 +18,7 @@ const BASE_URL = process.env.BKT_VERIFY_BASE_URL ?? 'http://localhost:5000/api';
 const S = 0.15;
 const T = 0.2;
 
-/** From P(L₀) = 0.10 — the same literals §2 of the offline harness checks. */
+/** From P(L₀) = 0.10; the same literals §2 of the offline harness checks. */
 const EXPECTED_FROM_PRIOR: Record<string, { posterior: number; evidence: number; obs: 0 | 1; pGuess: number }> = {
   easy: { posterior: 0.7231, evidence: 0.6538, obs: 1, pGuess: 0.05 },
   medium: { posterior: 0.4194, evidence: 0.2742, obs: 1, pGuess: 0.25 },
@@ -74,9 +46,7 @@ interface Fixture {
   conceptIds: string[];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Fixture
-// ─────────────────────────────────────────────────────────────────────────────
 
 async function buildFixture(): Promise<Fixture> {
   const stamp = Date.now();
@@ -107,8 +77,7 @@ async function buildFixture(): Promise<Fixture> {
     throw new Error(`"${material.title}" has ${concepts?.length ?? 0} concepts; need at least 4.`);
   }
 
-  // `handle_new_user` reads role and grade straight out of the metadata, so the
-  // profile lands correct with no follow-up update.
+  // handle_new_user reads role and grade from the metadata, so no follow-up update is needed.
   const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
     email,
     password,
@@ -181,9 +150,7 @@ async function buildFixture(): Promise<Fixture> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // HTTP + reads
-// ─────────────────────────────────────────────────────────────────────────────
 
 async function call<T>(
   token: string,
@@ -228,9 +195,7 @@ async function masteryOf(studentId: string, conceptId: string) {
   return data;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// §6 — Flashcards
-// ─────────────────────────────────────────────────────────────────────────────
+// §6 Flashcards
 
 async function flashcardLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   o.beginSection(
@@ -294,10 +259,7 @@ async function flashcardLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   o.checkExact('Easy raises it further than Medium', easyM > mediumM, true);
   o.checkExact('Hard is scored as an incorrect answer, below Medium', hardM < mediumM, true);
 
-  /*
-   * The due-check is the entire protection against farming mastery by
-   * re-drilling one card, so it gets its own case.
-   */
+  /* The due-check is the only protection against farming mastery by re-drilling, so it gets its own case. */
   console.log('');
   const notDue = fx.cards[3];
   await supabaseAdmin
@@ -331,9 +293,7 @@ async function flashcardLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// §7 — A full adaptive test
-// ─────────────────────────────────────────────────────────────────────────────
+// §7 A full adaptive test
 
 async function testLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   o.beginSection(
@@ -343,15 +303,8 @@ async function testLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   );
 
   /*
-   * EQ(4) as it stands right now, computed here so the stored snapshot can be
-   * checked against it.
-   *
-   * This is NOT 0.10, and that is the interesting part: §6 just rated three
-   * flashcards on concepts belonging to this same material, so three of its
-   * concepts carry real mastery and the rest are still at the prior. The
-   * snapshot therefore doubles as evidence that flashcard ratings feed the test
-   * generator's difficulty decision — the cross-feature path paper p. 81
-   * describes, which no single-feature check can show.
+   * EQ(4) now, to check the stored snapshot against. Not 0.10: §6 rated three cards on this material,
+   * so this also shows flashcard ratings feed the test's difficulty (paper p. 81).
    */
   const { data: priorRows } = await supabaseAdmin
     .from('bkt_mastery')
@@ -381,12 +334,7 @@ async function testLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   }
   const testId = created.data.id;
 
-  /*
-   * The answer key is read from the row with the service role, because
-   * `stripKey()` correctly refuses to put it on the wire — there is no other way
-   * for a script to answer correctly. A deliberate dev-tool privilege the browser
-   * never has, not a hole.
-   */
+  /* The answer key is read with the service role, since stripKey() keeps it off the wire. A dev-tool privilege only. */
   const { data: testRow } = await supabaseAdmin
     .from('practice_tests')
     .select('questions_payload, difficulty_tier, mastery_snapshot')
@@ -468,13 +416,7 @@ async function testLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   o.checkExact('no test row carries a flashcard rating', ratingSet, 0);
   o.checkExact('every row records the applied P(S)', wrongSlip, 0);
 
-  /*
-   * Per-format P(G) as it survived the round trip into the database.
-   *
-   * The expected values are LITERALS from paper pp. 73-75, not a lookup through
-   * `GUESS_KEY_BY_FORMAT` — a wrong mapping would otherwise agree with itself on
-   * both sides. Same rule as §2.
-   */
+  /* Per-format P(G) as stored. Expected values are literals from pp. 73-75, not a lookup (same rule as §2). */
   const PAPER_GUESS: Record<string, number> = {
     multiple_choice: 0.25,
     true_or_false: 0.5,
@@ -509,7 +451,7 @@ async function testLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   console.log('');
   o.checkExact(`mastery matches the final posterior for all ${finals.size} concepts`, masteryMismatch, 0);
 
-  // Idempotency — the reason the completion UPDATE is a compare-and-swap.
+  // Idempotency: the reason the completion UPDATE is a compare-and-swap.
   const before = logs?.length ?? 0;
   await call(fx.token, 'PUT', `/practice/${testId}/complete`, {});
   const { count: afterLogs } = await supabaseAdmin
@@ -523,8 +465,7 @@ async function testLeg(o: LiveOptions, fx: Fixture): Promise<void> {
   o.checkExact('re-completing writes no further audit rows', afterLogs ?? -1, before);
   o.checkExact('re-completing writes no further telemetry', afterTelemetry ?? -1, telemetryCount ?? -1);
 
-  // Where the material sits now. The tier is chosen at generation, so this is
-  // what the student's NEXT test would be calibrated against.
+  // Where the material sits now; the student's next test is calibrated against this.
   const { data: after } = await supabaseAdmin
     .from('bkt_mastery')
     .select('concept_id, latent_mastery')
@@ -538,8 +479,6 @@ async function testLeg(o: LiveOptions, fx: Fixture): Promise<void> {
       `${mean >= 0.85 ? 'advanced' : mean >= 0.5 ? 'intermediate' : 'foundational'}.`
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function runLiveVerification(o: LiveOptions): Promise<void> {
   const health = await fetch(`${BASE_URL}/health`).catch(() => null);

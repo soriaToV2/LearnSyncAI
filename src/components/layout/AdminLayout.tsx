@@ -29,12 +29,7 @@ function AdminLayoutInner() {
   const monogram = initials(user);
   const subtitle = subtitleFor(user);
 
-  /*
-   * Identical to the other two layouts, including `replace: true` — without it
-   * Back returns to the portal shell, which is the "still signed in" impression
-   * the shared `signOut()` exists to remove. The redirect is in `finally` because
-   * being stranded inside an account on a network blip is the worse failure.
-   */
+  // Same as the other layouts: `replace: true`, redirect in finally.
   const handleSignOut = async () => {
     if (isSigningOut) return;
     setIsSigningOut(true);
@@ -77,21 +72,7 @@ function AdminLayoutInner() {
   const collapsedNavClass = (collapsed: boolean) =>
     collapsed ? 'justify-center px-0 gap-0' : '';
 
-  /*
-   * Three destinations, and every one of them is about accounts. There is no
-   * Materials item, no analytics item and no settings item: this role "does not
-   * interact with learning content, study activities, or analytics"
-   * (ARCHITECTURE.md:14), and a nav entry is the most visible possible way to
-   * contradict that.
-   *
-   * Bulk import used to be a fourth destination, on the grounds that a multi-step
-   * flow — paste, review every row, then commit — needed a page to itself. It is
-   * now a button beside "New account" on Accounts, which is where an admin
-   * already is when they think "add the Grade 7 class". The height constraint
-   * that argument named is real and did not go away: `ImportAccountsModal` caps
-   * its own content and scrolls it, because `Modal` has no max-height and would
-   * otherwise push a fifty-row table off both edges of the viewport.
-   */
+  // Account destinations only: this role never touches learning content. Bulk import is a button on Accounts.
   const NAV_ITEMS = [
     { to: '/admin/dashboard', label: 'Dashboard', icon: Home, end: false },
     { to: '/admin/accounts', label: 'Accounts', icon: Users, end: false },
@@ -130,11 +111,7 @@ function AdminLayoutInner() {
         {!collapsed && (isSigningOut ? 'Signing out…' : 'Logout')}
       </button>
 
-      {/* Collapsed: no card chrome, smaller avatar. The collapsed rail is
-          w-20 with p-6, so its inner width is 32px — a 40px avatar inside a
-          bordered `p-3` box had a 6px slot and overflowed through the border.
-          See `StudentLayout` for the full arithmetic; all three sidebars
-          shipped the same block. */}
+      {/* Collapsed: no card chrome and a smaller avatar (the collapsed rail has 32px inner width). */}
       <div
         title={adminName}
         className={`flex items-center gap-3 w-full text-left ${
@@ -296,8 +273,7 @@ function AdminLayoutInner() {
         className={`flex-1 flex flex-col min-h-screen pt-16 md:pt-0 min-w-0 overflow-x-hidden transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'
           }`}
       >
-        {/* Above the keyed div so it does not replay its entrance animation on
-            every navigation — it is one standing notice, not a new alert per page. */}
+        {/* Outside the keyed div so it doesn't replay its entrance on every navigation. */}
         <EmailRecoveryBanner accent={theme.accent} />
         <div key={location.pathname} className="flex-1 flex flex-col animate-page-fade">
           <Outlet />
@@ -307,16 +283,7 @@ function AdminLayoutInner() {
   );
 }
 
-/**
- * `AuthProvider` is mounted HERE, matching the other two layouts — at the App
- * root it would fire `GET /api/auth/me` on `/login` and 401 on every cold load.
- *
- * ⚠️ `RequireRole` sits INSIDE it and OUTSIDE the shell, which is the only
- * ordering that works: it needs the profile the provider fetches, and the shell
- * must not render for anyone who is not an admin. This is the first route guard
- * in the app — see the component for why this portal is where one became
- * necessary.
- */
+/** AuthProvider per layout; RequireRole inside it and outside the shell, so no one but an admin sees the frame. */
 export default function AdminLayout() {
   return (
     <AuthProvider>

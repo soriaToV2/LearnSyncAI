@@ -34,7 +34,7 @@ export default function TermMatchingGame() {
   const [recentMatchIds, setRecentMatchIds] = useState<string[]>([]);
   const [failedPair, setFailedPair] = useState<[string, string] | null>(null);
   const [hintId, setHintId] = useState<string | null>(null);
-  // Wrong attempts per term (keyed by matchId) — the AI hint unlocks at 2.
+  // Wrong attempts per term (by matchId); the hint unlocks at 2.
   const [wrongCounts, setWrongCounts] = useState<Record<string, number>>({});
   const [moves, setMoves] = useState(0);
   const [combo, setCombo] = useState(0);
@@ -84,7 +84,7 @@ export default function TermMatchingGame() {
     return clearTimers;
   }, [startGame, clearTimers]);
 
-  /* The card currently anchored, for the mobile selection bar below. */
+  /* The anchored card, for the mobile selection bar. */
   const selectedCard =
     [...termCards, ...defCards].find((c) => c.id === selectedCardId) ?? null;
 
@@ -92,8 +92,7 @@ export default function TermMatchingGame() {
   const matchedPairs = matchedIds.length / 2;
   const accuracy = moves === 0 ? 100 : Math.round((matchedPairs / moves) * 100);
 
-  // Log the finished game once. Accuracy = pairs / attempts; the review shows
-  // how many wrong attempts each pair took before it was matched.
+  // Log once. Accuracy = pairs / attempts; the review shows misses per pair.
   useEffect(() => {
     if (!victory || recorded.current) return;
     recorded.current = true;
@@ -128,7 +127,7 @@ export default function TermMatchingGame() {
     const allCards = [...termCards, ...defCards];
     const first = allCards.find((c) => c.id === selectedCardId)!;
 
-    // Clicking another card in the same column just moves the selection.
+    // Another card in the same column just moves the selection.
     if (first.type === card.type) {
       setSelectedCardId(card.id);
       return;
@@ -162,8 +161,7 @@ export default function TermMatchingGame() {
     fire('wrong');
     play('wrong');
 
-    // Count this miss against the anchored term, and only surface the AI hint
-    // (its correct partner) once that term has been missed twice.
+    // Count the miss against the anchored term; show its partner as a hint after two misses.
     const nextCount = (wrongCounts[first.matchId] ?? 0) + 1;
     setWrongCounts((prev) => ({ ...prev, [first.matchId]: nextCount }));
 
@@ -197,12 +195,9 @@ export default function TermMatchingGame() {
         className={clsx(
           'group relative w-full flex items-start gap-3 rounded-2xl border p-3.5 sm:p-4 text-left',
           'font-sans text-sm leading-relaxed transition-all duration-300 outline-none select-none',
-          /* Natural height on a phone. The fixed minimums existed to keep the two
-             columns visually aligned, and below `sm:` there are no two columns —
-             they cost ~200px of dead space across a stacked board instead. */
+          /* Natural height on phones (the fixed minimums only aligned two columns). */
           isTerm ? 'sm:min-h-[4.5rem]' : 'sm:min-h-[6rem]',
-          /* `outline-none` above removes the browser indicator, and nothing
-             replaced it — on the primary interaction of the game. */
+          /* A visible focus ring replaces the removed outline. */
           'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]',
           isRecent && 'animate-pop',
           isFailed && 'animate-shake',
@@ -213,12 +208,7 @@ export default function TermMatchingGame() {
               : isSelected
                 ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim text-white'
                 : isHinted
-                  ? /* ⚠️ AMBER, NOT CYAN. `cyan-400` (#22d3ee) is eight units from
-                       this game's own `primary-fixed-dim` (#00daf3), so the hinted
-                       card looked identical to the SELECTED card — erasing the one
-                       distinction the hint exists to make. Amber is already the
-                       hint colour across the games: the crossword's AI Assist and
-                       the hint badge in the post-game review both use it. */
+                  ? /* Amber, the games' hint colour; cyan was indistinguishable from the selected state. */
                     'bg-amber-400/[0.07] border-amber-400/60 text-white'
                   : 'bg-white/[0.02] border-white/[0.08] text-slate-300 hover:bg-white/[0.05] hover:border-primary-fixed-dim/40 active:scale-[0.98]'
         )}
@@ -293,9 +283,7 @@ export default function TermMatchingGame() {
   }
 
   return (
-    /* Clearance only while the selection bar is up, so an idle board does not
-       carry a strip of dead space at the foot of the page — the mistake made on
-       the crossword, where permanent padding sat inside the card. */
+    /* Clearance only while the selection bar is up. */
     <div
       className={clsx(
         'max-w-4xl mx-auto fade-in duration-300',
@@ -340,12 +328,9 @@ export default function TermMatchingGame() {
           </div>
 
           {/* Board: two panels split by a spine */}
-          {/* Paired from `sm:` up, not `md:`. At 640px each column is still ~276px,
-              which a definition reads fine in — and every width below that is the
-              stacked board the bar at the foot of this file exists to rescue, so
-              it is worth ending 128px sooner. */}
+          {/* Paired from sm: up (columns are wide enough there). */}
           <div className="relative grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 md:gap-10">
-            {/* Center spine */}
+            {/* Centre spine */}
             <div
               aria-hidden
               className="hidden sm:block absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-gradient-to-b from-transparent via-white/10 to-transparent"
@@ -377,22 +362,7 @@ export default function TermMatchingGame() {
         </div>
       </GameStage>
 
-      {/*
-        ── THE MOBILE SELECTION BAR ──
-        Below `sm:` the two columns stack, so every Term sits above every
-        Definition. With 8 pairs you tap a term, scroll ~500px to reach the
-        definitions, and THE CARD YOU ANCHORED IS OFF SCREEN THE WHOLE TIME — its
-        `Crosshair` and coloured border are the only feedback and neither is
-        visible. This keeps the anchor on screen for the one moment it matters.
-
-        Conditional, not permanent chrome: it appears only between the two taps,
-        which is why the wrapper's bottom clearance is conditional too.
-
-        `fixed` for the same reason as the crossword's solving bar — `GameStage`
-        is `overflow-hidden`, which makes it a scrollport that never scrolls, so
-        a sticky child would be inert. No keyboard is involved here, so this one
-        needs no `visualViewport` handling.
-      */}
+      {/* Mobile selection bar: the columns stack below sm:, so this keeps the anchored term visible between the two taps. fixed, not sticky (an overflow-hidden ancestor makes sticky inert). */}
       {selectedCard && (
         <div className="sm:hidden fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-surface-container-lowest/95 backdrop-blur border-t border-white/10">
           <div className="min-w-0 flex-1">

@@ -29,19 +29,9 @@ import {
 } from '../../../lib/testMode';
 
 /**
- * Taking a test.
- *
- * Takes over the tab by an early return from `AdaptiveTestTab`, the same way
- * `FlashcardStudyView` does — not a portal, not `position: fixed`. The study
- * space header and tab bar stay where they are.
- *
- * ONE QUESTION PER SCREEN, except matching, where the block of terms shares one
- * screen because the six definitions are a single pool. `ARCHITECTURE.md` §7
- * has the frontend record `latency_ms` as the student answers, which only means
- * anything if one question is on screen at a time.
- *
- * NOTHING here knows whether an answer is right. `TestQuestion` carries no
- * answer key by construction; correctness arrives once, from `complete()`.
+ * Taking a test; replaces the tab body via an early return in AdaptiveTestTab. One question per
+ * screen (except a matching block), so per-question latency means something. No answer key here:
+ * correctness arrives only from complete().
  */
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -62,7 +52,7 @@ export default function TestSessionView({
   const screens = useMemo(() => buildScreens(test.questions), [test]);
 
   const [screenIdx, setScreenIdx] = useState(() => {
-    // Resuming lands on the first screen with something still unanswered.
+    // Resume on the first screen with something unanswered.
     const first = buildScreens(test.questions).findIndex((s) =>
       screenIndices(s).some((i) => !test.answers[i])
     );
@@ -74,37 +64,29 @@ export default function TestSessionView({
   const [showNav, setShowNav] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
 
-  /** question index → the screen that shows it. A matching block's four terms all map to one. */
+  /** Question index → its screen (a matching block's terms share one). */
   const screenOf = useMemo(() => {
     const map = new Map<number, number>();
     screens.forEach((s, i) => screenIndices(s).forEach((qi) => map.set(qi, i)));
     return map;
   }, [screens]);
 
-  /** Question index → dwell time owed to it, in ms. Survives a failed write. */
+  /** Question index → dwell time owed, in ms. Survives a failed write. */
   const dirtyRef = useRef<Map<number, number>>(new Map());
-  /** When the current screen was entered. Read and reset only by `queueFlush`. */
+  /** When the current screen was entered; read and reset only by queueFlush. */
   const enteredAtRef = useRef<number>(Date.now());
-  /**
-   * Saves are queued onto this chain rather than awaited by the navigation
-   * handler — a student pressing Next must not wait on a round trip. Finish
-   * awaits the chain, so everything typed has landed before the test is graded.
-   */
+  /** Saves queue on this chain so navigation never waits; Finish awaits it before grading. */
   const pendingRef = useRef<Promise<void>>(Promise.resolve());
-  /** Synchronous latch. `disabled` reads state that has not re-rendered yet, so a
-   *  double-click would otherwise complete the same test twice. */
+  /** Synchronous latch so a double-click can't complete the test twice. */
   const finishingRef = useRef(false);
 
   const screen = screens[screenIdx];
   const answeredCount = test.questions.filter((q) => answers[q.index]).length;
   const unanswered = test.questions.length - answeredCount;
 
-  // ── Saving ────────────────────────────────────────────────────────────────
+  // Saving
 
-  /**
-   * Sends whatever is owed. `dirtyRef` carries the dwell time with each index,
-   * so a retry after a failed write re-sends the real number rather than zero.
-   */
+  /** Sends whatever is owed, with its dwell time, so a retry resends the real value. */
   const flush = useCallback(
     async (indices: number[], current: Record<number, string>) => {
       const owed = indices
@@ -121,9 +103,7 @@ export default function TestSessionView({
         );
         setSaveError(false);
       } catch {
-        // Non-blocking: the answer is still held in component state and is sent
-        // again at Finish. Stopping the student mid-test over a failed write
-        // would cost them the whole attempt. The dwell goes back with it.
+        // Non-blocking: the answer stays in state and is resent at Finish.
         setSaveError(true);
         owed.forEach(({ index, latency }) => dirtyRef.current.set(index, latency));
       }
@@ -132,18 +112,9 @@ export default function TestSessionView({
   );
 
   /**
-   * Reads the stopwatch and restarts it, then queues the write.
-   *
-   * BOTH HALVES MUST HAPPEN HERE, SYNCHRONOUSLY. `flush` runs on a later
-   * microtask, so it used to read `enteredAtRef` after `goTo` had already reset
-   * it — every question recorded ~0ms, and the results screen reported 34
-   * seconds for a test that took 13 minutes. Whoever owns the reset must also
-   * take the reading; splitting them across a scheduling boundary is what broke
-   * it, and moving the reset back into `goTo` would break it again.
-   *
-   * The screen's dwell is divided between the questions answered on it, which
-   * is the only defensible split for a matching block where four terms are
-   * answered together.
+   * Reads and restarts the stopwatch, then queues the write. Both must happen here, synchronously:
+   * flush runs later and would read a reset clock. A screen's dwell is split across the questions
+   * answered on it.
    */
   const queueFlush = (indices: number[], current: Record<number, string>) => {
     const now = Date.now();
@@ -177,8 +148,7 @@ export default function TestSessionView({
     setIsFinishing(true);
     try {
       await queueFlush(screenIndices(screen), answers);
-      // Anything an earlier save failed to write, retried once before grading —
-      // with the dwell it was originally measured with, not zero.
+      // Retry failed saves once before grading, with their original dwell.
       const stragglers = [...dirtyRef.current.keys()];
       if (stragglers.length > 0) await flush(stragglers, answers);
       const result = await testApi.complete(test.id);
@@ -196,7 +166,7 @@ export default function TestSessionView({
     onExit();
   };
 
-  // ── Keyboard ──────────────────────────────────────────────────────────────
+  // Keyboard
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -249,7 +219,7 @@ export default function TestSessionView({
   return (
     <div className="fade-in duration-300 lg:grid lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-8 lg:items-start">
       <div className="flex flex-col items-center min-w-0">
-      {/* ── Header ──────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="w-full max-w-3xl mb-5">
         <div className="flex items-center justify-between gap-3 mb-3">
           <button
@@ -264,9 +234,7 @@ export default function TestSessionView({
             <span className="hidden sm:inline"> · {FORMAT_META[format].label}</span>
           </span>
 
-          {/* Below lg: the counter IS the way into the navigator — it is already
-              the thing a student looks at to ask "where am I?". The rail replaces
-              it above lg, so there is never both. */}
+          {/* Below lg the counter opens the navigator; above lg the rail replaces it. */}
           <button
             onClick={() => setShowNav(true)}
             className="lg:hidden flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors font-sans text-xs text-slate-400 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]"
@@ -279,8 +247,7 @@ export default function TestSessionView({
           </span>
         </div>
 
-        {/* One segment per QUESTION. Neutral by design — colouring by
-            correctness here would leak grading into the middle of the test. */}
+        {/* One segment per question, neutral: colouring by correctness would leak grading. */}
         <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden flex gap-0.5">
           {test.questions.map((q) => {
             const onScreen = indices.includes(q.index);
@@ -307,7 +274,7 @@ export default function TestSessionView({
         )}
       </div>
 
-      {/* ── Question ────────────────────────────────────────────────────── */}
+      {/* Question */}
       <div className="w-full max-w-3xl">
         <div
           key={screenIdx}
@@ -334,7 +301,7 @@ export default function TestSessionView({
           </div>
         )}
 
-        {/* ── Footer ────────────────────────────────────────────────────── */}
+        {/* Footer */}
         <div className="flex items-center justify-between gap-3 mt-5">
           <button
             onClick={() => goTo(screenIdx - 1)}
@@ -360,8 +327,7 @@ export default function TestSessionView({
               {isFinishing ? (
                 <><Spinner className="w-4 h-4" /> Checking…</>
               ) : (
-                /* "Previous" + "Finish & See Results" measures ~338px of the
-                   343px a 375px phone has, and overflows outright at 360px. */
+                /* The two buttons overflow narrow phones at full labels. */
                 <>
                   <Flag className="w-4 h-4" />
                   <span className="sm:hidden">Finish</span>
@@ -372,8 +338,7 @@ export default function TestSessionView({
           )}
         </div>
 
-        {/* Skipping is allowed on purpose — blocking Next means a stuck student
-            can never reach the end. An unanswered item is simply wrong. */}
+        {/* Skipping is allowed; an unanswered item counts as wrong. */}
         {screenIdx === screens.length - 1 && unanswered > 0 && !isFinishing && (
           <p className="font-sans text-xs text-amber-400/80 text-right mt-2">
             {unanswered} question{unanswered === 1 ? '' : 's'} still unanswered — these will be
@@ -389,16 +354,8 @@ export default function TestSessionView({
         </div>
       </div>
 
-      {/* ── Navigator, desktop ──────────────────────────────────────────── */}
-      {/*
-       * ⚠️ `9rem` IS A BOUND, NOT A MEASUREMENT.
-       *
-       * The real constraint is the scrollport of `<main>` in `StudySpace`, which
-       * is `100vh` minus the study-space header (~7rem: `pt-4`, a `pb-4` title
-       * row, and a `pb-3` tab strip). Erring LARGE is free — `max-h` only ever
-       * caps — so if the bottom of the rail is ever clipped on a short window,
-       * raise this number rather than lowering it.
-       */}
+      {/* Navigator, desktop */}
+      {/* 9rem is an upper bound for the header height; if the rail clips, raise it. */}
       <aside className="hidden lg:block sticky top-0 max-h-[calc(100vh-9rem)] overflow-y-auto no-scrollbar">
         {nav}
       </aside>
@@ -435,24 +392,11 @@ export default function TestSessionView({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Navigator
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Jump to any question. A 29-item test behind only Next/Previous means going
- * back to question 4 from question 29 is twenty-five clicks, and it makes
- * "6 unanswered" a warning the student cannot act on.
- *
- * Rendered twice from one definition — as a rail on `lg:` and inside a `Modal`
- * below it — so the two can never drift.
- *
- * Grouped by section because that is how the test is organised; the grouping is
- * also the only place the exam's shape is visible while working through it.
- *
- * A matching block contributes FOUR cells that all jump to the same screen.
- * Each term is separately answerable and separately scored, so four cells is the
- * truthful count — collapsing them to one would misreport progress.
+ * Jump to any question, grouped by section. Rendered as a rail on lg and in a Modal below it, from one
+ * definition. A matching block shows four cells (each term is scored separately).
  */
 function QuestionNav({
   questions,
@@ -522,9 +466,7 @@ function QuestionNav({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Per-format renderers
-// ─────────────────────────────────────────────────────────────────────────────
 
 const INPUT =
   'w-full bg-surface-container-high border border-white/10 rounded-xl px-4 py-3 text-white font-sans text-base outline-none focus:border-primary-fixed-dim transition-colors placeholder:text-slate-600';
@@ -652,30 +594,9 @@ function ChoiceList({
 }
 
 /**
- * A matching block you actually drag.
- *
- * **The TERM is the thing that moves, not the definition** — and that follows
- * from the data, not from taste. Measured over the live `concepts` table: terms
- * run to a median of 18 characters (p90 40), definitions to a median of 162
- * (p90 267, max 643). A classic two-column "draw a line across" layout needs
- * both sides short; a 267-character definition in a half-width column is
- * unreadable before a single line is drawn. So the short thing becomes a
- * draggable chip and the long thing gets full width as the drop target.
- *
- * TWO WAYS TO ANSWER, one model. Press a chip and drag it onto a definition, or
- * tap the chip and then tap the definition. The tap path is not a fallback for
- * neatness — dragging fails whenever the chip and its target are not on screen
- * together, which on a phone is most of the time with definitions this long, and
- * it is the only path a keyboard can take.
- *
- * SLOTS ARE EXCLUSIVE. One definition holds at most one term, and dropping onto
- * an occupied slot bumps the previous term back to the tray. Real matching type
- * works that way, and the two definitions left empty at the end are exactly the
- * two distractors — which makes the 4-against-6 shape visible instead of
- * something the student has to infer.
- *
- * What is stored is still the definition TEXT (`onAnswer(index, option)`), never
- * a slot position, so grading is unaffected by any of this.
+ * Drag-to-match: the short term is the draggable chip and the long definition the drop target. Drag
+ * or tap-then-tap (the only path for keyboards and small screens). Slots are exclusive: dropping on
+ * an occupied slot returns the previous term to the tray.
  */
 function MatchingBlock({
   screen,
@@ -703,7 +624,7 @@ function MatchingBlock({
     setHeld(null);
   };
 
-  /** What is under the pointer: a definition slot, the tray, or neither. */
+  /** What's under the pointer: a slot, the tray, or neither. */
   const targetAt = (x: number, y: number): { option: string } | 'tray' | null => {
     const el = document.elementFromPoint(x, y) as HTMLElement | null;
     const row = el?.closest('[data-option]') as HTMLElement | null;
@@ -711,8 +632,7 @@ function MatchingBlock({
     return el?.closest('[data-tray]') ? 'tray' : null;
   };
 
-  // No dependency array: the handlers close over `held` and `answers`, and both
-  // change while a drag is in flight. They only exist while something is held.
+  // No deps array: handlers close over `held` and `answers`, which change mid-drag.
   useEffect(() => {
     if (held === null) return;
 
@@ -762,8 +682,7 @@ function MatchingBlock({
     const isHeld = held === q.index;
     return (
       <button
-        // `touch-action: none` or the browser claims the gesture for scrolling
-        // and fires pointercancel the moment a finger moves.
+        // touch-action: none, or the browser takes the gesture for scrolling.
         style={{ touchAction: 'none' }}
         onPointerDown={() => {
           drag.current = { active: true, moved: false, reselect: held === q.index };
@@ -812,7 +731,7 @@ function MatchingBlock({
         Two definitions are left over.
       </p>
 
-      {/* ── Tray. Also a drop target, so a placed term can be dragged back out. ── */}
+      {/* Tray; also a drop target so a placed term can be dragged back. */}
       <div
         data-tray
         onClick={() => {
@@ -838,7 +757,7 @@ function MatchingBlock({
         )}
       </div>
 
-      {/* ── Definitions ───────────────────────────────────────────────────── */}
+      {/* Definitions */}
       <div className="space-y-2.5">
         {screen.options.map((option) => {
           const holder = holderOf(option);
@@ -881,8 +800,7 @@ function MatchingBlock({
         })}
       </div>
 
-      {/* Follows the pointer during a drag. pointer-events:none so it never
-          becomes the element under the cursor when we hit-test. */}
+      {/* Follows the pointer; pointer-events:none so it's never the hit-test target. */}
       {ghost && heldQuestion && (
         <div
           className="fixed z-[200] pointer-events-none -translate-x-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg bg-primary-fixed-dim text-black font-sans text-xs font-semibold shadow-2xl"

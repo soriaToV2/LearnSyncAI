@@ -1,22 +1,6 @@
 /**
- * Who owns which study space, and what a space actually shows.
- *
- * Companion to `materialAccess.ts`. That file answers "may this caller read this
- * MATERIAL?" from the grade-level rules; this one answers "is this SPACE the
- * caller's, and which materials does it currently hold?". Both exist for the same
- * reason, spelled out in migration 0008: the service role key bypasses Row-Level
- * Security by design, so the API layer must enforce ownership itself.
- *
- * THIS WAS THREE PRIVATE COPIES. `studyspaces.routes.ts` and `practice.routes.ts`
- * each carried their own `loadOwnedSpace`/`requireOwnedSpace`, differing only in
- * whether they selected `title` and whether they sent the 404 themselves, and
- * `cognitive.routes.ts` carried a third that returned the student id. Games would
- * have been the fourth. The active/role/grade checks below are the part that must
- * not drift — a disabled account or an educator holding a student's space id must
- * come back empty from every one of them.
- *
- * 404, NEVER 403. A 403 confirms the id names a real space, and space ids are
- * visible in the address bar (`/student/space/:spaceId`).
+ * Study space ownership and contents; the single home for these checks.
+ * The service role bypasses RLS, so ownership is enforced here. Misses answer 404, never 403.
  */
 
 import { Request, Response } from 'express';
@@ -27,16 +11,11 @@ export interface SpaceOwner {
   id: string;
   title: string;
   subject: string;
-  /** The OWNER's grade level, not the caller's — they are the same by construction. */
+  /** The owner's grade level. */
   gradeLevel: number;
 }
 
-/**
- * The space, but only for its owner and only for an active student with a grade.
- *
- * Returns null on every failure without distinguishing them; the caller sends the
- * 404. Use `requireOwnedSpace()` unless you genuinely need to handle the miss.
- */
+/** The space, only for its owner who must be an active student with a grade. Null on any miss. */
 export async function loadOwnedSpace(spaceId: string, userId: string): Promise<SpaceOwner | null> {
   const [{ data: space }, { data: profile }] = await Promise.all([
     supabaseAdmin
@@ -63,12 +42,7 @@ export async function loadOwnedSpace(spaceId: string, userId: string): Promise<S
   };
 }
 
-/**
- * `loadOwnedSpace()` that answers the request on failure.
- *
- * Returns null after `res` has already been written, so every caller is
- * `const space = await requireOwnedSpace(...); if (!space) return;`.
- */
+/** `loadOwnedSpace()` that sends the 404 itself; return immediately on null. */
 export async function requireOwnedSpace(
   spaceId: string,
   req: Request,
@@ -83,16 +57,8 @@ export async function requireOwnedSpace(
 }
 
 /**
- * The materials a space actually shows: linked to it AND still published to this
- * subject and grade.
- *
- * The intersection is what makes an educator's archive action drop a material
- * from every student's space instantly while the `study_space_materials` link row
- * survives — un-archive and it returns on its own.
- *
- * Not redundant with `rejectInaccessibleMaterials()`. That proves the student may
- * READ the material; this proves THIS SPACE holds it. A route that generates
- * something attributed to a space needs both.
+ * Materials linked to the space and still published to its subject and grade. Link rows survive
+ * archiving. Not redundant with rejectInaccessibleMaterials(): that proves read access, this proves the space holds it.
  */
 export async function spaceMaterialIds(space: SpaceOwner): Promise<string[]> {
   const published = await publishedMaterialIds(space.subject, space.gradeLevel);

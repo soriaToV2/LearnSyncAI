@@ -4,30 +4,11 @@ import Spinner from '../../components/ui/Spinner';
 import { inkOn } from '../../context/ThemeContext';
 
 /**
- * The form primitives shared by the self-service account forms and the admin
- * portal's account editors.
- *
- * These were private to `AccountForms.tsx` until the admin portal needed the same
- * pieces. They are lifted rather than copied for one reason above the others:
- * `useSubmitLatch` is a correctness guard, not styling, and a second copy of a
- * correctness guard drifts. The admin forms change passwords and account status,
- * which is exactly where a double-submit must not happen.
- *
- * Nothing here knows about an endpoint or an auth context — that is what keeps it
- * reusable across two portals with different authorisation models.
+ * Form primitives shared by the account forms and the admin editors. Shared rather than copied mainly
+ * because useSubmitLatch is a correctness guard. No endpoint or auth knowledge here.
  */
 
-/*
- * ⚠️ `outline-none` REMOVES THE BROWSER'S FOCUS INDICATOR, so this string has to
- * supply its own. It previously replaced it with `focus:border-white/25` alone —
- * a border going from 10% to 25% white, which is very nearly invisible, on the
- * forms where a password is changed.
- *
- * The ring is INSET because these inputs render on a card (the Profile pages) and
- * inside a `Modal` (the admin create/import editors), whose panels are different
- * colours. An offset ring needs its gap colour to match the backdrop; an inset one
- * needs to know nothing about it, and follows the `rounded-xl` correctly.
- */
+// outline-none removes the focus indicator, so this supplies an inset ring (works on any panel colour).
 export const INPUT_CLASS =
   'w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-2.5 text-on-surface font-sans text-sm outline-none transition-colors focus:border-white/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] disabled:opacity-50 disabled:cursor-not-allowed';
 
@@ -107,10 +88,7 @@ export function SaveButton({
   disabled: boolean;
   busy: boolean;
   label: string;
-  /**
-   * `danger` is for a control that takes access away — disabling an account. It
-   * is a colour, not a confirmation: the caller still owns asking first.
-   */
+  /** `danger` is for controls that remove access. Colour only; the caller still confirms. */
   tone?: 'accent' | 'danger';
 }) {
   const enabledStyle =
@@ -120,11 +98,7 @@ export function SaveButton({
       type="submit"
       disabled={disabled}
       style={disabled ? undefined : enabledStyle}
-      /* `ring-on-surface`, not the accent: this button's background IS the accent
-         (inline `style`), so an accent ring on it would be the same colour twice.
-         `on-surface` is the max-contrast token against the surface by definition,
-         so the offset gap separates them in every theme. Matches the treatment on
-         the student portal's other primary CTAs. */
+      /* ring-on-surface, not the accent: the background is already the accent. */
       className={`px-5 py-2.5 rounded-xl font-display text-xs font-bold flex items-center gap-2 transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface ${
         disabled
           ? 'bg-white/5 text-slate-500 cursor-not-allowed'
@@ -137,22 +111,14 @@ export function SaveButton({
   );
 }
 
-/**
- * Message from a thrown `api.ts` error, with a readable fallback.
- * `apiFetch` already unwraps the envelope, so `err.message` is display-ready.
- */
+/** Message from a thrown api.ts error (already display-ready), with a fallback. */
 export function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
 /**
- * A synchronous submit latch.
- *
- * NOT redundant with the button's `disabled`. That reads React state, which does
- * not re-render until the handler yields, so a double-click enters the handler
- * twice with `busy` still false and fires two requests. The same bug once graded
- * one Feynman answer 0.95 and 0.90 from identical input; here it would be two
- * password changes racing. Set before the first `await`, cleared in `finally`.
+ * Synchronous submit latch. Not redundant with `disabled`: state doesn't update until the handler
+ * yields, so a double-click would fire twice. Set before the first await, clear in finally.
  */
 export function useSubmitLatch() {
   const latch = useRef(false);

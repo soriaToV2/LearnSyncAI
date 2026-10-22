@@ -38,12 +38,7 @@ Rules:
 
   try {
     console.log("Sending to Gemini API...");
-    // `model` is required as of 2026-08-19 — this used to inherit a
-    // `gemini-2.5-flash` default that has returned HTTP 404 for months.
-    // `thinkingLevel` and `maxOutputTokens` are explicit because the extraction
-    // model is a `gemini-3*` one, where thinking is on by default and its tokens
-    // draw on the same output budget: left unset, a long deck truncates
-    // mid-array and surfaces as unparseable JSON rather than as a limit.
+    // Explicit thinking/token settings: Gemini 3 thinks by default and that shares the output budget.
     const concepts = await generateJsonFromDocument<{ term: string; definition: string }[]>(
       prompt,
       mimeType,

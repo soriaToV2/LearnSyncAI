@@ -1,9 +1,6 @@
-// ============================================================
-// ENUMS (mirroring the PostgreSQL ENUM types in schema.sql)
-// ============================================================
+// Enums (mirroring schema.sql)
 
-/** The three platform roles. Admin manages accounts; educators upload materials
- *  and view analytics; students use the learning features. */
+/** Admin manages accounts; educators upload and view analytics; students learn. */
 export type UserRole = 'student' | 'educator' | 'admin';
 
 /** Account lifecycle state, from the account_status enum. */
@@ -29,20 +26,13 @@ export type QuestionType =
 /** Postgres `bkt_source`. The only two interaction modes that may move mastery. */
 export type BktSource = 'flashcard' | 'adaptive_test';
 
-// ============================================================
-// TABLE INTERFACES
-// ============================================================
+// Table interfaces
 
 /** public.profiles — extends auth.users */
 export interface Profile {
   id: string;              // References auth.users(id)
   role: UserRole;
-  /**
-   * The LOGIN IDENTIFIER — `auth.users.email` is not. `POST /api/auth/login`
-   * resolves this to the email server-side and signs in, so the browser never
-   * learns anyone's address. Unique case-insensitively via
-   * `ux_profiles_username_lower`. NULL means the account cannot sign in.
-   */
+  /** The login identifier (resolved to an email server-side). Case-insensitively unique; NULL can't sign in. */
   username: string | null;
   first_name: string;
   last_name: string;
@@ -70,10 +60,7 @@ export interface StudySpaceMaterial {
   added_at: string;
 }
 
-/**
- * A material as the student Resources tab sees it: the stored row plus the
- * concept count, and without the educator-only columns (educator_id, storage_path).
- */
+/** A material as the student Resources tab sees it: no educator-only columns, plus concept_count. */
 export interface SpaceMaterial {
   id: string;
   title: string;
@@ -95,26 +82,17 @@ export interface Material {
   title: string;
   description: string | null;
   subject: string;                 // FK → subjects.code
-  /**
-   * smallint[] holding EXACTLY ONE grade — `materials_grade_levels_valid` is
-   * `array_length(grade_levels, 1) = 1`. Still an array because the whole
-   * grade-access layer (`@>`, `= ANY`, `unnest`, the GIN index) is built on it.
-   */
+  /** Exactly one grade, but kept as an array: all grade-access code is built on it. */
   grade_levels: number[];
   storage_path: string;            // Path within the private "materials" bucket
   file_size_bytes: number | null;
   page_count: number | null;
   is_scanned: boolean;
-  /** NOT NULL DEFAULT 'pending' — never null, despite the old nullable typing here. */
+  /** NOT NULL DEFAULT 'pending'. */
   parsed_status: ParsedStatus;
   parse_error: string | null;
   is_archived: boolean;
-  /**
-   * OCR transcript for a scanned/photographed material, one entry per page in
-   * page order (`""` for a page the model could not read); NULL for a text PDF.
-   * Served only by `GET /api/materials/:id/ocr-text` — `MATERIAL_COLUMNS` in
-   * `materials.routes.ts` keeps it out of the list and detail payloads.
-   */
+  /** OCR transcript per page ('' if unreadable); NULL for text PDFs. Served only by GET /:id/ocr-text. */
   ocr_pages: OcrPage[] | null;
   created_at: string;
   updated_at: string;
@@ -144,7 +122,7 @@ export interface FlashcardDeck {
   space_id: string | null;
   title: string;
   description: string | null;
-  /** Display only: true puts the definition on the first face. Migration 0027. */
+  /** Display only: show the definition first. */
   answer_first: boolean;
   created_at: string;
 }
@@ -163,12 +141,7 @@ export interface Flashcard {
   created_at: string;
 }
 
-/**
- * public.spaced_repetition_logs — one row per rating that COUNTED.
- *
- * Practice ratings (the card was not due) are deliberately absent: they are not
- * scheduled retrievals, so they are neither evidence nor schedule changes.
- */
+/** public.spaced_repetition_logs: one row per counted (due) rating. */
 export interface SpacedRepetitionLog {
   id: string;
   student_id: string | null;
@@ -214,11 +187,11 @@ export interface PracticeTelemetry {
   student_id: string;
   concept_id: string;
   practice_test_id: string;
-  /** Selects the context-sensitive P(G) for this observation. NOT NULL since migration 0011. */
+  /** Selects the observation's P(G). NOT NULL. */
   question_type: QuestionType;
   question_index: number | null;
   is_correct: boolean;
-  /** Recorded for the results screen only. BKT has no time term and ignores it. */
+  /** Results screen only; BKT ignores it. */
   latency_ms: number;
   created_at: string;
 }
@@ -228,28 +201,18 @@ export interface BktMastery {
   id: string;
   student_id: string;
   concept_id: string;
-  /**
-   * P(L_current), 0–1. A concept with NO ROW is at P(L₀) = 0.10, not 0 — the
-   * default is applied at read time and rows are deliberately not pre-seeded.
-   */
+  /** P(L), 0–1. No row means P(L₀) = 0.10 at read time (rows are never pre-seeded). */
   latent_mastery: number;
-  /** Learning opportunities so far. Reporting metadata; never enters the arithmetic. */
+  /** Reporting only; never used in the arithmetic. */
   opportunity_count: number;
-  /** Nullable with a `now()` default and NO trigger — writers must set it explicitly. */
+  /** No trigger maintains it; writers set it. */
   last_updated: string | null;
 }
 
 /**
- * public.bkt_update_logs — append-only trace of every BKT update.
- *
- * Not a debug log: it is the evidence behind the paper's Implementation
- * Correctness Rate (p. 96), which diffs system output against hand-computed
- * values at ±0.01. That is why the prior, all three parameters and BOTH update
- * phases are stored — `p_l_evidence` is EQ(1)/(2), `p_l_posterior` is EQ(3).
- *
- * Exactly one of `flashcard_id` / `practice_test_id` is set, and correspondingly
- * one of `rating` / `question_type`. That pairing is a convention the writer
- * enforces, not a database constraint.
+ * public.bkt_update_logs: append-only trace of every BKT update, the ICR evidence (paper p. 96).
+ * Stores the prior, parameters and both phases. Exactly one of flashcard_id/practice_test_id is set
+ * (writer convention, not a constraint).
  */
 export interface BktUpdateLog {
   id: string;
@@ -270,13 +233,7 @@ export interface BktUpdateLog {
   created_at: string;
 }
 
-/**
- * public.bkt_parameters — the eleven seeded values, read by the engine at boot.
- *
- * Keys: `p_l0`, `p_t`, `p_s`, and the eight P(G) values `g_mc`, `g_tf`, `g_id`,
- * `g_fib`, `g_match`, `g_easy`, `g_medium`, `g_hard`. `value` is NUMERIC, so it
- * arrives from PostgREST as a string and needs `Number()`.
- */
+/** public.bkt_parameters: p_l0, p_t, p_s and eight P(G) keys. `value` is NUMERIC (arrives as a string). */
 export interface BktParameter {
   key: string;
   value: number;
@@ -295,15 +252,14 @@ export interface GamificationProfile {
 export interface GameSession {
   id: string;
   student_id: string | null;
-  /** The game_content row this session played. Everything below is copied from it. */
+  /** The game_content row played; the fields below are copied from it. */
   content_id: string | null;
   space_id: string | null;
   material_id: string | null;
   game_type: GameType;
   accuracy: number | null;
   time_spent_ms: number | null;
-  /** M_doc at generation. Recorded for the Difficulty Alignment check (paper p. 98);
-   *  games never write back to bkt_mastery. Tier = mastery_tier(mastery_snapshot). */
+  /** M_doc at generation, for the Difficulty Alignment check (paper p. 98). */
   mastery_snapshot: number | null;
   detail: Record<string, unknown> | null; // Per-item response log for review
   completed_at: string | null;
@@ -324,11 +280,9 @@ export interface GameContent {
   space_id: string | null;
   material_ids: string[];
   game_type: GameType;
-  /** 'foundational' | 'intermediate' | 'advanced' — derived from mastery_snapshot
-   *  via masteryTier(), never client-supplied. CHECK-constrained in schema.sql. */
+  /** Derived from mastery_snapshot server-side, never client-supplied. */
   difficulty: string;
-  /** M_doc passed to the generation prompt (paper p. 83). NULL on rows generated
-   *  before calibration existed — which is what the audit query filters on. */
+  /** M_doc passed to the prompt (paper p. 83). NULL on pre-calibration rows. */
   mastery_snapshot: number | null;
   payload: Record<string, unknown>;   // JSONB — full CourseGameData for this game_type
   created_at: string | null;

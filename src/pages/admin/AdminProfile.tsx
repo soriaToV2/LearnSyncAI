@@ -7,17 +7,8 @@ import AppearanceCard from '../../components/common/AppearanceCard';
 import { formatWhen } from './components/accountUi';
 
 /**
- * The administrator's own account.
- *
- * Reuses `ProfileCard` and `AccountForms` unchanged — this is self-service, and
- * what a user may change about themselves does not vary by role. The admin's
- * extra powers live in `/admin/accounts/:userId`, applied to other people.
- *
- * ⚠️ AN ADMIN CANNOT CHANGE THEIR OWN ROLE OR STATUS, HERE OR ANYWHERE.
- * `PATCH /api/auth/me` omits both from `UpdateProfileSchema`, and the admin
- * routes refuse them on `req.user!.id` with a 400. There is one admin account on
- * this deployment: a self-demotion or a self-disable would lock every
- * administrator out permanently, including out of the request that would undo it.
+ * The administrator's own account, reusing ProfileCard and AccountForms unchanged. An admin can't
+ * change their own role or status anywhere: with one admin account, that would lock everyone out.
  */
 export default function AdminProfile() {
   const { theme, mode, setMode } = useAdminTheme();
@@ -66,9 +57,7 @@ export default function AdminProfile() {
         )}
 
         <div
-          /* No `animate-tab-in` — see the twin note in `EducatorProfile`. The
-             forms render immediately and only dim while loading, so the
-             wrapper's fade is the whole entrance. */
+          /* No animate-tab-in; see EducatorProfile. */
           className={`flex flex-col gap-6 ${isLoading ? 'opacity-60 transition-opacity' : 'transition-opacity'}`}
         >
           <ProfileCard

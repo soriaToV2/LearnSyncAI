@@ -1,29 +1,8 @@
 /**
- * What to do about a mastery number.
- *
- * BKT tells a student they are at 30% on a concept and then, until this module
- * existed, stopped. `bkt_mastery` had three readers — adaptive test difficulty,
- * game calibration and the Analytics tab — and none of them turned a low number
- * into an instruction. This turns one `(assessed, mastery)` pair into an ordered
- * ladder of study steps plus the sentences that go with them.
- *
- * ⚠️ NO MODEL CALL EVER REACHES THIS FILE, AND THAT IS A RULE RATHER THAN AN
- * OVERSIGHT. Every sentence below is assembled from a band, a term and a page
- * list, so it is instant, free, identical every time, and statable as one
- * paragraph in the paper. A Gemini call here would be none of those, and would
- * spend a ~20/day free-tier bucket that one adaptive test already takes five of.
- *
- * ⚠️ NO THRESHOLD IS DECLARED HERE. 0.50 and 0.85 live in `masteryTier()` next
- * door, which mirrors `masteryTier()` in `server/lib/testDifficulty.ts` and
- * `mastery_tier()` in `schema.sql`. This module imports it. A fourth copy is
- * exactly the drift that `MASTERED_AT = 0.85` in
- * `server/routes/dashboard.routes.ts` already demonstrates.
- *
- * ⚠️ THIS FILE NEVER RESTATES WHAT A TOOL IS. Every `Step` carries a `ToolKey`,
- * so a surface wanting the canonical description reads `TOOL_INTROS[step.tool]`
- * (`src/lib/onboarding.ts`). What is new here is only *why this concept, now*.
- *
- * Copy is grade-7 reading level, per the copy rule in `onboarding.ts`.
+ * Turns a mastery reading into an ordered ladder of study steps plus their sentences.
+ * Never call a model here: fixed sentences are instant, free and reproducible.
+ * No thresholds declared here (imports masteryTier). Tool descriptions come from TOOL_INTROS.
+ * Grade 7 reading level.
  */
 
 import { masteryPercent, masteryTier } from './mastery';
@@ -31,15 +10,7 @@ import type { ConceptMastery, DifficultyTier, MaterialMasteryDetail } from './ma
 import type { ToolKey } from './onboarding';
 import type { StudyTab } from './studySpace';
 
-/**
- * The four states a recommendation keys off.
- *
- * ⚠️ `unassessed` IS NOT A FOURTH TIER. It is the absence of a measurement, and
- * conflating it with `foundational` is the single mistake the whole analytics
- * surface exists to prevent — a concept nobody has asked about sits at
- * P(L₀) = 0.10, which is an assumption. `DifficultyTier` supplies the other
- * three unchanged, so the band vocabulary and the tier vocabulary cannot drift.
- */
+/** Recommendation bands. `unassessed` is the absence of a measurement, not a tier. */
 export type MasteryBand = 'unassessed' | DifficultyTier;
 
 export type StudyAction = 'read' | 'flashcards' | 'feynman' | 'free_recall' | 'test';
@@ -62,16 +33,8 @@ const ACTION_TOOL: Record<StudyAction, ToolKey> = {
 };
 
 /**
- * ⚠️ `bkt_mastery` HAS EXACTLY TWO WRITERS — `flashcards.routes.ts` (the
- * `counted: true` branch of `POST /rate`) and `practice.routes.ts`
- * (`PUT /:id/complete`) — and paper p. 58 fixes it at two. Reading, explaining
- * and recalling are real study and change nothing measurable.
- *
- * This is a FIELD rather than a comment because it is load-bearing copy policy:
- * a `why` string on a false step must describe what the activity *finds*, never
- * what it *moves*. Without that discipline the app tells a student to do Feynman
- * to fix their 30%, they do, the number does not budge, and they stop believing
- * every number on the screen.
+ * Which actions move mastery (only flashcards and tests, paper p. 58). A field, not a comment, because
+ * a `why` on a non-moving step must say what the activity finds, never what it moves.
  */
 const ACTION_MOVES_MASTERY: Record<StudyAction, boolean> = {
   read: false,
@@ -83,10 +46,10 @@ const ACTION_MOVES_MASTERY: Record<StudyAction, boolean> = {
 
 export interface Step {
   action: StudyAction;
-  /** For `TOOL_INTROS[tool]`. Never write a fourth copy of a tool description. */
+  /** Key into TOOL_INTROS; never write another copy of a tool description. */
   tool: ToolKey;
   tab: StudyTab;
-  /** Imperative, short. This is the link text. */
+  /** Short imperative; the link text. */
   cta: string;
   /** One sentence: why this step, for this concept, now. */
   why: string;
@@ -97,13 +60,7 @@ export interface Recommendation {
   band: MasteryBand;
   /** Ordered, never empty. `steps[0]` is the lead action. */
   steps: Step[];
-  /**
-   * The one sentence saying which steps move the number.
-   *
-   * ⚠️ RENDER IT ONCE PER CARD, NEVER PER ROW. Three focus rows and nine lesson
-   * lines would otherwise print it twelve times on one screen. The card that
-   * owns the rows prints it under its heading; the rows do not.
-   */
+  /** Which steps move the number. Render once per card, never per row. */
   honesty: string;
 }
 
@@ -118,25 +75,15 @@ function step(action: StudyAction, cta: string, why: string): Step {
   };
 }
 
-// ─────────────────────────────────────────────
 // Bands
 
-/**
- * ⚠️ GATE ON `assessed`, NEVER ON `mastery === 0.1`. An assessed concept can
- * legitimately sit near the prior, and the flag is the only thing that
- * distinguishes "measured and low" from "never asked".
- *
- * Rounds before banding, which `masteryTier`'s own JSDoc asks for: a concept at
- * 0.849 prints "85%" and tiers `intermediate` on the raw value, so the card
- * would read "You are at 85% on Injection. You know part of it" — the number
- * contradicting the sentence beside it.
- */
+/** Gate on `assessed`, never `mastery === 0.1`. Rounds before banding so the % shown matches the sentence. */
 export function conceptBand(c: Pick<ConceptMastery, 'assessed' | 'mastery'>): MasteryBand {
   if (!c.assessed) return 'unassessed';
   return masteryTier(masteryPercent(c.mastery) / 100);
 }
 
-/** Same rule one level up. Gate on the COUNT — a started lesson can average 0.10. */
+/** Same rule for a lesson: gate on the count. */
 export function materialBand(
   m: Pick<MaterialMasteryDetail, 'assessed_concept_count' | 'm_doc'>
 ): MasteryBand {
@@ -144,16 +91,9 @@ export function materialBand(
   return masteryTier(masteryPercent(m.m_doc) / 100);
 }
 
-// ─────────────────────────────────────────────
 // Pages
 
-/**
- * "page 24" / "pages 24 and 25" / "pages 24, 25 and 26" / "pages 24, 25 and more".
- *
- * Returns null rather than an empty string when there is nothing to cite, so a
- * caller has to branch and cannot render a dangling "Read  again".
- * `concepts.source_pages` is nullable, and a folded concept carries several.
- */
+/** "page 24", "pages 24 and 25", "pages 24, 25 and more"; null when there's nothing to cite. */
 export function pageHint(pages: number[] | null | undefined): string | null {
   if (!pages || pages.length === 0) return null;
   const clean = [...new Set(pages.filter((p) => Number.isFinite(p)))].sort((a, b) => a - b);
@@ -164,42 +104,31 @@ export function pageHint(pages: number[] | null | undefined): string | null {
   return `pages ${clean[0]}, ${clean[1]} and more`;
 }
 
-// ─────────────────────────────────────────────
 // The ladders
 
 const HONESTY_START =
   'Your mastery starts tracking the first time you answer a flashcard or a test question about it.';
-/** Stated as a benefit rather than a caveat, and true — a wrong answer at 0.90 pulls it down. */
+/** A benefit, and true: a wrong answer at 0.90 pulls it down. */
 const HONESTY_TEST = 'A test moves this number in both directions, so it is a real check.';
 
-/** How each non-moving action is named inside the honesty sentence. */
+/** How each non-moving action is named in the honesty sentence. */
 const NON_MOVING_GERUND: Record<StudyAction, string | null> = {
   read: 'reading',
   free_recall: 'writing down what you remember',
   feynman: 'explaining',
-  // The two writers. `bkt_mastery` has exactly these, per paper p. 58.
+  // The two mastery writers (paper p. 58).
   flashcards: null,
   test: null,
 };
 
-/**
- * Build the honesty sentence FROM the ladder rather than picking it by hand.
- *
- * ⚠️ THESE WERE FIVE HAND-PICKED CONSTANTS AND EXTENDING A LADDER DESYNCED THEM
- * IMMEDIATELY. The material `foundational` band gained a Free Recall step while
- * its sentence still said only "Reading and explaining do not", so the screen
- * listed an activity it had just failed to account for. Deriving it makes the
- * sentence provably match the steps above it — the property that matters, since
- * this line is the feature's whole credibility (see `ACTION_MOVES_MASTERY`).
- */
+/** Derives the honesty sentence from the steps, so it always matches them. */
 function honestyFor(steps: Step[]): string {
   const parts = steps
     .filter((s) => !s.movesMastery)
     .map((s) => NON_MOVING_GERUND[s.action])
     .filter((g): g is string => g !== null);
 
-  // Every step moves the number — there is nothing to disclaim, so say the
-  // useful thing instead.
+  // Every step moves the number, so say something useful instead of a disclaimer.
   if (parts.length === 0) return HONESTY_TEST;
 
   const list =
@@ -212,22 +141,14 @@ function honestyFor(steps: Step[]): string {
   return `Only flashcards and tests change this number. ${sentence} ${verb} not — ${pronoun} you what to fix.`;
 }
 
-/** A `Recommendation` whose honesty sentence is derived from its own steps. */
+/** A Recommendation whose honesty sentence is derived from its steps. */
 function withHonesty(band: MasteryBand, steps: Step[]): Recommendation {
   return { band, steps, honesty: honestyFor(steps) };
 }
 
 /**
- * One concept's ladder.
- *
- * ⚠️ THE ORDER IS THE DECISION. Below 0.50 the lead is READ, not Feynman:
- * Feynman works by finding holes in what you already partly know, so a student
- * at 20% asked to explain a concept to a ten-year-old writes an empty box and is
- * graded near zero. It is still offered, third, once there is something to
- * explain. From 0.50 up it leads, because that is where it is genuinely powerful.
- *
- * `mastery` is read only when `band !== 'unassessed'` — passing P(L₀) through is
- * harmless because nothing prints it in that branch.
+ * One concept's ladder. The order is the decision: below 0.50 lead with Read, not Feynman (which needs
+ * partial knowledge to find holes in).
  */
 export function recommendConcept(input: {
   term: string;
@@ -301,24 +222,9 @@ export function recommendConcept(input: {
 }
 
 /**
- * One lesson's ladder.
- *
- * ⚠️ FREE RECALL APPEARS HERE AND NOWHERE ELSE, and the asymmetry is deliberate
- * rather than an oversight. `FreeRecallSchema` caps the submission at exactly one
- * MATERIAL and scores a coverage ratio over every concept in it, so it cannot be
- * aimed at a concept — a per-concept ladder has no slot to put it in. A lesson is
- * exactly the unit it addresses.
- *
- * ⚠️ THE FULL LADDER IS RENDERED IN EXACTLY ONE PLACE — the adaptive-test results
- * screen. `AnalyticsTab` (its Focus rows and its lesson lines) and the dashboard's
- * `FocusRow` all read `steps[0]` alone, so lengthening a ladder here is invisible
- * to them. Verified before the four-step bands below were added; check it again
- * before adding a fifth step, because a new `steps[0]` WOULD change all three.
- *
- * The order within a band is the same rule `recommendConcept()` follows: below
- * 0.50 acquisition leads (read, then cards) and explaining comes last, because
- * Feynman finds holes in what you already partly know and has nothing to work
- * with at 20%. From 0.50 up, retrieval and explanation lead.
+ * One lesson's ladder. Free Recall appears only here (it scores a whole material).
+ * Only the test results screen renders the full ladder; other surfaces read steps[0], so check them
+ * before changing any band's first step.
  */
 export function recommendMaterial(input: {
   title: string;
@@ -400,28 +306,12 @@ export function recommendMaterial(input: {
   }
 }
 
-// ─────────────────────────────────────────────
 // Ranking
 
 /**
- * What an unassessed concept counts as WHEN CHOOSING WHAT TO WORK ON.
- *
- * ⚠️ CLIENT MIRROR of `NEUTRAL_MASTERY` in `server/lib/gameDifficulty.ts`.
- * Change one, change both — the same arrangement `isDue()` in
- * `src/lib/reviewSchedule.ts` has with its server twin.
- *
- * ⚠️ THIS IS THE EASIEST THING IN THE FEATURE TO GET BACKWARDS. BKT's transition
- * step floors every assessed posterior at P(T) = 0.20, while a concept nobody
- * has ever asked about sits at P(L₀) = 0.10. So ranking a picker by raw mastery
- * puts every UNTOUCHED concept above every concept the student is measurably
- * failing: on a 57-concept lesson with six assessed, the Feynman picker would
- * open entirely on concepts they have never seen. 0.50 gives the ordering that
- * is actually wanted — known-weak > unknown > known-strong.
- *
- * ⚠️ THIS 0.5 IS NOT THE `intermediate` TIER THRESHOLD. They coincide
- * numerically and mean different things: one is a paper threshold (p. 81 / p. 98),
- * the other is a selection-neutral point chosen to sit between weak and strong.
- * Do not unify them.
+ * Weight of an unassessed concept when choosing what to work on. Mirror of NEUTRAL_MASTERY in
+ * server/lib/gameDifficulty.ts; change both. Gives known-weak > unknown > known-strong. Not the
+ * intermediate tier threshold, despite the same value.
  */
 export const NEUTRAL_MASTERY = 0.5;
 
@@ -431,13 +321,7 @@ export function rankOf(assessed: boolean, mastery: number): number {
   return Math.min(Math.max(mastery, 0), 1);
 }
 
-/**
- * Weakest-worth-practising first.
- *
- * Deterministic, deliberately NOT `pickConceptsByMastery()`'s weighted sampling:
- * that exists so "Play Again" cannot rebuild a byte-identical game, and a list
- * that reshuffled on every render would read as broken.
- */
+/** Weakest-worth-practising first. Deterministic, so lists don't reshuffle on render. */
 export function byConceptPriority(
   a: Pick<ConceptMastery, 'assessed' | 'mastery' | 'term'>,
   b: Pick<ConceptMastery, 'assessed' | 'mastery' | 'term'>
@@ -445,8 +329,7 @@ export function byConceptPriority(
   const ra = rankOf(a.assessed, a.mastery);
   const rb = rankOf(b.assessed, b.mastery);
   if (ra !== rb) return ra - rb;
-  // A concept measured at exactly 0.50 outranks an unmeasured one sitting at the
-  // same key: one is evidence, the other is a placeholder standing in for none.
+  // A concept measured at 0.50 outranks an unmeasured one at the same key.
   if (a.assessed !== b.assessed) return a.assessed ? -1 : 1;
   return a.term.localeCompare(b.term);
 }

@@ -1,36 +1,14 @@
 /**
- * Client-side mirror of `server/lib/reviewSchedule.ts`.
- *
- * **The server remains the authority.** `POST /api/flashcards/rate` decides
- * whether a rating actually counts and reschedules the card; this only decides
- * what to *show* and which cards a session opens with. If the two ever
- * disagree, the server is right.
- *
- * It lives here rather than inside a tab because more than one screen needs it:
- * `FlashcardsTab` composes sessions and labels cards, and `StudySpace` counts
- * due cards for the tab badge. A tab exporting a utility up to its own parent
- * is backwards, and two copies of a scheduling rule drift.
+ * Client mirror of server/lib/reviewSchedule.ts, for display and session composition only.
+ * The server decides whether a rating counts.
  */
 
-/**
- * Is this card due for review?
- *
- * `<=` rather than `<` so overdue cards still count as due. A null date means
- * the card has never been scheduled — `flashcards.next_review_at` defaults to
- * `now()`, so a freshly generated card is born due and its first honest pass is
- * the one that counts.
- */
+/** Due if overdue or never scheduled (cards are born due). */
 export function isDue(nextReviewAt: string | null | undefined, now: number = Date.now()): boolean {
   if (!nextReviewAt) return true;
   const due = new Date(nextReviewAt).getTime();
   return Number.isNaN(due) || due <= now;
 }
 
-/**
- * A student's self-rating on a card, mirroring the same type in
- * `server/lib/reviewSchedule.ts` and the `ease_rating` CHECK constraint.
- *
- * One definition on the client: `FlashcardStudyView` keyed `RATING_CONFIG` off
- * its own private copy, and the deck grid needed the same union to sort by it.
- */
+/** A self-rating; mirrors the server type and the ease_rating CHECK. */
 export type EaseRating = 'easy' | 'medium' | 'hard';

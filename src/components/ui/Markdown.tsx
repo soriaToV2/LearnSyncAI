@@ -1,20 +1,11 @@
 import React from 'react';
 
 /**
- * Lightweight Markdown renderer for AI chat responses.
- *
- * The Study Assistant is prompted to format replies with markdown (bold, lists,
- * headings, etc.), but the chat bubble previously printed the raw string — so
- * users saw literal `**`, `##`, `-` characters. This component parses the small
- * subset the model actually produces and renders it as styled elements.
- *
- * Supported: **bold**, *italic* / _italic_, `inline code`, # headings,
- * - / * bullet lists, 1. numbered lists, and paragraphs. Anything else is passed
- * through as plain text. It is intentionally minimal (no external dependency) and
- * safe for streaming — it is a pure function of the current content string.
+ * Minimal Markdown renderer for chat replies: bold, italic, inline code, headings, bullet and
+ * numbered lists, paragraphs. No dependency; a pure function of the content, so safe while streaming.
  */
 
-// ── Inline parsing (bold / italic / code) ─────────────────────────────────────
+// Inline parsing (bold / italic / code)
 interface InlineRule {
   open: string;
   close: string;
@@ -22,7 +13,7 @@ interface InlineRule {
 }
 
 const INLINE_RULES: InlineRule[] = [
-  // Code is literal — its contents are never re-parsed. Listed first so it wins ties.
+  // Code first, and its contents are never re-parsed.
   { open: '`', close: '`', render: (inner, key) => (
     <code key={key} className="font-mono text-[0.85em] bg-black/25 border border-white/10 rounded px-1 py-0.5 text-slate-100">{inner}</code>
   ) },
@@ -72,7 +63,7 @@ function parseInline(text: string, keyPrefix: string): React.ReactNode[] {
   return out;
 }
 
-// ── Block parsing (headings / lists / paragraphs) ─────────────────────────────
+// Block parsing (headings / lists / paragraphs)
 function headingClass(level: number): string {
   if (level <= 1) return 'text-lg font-bold text-white mt-1';
   if (level === 2) return 'text-base font-bold text-white mt-1';

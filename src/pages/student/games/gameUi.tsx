@@ -17,13 +17,7 @@ import {
   getCourseResources,
 } from './gamesData';
 
-/**
- * One tone per game. Renaming `cyan` → `violet` is deliberate rather than
- * cosmetic: `cyan` (#22d3ee) sat a shade from `primary` (#00daf3), so Term
- * Matching and Timed Trivia read as the same game at a glance. Changing the
- * union member (not just its values) is what makes the compiler point at every
- * `tone="cyan"` still in the tree.
- */
+/** One tone per game. `violet`, not `cyan`, which was nearly identical to the primary accent. */
 export type GameTone = 'primary' | 'amber' | 'violet';
 
 interface ToneStyles {
@@ -57,8 +51,7 @@ const TONE_STYLES: Record<GameTone, ToneStyles> = {
     text: 'text-violet-400',
     softBg: 'bg-violet-400/10',
     softBorder: 'border-violet-400/25',
-    // Follows amber's shape (light fill, black label) rather than the old cyan's
-    // `bg-cyan-500 text-white`, and matches the Play pill on the launch card.
+    // Light fill and black label, matching amber and the launch card's Play pill.
     solid: 'bg-violet-400 text-black hover:bg-violet-300',
     chip: 'bg-violet-400/10 border-violet-400/20 text-violet-400',
   },
@@ -66,11 +59,9 @@ const TONE_STYLES: Record<GameTone, ToneStyles> = {
 
 export const toneStyles = (tone: GameTone) => TONE_STYLES[tone];
 
-/* ---------------------------------------------------------------
-   Audio mute toggle
-   --------------------------------------------------------------- */
+// Audio mute toggle
 
-/** Header speaker button — mutes/unmutes all game audio (persisted). */
+/** Header speaker button; mutes all game audio (persisted). */
 export function AudioToggle() {
   const muted = useMuted();
   return (
@@ -85,9 +76,7 @@ export function AudioToggle() {
   );
 }
 
-/* ---------------------------------------------------------------
-   Screen flash
-   --------------------------------------------------------------- */
+// Screen flash
 
 export type FeedbackTone = 'correct' | 'wrong';
 
@@ -96,7 +85,7 @@ interface FlashState {
   id: number;
 }
 
-/** Fires a short full-screen vignette pulse. Each call restarts the animation. */
+/** A short full-screen vignette pulse; each call restarts it. */
 export function useGameFlash() {
   const [flash, setFlash] = useState<FlashState | null>(null);
   const counter = useRef(0);
@@ -124,30 +113,18 @@ export function ScreenFlash({ flash }: { flash: FlashState | null }) {
   );
 }
 
-/* ---------------------------------------------------------------
-   Confetti
-   --------------------------------------------------------------- */
+// Confetti
 
-/**
- * Moved to `components/ui/ConfettiBurst.tsx` when the badge-earned modal needed
- * the same effect. Re-exported rather than relocated-and-rewired, so the three
- * usages inside the games are unchanged.
- *
- * It could not stay here: this module imports `MOCK_COURSES`, so a globally
- * mounted consumer would drag the last mock data in the tree into the student
- * portal bundle.
- */
+/** Lives in components/ui/ConfettiBurst.tsx (so the portal bundle doesn't import mock data); re-exported here. */
 export { ConfettiBurst };
 
-/* ---------------------------------------------------------------
-   HUD
-   --------------------------------------------------------------- */
+// HUD
 
 interface HudStatProps {
   icon?: LucideIcon;
   label: string;
   value: React.ReactNode;
-  /** Re-mount key: change it to replay the pop animation when the value changes. */
+  /** Remount key: change it to replay the pop animation. */
   pulseKey?: string | number;
   highlight?: boolean;
 }
@@ -180,9 +157,7 @@ export function HudStat({ icon: Icon, label, value, pulseKey, highlight }: HudSt
   );
 }
 
-/* ---------------------------------------------------------------
-   Timer ring
-   --------------------------------------------------------------- */
+// Timer ring
 
 export function TimerRing({
   progress,
@@ -220,12 +195,7 @@ export function TimerRing({
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={circumference * (1 - progress)}
-          /* The idle stroke reads `--stage-accent`, which `GameStage` sets from
-             its own tone, instead of naming a colour. It was hardcoded
-             `stroke-cyan-400` — the trivia accent at the time — so recolouring
-             the game left the ring behind. Deriving it means the ring cannot
-             disagree with the stage it is drawn inside, whatever the tone.
-             Urgent stays rose: that is an alarm, not an identity. */
+          /* The idle stroke uses --stage-accent so it matches the stage; urgent stays rose. */
           className={clsx(
             'game-timer-ring',
             urgent ? 'stroke-rose-500' : 'stroke-[var(--stage-accent)]'
@@ -241,9 +211,7 @@ export function TimerRing({
         >
           {seconds}
         </span>
-        {/* 8px was the smallest text in the app, on a countdown a student reads
-            under time pressure. 10px is the uppercase-micro-label floor used
-            everywhere else; the ring is 84px so there is room. */}
+        {/* 10px minimum on a countdown read under pressure. */}
         <span className="font-sans text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500 mt-0.5">
           sec
         </span>
@@ -252,20 +220,14 @@ export function TimerRing({
   );
 }
 
-/* ---------------------------------------------------------------
-   Stage shell
-   --------------------------------------------------------------- */
+// Stage shell
 
 interface GameStageProps {
   tone: GameTone;
   icon: LucideIcon;
   title: string;
   subtitle: string;
-  /**
-   * The mastery tier this game was generated at. Null in mock mode and on rows
-   * generated before calibration existed — both render no chip rather than
-   * guessing `foundational`, which would assert a calibration that never ran.
-   */
+  /** The tier this game was generated at; null in mock mode and on pre-calibration rows (no chip then). */
   tier?: DifficultyTier | null;
   hud?: React.ReactNode;
   actions?: React.ReactNode;
@@ -319,10 +281,7 @@ export function GameStage({
 
           <div className="min-w-0">
             <h1 className="font-display text-base font-bold text-white leading-tight truncate">{title}</h1>
-            {/* The one place the calibration is visible while playing, and what the
-                paper's Difficulty Alignment check (p. 98) is about. It sits beside
-                the subtitle rather than in `hud`, which is per-game stats and is
-                already tight on mobile with two HudStats plus the audio toggle. */}
+            {/* The calibration tier, visible while playing (Difficulty Alignment, p. 98). Beside the subtitle; the HUD is tight on mobile. */}
             <div className="flex items-center gap-1.5 min-w-0">
               <p className="font-sans text-[11px] text-slate-500 truncate">{subtitle}</p>
               {tier && (
@@ -350,7 +309,7 @@ export function GameStage({
       {/* Playfield */}
       <div className="relative px-4 sm:px-6 md:px-8 py-6 sm:py-7 md:py-8">{children}</div>
 
-      {/* Footer: materials + actions */}
+      {/* Footer: materials and actions */}
       {(resources.length > 0 || actions) && (
         <footer className="relative flex flex-wrap items-center justify-between gap-3 border-t border-white/5 bg-white/[0.01] px-4 md:px-6 py-3">
           <div className="flex flex-wrap items-center gap-1.5 min-w-0">
@@ -358,8 +317,7 @@ export function GameStage({
             {resources.slice(0, 3).map((res) => (
               <span
                 key={res}
-                /* 11px, not 10px: these are material TITLES the student reads,
-                   not uppercase micro-labels. */
+                /* 11px: material titles, not micro-labels. */
                 className="px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06] text-[11px] font-sans font-medium text-slate-400 truncate max-w-[10rem]"
               >
                 {res}
@@ -379,9 +337,7 @@ export function GameStage({
   );
 }
 
-/* ---------------------------------------------------------------
-   Results screen
-   --------------------------------------------------------------- */
+// Results screen
 
 interface ResultScreenProps {
   tone: GameTone;
@@ -391,10 +347,10 @@ interface ResultScreenProps {
   headline: string;
   headlineLabel: string;
   stats?: { label: string; value: string }[];
-  /** Replays the current content locally (same puzzle/questions). */
+  /** Replays the current content (same puzzle/questions). */
   onReplay: () => void;
   replayLabel?: string;
-  /** Generates a fresh game from the same materials. Omitted → button hidden (mock mode). */
+  /** Generates a fresh game from the same materials; omitted in mock mode. */
   onRegenerate?: () => void;
   regenerating?: boolean;
   celebrate?: boolean;
@@ -472,17 +428,13 @@ export function ResultScreen({
             Close
           </button>
 
-          {/* Retry replays the same content. Styled as the primary CTA only when
-              there's no separate "Play Again" (mock mode). */}
+          {/* Retry replays the same content; it's the primary CTA only without Play Again (mock mode). */}
           <button
             onClick={onReplay}
             disabled={regenerating}
             className={clsx(
               'px-5 py-2.5 rounded-xl font-sans font-bold text-sm transition-all active:scale-95 disabled:opacity-40',
-              /* `ring-on-surface` covers BOTH branches: this button is outlined
-                 when "Play Again" exists and accent-filled when it doesn't, and a
-                 max-contrast-vs-surface ring is legible on either. An accent ring
-                 would vanish into the filled variant. */
+              /* ring-on-surface stays legible on both the outlined and accent-filled variants. */
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-on-surface focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-lowest',
               onRegenerate
                 ? 'border border-white/10 text-slate-200 hover:bg-white/5'
@@ -518,9 +470,7 @@ export function ResultScreen({
   );
 }
 
-/* ---------------------------------------------------------------
-   Content loading
-   --------------------------------------------------------------- */
+// Content loading
 
 interface GameSource {
   space_id: string;
@@ -534,25 +484,16 @@ interface GameContentResponse extends GameSource {
   mastery_snapshot: number | null;
 }
 
-/**
- * What the server derived from this student's mastery when it built the game.
- *
- * All of it is server-supplied. The client never picks a tier or a timer — see
- * `server/lib/gameDifficulty.ts`, and `GenerateGameContentSchema`, which
- * deliberately has no `difficulty` field to send.
- */
+/** Tier and timer derived server-side from mastery; the client never chooses them. */
 export interface GameCalibration {
   tier: DifficultyTier;
-  /** M_doc over the selected materials. Null on pre-calibration rows. */
+  /** M_doc over the selected materials; null on pre-calibration rows. */
   masterySnapshot: number | null;
-  /** Timed Trivia only — undefined for the two untimed games. */
+  /** Timed Trivia only. */
   questionMs?: number;
 }
 
-/**
- * Per-item response log persisted with a session so the student can review
- * their answers afterward. Shape is discriminated by the game type.
- */
+/** Per-item answers saved with a session for later review, discriminated by game type. */
 export type SessionDetail =
   | {
       type: 'trivia';
@@ -573,12 +514,12 @@ export type SessionDetail =
       items: { number: number; direction: 'across' | 'down'; clue: string; answer: string; hintedLetters: number }[];
     };
 
-/** Outcome of a finished game, persisted to the student's session history. */
+/** A finished game's outcome, saved to session history. */
 export interface GameResult {
   /** 0 → 1. */
   accuracy: number;
   timeMs?: number;
-  /** Per-item breakdown for the post-game review view. */
+  /** Per-item breakdown for the review view. */
   detail?: SessionDetail;
 }
 
@@ -587,27 +528,21 @@ interface GameContentState {
   resources: string[];
   loading: boolean;
   error: string | null;
-  /** The tier and timer the server derived from mastery. Null in mock mode. */
+  /** Server-derived tier and timer; null in mock mode. */
   calibration: GameCalibration | null;
-  /** Generates a brand-new game from the same materials ("Play Again"). Undefined in mock mode. */
+  /** A new game from the same materials ("Play Again"); undefined in mock mode. */
   regenerate?: () => void;
   regenerating: boolean;
-  /** Logs a finished game to the student's history. No-op in mock mode (no content id). */
+  /** Logs a finished game; no-op in mock mode. */
   recordSession: (result: GameResult) => void;
 }
 
 /**
- * Resolves a game's content. When a `?contentId=` param is present it fetches
- * the AI-generated payload from the backend; otherwise it falls back to the
- * mock COURSE_DATABASE keyed by the `?course=` param (keeps dev/demo working).
- *
- * Also exposes `regenerate()` — a fresh POST /generate from the same source
- * materials — which powers the "Play Again" button (distinct from "Retry",
- * which just replays the current content locally).
+ * Resolves a game's content: from the backend with ?contentId=, else the mock COURSE_DATABASE by
+ * ?course=. regenerate() powers "Play Again" (a fresh generation); "Retry" just replays.
  */
 export function useGameContent(): GameContentState {
-  // Aliased: this module already has a `celebrate` — a boolean prop on the
-  // result screen that gates the confetti. Same name, unrelated meaning.
+  // Aliased: `celebrate` is already a confetti prop in this module.
   const { celebrate: celebrateBadges } = useBadges();
   const [searchParams, setSearchParams] = useSearchParams();
   const contentId = searchParams.get('contentId');
@@ -620,11 +555,10 @@ export function useGameContent(): GameContentState {
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Content id we already have in state — lets regenerate update the URL
-  // without the fetch effect re-downloading what it just produced.
+  // Lets regenerate update the URL without the fetch effect re-downloading.
   const loadedId = useRef<string | null>(null);
 
-  // Mock fallback resources are cosmetic (the "Connected Materials" chips).
+  // Mock resources only feed the "Connected Materials" chips.
   const resources = useMemo(() => getCourseResources(courseId), [courseId]);
 
   useEffect(() => {
@@ -633,8 +567,7 @@ export function useGameContent(): GameContentState {
       const info = getCourseDisplayInfo(course);
       setData(COURSE_DATABASE[info.gameKey]);
       setSource(null);
-      // Mock content was never calibrated against anyone's mastery, so it shows
-      // no tier chip and falls back to the default timer.
+      // Mock content is uncalibrated: no tier chip, default timer.
       setCalibration(null);
       setLoading(false);
       setError(null);
@@ -681,11 +614,7 @@ export function useGameContent(): GameContentState {
     setRegenerating(true);
     setError(null);
     try {
-      // No `difficulty` — the server re-derives it from mastery, which may have
-      // moved since the last generation (a test or a flashcard session between
-      // rounds is exactly the point). THE CALIBRATION MUST BE REFRESHED FROM THE
-      // RESPONSE: it varies per generation now, so leaving the old one in state
-      // would show the previous game's tier chip and, worse, its clock.
+      // No difficulty sent; the server re-derives it. Refresh the calibration from the response, or the old tier chip and clock would show.
       const res = await api.post<{
         id: string;
         payload: CourseGameData;
@@ -703,7 +632,7 @@ export function useGameContent(): GameContentState {
         masterySnapshot: res.data.mastery_snapshot ?? null,
         questionMs: res.data.payload?.settings?.questionMs,
       });
-      // Point the URL at the new content without triggering a redundant refetch.
+      // Point the URL at the new content without a refetch.
       const next = new URLSearchParams(searchParams);
       next.set('contentId', res.data.id);
       setSearchParams(next, { replace: true });
@@ -716,8 +645,7 @@ export function useGameContent(): GameContentState {
 
   const recordSession = useCallback(
     (result: GameResult) => {
-      // Read the ref, not `source` — it is what `regenerate` updates, so a session
-      // played after "Play Again" is logged against the content actually played.
+      // The ref, which regenerate updates, so the session logs the content actually played.
       const contentPlayed = loadedId.current;
       if (!contentPlayed) return; // mock mode — nothing to persist
 
@@ -725,13 +653,8 @@ export function useGameContent(): GameContentState {
         ? Math.max(0, Math.min(1, result.accuracy))
         : undefined;
 
-      // The body carries only the OUTCOME. `space_id`, `material_id`, `game_type`
-      // and `mastery_snapshot` are read server-side from the content row, because
-      // that snapshot is the evidence the Difficulty Alignment check reads.
-      //
-      // Best-effort: a failed log must never disrupt the result screen. The warn
-      // matters — this catch is silent, so a schema mismatch here would otherwise
-      // stop session logging entirely without a single visible symptom.
+      // The body carries only the outcome; the server reads the rest from the content row. Best-effort,
+      // but warn: a silent failure here would stop session logging unnoticed.
       void api
         .post('/gamification/session', {
           content_id: contentPlayed,
@@ -740,9 +663,7 @@ export function useGameContent(): GameContentState {
           detail: result.detail,
         })
         .then(() => {
-          // After the POST resolves, not beside it: the session insert is what
-          // logs the activity, so checking earlier would read the badge list
-          // from before First Game or Flawless was awarded.
+          // After the POST resolves: the session insert is what logs the activity.
           celebrateBadges();
         })
         .catch((err: unknown) => {
@@ -764,7 +685,7 @@ export function useGameContent(): GameContentState {
   };
 }
 
-/** Full-stage loading / error placeholder shown while content resolves. */
+/** Full-stage loading/error placeholder while content resolves. */
 export function GameStatusScreen({
   tone,
   state,
@@ -777,17 +698,7 @@ export function GameStatusScreen({
   const styles = TONE_STYLES[tone];
 
   return (
-    /*
-      ⚠️ `animate-delayed-in` ON THE LOADING STATE, AND NOT ON THE ERROR STATE.
-      Reaching a game route is ALWAYS the second loading state in a row: the
-      landing page has just spent the real AI wait on `POST /games/generate`
-      behind its own spinner, and this screen covers the `GET /games/content/:id`
-      that follows — which returns in about 100ms, because the content is already
-      in the database. Long enough to paint, far too short to read, so it blinked.
-
-      The delay makes that fetch show nothing at all. An error must never be
-      delayed. See the class in `index.css`.
-    */
+    /* Loading uses animate-delayed-in (this fetch is ~100ms, so it would only blink); errors are never delayed. */
     <section
       className={clsx(
         'relative overflow-hidden rounded-3xl border border-white/10 bg-surface-container-lowest/60 shadow-2xl',
@@ -802,11 +713,7 @@ export function GameStatusScreen({
         {state === 'loading' ? (
           <>
             <Spinner className={clsx('w-8 h-8 mx-auto', styles.text)} />
-            {/* ⚠️ "Loading", NOT "Generating". Generation happens on the landing
-                page and, for Play Again, under `regenerating` — which never
-                renders this screen. Every appearance of this state is a plain
-                fetch of content that already exists, so the old copy told the
-                student the AI was writing their game a second time. */}
+            {/* "Loading", not "Generating": generation already happened on the landing page. */}
             <p className="font-display text-lg font-bold text-white mt-5">Loading your game…</p>
             <p className="font-sans text-sm text-slate-500 mt-1.5">
               Getting your questions ready.

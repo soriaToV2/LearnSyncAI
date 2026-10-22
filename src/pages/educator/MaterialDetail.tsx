@@ -36,15 +36,8 @@ type Draft = { term: string; definition: string; pages: string };
 const EMPTY_DRAFT: Draft = { term: '', definition: '', pages: '' };
 
 /**
- * The focus indicator for this page, matching `EducatorDashboard` and
- * `MaterialsLibrary`. The page had none at all: every control here — the three
- * header actions, the tab bar, the grade editor, and two buttons on each of up
- * to 57 concept rows — was invisible to a keyboard.
- *
- * ⚠️ `ring-inset` on the row-level controls. The concept list spaces its rows
- * with `gap-2` and the two actions inside a row sit `gap-1` apart, so an outward
- * `ring-2` bleeds into both. The page-level buttons use the same token for
- * consistency; nothing here needs a ring that escapes its own box.
+ * Focus ring, matching EducatorDashboard and MaterialsLibrary. ring-inset because concept rows and
+ * their actions sit only gap-2/gap-1 apart, so an outward ring would bleed into neighbours.
  */
 const FOCUS =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
@@ -82,12 +75,7 @@ export default function MaterialDetail() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
-  /*
-   * Grade access and archive were LOCAL STATE ONLY until `PATCH /api/materials/:id`
-   * existed — both controls looked functional and persisted nothing. They now
-   * hold the *draft* (what the educator is editing) while `material` holds the
-   * saved truth; `gradeDraft` is only meaningful while `isEditingGrades`.
-   */
+  /* Drafts being edited; `material` holds the saved row. gradeDraft only matters while isEditingGrades. */
   const [gradeDraft, setGradeDraft] = useState<string>('');
   const [isEditingGrades, setIsEditingGrades] = useState(false);
   // Title and subject follow the same draft-vs-saved-truth split as grade access.
@@ -96,22 +84,11 @@ export default function MaterialDetail() {
   const [subjectDraft, setSubjectDraft] = useState('');
   const [isEditingSubject, setIsEditingSubject] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
-  /*
-   * Its own slot, not `actionError`: that one renders inside the Concepts tab, so
-   * a failed title/subject/grade save made from the Class Performance tab would
-   * otherwise fail silently.
-   */
+  /* Separate from actionError, which renders inside the Concepts tab and would hide errors from the other tab. */
   const [metaError, setMetaError] = useState<string | null>(null);
   const [conceptSearch, setConceptSearch] = useState('');
   const [showDelete, setShowDelete] = useState(false);
-  /*
-   * Seeded from `?tab=`, which is how the dashboard links here: its material,
-   * student and concept rows are all about performance, so landing them on the
-   * Concepts tab would put the educator one click away from what they clicked for.
-   * Read ONCE as the initial value rather than kept in sync — the tab bar is the
-   * owner after mount, and mirroring it into the URL would add history entries for
-   * every toggle.
-   */
+  /* Seeded once from ?tab= (dashboard links use ?tab=performance); the tab bar owns it after mount. */
   const [activeTab, setActiveTab] = useState<Tab>(
     searchParams.get('tab') === 'performance' ? 'performance' : 'concepts'
   );
@@ -128,7 +105,7 @@ export default function MaterialDetail() {
   // PDF viewer in new tab
   const [openingPdf, setOpeningPdf] = useState(false);
 
-  // ── Load material + concepts ────────────────────────────────
+  // Load material + concepts
   const load = useCallback(async () => {
     if (!materialId) return;
     try {
@@ -148,22 +125,13 @@ export default function MaterialDetail() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Don't let a background refetch disrupt an in-progress edit. Grade editing is
-  // included for the same reason concept editing is: the poll calls `load()`,
-  // which replaces `material`, and a refetch mid-edit would swap the row out from
-  // under an unsaved grade choice.
+  // Don't let the background poll replace `material` mid-edit (concepts or grade).
   const busyRef = useRef(false);
   busyRef.current =
     addingNew || editingId !== null || saving || isEditingGrades || isEditingTitle ||
     isEditingSubject || savingMeta;
 
-  /**
-   * The one writer for archive, grade access, title and subject.
-   *
-   * Replaces the whole row from the response rather than merging a field, so the
-   * page cannot drift from the server — `PATCH` deliberately returns the same
-   * shape as `GET /:id`.
-   */
+  /** The one writer for archive, grade, title and subject. Replaces the whole row from the response. */
   const patchMaterial = useCallback(
     async (body: { is_archived?: boolean; grade_levels?: number[]; title?: string; subject?: string }) => {
       if (!materialId) return false;
@@ -237,7 +205,7 @@ export default function MaterialDetail() {
   const bumpCount = (delta: number) =>
     setMaterial((m) => (m ? { ...m, concept_count: Math.max(0, m.concept_count + delta) } : m));
 
-  // ── Concept CRUD handlers ───────────────────────────────────
+  // Concept CRUD handlers
   const addConcept = async () => {
     if (!material) return;
     if (!addDraft.term.trim() || !addDraft.definition.trim()) {
@@ -367,12 +335,10 @@ export default function MaterialDetail() {
   const tint = SUBJECT_COLOR[material.subject] ?? '#94a3b8';
 
   const facts: Array<[string, string]> = [
-    // No Subject here: it has its own editable row below, and a read-only copy
-    // above an editable one reads as "this cannot be changed".
+    // No Subject here: it has its own editable row, and a read-only copy would read as uneditable.
     ['Pages', material.page_count ? String(material.page_count) : '—'],
     ['Size', formatFileSize(material.file_size_bytes)],
-    // Photos are assembled into a PDF at upload, so a scan and a photographed
-    // lesson are one case here: both were read with OCR before extraction.
+    // Photos become a PDF at upload, so scans and photos are one case: both were read with OCR.
     ['Type', material.is_scanned ? 'Scanned / photographed (OCR)' : 'Text PDF'],
     ['Uploaded', formatDate(material.created_at)],
     ['Concepts', String(material.concept_count)],
@@ -380,9 +346,7 @@ export default function MaterialDetail() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      {/* `sm:` steps on both axes, plus the entrance the rest of the educator
-          portal now uses. See `EducatorDashboard` for why it is
-          `animate-page-fade` and not the student pages' `fade-in`. */}
+      {/* Same page entrance as the rest of the educator portal. */}
       <div className="max-w-4xl mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
 
         {/* Back */}
@@ -396,10 +360,7 @@ export default function MaterialDetail() {
 
         {/* Header */}
         <header className="flex flex-col sm:flex-row sm:items-start justify-between gap-5 mb-6">
-          {/* The subject-tinted mark echoes the card the educator just clicked in
-              the library, so arriving here confirms they opened the right lesson
-              before they have read a word. Same `SUBJECT_COLOR` map that
-              `SubjectBadge` renders two lines below, so the two cannot drift. */}
+          {/* Subject-tinted mark, from the same SUBJECT_COLOR map as SubjectBadge. */}
           <div className="flex items-start gap-3.5 min-w-0">
             <div
               className="tone-chip w-11 h-11 rounded-xl border flex items-center justify-center shrink-0"
@@ -479,16 +440,7 @@ export default function MaterialDetail() {
             </div>
           </div>
 
-          {/*
-            ⚠️ `flex-wrap`, AND `shrink-0` ONLY FROM `sm:`. These three buttons
-            are ~319px of content-fitted width with no wrap and no shrink, inside
-            the 288px a 320px phone leaves after the page gutters — so the row
-            overflowed, and because `<main>` sets `overflow-y-auto` (which forces
-            the x-axis to `auto` too, per the CSS overflow rules) the symptom was
-            the WHOLE PAGE scrolling sideways rather than a clipped button.
-            Wrapping drops Delete onto its own line instead. It never wraps from
-            `sm:` up, where the row has the width it was designed for.
-          */}
+          {/* flex-wrap, and shrink-0 only from sm: — the three buttons are wider than a 320px phone, and the overflow scrolled the whole page sideways. */}
           <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
             <button
               onClick={openPdfInNewTab}
@@ -542,21 +494,9 @@ export default function MaterialDetail() {
           </div>
         )}
 
-        {/*
-          ⚠️ THE FACTS AND GRADE ACCESS ARE ONE PANEL, NOT A LOOSE LINE OF TEXT
-          ABOVE A BOX. They were two separate blocks — six unbordered label/value
-          pairs floating directly on the page background, then a bordered card
-          immediately below carrying one more property of the same file. Two
-          treatments for one idea ("what this material is") read as a rendering
-          mistake, and the unbordered half looked like a caption belonging to the
-          header rather than a row of its own.
-
-          A hairline divides them instead, which keeps the editable half visibly
-          distinct from the read-only half without inventing a second surface.
-        */}
+        {/* Facts and grade access share one panel, split by a hairline (read-only above, editable below). */}
         <section className="rounded-xl bg-white/[0.02] border border-white/5 mb-8 divide-y divide-white/5">
-          {/* `gap-x-3` and a hidden-on-first separator, so this wraps into tidy
-              rows on a phone instead of one dense 12px run-on. */}
+          {/* Wraps into rows on a phone; the separator is hidden on the first item. */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 font-sans text-xs px-4 py-3">
             {facts.map(([label, value], i) => (
               <span key={label} className="flex items-center gap-3">
@@ -569,14 +509,7 @@ export default function MaterialDetail() {
             ))}
           </div>
 
-          {/*
-            Subject — same shape as the grade row below, and the same mechanism:
-            reads filter live on (subject, grade), so changing it moves the
-            material between students' spaces without deleting anything.
-            Edit stays disabled until the catalogue has loaded, because
-            `Dropdown` silently renders its first option for a value it does not
-            recognise.
-          */}
+          {/* Subject. Reads filter live on (subject, grade), so changing it moves the material between spaces without deleting anything. Edit waits for the catalogue: Dropdown shows its first option for an unknown value. */}
           <div className="flex flex-col gap-2.5 py-3.5 px-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <span className="font-sans text-xs font-semibold text-slate-300 shrink-0 sm:w-24">Subject</span>
@@ -637,53 +570,13 @@ export default function MaterialDetail() {
           )}
           </div>
 
-          {/* Grade access — one grade per material (materials_grade_levels_valid) */}
+          {/* Grade access: one grade per material (materials_grade_levels_valid) */}
           <div className="flex flex-col gap-2.5 py-3.5 px-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <span className="font-sans text-xs font-semibold text-slate-300 shrink-0 sm:w-24">Grade access</span>
-            {/*
-              ⚠️ ONLY THE EDITING STATES ANIMATE — the chips and the Edit button
-              deliberately do not. Those are the resting state: they are present
-              on every page load, so animating them would fire on arrival for
-              every visitor, nested inside the page's own entrance, to no
-              purpose. Returning to rest after Cancel is instant, which is
-              correct — a flourish belongs on the thing that appeared because
-              you clicked, not on the thing that was always there.
-
-              `Dropdown` takes the class through its `className` prop, which
-              lands on its root. It cannot take a `key` — locally-declared
-              component, no `@types/react`, props enforced exactly — but it does
-              not need one: the chips and the dropdown are different element
-              types, so React genuinely remounts.
-            */}
+            {/* Only the editing states animate; the resting chips and Edit button don't. Dropdown takes no key, but it's a different element type from the chips, so React remounts it anyway. */}
             <div className="flex-1 min-w-0">
-              {/*
-                ⚠️ NO ENTRANCE ANIMATION ON THIS ONE, AND THE REASON IS NOT
-                TASTE. It had `animate-swap-in`, and that made the OPEN MENU
-                appear transparent — page content showed straight through it.
-
-                `swapIn` animates `transform` and `opacity` on the element it is
-                applied to, which here is the `Dropdown` ROOT. An element with a
-                transform or a non-1 opacity forms a STACKING CONTEXT, and the
-                menu's `z-[100]` is then scoped inside it. Since the root itself
-                has `z-index: auto`, everything later in the document — the hint
-                paragraph below, the tab bar, the whole concept list — painted
-                OVER the menu. The panel was opaque the entire time; it was
-                simply underneath, which is indistinguishable from transparent
-                when the thing on top is text on a see-through background.
-
-                ⚠️ THE RULE, WHICH APPLIES TO `animate-tab-in` EQUALLY: never
-                put either class on an element that contains an absolutely
-                positioned overlay — a dropdown, a popover, a tooltip. Animate
-                something inside it, or animate a wrapper that is not the
-                overlay's positioning ancestor. Every other `animate-swap-in` in
-                this file wraps plain content (a paragraph, a button row, the
-                concept form) and is safe.
-
-                Nothing is lost here: the dropdown already replaces the grade
-                chips instantly, and the Cancel/Save pair beside it still
-                animates in.
-              */}
+              {/* No animate-swap-in/animate-tab-in here: a transform or opacity creates a stacking context that traps the menu's z-index, so later content paints over the open menu. Never put either class on an element containing a dropdown, popover or tooltip. */}
               {isEditingGrades ? (
                 <Dropdown
                   value={gradeDraft}
@@ -729,13 +622,7 @@ export default function MaterialDetail() {
             )}
           </div>
 
-          {/*
-            Stated before saving, not after. Moving a material between grades is
-            reversible and destroys nothing — the study_space_materials link rows
-            and every bkt_mastery row survive, so setting the grade back restores
-            exactly what was there — but "the students who were studying this lose
-            it" is not something to discover afterwards.
-          */}
+          {/* Warn before saving. Changing grade is reversible (link rows and mastery survive), but current students lose access. */}
           {isEditingGrades && (
             <p className="font-sans text-[11px] text-slate-500 leading-relaxed animate-swap-in">
               Students in the current grade will stop seeing this material, and students in the new
@@ -753,27 +640,12 @@ export default function MaterialDetail() {
           )}
         </section>
 
-        {/*
-          Scanned and photographed materials only: the per-page OCR transcript
-          the concepts were extracted from. Shown once processing has finished
-          either way — after a FAILED extraction the transcript is exactly what
-          tells a blurry page from a model problem, and the server writes it
-          before extraction runs so it survives that failure.
-        */}
+        {/* Scanned/photographed materials: the OCR transcript. Shown once processing ends either way; after a failed extraction it tells a blurry page from a model problem. */}
         {material.is_scanned && canEdit && materialId && (
           <OcrTranscriptPanel materialId={materialId} focusClass={FOCUS} />
         )}
 
-        {/*
-          ⚠️ THE THREE LABELS SHORTEN BELOW `sm:`, FOR THE SAME REASON THE
-          DASHBOARD'S SEGMENTED CONTROL DOES. "Concepts · Class Performance ·
-          Pre / Post Test" is ~271px of 14px text plus two 24px gaps — 319px —
-          against the 288px a 320px phone leaves after the gutters. The bar
-          neither wraps nor scrolls, so the third tab was pushed off the right
-          edge with no way to reach it. Dropping "Class " and " Test" costs
-          nothing: this page is already about one material, so "Performance" can
-          only mean the class's.
-        */}
+        {/* Short labels below sm: so the tab bar fits a 320px phone. */}
         <div className="flex items-center gap-4 sm:gap-6 border-b border-white/5 mb-6">
           {(
             [
@@ -798,18 +670,10 @@ export default function MaterialDetail() {
           ))}
         </div>
 
-        {/*
-          Keyed on the active tab so the fade re-fires on every switch. A CSS
-          animation runs once on mount, so without a `key` React would reuse the
-          node and the class would do nothing after the first render — the same
-          reason `EducatorDashboard` keys its three views. All three branches
-          already mount and unmount on switch, so the key changes nothing about
-          what fetches or when; every piece of state on this page lives in the
-          parent, so nothing is lost on remount either.
-        */}
+        {/* Keyed on the tab so the fade re-runs on every switch. All state lives in the parent, so remounting loses nothing. */}
         <div key={activeTab} className="animate-tab-in">
 
-        {/* ── Concepts tab ── */}
+        {/* Concepts tab */}
         {activeTab === 'concepts' && (
           <section>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -822,8 +686,7 @@ export default function MaterialDetail() {
               </div>
 
               <div className="flex items-center gap-2">
-                {/* `flex-1` below `sm:`, where this row is the full page width
-                    and a fixed 176px box left ~150px of dead space beside it. */}
+                {/* flex-1 below sm:, where a fixed width left dead space. */}
                 {concepts.length > 0 && (
                   <div className="relative flex-1 min-w-0 sm:flex-none sm:w-56">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
@@ -909,9 +772,7 @@ export default function MaterialDetail() {
                         />
                       ) : (
                         <div className="flex gap-3.5">
-                          {/* `slate-500`, not `slate-600` — at 11px on this
-                              surface the darker step was under 3:1 and the
-                              numbering read as smudges rather than an index. */}
+                          {/* slate-500: slate-600 was under 3:1 contrast at 11px. */}
                           <span className="font-sans text-[11px] font-bold text-slate-500 tabular-nums pt-0.5 w-5 shrink-0">
                             {String(i + 1).padStart(2, '0')}
                           </span>
@@ -931,10 +792,7 @@ export default function MaterialDetail() {
                               {c.definition}
                             </p>
 
-                            {/* Same treatment as the editor: this confirmation
-                                appears in place under the definition, and a
-                                destructive prompt popping in with no transition
-                                is the one that most deserves a beat. */}
+                            {/* The destructive confirmation gets the same entrance as the editor. */}
                             {isDeleting && (
                               <div className="flex items-center gap-2 mt-2.5 animate-swap-in">
                                 <span className="font-sans text-xs text-rose-300">Delete this concept?</span>
@@ -956,17 +814,7 @@ export default function MaterialDetail() {
                             )}
                           </div>
 
-                          {/*
-                            `p-2`, not `p-1.5` — a 3.5-unit icon in 1.5 units of
-                            padding is a 26px target, and these two sit 4px
-                            apart, so on a phone a mis-tap on Delete instead of
-                            Edit is one tap away from removing a concept. Both
-                            name their term, because a screen reader otherwise
-                            hears "Edit concept" 57 times with nothing to tell
-                            them apart. Chrome-less on purpose: bordered buttons
-                            on every row of a 57-row list is noise, which is why
-                            these do NOT follow the library card's pattern.
-                          */}
+                          {/* p-2 for a usable tap target (the two buttons sit 4px apart). Both name their term for screen readers. Chrome-less to keep a long list quiet. */}
                           {canEdit && !isDeleting && (
                             <div className="flex items-start gap-1 shrink-0">
                               <button
@@ -997,13 +845,7 @@ export default function MaterialDetail() {
           </section>
         )}
 
-        {/*
-          ── Class Performance tab ──
-          Rendered only while active, so entering the tab mounts it and fetches
-          fresh — the same freshness-by-construction the student tabs get from
-          `<main key={activeTab}>`. Deliberately NOT wired into the parse poll
-          above: a class read has no reason to repeat every three seconds.
-        */}
+        {/* Class Performance tab. Mounted only while active, so it fetches fresh on entry. Not tied to the parse poll. */}
         {activeTab === 'performance' && materialId && (
           <ClassPerformance materialId={materialId} />
         )}
@@ -1061,13 +903,7 @@ function ConceptForm({
   saving: boolean;
   saveLabel: string;
 }) {
-  /*
-    `animate-swap-in` on the form's own root, so BOTH places it appears are
-    covered by one line: the Add card at the top of the list, and an inline edit
-    replacing a row. See the class in `index.css` for why it fires without a
-    `key` here, and for what it deliberately does not smooth (the row's height
-    jump, which is instant and would need a measured max-height).
-  */
+  /* animate-swap-in on the form root covers both places it appears (the Add card and an inline row edit). */
   return (
     <div className="flex flex-col gap-3 animate-swap-in">
       <div className="flex flex-col sm:flex-row gap-3">
@@ -1090,25 +926,7 @@ function ConceptForm({
           className="sm:w-56 bg-surface-container border border-white/10 rounded-lg px-3 py-2 text-white text-xs placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-fixed-dim/50"
         />
       </div>
-      {/*
-        ⚠️ THE DEFINITION BOX WAS TWO ROWS AND `resize-none`, WHICH MADE IT
-        UNUSABLE ON BOTH SCREEN SIZES. Definitions in this corpus run to a
-        ~162-character median and reach 643 when a term is explained across two
-        pages, and the field is the one place an educator vets text that then
-        feeds Free Recall scoring, Feynman grading, the chatbot and adaptive
-        tests. At two rows a median definition opened already scrolled, with the
-        sentence being edited half out of view.
-
-        The height is responsive because the line count is: the same 162
-        characters wrap to ~6 lines in a phone-width box and ~2 on a desktop, so
-        one fixed height is wrong at one end or the other. `rows` cannot be
-        expressed per breakpoint, hence `min-h-*` doing the work.
-
-        `resize-y` restores the grab handle for the 643-character outliers.
-        `resize-none` was removing the browser's own answer to exactly this
-        problem — keep it off, but keep the axis locked to Y so dragging cannot
-        break the row's width.
-      */}
+      {/* Definitions run long, and this is where educators vet them. min-h grows with breakpoint because the line count does (rows can't vary per breakpoint). resize-y for outliers; keep it Y-only so the width can't break. */}
       <textarea
         value={draft.definition}
         onChange={(e) => onChange({ ...draft, definition: e.target.value })}

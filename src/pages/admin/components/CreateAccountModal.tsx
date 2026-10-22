@@ -8,18 +8,8 @@ import { emailProblem, USERNAME_HINT, usernameProblem } from '../../../lib/accou
 import { adminApi, type AssignableRole, type CreatedAccount } from '../../../lib/adminAccounts';
 
 /**
- * Create one student or educator.
- *
- * ⚠️ THE GRADE FIELD IS REQUIRED FOR A STUDENT AND THERE IS NO DEFAULT.
- * `handle_new_user()` silently assigns Grade 7 to a student created without one,
- * and that value decides which year's materials the account can open for the rest
- * of its life. A pre-selected grade in this form would be the same silent choice
- * wearing a nicer hat, so the picker opens empty and Create stays disabled.
- *
- * ⚠️ THE PASSWORD IS SHOWN EXACTLY ONCE, ON SUCCESS. It is not stored in readable
- * form anywhere and cannot be retrieved — only reset. The success panel says so,
- * because an admin who closes it assuming they can look it up later has locked a
- * student out.
+ * Create one student or educator. A student's grade is required with no default (the trigger would
+ * silently pick Grade 7). The password is shown once, on success, and can only be reset afterwards.
  */
 
 const GRADES = [7, 8, 9, 10];
@@ -51,13 +41,7 @@ export default function CreateAccountModal({
 
   const canGenerate = first.trim().length > 0 && last.trim().length > 0 && !isSuggesting;
 
-  /*
-   * The server builds AND checks the name — a client-side `first.last` would look
-   * right and then collide on Create, which is exactly the round trip this button
-   * exists to remove. It also handles the parts that are easy to get wrong:
-   * folding `ñ` to `n`, dropping hyphens and apostrophes, fitting 30 characters,
-   * and appending `2` when the name is already taken.
-   */
+  /* The server builds and checks the username (ñ folding, length, numeric suffix on collision). */
   const generateUsername = async () => {
     if (!canGenerate) return;
     setIsSuggesting(true);
@@ -74,20 +58,8 @@ export default function CreateAccountModal({
   const usernameError = username.length > 0 ? usernameProblem(username) : null;
 
   /*
-   * ⚠️ EMAIL IS OPTIONAL HERE, AS IT IS IN A CSV IMPORT. It was required until
-   * 2026-09-09; the argument for that — an admin entering one account at a time
-   * has the address in front of them — is usually true and was the wrong thing to
-   * enforce, because when it is not true the form refused to create the account at
-   * all. The server falls back to a `<username>@pca.invalid` placeholder, and the
-   * account signs in normally: the credential is the username, never this.
-   *
-   * ⚠️ A BLANK FIELD MUST OMIT THE KEY, NOT SEND `''` — see `submit()` below.
-   *
-   * `emailProblem()` already returns null for an empty value (unlike
-   * `isPasswordValid()`), so removing the length test is the whole gate change.
-   * It is shape-checked only, and shared with the account page's email form — the
-   * server validates properly, and two browser-side regexes disagreeing about the
-   * same address is worse than either alone.
+   * Email is optional; the server falls back to a placeholder and the account still signs in by
+   * username. Shape-checked only, shared with the account page. A blank field omits the key.
    */
   const emailError = emailProblem(email);
 
@@ -128,14 +100,9 @@ export default function CreateAccountModal({
         first_name: first.trim(),
         last_name: last.trim(),
         username: username.trim().toLowerCase(),
-        // Sent only for a student — an educator must carry no grade at all.
+        // Sent only for a student; an educator carries no grade.
         ...(role === 'student' && grade !== null ? { grade_level: grade } : {}),
-        /*
-         * OMITTED ENTIRELY when blank, never sent as `''`. The server does accept
-         * an empty string and reads it as absent, deliberately — but the honest
-         * request for "no address given" is one with no key, and it is what the
-         * CSV importer already sends.
-         */
+        /* Omitted when blank, never sent as '', matching the CSV importer. */
         ...(email.trim() ? { email: email.trim().toLowerCase() } : {}),
       });
       setCreated(account);
@@ -172,17 +139,7 @@ export default function CreateAccountModal({
             </p>
           </div>
 
-          {/*
-            ⚠️ SAYS AN ADDRESS IS MISSING WITHOUT EVER PRINTING THE PLACEHOLDER —
-            `<username>@pca.invalid` is generated, undeliverable by RFC 2606, and
-            showing it as though it were the account's contact address is the
-            mistake `isPlaceholderEmail()` exists to prevent.
-
-            It states the ONE consequence: no address means no self-service
-            password recovery, so a forgotten password comes back to this admin.
-            Left unsaid, that surfaces weeks later as "the reset email never
-            arrives" for an account that was never reachable.
-          */}
+          {/* Says the address is missing without printing the placeholder, and states the consequence: no self-service password recovery. */}
           {created.email_is_placeholder && (
             <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3">
               <p className="font-sans text-xs text-slate-400 leading-relaxed">
@@ -216,13 +173,7 @@ export default function CreateAccountModal({
             </button>
           </div>
 
-          {/*
-            Two sentences that both have to survive. The first: an admin who closes
-            this assuming the password is retrievable has locked a student out, and
-            the reset that fixes it is an admin action, not a self-service one.
-            The second: the admin has to TELL the student they will be asked to
-            change it, or the prompt at first login looks like a fault.
-          */}
+          {/* Both sentences matter: the password can't be retrieved, and the student will be asked to change it at first login. */}
           <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/20 px-4 py-3 flex flex-col gap-1.5">
             <p className="font-sans text-xs text-amber-300/90 leading-relaxed">
               Save this password now — it is not stored anywhere and cannot be looked up later. If
@@ -265,8 +216,7 @@ export default function CreateAccountModal({
                   type="button"
                   onClick={() => {
                     setRole(r);
-                    // An educator carries no grade at all — clearing it here keeps
-                    // the form honest rather than sending a value the server rejects.
+                    // An educator carries no grade; clear it rather than send a value the server rejects.
                     if (r === 'educator') setGrade(null);
                   }}
                   style={role === r ? { borderColor: accent, color: accent } : undefined}
@@ -278,10 +228,7 @@ export default function CreateAccountModal({
                 </button>
               ))}
             </div>
-            {/*
-              Stated rather than left to be discovered: `admin` is not in the list
-              and its absence would otherwise read as an oversight.
-            */}
+            {/* Say why admin isn't offered. */}
             <p className="font-sans text-[11px] text-slate-500">
               Administrator accounts are not created here.
             </p>
@@ -304,13 +251,7 @@ export default function CreateAccountModal({
             />
           </div>
 
-          {/*
-            The Generate button sits inside the field rather than beside it so it
-            reads as an action ON the username, not a separate control. It is
-            disabled until both names are present, because that is what it builds
-            from — and a button that silently does nothing is worse than one
-            visibly waiting.
-          */}
+          {/* Inside the field so it reads as an action on the username; disabled until both names are present. */}
           <div className="relative">
             <Field
               label="Username"
@@ -375,11 +316,7 @@ export default function CreateAccountModal({
             </div>
           )}
 
-          {/*
-            ⚠️ "(optional)" IS IN THE LABEL, NOT ONLY IN THE HINT. A blank required
-            field and a blank optional one look identical, and the admin decides
-            whether to hunt down an address before reading three lines of hint.
-          */}
+          {/* "(optional)" in the label itself. */}
           <Field
             label="Email (optional)"
             type="email"

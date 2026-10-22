@@ -22,24 +22,9 @@ import { adminApi, type ImportRowResult } from '../../../lib/adminAccounts';
 import { ErrorBanner } from './accountUi';
 
 /**
- * Bulk account creation from a CSV — an action on the Accounts page, beside
- * creating one.
- *
- * This exists for the paper's 50-student study: the alternative is fifty trips
- * through the create form, and fifty chances to mistype a grade level.
- *
- * ⚠️ THE WHOLE FILE IS VALIDATED BEFORE ANYTHING IS WRITTEN. Every rule is
- * checked client-side first (`csvAccounts.ts`), then again by
- * `CreateAccountSchema` on the server — including within-file duplicate
- * usernames, which are the failure most likely to leave half a class created and
- * half not. The Create button stays disabled while any row has a problem.
- *
- * ⚠️ THE RESULTS TABLE IS THE ONLY TIME THE GENERATED PASSWORDS EXIST IN
- * READABLE FORM. They are not stored anywhere and cannot be looked up — losing
- * this screen means resetting each account individually. That was safe when this
- * was a full page, which cannot vanish by accident; a modal closes on Escape, on
- * a backdrop click and on the X. `requestClose()` below is the whole reason this
- * component is more than a moved file.
+ * Bulk account creation from a CSV. The whole file is validated (client, then server) before anything
+ * is written. The results table is the only time the generated passwords are readable, so closing goes
+ * through requestClose().
  */
 
 type Phase = 'input' | 'preview' | 'done';
@@ -59,7 +44,7 @@ export default function ImportAccountsModal({
   const [fileName, setFileName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
-  /** Set only when the existing-username check could not run. See `ingest()`. */
+  /** Set only when the existing-account check could not run. */
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('input');
@@ -68,13 +53,9 @@ export default function ImportAccountsModal({
   const [results, setResults] = useState<ImportRowResult[] | null>(null);
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
-  /** True once the credentials have been copied OR saved to a file. See `requestClose()`. */
+  /** True once the credentials have been copied or saved to a file. */
   const [saved, setSaved] = useState(false);
-  /**
-   * Which discarding action is waiting on confirmation. Closing is the obvious
-   * one; "Import more" is the same hazard wearing a friendlier label, since it
-   * wipes `results` just as thoroughly.
-   */
+  /** Which discarding action awaits confirmation: closing, or "Import more" (it clears results too). */
   const [confirming, setConfirming] = useState<'close' | 'restart' | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const latch = useSubmitLatch();
@@ -82,29 +63,10 @@ export default function ImportAccountsModal({
   const problemCount = useMemo(() => rows.filter((r) => r.errors.length > 0).length, [rows]);
   const usableCount = rows.length - problemCount;
 
-  /*
-   * ⚠️ UPLOAD IS THE ONLY WAY IN — there is deliberately no paste box.
-   *
-   * There used to be one, and it could not work the way anybody would try to use
-   * it: copying cells out of Excel or Google Sheets puts them on the clipboard
-   * TAB-separated, and `splitLine()` in `csvAccounts.ts` splits on commas only. A
-   * spreadsheet paste therefore arrived as one giant column and failed the header
-   * check with "The header row is missing: role, first_name, …", which reads as a
-   * problem with the admin's data rather than with the input method. The only
-   * clipboard content it accepted was raw CSV text — a file already saved, opened
-   * in Notepad and copied, which is a stranger route than uploading it.
-   *
-   * Do not reintroduce paste without teaching the parser about tabs first.
-   */
+  /* Upload only, no paste box: a spreadsheet paste is tab-separated and splitLine() splits on commas. */
   const ingest = async (file: File) => {
     setFileName(file.name);
-    /*
-     * Excel saves .xlsx by default, so dropping a workbook is the single most
-     * likely mistake here. Caught by name rather than left to the parser: a
-     * binary file reaches `parseAccountsCsv()` as mojibake and comes back as
-     * "the header row is missing", which sends the admin looking at their columns
-     * instead of at File → Save As.
-     */
+    /* Reject .xlsx by name: a binary file would reach the parser and fail as a missing header. */
     if (!/\.(csv|txt)$/i.test(file.name)) {
       setRows([]);
       setFatal(
@@ -125,28 +87,11 @@ export default function ImportAccountsModal({
   };
 
   /*
-   * ⚠️ `csvAccounts.ts` CATCHES DUPLICATES WITHIN THE FILE, NOT AGAINST THE
-   * DATABASE — this is the half that was missing.
-   *
-   * Without it the review screen could say "50 accounts ready to create" and then
-   * fail on row 34 because that username already exists, leaving 33 accounts
-   * created and a class half imported. The most likely way to hit that is the
-   * ordinary one: import a class, notice two students were missed, and re-upload
-   * the corrected *full* file. The email half has its own realistic route in:
-   * siblings handed the same parent's address, which Supabase's unique index on
-   * `auth.users.email` refuses.
-   *
-   * A courtesy, not the guarantee. The per-row checks inside the import route and
-   * both unique indexes are still the real arbiters, so a per-row 409 remains
-   * reachable if an account appears in between.
+   * csvAccounts.ts only catches duplicates within the file; this checks usernames and emails against
+   * the database. A courtesy, not the guarantee: the import route's per-row checks still decide.
    */
   const withExistingAccountErrors = async (parsed: ParsedRow[]): Promise<ParsedRow[]> => {
-    /*
-     * Blank usernames are excluded because the server generates those and already
-     * checks the database while doing it. Malformed values are excluded because
-     * `ImportPrecheckSchema` validates every entry and would 400 on the whole
-     * array — those rows already carry their own format errors anyway.
-     */
+    /* Blank usernames are generated (and checked) by the server; malformed values would 400 the whole array. */
     const usernames = [
       ...new Set(
         parsed
@@ -179,11 +124,7 @@ export default function ImportAccountsModal({
         return extra.length > 0 ? { ...row, errors: [...row.errors, ...extra] } : row;
       });
     } catch {
-      /*
-       * Non-fatal on purpose. The import's own per-row check is the backstop, so
-       * failing here costs the early warning and nothing else — blocking the
-       * whole import over an unavailable courtesy check would be the worse trade.
-       */
+      /* Non-fatal: failing costs the early warning only. */
       setCheckNote(
         'Could not check this file against existing accounts. Any clash will still be caught and reported per row when you create.'
       );
@@ -241,17 +182,8 @@ export default function ImportAccountsModal({
   };
 
   /*
-   * ⚠️ THE DISCARD GUARD. `Modal` routes Escape, the backdrop click and the X
-   * through one `onClose`, so guarding only the X would leave the two easiest
-   * accidents wide open — every path comes through here instead.
-   *
-   * `busy` refuses outright rather than confirming: `commit()` creates up to
-   * fifty accounts SEQUENTIALLY (the server route explains why — Supabase
-   * rate-limits the auth admin API by source IP), so unmounting mid-flight loses
-   * every password while the server carries on creating the accounts.
-   *
-   * `saved` is set by either escape route, copy or download. Once the admin has
-   * the passwords the prompt has done its job and must not nag.
+   * Discard guard. Escape, backdrop and X all arrive here via Modal's onClose. Refuse outright while
+   * busy (creation is sequential, and unmounting loses every password); once saved, don't prompt.
    */
   const requestClose = () => {
     if (busy) return;
@@ -263,11 +195,7 @@ export default function ImportAccountsModal({
     onClose();
   };
 
-  /**
-   * "Start over" in the preview phase, "Import more" in the results phase. The
-   * second is guarded for the same reason closing is: it clears `results`, and an
-   * admin reaching for the next class has not necessarily saved the last one.
-   */
+  /** "Start over" / "Import more". The latter clears results, so it goes through the same guard. */
   const requestRestart = () => {
     if (busy) return;
     if (phase === 'done' && !saved) {
@@ -277,12 +205,7 @@ export default function ImportAccountsModal({
     restart();
   };
 
-  /*
-   * Both escape hatches emit the SAME four columns, including the names — see
-   * `CREDENTIAL_HEADER` in `csvAccounts.ts` for why a file without them cannot be
-   * handed out at all. The building lives there, beside the parser it mirrors, so
-   * the quoting rule has one home and can be tested on its own.
-   */
+  /* Both exports emit the same four columns; the builders live in csvAccounts.ts beside the parser. */
   const copyAll = async () => {
     if (!results) return;
     await navigator.clipboard.writeText(toTsv(CREDENTIAL_HEADER, credentialRows(results)));
@@ -318,33 +241,13 @@ export default function ImportAccountsModal({
       title={phase === 'done' ? 'Import complete' : 'Import accounts'}
       maxWidth="max-w-3xl"
     >
-      {/*
-        ⚠️ THE SCROLL REGION IS NOT OPTIONAL. `Modal`'s panel is `overflow-hidden`
-        with no max-height, inside a wrapper that centres with `items-center` — so
-        a fifty-row table grows the panel past the viewport and it overflows BOTH
-        edges. The top rows become unreachable and the Create button sits below
-        the fold with nothing to scroll. (The same failure `CLAUDE.md` records for
-        flashcard faces.) Capping the height here rather than in `Modal.tsx` keeps
-        the other twelve call sites untouched.
-
-        The action row is a SIBLING of the scroll box, never inside it, so the
-        buttons stay pinned at every phase and every row count.
-
-        The cap is `85vh` for the whole panel minus `11rem` of fixed chrome
-        (Modal's header, its padding, and the action row) rather than a flat `vh`
-        fraction — the chrome is a constant number of pixels, so a fraction that
-        fits a 1080px screen overflows a 600px laptop, which is the machine an
-        administrator is most likely to be using.
-      */}
+      {/* Scroll region: Modal has no max-height and centres its panel, so a long table would overflow both edges. The action row stays a sibling so it is pinned. Cap = 85vh minus 11rem of fixed chrome. Don't fix this in Modal.tsx. */}
       <div className="flex flex-col gap-5">
         <div className="max-h-[calc(85vh-11rem)] overflow-y-auto -mx-1 px-1">
           {error && <ErrorBanner message={error} />}
           {fatal && <ErrorBanner message={fatal} />}
 
-          {/*
-            Amber, not rose: the import is still safe to run — the check that
-            failed is the early warning, not the enforcement.
-          */}
+          {/* Amber: the import is still safe to run without the early warning. */}
           {checkNote && (
             <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-amber-500/[0.07] border border-amber-500/20 mb-6">
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -404,16 +307,7 @@ export default function ImportAccountsModal({
                   Nothing is created until you have reviewed every row on the next screen.
                 </p>
 
-                {/*
-                  A button rather than a div, so it is reachable by keyboard and
-                  announces itself — the drag handlers ride along on it.
-
-                  ⚠️ THE CONTENTS ARE `pointer-events-none`. Without it,
-                  `dragleave` fires every time the cursor crosses onto a child
-                  element, so the highlight flickers off while the file is still
-                  over the target. Guarding it with a counter is the other common
-                  fix and is more code for the same result.
-                */}
+                {/* A button for keyboard access. Contents are pointer-events-none, or dragleave fires on every child and the highlight flickers. */}
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
@@ -459,12 +353,7 @@ export default function ImportAccountsModal({
                   className="hidden"
                 />
 
-                {/*
-                  Named only when it did NOT go through — a file that parsed has
-                  already moved the modal to the preview, so there is nothing here
-                  to read. This tells the admin WHICH file failed, which matters
-                  when they have two versions in the same folder.
-                */}
+                {/* Names the file that failed to parse. */}
                 {fileName && fatal && (
                   <p className="font-sans text-[11px] text-slate-500 mt-3">
                     Last tried: <span className="font-mono text-slate-400">{fileName}</span>
@@ -531,14 +420,7 @@ export default function ImportAccountsModal({
                             <td className="px-4 py-3 font-sans text-xs text-slate-200 align-top whitespace-nowrap">
                               {row.account.first_name} {row.account.last_name}
                             </td>
-                            {/*
-                              Blank is the NORMAL case now that the template has
-                              no username column, so "—" would read as missing
-                              data on every row of a healthy file. The real value
-                              cannot be previewed — the server derives it and
-                              resolves collisions — so the honest thing to show is
-                              that one is coming.
-                            */}
+                            {/* Blank is normal (the server generates it), so say so rather than showing "—". */}
                             <td className="px-4 py-3 font-mono text-xs text-slate-300 align-top">
                               {row.account.username || (
                                 <span className="font-sans italic text-slate-500">generated</span>
@@ -606,20 +488,7 @@ export default function ImportAccountsModal({
                     <tbody>
                       {results.map((r) => (
                         <tr key={r.row} className="border-b border-white/5 last:border-0">
-                          {/*
-                            ⚠️ THE SERVER'S `r.row` IS A 1-BASED INDEX INTO THE ARRAY
-                            THIS CLIENT POSTED, NOT A LINE IN THE FILE — so printing
-                            it raw makes this screen disagree with the preview, which
-                            shows the spreadsheet line. `rows` is still in state here
-                            (`restart()` is the only thing that clears it), so the
-                            lookup is exact.
-
-                            This is NOT the index-matching `credentialRows()` and the
-                            import route both forbid: the name, username and password
-                            still come from the server's own result row and are
-                            untouched. Only the display number is resolved locally,
-                            through an index the server itself assigned.
-                          */}
+                          {/* r.row indexes the posted array; map it to the file line so this matches the preview. Names and credentials still come from the server's row. */}
                           <td className="px-4 py-3 font-mono text-xs text-slate-500 tabular-nums">
                             {rows[r.row - 1]?.line ?? r.row}
                           </td>
@@ -649,13 +518,9 @@ export default function ImportAccountsModal({
           )}
         </div>
 
-        {/* ── Action row — pinned outside the scroll box ─────────────────── */}
+        {/* Action row, outside the scroll box */}
 
-        {/*
-          The confirmation renders IN PLACE, replacing the action row. Not a
-          nested `Modal`: two portals both binding Escape and both writing
-          `document.body.style.overflow` fight over the teardown.
-        */}
+        {/* Confirmation renders in place of the action row, not as a nested Modal (two portals would fight over Escape and body overflow). */}
         {confirming ? (
           <div className="flex flex-col gap-3 px-4 py-3 rounded-2xl bg-amber-500/[0.07] border border-amber-500/25">
             <div className="flex items-start gap-3">
@@ -695,12 +560,7 @@ export default function ImportAccountsModal({
             </div>
           </div>
         ) : phase === 'input' ? (
-          /*
-            No action row in this phase. A file parses the moment it arrives and
-            takes the modal to the preview itself, so a "Review rows" button would
-            be a second click that does nothing — it only existed to submit the
-            paste box that used to sit here.
-          */
+          /* No action row: a file parses on arrival and moves to the preview itself. */
           null
         ) : (
           <div className="flex flex-wrap items-center gap-3">
@@ -736,11 +596,7 @@ export default function ImportAccountsModal({
                 >
                   Start over
                 </button>
-                {/*
-                  Accounts are created one at a time, so fifty rows is a genuine
-                  wait. Saying so is also what makes the modal refusing to close
-                  read as deliberate rather than broken.
-                */}
+                {/* Accounts are created one at a time, so this is a real wait. */}
                 {busy && (
                   <p className="font-sans text-[11px] text-slate-400 leading-relaxed">
                     Creating accounts one at a time — please keep this window open.

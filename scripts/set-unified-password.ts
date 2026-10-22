@@ -1,50 +1,22 @@
 /**
- * Sets ONE shared password across every imported student account, and clears the
- * first-login activation gate so that password keeps working.
+ * Sets one shared password across every imported student account and clears the first-login gate
+ * (must_change_password), or the shared password would survive exactly one login.
  *
  *   npx tsx scripts/set-unified-password.ts "the-password"           # dry run, writes nothing
  *   npx tsx scripts/set-unified-password.ts "the-password" --apply   # performs it
  *
- * WHY THIS EXISTS. The 98 study accounts were bulk-imported with one generated
- * password each (`brave-otter-93` style). The school principal asked for a single
- * password for the whole cohort so it can be written on a board and read aloud.
+ * Requested by the principal for the usage week. It suspends the single-use property that makes the
+ * memorable initial passwords acceptable: usernames are first.last, so any student can sign in as any
+ * classmate and corrupt per-student mastery undetectably. Re-arm the gate when the window closes.
  *
- * ⚠️ IT CLEARS `must_change_password`, AND THAT IS THE WHOLE POINT — WITHOUT IT
- * THE SHARED PASSWORD WOULD SURVIVE EXACTLY ONE LOGIN. The flag is a hard gate
- * enforced twice (`RequireRole.tsx` redirects to `/set-password`,
- * `requireRole.ts` refuses every API route), so setting a shared password while
- * leaving it armed would force all 98 students to invent their own within
- * minutes of signing in — which is the opposite of what was asked for.
+ * The password is an argument and must never be hardcoded or committed.
  *
- * ⚠️ THIS SUSPENDS A DOCUMENTED SAFETY TRADE, DELIBERATELY. `CLAUDE.md` records
- * that the memorable low-entropy initial password is acceptable ONLY because the
- * forced change makes it single-use. It is not single-use any more. Usernames are
- * `first.last` and derivable from any class list, so any student can sign in as
- * any classmate — and because `bkt_mastery` is per-student and the study measures
- * exactly that, an impersonated session corrupts the research data undetectably.
- * This was a principal-directed decision taken with that stated. Re-arm the gate
- * when the usage window closes.
- *
- * ⚠️ THE PASSWORD IS AN ARGUMENT AND MUST NEVER BE HARDCODED HERE. It is a live
- * shared credential for ~100 minors; committing it would put it in the
- * repository's git history permanently, where deleting the line does not remove
- * it.
- *
- * ⚠️ WRITES TO THE CONFIGURED SUPABASE PROJECT — the same one the deployed app
- * uses. Run the dry form first and read the list.
+ * Writes to the configured Supabase project, the same one the deployed app uses. Dry-run first.
  */
 import { supabaseAdmin } from '../server/lib/supabase';
 import { ResetAccountPasswordSchema } from '../server/types/api';
 
-/**
- * The sample accounts used for building and testing, taken from
- * `default_users.csv`. They keep their own passwords and their own activation
- * state — several are mid-test and one is the administrator this script's own
- * operator signs in with.
- *
- * Listed as literals with the username beside each so the exclusion can be
- * audited by reading this file, rather than trusted because a query said so.
- */
+/** Sample accounts from default_users.csv that keep their own password and activation state. Literals, so the exclusion can be audited. */
 const EXCLUDED_IDS = [
   '0c4ea02a-1711-4ca6-95f5-ee22123a0630', // student      — Jhon Osa
   '1e20c99b-96fa-4581-930f-19f30bb49ae3', // educ1        — Luffy Kamado (educator)
@@ -114,11 +86,7 @@ async function main(): Promise<void> {
     );
   }
 
-  /*
-   * Validated with the same schema the admin reset route uses, rather than a
-   * second copy of the rule — a password this script accepts but the app would
-   * reject is a password nobody can subsequently change from inside the product.
-   */
+  /* Validated with the admin reset route's schema, so the app can't reject a password set here. */
   const check = ResetAccountPasswordSchema.safeParse({ new_password: password });
   if (!check.success) {
     fail(
@@ -142,11 +110,7 @@ async function main(): Promise<void> {
   const succeeded: string[] = [];
   const failed: { username: string; reason: string }[] = [];
 
-  /*
-   * Sequential, never Promise.all: Supabase rate-limits the auth admin API by
-   * source IP and every call here shares this machine's — the same reason
-   * `POST /api/admin/accounts/import` creates accounts one at a time.
-   */
+  /* Sequential, never Promise.all: Supabase rate-limits the auth admin API by source IP. */
   for (const student of students) {
     const label = student.username ?? student.id;
     const { error } = await supabaseAdmin.auth.admin.updateUserById(student.id, {
@@ -162,13 +126,7 @@ async function main(): Promise<void> {
     }
   }
 
-  /*
-   * The password first, the flag second — the ordering rule stated on
-   * `POST /api/admin/accounts/:userId/password`. Clearing the gate for an
-   * account whose password change failed would leave it open on its old import
-   * password with nothing forcing a replacement, which is strictly worse than
-   * leaving it gated.
-   */
+  /* Password first, flag second: clearing the gate after a failed change would leave the old password open. */
   if (succeeded.length > 0) {
     const { error } = await supabaseAdmin
       .from('profiles')

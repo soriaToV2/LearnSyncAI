@@ -17,20 +17,8 @@ import type { DifficultyTier } from '../lib/testAllocation';
 import { GenerateGameContentSchema } from '../types/api';
 
 /**
- * The Procedural Gamification Engine (paper p. 67).
- *
- * Every game is calibrated from the student's document mastery. Paper p. 83:
- * "When a game session is initialized, the system retrieves the current M_doc
- * value from the database and applies it as a baseline parameter to the
- * generative AI prompt"; paper p. 58 adds that mastery adjusts "the question
- * selection and difficulty" of the games. Both halves live here — `M_doc` picks
- * the tier, and the tier reaches the prompts through `server/lib/gameDifficulty.ts`
- * while the per-concept map orders what the model even sees.
- *
- * GAMES READ MASTERY AND NEVER WRITE IT. Paper p. 58 (Limitations) permits games
- * to "utilize existing mastery estimates only ... without modifying the learner's
- * mastery state", and `bkt_source` is a two-value enum enforcing it. Nothing in
- * this file imports `server/lib/bkt.ts`.
+ * Game generation (paper p. 67), calibrated from document mastery (paper pp. 58, 83): M_doc picks the
+ * tier and per-concept mastery orders what the model sees. Games never write mastery; no bkt.ts import.
  */
 
 const router = Router();
@@ -39,27 +27,9 @@ router.use(authenticate, requireRole('student'));
 type ConceptRow = { id: string; term: string; definition: string };
 
 /**
- * POST /api/games/generate
- *
- * Gate order, identical to the deck generator and `practice.routes.ts`:
- *   1. Zod                                                            -> 400
- *   2. requireOwnedSpace          — the space is the caller's         -> 404
- *   3. rejectInaccessibleMaterials — the grade/archive rules          -> 403
- *   4. spaceMaterialIds            — this space actually holds them   -> 404
- *
- * Gate 4 is NOT redundant with gate 3: passing the grade rule proves the student
- * may READ the material, not that this space holds it — and this route stores a
- * `mastery_snapshot` attributed to `space_id`, so a material from another space
- * would corrupt that space's picture. Gates 3 and 4 were both missing before
- * calibration landed, which meant any signed-in student could generate from any
- * grade's materials; once the route began reading per-student mastery over those
- * concepts that became the same defect CLAUDE.md records for
- * `POST /api/flashcards/rate`.
- *
- * Then: concepts -> M_doc -> tier -> mastery-weighted selection -> Gemini -> insert.
- * BOTH `difficulty` and `mastery_snapshot` are persisted, because the paper's
- * Difficulty Alignment check (p. 98) verifies that the mastery parameter reached
- * the prompt and cannot be run against data that was never written.
+ * POST /api/games/generate. Gates: Zod 400 → requireOwnedSpace 404 → rejectInaccessibleMaterials 403
+ * → spaceMaterialIds 404 (the space must hold the materials, not just be readable).
+ * Persists `difficulty` and `mastery_snapshot` for the Difficulty Alignment check (p. 98).
  */
 router.post('/generate', async (req: Request, res: Response): Promise<void> => {
   const parsed = GenerateGameContentSchema.safeParse(req.body);
@@ -95,10 +65,7 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // EQ(4) over the union of the selected materials' concepts — the same function
-  // Test Mode uses, so one figure cannot acquire two definitions. `byConcept`
-  // comes back from the same round trip and feeds the selection below, so the
-  // whole calibration costs one read.
+  // EQ(4) over the selected materials, same function as Test Mode; byConcept feeds selection too.
   const { snapshot, byConcept } = await masterySnapshot(
     studentId,
     concepts.map((c) => c.id as string)
@@ -115,17 +82,12 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
       space.title
     );
   } catch (err) {
-    // Logged, because this catch used to discard the cause entirely — which left
-    // a failed game with no server-side trace of WHY.
+    // Log the cause.
     console.error('[Games] content generation failed:', err);
 
-    // A typed Gemini failure carries its own status and its own true sentence:
-    // 429 when the key's daily allowance is spent, 503 for an outage. Answering a
-    // flat 502 to both tells a student "please try again" on a day when retrying
-    // cannot possibly work — the same split `failGeneration()` makes for adaptive
-    // tests and the deck generator makes for flashcards.
+    // Typed Gemini failures keep their status (429 quota / 503 outage).
     if (err instanceof GeminiUnavailableError) {
-      // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+      // userMessage, never err.message.
       res.status(err.status).json({
         error: 'Game content generation failed',
         message: studentFacingError(err),
@@ -133,8 +95,7 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Everything else, including "Could not lay out a crossword from the generated
-    // words." — genuinely a generation failure, and genuinely worth retrying.
+    // Anything else (e.g. no crossword layout) is a retryable generation failure.
     const message = err instanceof Error ? err.message : 'Unknown generation error';
     res.status(502).json({ error: 'Game content generation failed', message });
     return;
@@ -159,9 +120,7 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // `difficulty` and `mastery_snapshot` come back so "Play Again" can refresh the
-  // tier chip and the timer without a second fetch — they change per generation
-  // now, so echoing the request's own values would show the previous game's.
+  // Returned so "Play Again" can refresh the tier chip and timer.
   res.status(201).json({
     data: { id: row.id, payload, difficulty: tier, mastery_snapshot: snapshot },
     message: 'Game content generated',
@@ -169,13 +128,8 @@ router.post('/generate', async (req: Request, res: Response): Promise<void> => {
 });
 
 /**
- * GET /api/games/content/:id
- * Returns the generated payload plus the source parameters (so the client can
- * regenerate a fresh game from the same materials via "Play Again").
- *
- * `mastery_snapshot` is included so the p. 99 black-box test — "educational game
- * generation and difficulty calibration" — is demonstrable from the browser's
- * network tab without database access. The client renders only the tier.
+ * GET /api/games/content/:id: the payload plus source parameters for "Play Again". mastery_snapshot
+ * is included for verification; the client shows only the tier.
  */
 router.get('/content/:id', async (req: Request, res: Response): Promise<void> => {
   const studentId = req.user!.id;
@@ -205,13 +159,7 @@ router.get('/content/:id', async (req: Request, res: Response): Promise<void> =>
   });
 });
 
-/**
- * Assembles a CourseGameData-shaped payload for the requested game type.
- * Only the fields the target game reads are populated; unused arrays stay empty.
- *
- * `settings` is written for `timed_trivia` ONLY. A `questionMs` on a game with no
- * clock would be a stored lie, and the two untimed games fall back to nothing.
- */
+/** Builds the CourseGameData payload for one game type. `settings` only for timed_trivia. */
 async function buildPayload(
   gameType: string,
   concepts: ConceptRow[],

@@ -1,24 +1,13 @@
 /**
- * Verifies how upstream Gemini failures are CLASSIFIED, and what each audience is
- * told about them. Run: `npx tsx scripts/gemini-error-verify.ts`
+ * Verifies how upstream Gemini failures are classified and what each audience is told.
+ * Run: `npx tsx scripts/gemini-error-verify.ts`
  *
- * This exists because two production incidents came from the same few lines and
- * neither was catchable by reading the code:
+ * Covers two regressions: a per-minute burst graded as a spent daily quota, and operator text (with
+ * Google's documentation link) shown to students. Drives the real withRetry path by stubbing
+ * embedContent with the exact upstream bodies, so parsing, classification, the retry budget and both
+ * message builders are tested together.
  *
- *   1. A per-minute burst limit was graded as a spent daily allowance, so it took
- *      one retry instead of the full backoff and told a student to come back after
- *      the reset — on a PAID key, which has no daily embedding cap at all.
- *   2. The operator's text WAS the student's text, so a student read Google's own
- *      `https://` quota documentation link in the chat error bar.
- *
- * It drives the REAL `withRetry` path by stubbing `genai.models.embedContent` to
- * throw the exact upstream bodies observed in the Render logs — so
- * `parseUpstreamError`, `classifyFailure`, the retry budget and both message
- * builders are all under test together, rather than an exported internal that
- * could drift from what actually ships.
- *
- * No network, no API key, no quota consumed. It does sleep through the real
- * backoff, so a full run takes ~25s.
+ * No network, no API key, no quota. Sleeps through the real backoff (~25s).
  */
 import { readFileSync } from 'node:fs';
 import {
@@ -70,10 +59,7 @@ async function run(name: string, err: Error): Promise<any> {
   return new Error('unreachable');
 }
 
-/**
- * Nothing a student reads may name the plumbing. `gemini` is on the list too —
- * the product name they know is "the study assistant".
- */
+/** Nothing a student reads may name the plumbing, "gemini" included (to them it's "the study assistant"). */
 function assertStudentSafe(label: string, text: string): void {
   const banned = ['http', 'api key', 'billing', 'google cloud', 'quota', 'metric', 'aiplatform', 'gemini'];
   const hit = banned.find(word => text.toLowerCase().includes(word));
@@ -85,7 +71,7 @@ async function main(): Promise<void> {
   console.log('Gemini error classification — verification');
   console.log('='.repeat(68));
 
-  // ── 1. The reported Render failure: paid key, aiplatform wording, no details ──
+  // 1. Paid key, aiplatform wording, no details
   {
     const e = await run(
       '1. Per-minute burst, aiplatform wording  (the reported bug)',
@@ -104,7 +90,7 @@ async function main(): Promise<void> {
     assertStudentSafe('userMessage', e.userMessage);
   }
 
-  // ── 2. generativelanguage wording, where only quotaId names the window ───────
+  // 2. generativelanguage wording, where only quotaId names the window
   {
     const e = await run(
       '2. Per-minute burst, window stated only in quotaId',
@@ -122,7 +108,7 @@ async function main(): Promise<void> {
     assertStudentSafe('userMessage', e.userMessage);
   }
 
-  // ── 3. A genuinely spent day must still behave as a quota refusal ────────────
+  // 3. A genuinely spent day must still behave as a quota refusal
   {
     const e = await run(
       '3. Daily allowance genuinely spent',
@@ -150,7 +136,7 @@ async function main(): Promise<void> {
     assertStudentSafe('userMessage', e.userMessage);
   }
 
-  // ── 4. Regression: the older `metric:` prose shape must still parse ──────────
+  // 4. The older `metric:` prose shape must still parse
   {
     const e = await run(
       '4. Legacy "Quota exceeded for metric: <name>" prose',
@@ -165,7 +151,7 @@ async function main(): Promise<void> {
       e.message.includes('generate_content_free_tier_requests'), true);
   }
 
-  // ── 5. A bad key must still fail fast and be rethrown untouched ──────────────
+  // 5. A bad key must still fail fast and be rethrown untouched
   {
     const e = await run(
       '5. HTTP 401 — the mangled-key failure',
@@ -180,7 +166,7 @@ async function main(): Promise<void> {
     check('fails fast — one attempt, no retry', attempts, 1);
   }
 
-  // ── 6. A real outage must still be transient ─────────────────────────────────
+  // 6. A real outage must still be transient
   {
     const e = await run(
       '6. HTTP 503 — genuine upstream outage',
@@ -192,11 +178,7 @@ async function main(): Promise<void> {
     assertStudentSafe('userMessage', e.userMessage);
   }
 
-  // ── 6b. The three failure modes an operator actually asks about ─────────────
-  //
-  // Named scenarios, kept because each one calls for DIFFERENT advice and the
-  // three used to collapse onto two sentences — a 30-second overload was telling
-  // students to go and fetch their teacher.
+  // 6b. The three failure modes an operator asks about, each needing different advice.
   {
     const e = await run(
       '6b-i. Capacity: overload reported as 429 with NO quota metadata',
@@ -239,8 +221,7 @@ async function main(): Promise<void> {
     assertStudentSafe('userMessage', e.userMessage);
   }
 
-  // The three sentences must stay three. If two ever collapse, one scenario is
-  // being given advice written for a different one.
+  // The three sentences must stay distinct.
   {
     console.log('');
     console.log('6c. The three student sentences are distinct');
@@ -256,13 +237,8 @@ async function main(): Promise<void> {
     check('three scenarios, three sentences', distinct.size, 3);
   }
 
-  // ── 7. Static: no student-facing route may forward `err.message` ────────────
-  //
-  // The runtime cases above prove `userMessage` says the right thing. This proves
-  // every student route actually SENDS it — the leak was six routes forwarding
-  // `err.message`, several of them carrying a comment promising they did not, so
-  // a comment is not evidence and neither is one passing route.
-  //
+  // 7. Static: no student-facing route may forward err.message. A comment claiming otherwise is not
+  // evidence, so read the route source.
   console.log('');
   console.log('7. Static audit — no student route forwards err.message');
   {

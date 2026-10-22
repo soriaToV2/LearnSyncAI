@@ -19,26 +19,8 @@ import type { ToolKey } from '../../lib/onboarding';
 import { DEFAULT_STUDY_TAB, readStudyIntent } from '../../lib/studySpace';
 import type { StudyIntent, StudyTab } from '../../lib/studySpace';
 
-/**
- * Which first-run walkthrough belongs to which tab.
- *
- * ⚠️ THE WALKTHROUGH REPLACED A DISMISSIBLE PANEL. The panel explained the tool
- * in three sentences above the content; a spotlight that points at the actual
- * controls says the same thing and shows where to press, so running both would
- * interrupt twice on every tool. `ToolIntro.tsx` is gone; its copy lives on as
- * step one of each walkthrough and as the Help page's section intro.
- */
-/**
- * The mobile tab menu.
- *
- * Typed on `StudyTab` so the ids cannot drift from the six desktop buttons — it
- * previously mapped over an inline array and cast `item.id as any` at the click
- * handler, which is the pattern `ANALYTICS_IMPLEMENTATION.md` §12.1 asked not be
- * extended before a deep link could be built on it.
- *
- * Resources leads, matching the desktop order and the tab a space opens on
- * (`DEFAULT_STUDY_TAB`).
- */
+/** Which first-run walkthrough belongs to which tab. */
+/** The mobile tab menu, typed on StudyTab so ids match the desktop buttons. Resources leads (the default tab). */
 const MOBILE_TABS: { id: StudyTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'resources', label: 'Learning Resources', icon: BookOpen },
   { id: 'flashcards', label: 'Flashcards', icon: Layers },
@@ -61,34 +43,15 @@ interface Flashcard {
   id: string;
   front: string;
   back: string;
-  /**
-   * The concept this card assesses — the link a test result is matched on.
-   *
-   * ⚠️ NULLABLE, AND THE NULL CASE IS REAL. `flashcards.concept_id` is
-   * `ON DELETE SET NULL`, so a card whose concept was removed by a re-upload
-   * keeps working as a card and matches no concept. Every membership test must
-   * tolerate null rather than assuming a card always has one.
-   */
+  /** The concept this card assesses. Nullable (ON DELETE SET NULL); membership tests must allow null. */
   conceptId?: string | null;
-  /** Which material generated this card — drives "already in this deck". */
+  /** The material that generated this card. */
   sourceMaterialId?: string | null;
   /** When this card is next due. Past or null = due now. */
   nextReviewAt?: string | null;
-  /**
-   * The model wrote this card's front, i.e. it is a question rather than the
-   * term itself. Only ever true of the front — the back is the educator's
-   * definition in both formats.
-   */
+  /** The model wrote this card's front (a question). The back is always the educator's definition. */
   isAiGenerated?: boolean;
-  /**
-   * The student's last self-rating on this card, or null.
-   *
-   * ⚠️ IT RECORDS ONLY RATINGS THAT COUNTED. `POST /api/flashcards/rate` writes
-   * it inside the same compare-and-swap as `next_review_at`, so a rating on a
-   * card that was not due leaves it untouched. Null means "never
-   * rated while due", which is the state of most of a real deck — never treat
-   * it as easy.
-   */
+  /** Last self-rating, written only by counted ratings. Null (never rated while due) is common; never treat it as easy. */
   easeRating?: EaseRating | null;
 }
 
@@ -98,11 +61,7 @@ interface FlashcardSet {
   description?: string;
   cardCount: number;
   cards: Flashcard[];
-  /**
-   * Deck display preference: show the definition first and ask for the term.
-   * Stored on the deck row (migration 0027), so it follows the student to any
-   * computer. Rendering only — it moves no schedule and no mastery.
-   */
+  /** Show the definition first. Stored on the deck row; display only. */
   answerFirst: boolean;
 }
 
@@ -111,22 +70,8 @@ export default function StudySpace() {
   const { spaceId } = useParams();
   const [searchParams] = useSearchParams();
 
-  /*
-   * A recommendation's destination, arriving either in the URL (from the
-   * dashboard) or through `navigateWithin` (from a card inside this page).
-   *
-   * ⚠️ READ ONCE, AS THE INITIAL VALUE. The same rule `MaterialDetail.tsx`
-   * states for its own `?tab=`: the tab bar owns this state after mount, and
-   * mirroring it back into the URL would add a history entry per toggle.
-   *
-   * ⚠️ AND THEN CONSUMED, NEVER HELD. `<main key={activeTab}>` remounts every
-   * tab on entry, so a preselection kept as ordinary state would be re-applied
-   * every time the student came back to the tab — silently replacing a lesson or
-   * concept they had since picked by hand. Each tab calls
-   * `onPreselectConsumed()` once it has applied what it could, and clearing
-   * `pending` re-renders without remounting because `key` is `activeTab`, which
-   * has not changed.
-   */
+  // A recommendation's destination, from the URL (dashboard) or navigateWithin (inside this page). Read
+  // once as the initial value, then consumed: tabs remount on entry, so a held intent would re-apply.
   const [seeded] = useState<StudyIntent | null>(() => readStudyIntent(searchParams));
   const [pending, setPending] = useState<StudyIntent | null>(seeded);
   const [activeTab, setActiveTab] = useState<StudyTab>(seeded?.tab ?? DEFAULT_STUDY_TAB);
@@ -134,18 +79,8 @@ export default function StudySpace() {
   const consumePreselect = React.useCallback(() => setPending(null), []);
 
   /**
-   * Follow a recommendation rendered INSIDE this page.
-   *
-   * ⚠️ A CALLBACK RATHER THAN A `<Link>`, AND THAT IS NOT A STYLE PREFERENCE.
-   * `AnalyticsTab` and `TestResultsView` render inside this component, so a
-   * `<Link to={`/student/space/${spaceId}?tab=feynman`}>` from either is a
-   * SAME-ROUTE navigation: `location.search` changes, this component never
-   * unmounts, and `activeTab` was seeded once at mount — the URL would change
-   * and nothing else would happen. That failure reads as correct in review and
-   * is dead the moment a student presses it.
-   *
-   * Both setters are in one handler, so React 19 batches them and the target tab
-   * mounts exactly once with its preselection already in place.
+   * Follow a recommendation rendered inside this page. A callback, not a <Link>: a same-route link changes
+   * the URL but not activeTab. Both setters batch, so the tab mounts once with its preselection.
    */
   const navigateWithin = React.useCallback((intent: StudyIntent) => {
     setPending(intent);
@@ -162,28 +97,13 @@ export default function StudySpace() {
   const [currentSpace, setCurrentSpace] = useState<any>(null);
   const [flashcardSets, setFlashcardSets] = useState<FlashcardSet[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  // `concept_count` is how many cards a material will produce. The other study
-  // tabs read only id and title and are unaffected by the extra field.
+  // concept_count = how many cards a material will produce.
   const [availableResources, setAvailableResources] = useState<
     { id: string; title: string; concept_count: number }[]
   >([]);
 
-  /*
-   * Offer this tab's walkthrough on entry. `startTour` is a no-op once the key
-   * is recorded, once another walkthrough is running, and until the seen-set has
-   * loaded — so firing it on every tab change is safe and needs no local flag.
-   *
-   * ⚠️ NOT WHILE THE SPACE IS STILL LOADING. This component returns a spinner
-   * until its fetch lands, so none of the tab's anchors are in the DOM yet. The
-   * walkthrough would open over "Loading study space…", find nothing, and burn
-   * through every step before the page had rendered a single control — which is
-   * exactly what it did.
-   *
-   * The extra delay after loading lets the tab's own render settle. It is not a
-   * guarantee, and does not need to be: `TourOverlay` hunts for a missing anchor
-   * briefly and then skips that step, which is also what handles a space with no
-   * lessons in it, where most of these anchors never appear at all.
-   */
+  // Offer the tab's walkthrough on entry (startTour no-ops when seen or busy). Not while loading, and
+  // after a short delay so the tab's anchors exist.
   const { startTour } = useOnboarding();
   useEffect(() => {
     if (isLoading) return;
@@ -191,18 +111,7 @@ export default function StudySpace() {
     return () => clearTimeout(t);
   }, [activeTab, isLoading, startTour]);
 
-  /**
-   * Cards waiting for review across every deck in this space.
-   *
-   * Derived, not fetched. `fetchSpaceData` already pulls every card with its
-   * `next_review_at`, so this costs nothing — and deliberately so: the old
-   * `GET /api/flashcards/due/:spaceId` was deleted for returning any space's
-   * cards to any logged-in user, and nothing here needs it back.
-   *
-   * It also refreshes itself. `FlashcardsTab.exitStudy()` calls `onRefresh`,
-   * which is `fetchSpaceData`, so finishing a session drops the badge with no
-   * extra wiring.
-   */
+  /** Due cards across the space's decks, derived from cards already loaded (no endpoint). Refreshes via onRefresh. */
   const dueCount = useMemo(
     () => flashcardSets.flatMap(s => s.cards).filter(c => isDue(c.nextReviewAt)).length,
     [flashcardSets]
@@ -215,14 +124,11 @@ export default function StudySpace() {
       const space = resSpace.data;
       setCurrentSpace(space);
 
-      // Since courses are removed, study spaces act as the primary container.
-      // Set courseConnected to true to bypass any legacy 'connect course' UI prompts.
+      // Study spaces are the primary container; courseConnected bypasses legacy course prompts.
       setCourseConnected(true);
 
       try {
-        // The space's materials, already filtered to this student's grade level and
-        // this space's subject. Only fully processed ones have concepts, so only
-        // those are offered to the study tools downstream.
+        // Already filtered to this grade and subject; only processed materials have concepts.
         const resMaterials = await api.get<any>(`/spaces/${spaceId}/materials`);
         const materials = resMaterials.data?.materials ?? [];
         setAvailableResources(
@@ -250,16 +156,14 @@ export default function StudySpace() {
             id: deck.id,
             title: deck.title,
             description: deck.description,
-            // `?? false` covers a deck row read before migration 0027 landed.
+            // ?? false for rows predating answer_first.
             answerFirst: deck.answer_first ?? false,
             cardCount: cardsList.length,
             cards: cardsList.map((c: any) => ({
               id: c.id,
               front: c.term,
               back: c.definition,
-              // Already on the wire — `GET /:id/decks/:deckId/flashcards` selects
-              // `*`. It was simply being dropped here, which is why nothing
-              // client-side could match a card to a concept.
+              // The route already sends concept_id; keep it so test results can match cards.
               conceptId: c.concept_id ?? null,
               sourceMaterialId: c.source_material_id ?? null,
               nextReviewAt: c.next_review_at ?? null,
@@ -283,15 +187,11 @@ export default function StudySpace() {
 
   const handleConnectCourse = () => setCourseConnected(true);
 
-  /* Subject accent, matching the card in the spaces list and `SubjectBadge`
-     everywhere else — one subject, one colour across the whole app. */
+  /* Subject accent, one colour per subject across the app. */
   const subjectAccent = (currentSpace?.subject && SUBJECT_COLOR[currentSpace.subject]) || '#94a3b8';
 
   if (isLoading) {
-    /* Height must match the loaded view below. It was a bare `h-screen`, which on
-       mobile is 4rem taller than the shell allows (StudentLayout reserves pt-16
-       for its fixed top bar) — so the page scrolled by a header's height and then
-       snapped back the moment the data landed. */
+    /* Matches the loaded view's height (StudentLayout reserves pt-16 on mobile). */
     return (
       <div className="h-[calc(100vh-4rem)] md:h-screen w-full flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 text-white">
@@ -314,19 +214,11 @@ export default function StudySpace() {
             </Link>
             <div className="flex flex-wrap items-center gap-2 min-w-0">
               <h1 className="font-display text-base md:text-xl font-medium text-on-surface flex items-center gap-2 min-w-0">
-                {/* The glow was `rgba(0,218,243,0.5)` — the cyan theme's accent
-                    written out as a literal, so it stayed cyan under every
-                    other palette and became an invisible cyan haze on white.
-                    `--theme-glow` is the token `applyThemeToElement` sets for
-                    exactly this, and it is already per-theme. */}
+                {/* --theme-glow, not a literal cyan, so it follows the theme. */}
                 <span className="w-2.5 h-2.5 rounded-full bg-primary-fixed-dim shadow-[0_0_10px_var(--theme-glow)] shrink-0" />
                 <span className="truncate">{currentSpace ? currentSpace.title : 'Study Space'}</span>
               </h1>
-              {/*
-                * No `Lock` icon here. It meant "the subject is fixed", which the
-                * pill says perfectly well on its own — it is self-evidently a
-                * subject label, and nothing on this screen offers to change it.
-                */}
+              {/* No lock icon: the pill is plainly a fixed subject label. */}
               {currentSpace?.subject && (
                 <span
                   className="px-2.5 py-1 rounded-full border font-sans text-[10px] font-bold uppercase tracking-wider shrink-0"
@@ -343,23 +235,16 @@ export default function StudySpace() {
           </div>
         </div>
 
-        {/* Navigation Tabs Container */}
+        {/* Tab strip */}
         <div className="relative w-full mb-2">
-          {/* `scrollbar-none` was a dead class — nothing in the codebase or in
-              Tailwind v4 defines it, so the strip has been showing the scrollbar
-              it meant to hide. The real utility is `.no-scrollbar` (index.css).
-              Gaps are tighter than the old `gap-4 md:gap-8` because this row now
-              carries up to EIGHT tabs once both study phases are released. */}
+          {/* no-scrollbar (scrollbar-none doesn't exist). Tight gaps: up to eight tabs. */}
           <div className="hidden sm:flex gap-3 md:gap-6 overflow-x-auto pb-px no-scrollbar pr-8">
             <button
               onClick={() => setActiveTab('resources')}
               className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'resources' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
               <BookOpen className="w-4 h-4" />
-              {/* `hidden sm:inline` here was a no-op: this span lives inside a
-                  `hidden sm:flex` row, so it appeared exactly when its parent
-                  did. Moved to `lg:` so the three long labels actually shorten
-                  the strip on tablet widths, where eight tabs overflow. */}
+              {/* lg:inline so long labels shorten on tablet widths. */}
               <span><span className="hidden lg:inline">Learning </span>Resources</span>
             </button>
             <button
@@ -395,14 +280,13 @@ export default function StudySpace() {
               onClick={() => setActiveTab('analytics')}
               className={`pb-3 font-display text-[15px] whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] rounded-t flex items-center gap-2 shrink-0 ${activeTab === 'analytics' ? 'text-primary-fixed-dim border-primary-fixed-dim' : 'text-on-surface-variant hover:text-on-surface border-transparent'}`}
             >
-              {/* No `hidden sm:inline` split: the other labels drop a long half
-                  on small screens, and "Analytics" is already one short word. */}
+              {/* "Analytics" is short already; no split label. */}
               <ChartColumn className="w-4 h-4" />
               Analytics
             </button>
           </div>
 
-          {/* Mobile Tab Select Button & Dropdown */}
+          {/* Mobile tab select */}
           <div className="sm:hidden relative z-50">
             <button
               onClick={() => setIsMobileTabMenuOpen(!isMobileTabMenuOpen)}
@@ -418,12 +302,7 @@ export default function StudySpace() {
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
-                {/* The menu is shut on the collapsed button, so the due count has
-                    to ride out here — otherwise a student on a phone only learns
-                    cards are waiting by opening the menu. It sits beside the
-                    CHEVRON rather than beside the active tab's label, where it
-                    rendered immediately left of that label and read as though
-                    Analytics (or whichever tab was open) had items due. */}
+                {/* The due count rides beside the chevron, visible while the menu is shut. */}
                 {activeTab !== 'flashcards' && <DueBadge count={dueCount} />}
                 <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isMobileTabMenuOpen ? 'rotate-180' : ''}`} />
               </div>
@@ -458,23 +337,8 @@ export default function StudySpace() {
         </div>
       </header>
 
-      {/* Main Content */}
-      {/*
-        * `scrollbar-gutter: stable` — this is what stops the content twitching
-        * horizontally when you switch tabs.
-        *
-        * The tabs disagree about whether they can overflow: Resources, Free Recall
-        * and Feynman root at `h-full` and so exactly fit this box, while Flashcards
-        * and Test Mode are natural-flow and can exceed it. Since this element is
-        * `overflow-y-auto`, moving from one of the first group to one of the second
-        * ADDS a scrollbar, which narrows the content box by the scrollbar's width —
-        * and it lands mid-`animate-page-fade`, so the reflow reads as the panel
-        * animating inwards rather than as a scrollbar appearing.
-        *
-        * Reserving the gutter permanently costs a few px of width on platforms with
-        * classic scrollbars and nothing at all where they overlay (mobile, macOS),
-        * in exchange for a content width that never changes between tabs.
-        */}
+      {/* Main content */}
+      {/* scrollbar-gutter: stable, so switching between tabs that do and don't overflow never shifts the content width. */}
       <main key={activeTab} className="flex-1 overflow-y-auto [scrollbar-gutter:stable] w-full max-w-7xl mx-auto p-4 sm:p-6 md:p-8 relative animate-page-fade">
 
         {activeTab === 'flashcards' && (
@@ -490,10 +354,7 @@ export default function StudySpace() {
           />
         )}
 
-        {/* `preselect` is gated on the intent naming THIS tab, so a stale intent
-            for another tab can never be applied by whichever tab happens to
-            mount next. Each tab validates the ids against its own fetched list
-            and drops what it cannot resolve. */}
+        {/* preselect only reaches the tab the intent names; each tab validates the ids. */}
         {activeTab === 'free-recall' && (
           <FreeRecallTab
             availableResources={availableResources}
@@ -522,11 +383,7 @@ export default function StudySpace() {
           />
         )}
 
-        {/* Read-only. `<main key={activeTab}>` remounts this on every entry, so
-            its own fetch is always fresh — which is why it takes no `onRefresh`
-            and holds no cache. `flashcardSets` is deliberately not passed: it
-            carries no review count, and `opportunity_count` in the mastery
-            payload is the writer-of-record's own figure across both sources. */}
+        {/* Read-only, refetched on each entry (remount). flashcardSets isn't passed: opportunity_count already covers both sources. */}
         {activeTab === 'analytics' && (
           <AnalyticsTab
             spaceId={spaceId!}

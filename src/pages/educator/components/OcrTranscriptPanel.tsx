@@ -4,22 +4,9 @@ import Spinner from '../../../components/ui/Spinner';
 import { api } from '../../../lib/api';
 
 /**
- * What OCR read from a scanned or photographed material, page by page.
- *
- * This is the one place an educator can tell a blurry photo from a bad
- * concept: the concepts were extracted from exactly this text, so a page that
- * reads as gibberish here explains every odd flashcard downstream, and says
- * which single page to retake. It is also the evidence behind the paper's OCR
- * claim (p. 60).
- *
- * Fetched on first expand, never with the material: a 20-page transcript is
- * tens of kilobytes that most visits to this page do not need, which is why
- * `GET /api/materials/:id/ocr-text` exists apart from the detail payload.
- *
- * `[?]` is left visible on purpose. It is what the model writes for a word it
- * could not read (`UNREADABLE_MARK` in `server/lib/ocr.ts`), and rendering it
- * in a warning tone makes an unreadable line stand out without touching the
- * text itself.
+ * What OCR read from a scanned or photographed material, page by page: the text the concepts came
+ * from, so a garbled page here explains odd concepts downstream. Fetched on first expand (it's large).
+ * `[?]` (UNREADABLE_MARK) stays visible, tinted as a warning.
  */
 
 interface OcrPage {

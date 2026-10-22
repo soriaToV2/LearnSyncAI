@@ -1,19 +1,8 @@
 /**
- * Class-level mastery on the client — wire types and the two read calls.
- *
- * The educator counterpart of `src/lib/mastery.ts`, and it deliberately declares
- * none of that file's vocabulary: `DifficultyTier`, `masteryTier`,
- * `masteryPercent`, `TIER_TONE`, `TIER_LABEL` and `relativeTime` are all imported
- * and re-exported from there. A student's mastery and an educator's view of the
- * same student's mastery are one number, and the moment the two portals own two
- * copies of the thresholds they start disagreeing about who is "advanced".
- *
- * THE ONE RULE, unchanged from the student side: a student with no `bkt_mastery`
- * row sits at P(L₀) = 0.10, and that is an ASSUMPTION, not a measurement. Every
- * figure here that could be unmeasured is `number | null`, and every one carries
- * the count that lets you tell the two apart — `assessed_concept_count` per
- * student, `assessed_students` per concept, `started` per class. If you find
- * yourself printing a percentage without checking one of them, stop.
+ * Class-level mastery on the client: wire types and read calls. Tier vocabulary is re-exported from
+ * src/lib/mastery.ts so both portals share one set of thresholds.
+ * Unmeasured figures are null and travel with their count (assessed_concept_count, assessed_students,
+ * started). Never print a percentage without checking it.
  */
 
 import { api } from './api';
@@ -36,7 +25,7 @@ export interface StudentPerformance {
   first_name: string;
   last_name: string;
   grade_level: number;
-  /** EQ(4) over this material's concepts. **null means not started — never render it.** */
+  /** EQ(4) over this material's concepts; null means not started. */
   m_doc: number | null;
   tier: DifficultyTier;
   assessed_concept_count: number;
@@ -44,13 +33,7 @@ export interface StudentPerformance {
   last_updated: string | null;
 }
 
-/**
- * One concept across the class — the re-teach signal.
- *
- * `avg_mastery` is a mean over ASSESSED students only, so it is not EQ(4) and
- * does not fill absences with the prior. `assessed_students` is its denominator
- * and must be shown next to it.
- */
+/** One concept across the class. `avg_mastery` is over assessed students only; show `assessed_students` beside it. */
 export interface ConceptPerformance {
   concept_id: string;
   term: string;
@@ -80,7 +63,7 @@ export interface MaterialPerformance {
     /** Mean over STARTED students only. null when none have started. */
     m_doc: number | null;
     tier: DifficultyTier;
-    /** Over started students only — an unmeasured student is in no tier. */
+    /** Started students only. */
     by_tier: Record<DifficultyTier, number>;
   };
   /** Server-sorted: started weakest-first, then not-started by name. */
@@ -89,7 +72,7 @@ export interface MaterialPerformance {
   concepts: ConceptPerformance[];
 }
 
-/** One student's concept-by-concept detail — the expanded row. */
+/** One student's per-concept detail (the expanded row). */
 export interface StudentMaterialDetail {
   student: {
     student_id: string;
@@ -107,20 +90,20 @@ export interface StudentMaterialDetail {
   concepts: ConceptMastery[];
 }
 
-/** One student's standing on ONE concept — the transpose of `ConceptMastery`. */
+/** One student on one concept (the transpose of ConceptMastery). */
 export interface ConceptStudentMastery {
   student_id: string;
   first_name: string;
   last_name: string;
   grade_level: number;
-  /** Exactly P(L₀) when `assessed` is false. Do not display it in that case. */
+  /** Exactly P(L₀) when `assessed` is false; don't display it then. */
   mastery: number;
   assessed: boolean;
   opportunity_count: number;
   last_updated: string | null;
 }
 
-/** Who stands where on one concept — the expanded concept row. */
+/** Every student on one concept (the expanded concept row). */
 export interface ConceptClassDetail {
   concept: {
     concept_id: string;
@@ -138,26 +121,12 @@ export interface ConceptClassDetail {
 }
 
 /**
- * The mastery below which an ASSESSED student counts as struggling on a concept.
- *
- * It is the foundational band, `mastery_tier()`'s lower bound, and the same 0.50
- * the tier badge uses — but it is applied per concept, to one student, and ONLY
- * once there is evidence. A student who has never been asked about a concept sits
- * at P(L₀) = 0.10, which is below this number and means nothing; the server gates
- * on `assessed` before comparing, and any client-side reuse of this constant must
- * do the same. That gate is why `TIER_STYLE.foundational` can be slate (the cold
- * start is not a failure) while a struggling count can still be flagged.
+ * Below this an assessed student is struggling on a concept. Only apply it when `assessed` is true:
+ * an unassessed student sits at P(L₀), below it, meaning nothing.
  */
 export const STRUGGLING_BELOW = 0.5;
 
-/**
- * The sentence printed under the class average.
- *
- * It must always name its denominator. The average excludes students who have not
- * started, so "54%" on its own would read as the whole class when it may describe
- * three people out of twenty — and that gap is the most actionable thing on the
- * screen, not a footnote.
- */
+/** The caption under the class average; it must always name its denominator (started students). */
 export function classCaption(c: MaterialPerformance['class'], conceptCount: number): string {
   if (conceptCount === 0) {
     return 'Concepts appear once extraction finishes — mastery starts tracking after that.';
@@ -171,14 +140,7 @@ export function classCaption(c: MaterialPerformance['class'], conceptCount: numb
   return `Averaged across the ${c.started} of ${c.size} student${c.size === 1 ? '' : 's'} who have started.`;
 }
 
-/**
- * The same sentence for the DASHBOARD's class average, which is over every material
- * the educator has published rather than one.
- *
- * Deliberately adjacent to `classCaption()` rather than filed with the overview's
- * own types: they are one sentence at two scopes, and the moment they live in two
- * files one of them starts naming its denominator and the other stops.
- */
+/** The same caption for the dashboard's class average, kept beside classCaption() so they don't drift. */
 export function overviewCaption(
   c: MaterialPerformance['class'],
   conceptCount: number
@@ -195,7 +157,7 @@ export function overviewCaption(
   return `Averaged across the ${c.started} of ${c.size} student${c.size === 1 ? '' : 's'} who have started.`;
 }
 
-/** "3 of 5 struggling" — the concept row's caption, or null when untouched. */
+/** "3 of 5 struggling", or null when untouched. */
 export function conceptCaption(c: ConceptPerformance): string | null {
   if (c.assessed_students === 0) return null;
   const parts = [`${c.assessed_students} assessed`];
@@ -205,18 +167,8 @@ export function conceptCaption(c: ConceptPerformance): string | null {
 }
 
 /**
- * One student's learning-progress row — the study's evidence, one material.
- *
- * ⚠️ `start_mastery` IS NOT A BASELINE. It is the mean mastery AFTER the student's
- * first answer on each assessed concept, so that answer's outcome is already
- * inside it. Never label a column, caption or chart derived from it "pre-test",
- * "baseline" or "before studying". The one honest phrasing is "after the first
- * opportunity". (The genuine before-value, P(L₀) = 0.10, is identical for every
- * student and is an assumption, which is why it is not in this payload at all.)
- *
- * `start`, `end` and `growth` are all means over the SAME set — the concepts with
- * a mastery row — which is what makes `growth` a paired difference. Their
- * denominator is `assessed_concept_count`, and it must travel with them.
+ * One student's learning-progress row. `start_mastery` is after the first opportunity, never a
+ * baseline or pre-test. start/end/growth are over the same set (denominator assessed_concept_count).
  */
 export interface EvidenceStudent {
   student_id: string;
@@ -224,9 +176,9 @@ export interface EvidenceStudent {
   last_name: string;
   grade_level: number;
   concept_count: number;
-  /** The denominator of the three figures below. **null figures mean not started.** */
+  /** Denominator of the figures below; null figures mean not started. */
   assessed_concept_count: number;
-  /** Has mastery but no surviving audit row — excluded from start AND end. */
+  /** Mastery but no surviving audit row; excluded from start and end. */
   concepts_without_trail: number;
   opportunity_count: number;
   flashcard_observations: number;
@@ -234,7 +186,7 @@ export interface EvidenceStudent {
   start_mastery: number | null;
   end_mastery: number | null;
   growth: number | null;
-  /** EQ(4) over every concept — the number Class Performance prints. */
+  /** EQ(4) over every concept (what Class Performance prints). */
   m_doc: number | null;
   tier: DifficultyTier;
   first_observed_at: string | null;
@@ -252,7 +204,7 @@ export interface MasteryEvidence {
     parsed_status: string;
   };
   generated_at: string;
-  /** The audit-trail read hit its row cap. Figures are still anchored to bkt_mastery. */
+  /** The audit-trail read hit its cap; figures are still anchored to bkt_mastery. */
   truncated: boolean;
   class: {
     size: number;
@@ -262,29 +214,20 @@ export interface MasteryEvidence {
     growth: number | null;
     m_doc: number | null;
   };
-  /** Roster order (by name), NOT weakest-first — this is a table, not a ranking. */
+  /** Roster (name) order, not weakest-first. */
   students: EvidenceStudent[];
-  /**
-   * One row per (student, assessed concept) — what every figure above is a mean
-   * OVER. The .xlsx export puts these on their own sheet and rebuilds each
-   * summary column as a live formula against them, so a reader can check the
-   * arithmetic instead of taking it on trust.
-   */
+  /** One row per (student, assessed concept); the .xlsx rebuilds every summary from these. */
   concept_rows: EvidenceConceptRow[];
 }
 
-/**
- * ⚠️ `first_posterior` is null where the audit trail lost the row. Such a row is
- * excluded from start AND end (it is counted in `concepts_without_trail`), and a
- * blank cell is precisely what makes AVERAGEIFS reproduce that exclusion.
- */
+/** `first_posterior` is null when the audit row was lost; that concept is excluded from start and end. */
 export interface EvidenceConceptRow {
   student_id: string;
   last_name: string;
   first_name: string;
   concept_id: string;
   concept_term: string;
-  /** Posterior AFTER the first opportunity on this concept. Never a baseline. */
+  /** Posterior after the first opportunity; never a baseline. */
   first_posterior: number | null;
   latent_mastery: number;
   opportunity_count: number;
@@ -303,10 +246,7 @@ export const educatorAnalyticsApi = {
     return res.data;
   },
 
-  /**
-   * One student's concepts. Separate from the summary purely on payload size —
-   * shipping every student's vector inline is ~256 KB at study scale.
-   */
+  /** One student's concepts; separate from the summary for payload size. */
   async student(materialId: string, studentId: string): Promise<StudentMaterialDetail> {
     const res = await api.get<StudentMaterialDetail>(
       `/educator/materials/${materialId}/students/${studentId}/concepts`
@@ -314,12 +254,7 @@ export const educatorAnalyticsApi = {
     return res.data;
   },
 
-  /**
-   * The study's learning-progress evidence for one material.
-   *
-   * Fetched lazily, on the export click only — it reads the BKT audit trail, and
-   * a research export must not cost every educator that on every tab entry.
-   */
+  /** Learning-progress evidence; fetched only on export (it reads the audit trail). */
   async evidence(materialId: string): Promise<MasteryEvidence> {
     const res = await api.get<MasteryEvidence>(
       `/educator/materials/${materialId}/mastery-evidence`
@@ -327,7 +262,7 @@ export const educatorAnalyticsApi = {
     return res.data;
   },
 
-  /** One concept across the class — the transpose of `student()`. */
+  /** One concept across the class. */
   async concept(materialId: string, conceptId: string): Promise<ConceptClassDetail> {
     const res = await api.get<ConceptClassDetail>(
       `/educator/materials/${materialId}/concepts/${conceptId}/students`

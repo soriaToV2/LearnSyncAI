@@ -34,21 +34,10 @@ function getServiceRoleKey(): string {
   return key;
 }
 
-/**
- * Anon client — respects Row Level Security (RLS).
- * Use for operations that should behave like a logged-in user.
- */
+/** Anon client; respects RLS. Server DB access uses supabaseAdmin instead. */
 export const supabaseAnon: SupabaseClient = createClient(getSupabaseUrl(), getAnonKey());
 
-/**
- * Admin client — bypasses Row Level Security (RLS).
- * Use ONLY on the server side for privileged operations like:
- *  - Verifying user JWTs
- *  - Background jobs
- *  - Admin data access
- *
- * ⚠️  NEVER expose this client or its key to the browser/frontend.
- */
+/** Service-role client; bypasses RLS. Never expose it or its key to the browser. */
 export const supabaseAdmin: SupabaseClient = createClient(
   getSupabaseUrl(),
   getServiceRoleKey(),

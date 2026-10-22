@@ -1,57 +1,32 @@
 /**
- * Server-side PDF reading for the Material Ingestion path.
- *
- * We read the text layer page by page with pdfjs-dist's *legacy* build, which is
- * the one that runs under Node (the default build assumes a browser worker). No
- * canvas or worker is needed because we only pull the text layer — never render.
- *
- * Two jobs, one pass:
- *   1. Report page_count and whether the document is scanned (image-only), so the
- *      upload handler can route it through OCR instead of the text layer.
- *   2. Hand the per-page text to the concept extractor, so every concept can
- *      record the page(s) it came from (educator traceability).
+ * Reads a PDF's text layer per page (pdfjs-dist legacy build, which runs under Node) and
+ * detects image-only scans so they can go through OCR.
  */
 
-// Runtime only. pdfjs-dist ships no `exports` map, so this subpath resolves by
-// file; its types live elsewhere, so the module is treated as `any` — fine here.
+// pdfjs-dist has no `exports` map; this subpath resolves by file and is typed as `any`.
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 export interface PdfPage {
-  /** 1-based page number, matching what a human sees in a PDF reader. */
+  /** 1-based. */
   page: number;
-  /** Reading-order text for this page, with newlines at visual line breaks. */
+  /** Reading-order text with newlines at visual line breaks. */
   text: string;
 }
 
 export interface PdfExtract {
   pageCount: number;
   pages: PdfPage[];
-  /**
-   * True when the document carries essentially no text — i.e. it is a scan or
-   * photos of printed pages. These go through OCR (`ocr.ts`) before extraction;
-   * a PDF assembled from uploaded photos (`pdfAssemble.ts`) reads as scanned by
-   * construction, which is exactly the branch it needs.
-   */
+  /** No usable text layer (scan or assembled photos); route through OCR. */
   isScanned: boolean;
 }
 
-/**
- * A page of real prose yields dozens to hundreds of text items; a scanned page
- * yields none, or a few stray marks. Averaging fewer than this many items per
- * page across the whole document means there is no usable text layer.
- */
+/** Fewer text items per page than this, on average, means no usable text layer. */
 const MIN_TEXT_ITEMS_PER_PAGE = 5;
 
-/** Y positions closer than this (PDF points) are treated as the same line. */
+/** Y positions closer than this (PDF points) are the same line. */
 const LINE_BREAK_TOLERANCE = 3;
 
-/**
- * Reads a PDF buffer and returns its page count, per-page text, and whether it
- * is a scanned/image-only document.
- *
- * Throws if the buffer is not a readable PDF; the caller surfaces that as a
- * validation error rather than letting it reach concept extraction.
- */
+/** Page count, per-page text and scan detection. Throws if the buffer isn't a readable PDF. */
 export async function extractPdfPages(buffer: Buffer): Promise<PdfExtract> {
   const data = new Uint8Array(buffer);
   const pdf = await getDocument({ data, useSystemFonts: true }).promise;
@@ -69,7 +44,7 @@ export async function extractPdfPages(buffer: Buffer): Promise<PdfExtract> {
       let text = '';
       let lastY: number | null = null;
       for (const item of content.items) {
-        // items are TextItem | TextMarkedContent; only TextItem carries `str`.
+        // Only TextItem carries `str`.
         if (!('str' in item)) continue;
         const y = item.transform?.[5];
         if (lastY !== null && typeof y === 'number' && Math.abs(y - lastY) > LINE_BREAK_TOLERANCE) {

@@ -1,32 +1,17 @@
 /**
- * Who may read which material.
- *
- * Migration 0008 spells out why this file has to exist: the Express API talks to
- * Postgres with the service role key, which bypasses Row-Level Security by
- * design, so "the API layer must still enforce role and ownership itself". The
- * RLS policies are defence-in-depth against direct anon-key access; they do
- * nothing for a request that arrives here.
- *
- * The rule comes straight from the paper: educators "select which grade level can
- * access" each upload, and the Material Ingestion and Distribution Core "makes
- * the processed content available to students within the educator's selected
- * grade level". So:
- *
- *   student  -> materials that are not archived and list their grade_level
+ * Who may read which material. The service role bypasses RLS, so every route taking a material id
+ * must check here.
+ *   student  -> not archived and published to their grade
  *   educator -> their own uploads, archived or not
- *   admin    -> everything (read-only elsewhere)
- *   disabled -> nothing, whatever the role says
- *
- * Every route a student can reach with a material id routes through here. Before
- * this existed, any signed-in user could pass any material id to /view, /concepts
- * or /status and get another grade's content back.
+ *   admin    -> everything
+ *   disabled -> nothing
  */
 
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import { supabaseAdmin } from './supabase';
 import { UserRole } from '../types/database';
 
-/** Matches the uuid format Postgres will accept, so a junk id 404s instead of 500ing. */
+/** So a junk id 404s instead of 500ing. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isUuid(value: string | undefined): boolean {
@@ -50,13 +35,7 @@ async function loadCaller(userId: string): Promise<Caller | null> {
   return { role: data.role as UserRole, gradeLevel: data.grade_level ?? null };
 }
 
-/**
- * Narrows `materialIds` to the ones this user is actually allowed to read.
- *
- * Returns a Set rather than a boolean so a caller holding several ids can tell
- * *which* were rejected, and so the check costs one query no matter how many ids
- * are passed. An empty input returns an empty Set without touching the database.
- */
+/** The subset of `materialIds` this user may read, in one query. */
 export async function accessibleMaterialIds(
   userId: string,
   materialIds: string[]
@@ -72,8 +51,7 @@ export async function accessibleMaterialIds(
   if (caller.role === 'student') {
     // A student with no grade level on file qualifies for nothing.
     if (caller.gradeLevel === null) return new Set();
-    // grade_levels is smallint[]; `contains` compiles to @>, which uses the
-    // existing GIN index idx_materials_grade_levels.
+    // `contains` compiles to @>, which uses the GIN index on grade_levels.
     query = query.eq('is_archived', false).contains('grade_levels', [caller.gradeLevel]);
   } else if (caller.role === 'educator') {
     query = query.eq('educator_id', userId);
@@ -94,13 +72,7 @@ export async function canReadAllMaterials(userId: string, materialIds: string[])
   return unique.every((id) => allowed.has(id));
 }
 
-/**
- * Route guard for endpoints that name a single material in the path.
- *
- * Answers 404, never 403: a 403 would confirm that the id names a real material,
- * which is itself a disclosure. From outside, an inaccessible material and a
- * non-existent one are indistinguishable.
- */
+/** Guard for a material id in the path. Answers 404, never 403, so ids can't be probed. */
 export function requireMaterialAccess(param: string = 'id'): RequestHandler {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const materialId = req.params[param];
@@ -120,15 +92,7 @@ export function requireMaterialAccess(param: string = 'id'): RequestHandler {
   };
 }
 
-/**
- * Body-parameter equivalent of the guard above, for routes that take an array of
- * material ids. Responds 403 and returns false when any id is off-limits; the
- * caller should return immediately.
- *
- * 403 rather than 404 here because these routes are only ever reached with ids
- * the client already listed from its own study space — a mismatch means the
- * client is asking for something it was never shown.
- */
+/** For material id arrays in a body: sends 403 and returns false if any id is off-limits. Return immediately. */
 export async function rejectInaccessibleMaterials(
   req: Request,
   res: Response,
@@ -148,12 +112,7 @@ export async function rejectInaccessibleMaterials(
   return false;
 }
 
-/**
- * Materials published to a subject at a grade level — the derived contents of a
- * study space. Archived materials are excluded, which is what makes an educator's
- * archive action remove the material from every student's space without touching
- * study_space_materials.
- */
+/** Non-archived materials published to a subject and grade. Archiving hides them without touching link rows. */
 export async function publishedMaterialIds(subject: string, gradeLevel: number): Promise<string[]> {
   const { data, error } = await supabaseAdmin
     .from('materials')

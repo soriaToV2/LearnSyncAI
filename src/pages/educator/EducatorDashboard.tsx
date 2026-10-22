@@ -21,74 +21,21 @@ import {
 } from '../../lib/educatorOverview';
 
 /**
- * The educator dashboard.
- *
- * Rebuilt from a version that made ZERO network calls. Every figure on it came from
- * `src/data/mockEducator.ts` — eighteen invented students, eight invented materials
- * and a mastery table generated from an FNV-1a hash of the student id — and it
- * greeted every educator as "Liza".
- *
- * ══ WHAT THIS PAGE IS FOR ══
- * Class Performance is scoped to one material by design. This page is the only place
- * that can answer the three questions that cross materials:
- *   1. which of my materials needs attention,
- *   2. how is one student doing across everything I teach them (the thing CLAUDE.md
- *      records as the single loss when the mock roster pages were deleted), and
- *   3. which concepts is the class weakest on across my whole library.
- * Plus the one that matters most on real data: is anything broken or reaching nobody.
- *
- * ══ ONE REQUEST ══
- * `GET /api/educator/overview`, which accepts nothing. No cache and no refresh
- * button — the page is fresh on mount like every other screen.
- *
- * ══ NEVER PRINT P(L₀) ══
- * A student with no `bkt_mastery` row sits at 0.10 by ASSUMPTION. Every unmeasured
- * figure renders "—" with `<MeterBar value={null} />`, which draws an empty track of
- * the same height rather than a short bar. Gate on the counts (`started`,
- * `assessed_concept_count`, `assessed_students`), never on `m_doc === 0.1`.
- *
- * ══ WHAT IS DELIBERATELY ABSENT ══
- * No class mastery curve over time. The student curve anchors its last point to
- * `bkt_mastery` by construction; a class mean cannot, because its denominator
- * changes as students start — fix it at "started now" and every student who had not
- * yet begun contributes an all-P(L₀) EQ(4), which is printing the prior; let it move
- * and the class average DROPS when a new student begins, reading as "the class got
- * worse" because someone joined. Both are wrong.
- *
- * No streaks, study hours or badges. The REASON changed on 2026-08-19 without the
- * conclusion changing: `activity_logs` and `user_badges` now have a writer and the
- * student dashboard shows both. They stay off THIS page because a streak is a
- * motivational signal aimed at its owner, and surfacing "who has studied on the
- * fewest days" to a teacher turns it into an attendance register. Study hours has
- * no honest source on either page. No per-student activity feed:
- * `cognitive_logs` and `game_sessions` are student-private and there is no educator
- * route for either. No Free Recall or Feynman numbers — their denominator is however
- * finely a document happened to be split.
+ * The educator dashboard: answers cross-material questions Class Performance can't (which materials
+ * need attention, a student across everything you teach, the class's weakest concepts library-wide).
+ * One request (GET /api/educator/overview); no cache.
+ * Never print P(L₀): unmeasured figures render "—" with an empty MeterBar; gate on the counts.
+ * Deliberately absent: a class mastery curve (its denominator moves), streaks/badges/study hours
+ * (motivational for the student, an attendance register for a teacher), Free Recall/Feynman numbers.
  */
 
 type View = 'materials' | 'students' | 'concepts';
 
-/**
- * ⚠️ TWO TOKENS, AND THE SPLIT MATTERS. `PANEL` was doing both jobs: the page's
- * big surfaces (class mastery, grade coverage, recent uploads) AND every row
- * inside the three list views. Giving one constant a shadow would have put a
- * drop shadow under all ~40 list rows, which reads as forty floating cards
- * rather than a list.
- *
- * `CARD` is a surface you look at; `PANEL` is a row inside one.
- */
+/** CARD is a surface you look at; PANEL is a row inside one (so ~40 rows don't each get a shadow). */
 const PANEL = 'rounded-2xl bg-white/[0.02] border border-white/5';
 const CARD = `${PANEL} shadow-lg shadow-black/20`;
 
-/**
- * The focus indicator for this page's rows and links.
- *
- * ⚠️ `ring-inset`, NOT an offset ring. The list views space their rows with
- * `gap-1.5` — 6px — so an outward `ring-2` plus a 2px offset is 8px of glow
- * bleeding into a 6px gap and butting against the neighbouring row. It is the
- * same defect reported on the student Resources list. Several of these rows also
- * sit inside `overflow-hidden` parents, which would clip an outward ring anyway.
- */
+/** Focus ring for rows and links: inset, since rows sit 6px apart and some parents clip overflow. */
 const FOCUS =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
@@ -119,20 +66,7 @@ export default function EducatorDashboard() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      {/* `sm:` steps on both axes so a tablet does not jump straight from phone
-          padding to desktop padding — the scale the rest of the app uses.
-
-          ⚠️ `animate-page-fade`, NOT `fade-in`. The educator portal had NO
-          entrance animation on any page while the student portal uses one on
-          nearly every screen, so this dashboard snapped in after its spinner.
-
-          The student pages used to write `animate-in fade-in duration-300`, of
-          which only two thirds ever did anything: `animate-in`, `zoom-in-*` and
-          `slide-in-from-*` come from tailwindcss-animate, which is not
-          installed, so they compiled to nothing. (`duration-*` DOES apply —
-          `index.css` defines it with `animation-duration` as well as
-          `transition-duration`.) Those dead tokens have since been stripped
-          app-wide; `animate-page-fade` is the same keyframe named honestly. */}
+      {/* sm: steps for tablets. animate-page-fade for the page entrance. */}
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
 
         <header className="mb-8">
@@ -165,8 +99,6 @@ export default function EducatorDashboard() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 function Loaded({
   data,
   view,
@@ -179,21 +111,11 @@ function Loaded({
   const { counts, class: cls } = data;
   const tone = TIER_TONE[cls.tier];
 
-  /*
-    ⚠️ `animate-tab-in` SITS ON THE LOADED BODY, NOT ON THE PAGE WRAPPER. The
-    wrapper's `animate-page-fade` fires when the route mounts — which is while
-    the spinner is on screen — so it is finished before a single figure arrives
-    and the dashboard then snaps in. That is the whole "there is a loading
-    spinner, then no entrance animation" report. Every screen in the app with a
-    fetch has the same shape; the fix is always to animate what the reader
-    actually waits for.
-  */
+  /* animate-tab-in on the loaded body, not the wrapper (whose fade finishes while the spinner shows). */
   return (
     <div className="animate-tab-in">
-      {/* ── Summary strip ────────────────────────────────────────────── */}
-      {/* 4-across from `md:` rather than `lg:`. At 768px two tiles were ~370px
-          wide each, holding a 9px icon and two short lines — the widest thing on
-          the page carrying the least. */}
+      {/* Summary strip */}
+      {/* 4-across from md:. */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6">
         <StatCard
           label="Materials"
@@ -213,14 +135,7 @@ function Loaded({
           icon={Users}
           color="#818cf8"
         />
-        {/*
-          These two tiles count DIFFERENT THINGS — people and topics — and sat
-          adjacent reading "1 / 1" and "28 / 57" with hints that only restated the
-          numerator ("Somebody has been asked about these"). The label now carries
-          the noun, and the hint names the REMAINDER, which is the half you can act
-          on: a student can be "1 of 1 started" while most concepts are untouched,
-          because starting means one answer, not all of them.
-        */}
+        {/* These tiles count different things (students, concepts); each names its unit and the remainder. */}
         <StatCard
           label="Students started"
           value={`${cls.started} / ${cls.size}`}
@@ -237,18 +152,14 @@ function Loaded({
         />
       </section>
 
-      {/* ── Needs a look ─────────────────────────────────────────────── */}
-      {/*
-        Omitted entirely when empty. A green "all clear" card in its place would be
-        a permanent widget that reports nothing — the same reason the student
-        dashboard drops its due-cards card at zero.
-      */}
+      {/* Needs a look */}
+      {/* Omitted when empty (no permanent "all clear" card). */}
       {data.attention.length > 0 && <AttentionStrip items={data.attention} />}
 
       <div className="grid grid-cols-12 gap-6">
         <div className="col-span-12 lg:col-span-8 flex flex-col gap-6">
 
-          {/* ── Class mastery ──────────────────────────────────────── */}
+          {/* Class mastery */}
           <div className={`${CARD} p-5 sm:p-6`}>
             <div className="flex items-center gap-2.5 mb-5">
               <span className="w-8 h-8 rounded-lg bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center shrink-0">
@@ -300,21 +211,9 @@ function Loaded({
             </div>
           </div>
 
-          {/* ── By material / By student / By concept ──────────────── */}
+          {/* By material / By student / By concept */}
           <div className="flex flex-col gap-4">
-            {/*
-              ⚠️ THIS SEGMENTED CONTROL OVERFLOWED A PHONE. "By material (8) ·
-              By student (24) · By concept (28)" is ~345px of text plus padding
-              inside the 343px a 375px screen leaves after the page gutters, so
-              the third tab was clipped off the right edge with no way to reach
-              it — the control has no scroll and the row does not wrap.
-
-              Fixed on both axes: the labels drop the redundant "By " below
-              `sm:` (the heading above already says what this is), and the
-              control goes full-width with equal thirds instead of hugging its
-              content. The counts stay at every width — they are the reason to
-              pick one tab over another.
-            */}
+            {/* Fits a phone: "By " drops below sm: and the control goes full-width in equal thirds. Counts always show. */}
             <div className="flex w-full sm:w-auto sm:self-start items-center gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/5">
               {(
                 [
@@ -337,14 +236,7 @@ function Loaded({
               ))}
             </div>
 
-            {/* ⚠️ `key={view}` IS WHAT MAKES THE FADE FIRE. A CSS animation runs
-                once when an element mounts; without the key React reuses the
-                same node across tab switches and only swaps its children, so
-                the class sits there doing nothing after the first render.
-                Keying it remounts on every switch — which is also why
-                `StudentsView`'s expanded row resets when you leave and come
-                back, matching how `<main key={activeTab}>` behaves in the
-                student study space. */}
+            {/* key={view} remounts on each switch so the fade fires (and expanded rows reset). */}
             <div key={view} className="animate-tab-in">
               {view === 'materials' && <MaterialsView materials={data.materials} />}
               {view === 'students' && (
@@ -357,19 +249,14 @@ function Loaded({
           </div>
         </div>
 
-        {/* ── Side column ─────────────────────────────────────────── */}
+        {/* Side column */}
         <div className="col-span-12 lg:col-span-4 flex flex-col gap-6">
           <GradeCoverage grades={data.grades} />
           <RecentUploads uploads={data.recent_uploads} />
         </div>
       </div>
 
-      {/*
-        Careful with this sentence. An earlier version of it said free recall and the
-        Feynman technique "read these values to personalise themselves", which is not
-        true of the built system — `cognitive.routes.ts` contains neither the word
-        "mastery" nor "bkt". Only the games read it.
-      */}
+      {/* Accurate: only the games read mastery (Free Recall and Feynman don't). */}
       <p className="font-sans text-xs text-slate-500 mt-6 leading-relaxed">
         Mastery comes from Bayesian Knowledge Tracing and moves only when a student rates a due
         flashcard or completes an adaptive test. The games read it to pick their difficulty but never
@@ -380,11 +267,9 @@ function Loaded({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Attention
-// ─────────────────────────────────────────────────────────────────────────────
 
-/** `parse_pending` is informational; everything else is a thing to act on. */
+/** parse_pending is informational; the rest need action. */
 const ATTENTION_TONE: Record<AttentionItem['reason'], string> = {
   parse_failed: 'text-amber-400',
   parse_pending: 'text-slate-400',
@@ -433,9 +318,7 @@ function AttentionStrip({ items }: { items: AttentionItem[] }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // By material
-// ─────────────────────────────────────────────────────────────────────────────
 
 function MaterialsView({ materials }: { materials: MaterialOverview[] }) {
   const navigate = useNavigate();
@@ -489,9 +372,7 @@ function MaterialsView({ materials }: { materials: MaterialOverview[] }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// By student — the view the deleted roster pages used to occupy
-// ─────────────────────────────────────────────────────────────────────────────
+// By student
 
 function StudentsView({
   students,
@@ -574,13 +455,7 @@ function StudentsView({
 
             {isOpen && (
               <div className="border-t border-white/5 px-4 py-4 flex flex-col gap-1.5">
-                {/*
-                  Already in the payload — no request fires on expansion, and no
-                  student id ever appears in a URL. Per-concept detail is a
-                  different question and still lives behind the existing
-                  /materials/:id/students/:id/concepts route, reached from the
-                  material's own Class Performance tab.
-                */}
+                {/* Already in the payload: no request on expansion and no student id in a URL. */}
                 {s.by_material.map((slice) => {
                   const tier = tierOf(slice.m_doc);
                   return (
@@ -621,9 +496,7 @@ function StudentsView({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // By concept
-// ─────────────────────────────────────────────────────────────────────────────
 
 function ConceptsView({ concepts, total }: { concepts: ConceptOverview[]; total: number }) {
   if (concepts.length === 0) {
@@ -696,9 +569,7 @@ function ConceptsView({ concepts, total }: { concepts: ConceptOverview[]; total:
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Side column
-// ─────────────────────────────────────────────────────────────────────────────
 
 function GradeCoverage({ grades }: { grades: EducatorOverview['grades'] }) {
   return (
@@ -747,9 +618,7 @@ function GradeCoverage({ grades }: { grades: EducatorOverview['grades'] }) {
 function RecentUploads({ uploads }: { uploads: EducatorOverview['recent_uploads'] }) {
   return (
     <div className={`${CARD} p-5 sm:p-6`}>
-      {/* An icon chip, matching Class mastery and Grade coverage. This heading
-          was the only one of the three without one, which made the side column
-          read as two cards and a list. */}
+      {/* Icon chip, matching the other side-column headings. */}
       <div className="flex items-center justify-between gap-3 mb-5">
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="w-8 h-8 rounded-lg bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center shrink-0">
@@ -821,14 +690,7 @@ function NoMaterials({ archived }: { archived: number }) {
   );
 }
 
-/**
- * The summary tiles' hints, which state the REMAINDER rather than the numerator.
- *
- * "28 / 57" already shows what has been done; what an educator can act on is the
- * 29 that have not. Both read as a plain sentence at a glance, and both name their
- * unit — students in one, concepts in the other — because the two tiles sit side
- * by side counting different things.
- */
+/** Tile hints state the remainder (what's left to act on) and name their unit. */
 function startedHint(started: number, size: number): string {
   if (size === 0) return 'No students in your grade levels';
   if (started === size) return 'Everyone has begun';
@@ -838,19 +700,11 @@ function startedHint(started: number, size: number): string {
 function assessedHint(assessed: number, total: number): string {
   if (total === 0) return 'No concepts extracted yet';
   if (assessed === total) return 'Every concept has been answered on';
-  // Matches the student dashboard's own phrasing for the same idea.
+  // Same phrasing as the student dashboard.
   return `${total - assessed} have not come up yet`;
 }
 
-/**
- * Tier from the value being DISPLAYED, not the raw one.
- *
- * `masteryTier()` carries this rule in its own JSDoc: a value at 0.849 renders as
- * "85%" but tiers as `intermediate`, so feeding it the raw number puts an amber bar
- * beside a number that reads as the advanced threshold. The class and per-student
- * tiers come from the server, computed on the unrounded mean, so the two can only
- * differ inside a razor-thin band. Same helper, same reason, as `ClassPerformance`.
- */
+/** Tier from the displayed (rounded) value so the bar colour matches the number. */
 function tierOf(mastery: number): DifficultyTier {
   return masteryTier(masteryPercent(mastery) / 100);
 }

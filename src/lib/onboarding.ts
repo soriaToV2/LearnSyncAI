@@ -1,33 +1,6 @@
 /**
- * Every word of the student onboarding, in one place.
- *
- * ══ WHY ONE MODULE ══
- * The same explanation appears in two surfaces: the opening step of the
- * walkthrough that runs the first time a student enters a study tool, and the
- * matching section of the Help page. Written twice they drift, and a student who
- * reads both gets two slightly different accounts of the same feature. Here the
- * Help page imports the intro verbatim and only adds the "how to" list beneath.
- *
- * ══ THE COPY RULE: SAY WHAT THE SCREEN DOES NOT ══
- * The portal is already dense with good explanatory prose — `AnalyticsTab`
- * explains an unmeasured concept, `FlashcardsTab` explains what a deck is,
- * `FlashcardStudyView` explains the 1/3/7-day intervals. None of that is
- * repeated here. Every line below exists because it says something a first-run
- * student cannot read anywhere on the screen it describes.
- *
- * Three of them carry the app's most-misread facts, and they are the reason this
- * feature is worth building at all:
- *
- *   - a low Free Recall percentage is NORMAL, and is meaningless across lessons;
- *   - Test Mode getting harder is the adaptation working, not a fault;
- *   - a blank in Analytics means "not asked yet", which is not a zero.
- *
- * All three are currently gated behind `assessed > 0` wherever the app states
- * them (`AdaptiveTestTab.tsx`, `GamesLanding.tsx`, `StudentDashboard.tsx`), so a
- * student cannot see any of them until after the moment they needed them.
- *
- * ⚠️ READING LEVEL IS GRADE 7. Short sentences, no jargon, and never a word the
- * interface does not itself use.
+ * All student onboarding copy, in one place so the tool walkthroughs and the Help page can't drift.
+ * Only say what the screen itself doesn't. Grade 7 reading level: short sentences, no jargon.
  */
 
 /** The six study tools, keyed by the tab that opens them. */
@@ -39,39 +12,15 @@ export type ToolKey =
   | 'tool_adaptive_test'
   | 'tool_analytics';
 
-/**
- * Walkthroughs that run the first time a RESULT exists, not the first time a tab
- * is opened.
- *
- * ⚠️ THESE EXIST BECAUSE THE RESULT CANNOT BE TAUGHT ALONGSIDE THE CONTROLS.
- * In both cognitive tabs the composer and the results panel are mutually
- * exclusive siblings in one slot (`FreeRecallTab.tsx`, `FeynmanTab.tsx`), and a
- * flashcard session replaces the whole tab body. So a walkthrough that spotlights
- * the text box physically cannot go on to spotlight the score — it does not exist
- * yet, and by the time it does the text box is gone.
- *
- * Deferring them is better than a compromise, not worse: the score is explained
- * at the exact moment a student is looking at it and wondering what it means.
- */
+/** Walkthroughs that run the first time a result exists (results replace the controls they'd follow). */
 export type ResultKey =
   | 'tool_flashcards_study'
   | 'tool_free_recall_result'
   | 'tool_feynman_result';
 
 /**
- * ⚠️ THE STRING IS THE IDENTITY, exactly as `badge_name` is in `badges.ts`.
- * It is written to `onboarding_seen.step_key`, so renaming one does not migrate
- * anybody — it re-shows that walkthrough to every student who had already
- * finished it, and orphans the row that recorded they had.
- *
- * `tour_v1` carries a version suffix for the one case where re-showing is the
- * point: a genuinely rewritten tour becomes `tour_v2` and everyone sees it once
- * more. The tool keys need no version; they describe a tab, not a script.
- *
- * ⚠️ MIRRORED as a Zod enum by `OnboardingStepKeySchema` in
- * `server/types/api.ts`. Adding a key is a deliberate edit in both files, which
- * is the intent — the server refuses an unknown key rather than accumulating
- * junk rows nothing will ever read or clean up.
+ * Keys are identities stored in onboarding_seen.step_key: never rename one. Bump `tour_v1` to re-show
+ * a rewritten tour. Mirrored by OnboardingStepKeySchema in server/types/api.ts; edit both.
  */
 export type OnboardingKey = 'tour_v1' | ToolKey | ResultKey;
 
@@ -88,61 +37,23 @@ export const ONBOARDING_KEYS: readonly OnboardingKey[] = [
   'tool_feynman_result',
 ];
 
-// ─────────────────────────────────────────────
 // The first-run tour
-// ─────────────────────────────────────────────
 
 export interface TourStep {
-  /**
-   * The `data-tour` attribute value to spotlight, or `null` for a centred card
-   * with no target.
-   *
-   * ⚠️ A STEP WHOSE ANCHOR IS NOT IN THE DOM IS SKIPPED, not rendered pointing
-   * at nothing. That one rule is what lets a single step list survive the mobile
-   * drawer being shut, a study space with no lessons in it, and every future
-   * layout change, without a per-device script.
-   */
+  /** The `data-tour` value to spotlight, or null for a centred card. Steps with no anchor in the DOM are skipped. */
   anchor: string | null;
   title: string;
   body: string;
-  /**
-   * Fill the spotlighted card with example content while this step is showing.
-   *
-   * ⚠️ ONLY TRUE FOR STEPS WHOSE CARD IS EMPTY ON A NEW ACCOUNT, and the example
-   * never outlives the step — see `DEMO_*` below for why that boundary is the
-   * whole design.
-   */
+  /** Show example content in the card while this step is showing (only for cards empty on a new account). */
   demo?: boolean;
   /**
-   * Hold the mobile ☰ menu open while this step is showing.
-   *
-   * ⚠️ TRUE FOR EVERY STEP ANCHORED TO A SIDEBAR NAV ITEM, and for nothing else.
-   * On a phone those five links live in a drawer that is slid off screen, so the
-   * step has nothing to point at — and the skip rule above does NOT catch it,
-   * because the drawer hides by transform rather than by `display` (see
-   * `isReachable` in `TourOverlay.tsx`). Skipping them was the alternative and
-   * was rejected: it would leave a phone student never told the app has a menu,
-   * and would drop the Study Spaces explanation, which is the most useful thing
-   * the tour says.
-   *
-   * On a desktop it is a no-op — the drawer is `display: none` there and the
-   * anchor resolves to the visible sidebar copy either way.
+   * Hold the mobile menu open during this step. True for every sidebar-anchored step: the drawer
+   * hides by transform, so the skip rule wouldn't catch it. No-op on desktop.
    */
   needsNav?: boolean;
 }
 
-/**
- * The first-run tour: the sidebar, then the four dashboard cards that fill in as
- * a student works. Ten steps, about a minute.
- *
- * ⚠️ WRITTEN AGAINST THE EMPTY DASHBOARD, WHICH IS THE ONLY ONE A NEW STUDENT
- * SEES. `RequireRole` sends an admin-created account to `/set-password` before
- * the portal, so the first screen they reach afterwards has no spaces, no
- * lessons and no mastery. Until recently that state rendered ONE card and
- * nothing else, which is why this tour could only point at the sidebar; the
- * dashboard now draws every section with its own empty state, so the four cards
- * below are real targets.
- */
+/** The first-run tour: the sidebar, then the four dashboard cards. Written against the empty dashboard a new student sees. */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
     anchor: null,
@@ -232,31 +143,11 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
 ];
 
-// ─────────────────────────────────────────────
-// Example content, shown ONLY while a tour step is on the card
-// ─────────────────────────────────────────────
+// Example content, shown only while a tour step is on its card
 
 /**
- * ⚠️ THIS IS THE ONE PLACE THIS PROJECT SHOWS DATA A STUDENT DID NOT PRODUCE,
- * AND IT IS BOUNDED ON PURPOSE.
- *
- * The rule it is threading: `mockStudents.ts` was deleted, the fabricated
- * `liza.mendoza@pca.edu.ph` was deleted, `MasteryBar` was deleted for being
- * unable to express "not assessed", and "never print P(L₀)" is stated in four
- * places. What all of those forbid is invented data that OUTLIVES the moment it
- * is explained — a number a student can screenshot, quote, or mistake for their
- * own.
- *
- * So the example is bound to the tour step, not to the empty state. It is on
- * screen only while the spotlight is on that card and the tour card beside it is
- * saying what it is, it carries an `EXAMPLE` chip, and it is gone the instant
- * the tour advances or closes. Nothing persists, and nothing appears without its
- * own explanation attached.
- *
- * ⚠️ THE BADGES ARE REAL CATALOGUE IDENTITIES, not invented trophies. They go
- * through `badgeStyle()` in `src/lib/badges.ts` like every other badge, so the
- * example shows the student exactly what they will earn rather than something
- * that does not exist.
+ * The one place the app shows data a student didn't produce. It exists only while its tour step is
+ * on screen, carries an EXAMPLE chip, and never persists. Badges are real catalogue entries.
  */
 export const DEMO_MASTERY = {
   /** Mid-intermediate: clearly progress, clearly not finished. */
@@ -280,23 +171,14 @@ export const DEMO_RECENT: readonly { kind: 'test' | 'free_recall' | 'game'; text
   { kind: 'game', text: 'Played Term Matching in Filipino', when: 'Yesterday' },
 ];
 
-// ─────────────────────────────────────────────
-// The six study-tool intros
-// ─────────────────────────────────────────────
+// Study-tool intros
 
 export interface ToolIntro {
   title: string;
   body: string;
 }
 
-/**
- * What each tool IS, in one or two sentences.
- *
- * ⚠️ NOT A COMPONENT ANY MORE. This used to render as a dismissible panel at the
- * top of each tab (`ToolIntro.tsx`, deleted). It is now the opening step of that
- * tool's walkthrough and the Help page's section intro — one sentence, two
- * places, no third copy.
- */
+/** What each tool is, in a sentence or two. Used as the first walkthrough step and in Help. */
 export const TOOL_INTROS: Record<ToolKey, ToolIntro> = {
   tool_resources: {
     title: 'Your teacher’s lessons live here',
@@ -336,33 +218,12 @@ export const TOOL_INTROS: Record<ToolKey, ToolIntro> = {
   },
 };
 
-// ─────────────────────────────────────────────
-// The per-tool walkthroughs
-// ─────────────────────────────────────────────
+// Per-tool walkthroughs
 
 /**
- * A short spotlight walkthrough inside each study tool, run the first time that
- * tool is opened. Same overlay, same keyboard model, same skip rule as the
- * dashboard tour.
- *
- * ⚠️ STEP ONE OF EACH IS THE `TOOL_INTROS` SENTENCE, VERBATIM. That is the same
- * string the Help page prints, so the three surfaces cannot drift — and it means
- * the walkthrough opens by saying what the tool is FOR before it starts pointing
- * at controls.
- *
- * ⚠️ EVERY ANCHOR HERE IS CONDITIONAL EXCEPT THE FIRST. With no lessons in the
- * space — the normal day-one state — `NoMaterialsNotice` replaces the entire
- * composer in both cognitive tabs, and the flashcard and analytics bodies swap
- * to empty states. The skip rule turns that into a one- or two-step walkthrough
- * rather than a spotlight on nothing, which is why no step below is written as
- * if the one before it definitely ran.
- *
- * ⚠️ NOTHING HERE POINTS AT A RESULT. The composer and the results panel are
- * mutually exclusive siblings in one slot (`FreeRecallTab.tsx:550`,
- * `FeynmanTab.tsx:594`), so a result cannot be spotlighted in the same pass that
- * spotlights the text box — it does not exist yet. The submit step DESCRIBES
- * what happens instead, and the result itself is taught by a separate
- * walkthrough the first time one appears.
+ * Spotlight walkthroughs run the first time each tool opens. Step one is the TOOL_INTROS sentence
+ * verbatim. Every anchor after the first may be absent (e.g. no lessons yet), so no step assumes the
+ * previous one ran. Results are taught by separate walkthroughs.
  */
 export const TOOL_TOURS: Record<ToolKey, readonly TourStep[]> = {
   tool_resources: [
@@ -469,13 +330,8 @@ export const TOOL_TOURS: Record<ToolKey, readonly TourStep[]> = {
 };
 
 /**
- * Run the first time a result is actually on screen. Short — two steps at most —
- * because a student has just finished something and is reading their score.
- *
- * ⚠️ THESE CARRY THE THREE MOST-MISREAD FACTS IN THE APP, which is why they are
- * worth a separate trigger at all: that a low Free Recall percentage is normal
- * and meaningless across lessons, that Feynman's two marks are independent, and
- * that a flashcard rating is a scheduling decision rather than a grade.
+ * Run the first time a result appears; two steps at most. They cover the most misread facts: low Free
+ * Recall percentages are normal, Feynman's two marks are independent, ratings are scheduling, not grades.
  */
 export const RESULT_TOURS: Record<ResultKey, readonly TourStep[]> = {
   tool_free_recall_result: [
@@ -523,20 +379,14 @@ export const RESULT_TOURS: Record<ResultKey, readonly TourStep[]> = {
   ],
 };
 
-/**
- * Every walkthrough in the app, addressed by the key that records having seen it.
- * `TourOverlay` is handed one of these lists; nothing else decides which steps
- * exist.
- */
+/** Every walkthrough, keyed by the step key that records it. */
 export const TOURS: Partial<Record<OnboardingKey, readonly TourStep[]>> = {
   tour_v1: TOUR_STEPS,
   ...TOOL_TOURS,
   ...RESULT_TOURS,
 };
 
-// ─────────────────────────────────────────────
 // The Help page
-// ─────────────────────────────────────────────
 
 export interface HelpSection {
   id: string;
@@ -547,15 +397,7 @@ export interface HelpSection {
   how: readonly string[];
 }
 
-/**
- * ⚠️ THE SIX TOOL SECTIONS REUSE `TOOL_INTROS[...].body` RATHER THAN RESTATING
- * IT. That is the whole reason this module exists — a student who read the panel
- * in the tab and then opens Help must find the same sentence, not a second
- * version of it that has drifted.
- *
- * Study Spaces, Games and Streaks have no in-app panel, so their `intro` is
- * written here and nowhere else.
- */
+/** Tool sections reuse TOOL_INTROS verbatim; Study Spaces, Games and Streaks are written here only. */
 export const HELP_SECTIONS: readonly HelpSection[] = [
   {
     id: 'spaces',

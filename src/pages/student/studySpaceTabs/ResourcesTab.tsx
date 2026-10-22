@@ -14,34 +14,23 @@ import { useBadges } from '../../../context/BadgeContext';
 import type { StudyIntent, StudyTab } from '../../../lib/studySpace';
 
 /**
- * The student's read-only view of the materials their educators published.
- *
- * Students cannot upload, delete, or remove anything here — the paper is explicit
- * that "only authenticated educators are authorized to upload learning resources.
- * Students are not permitted to upload instructional materials". The single write
- * a student can make is pulling newly published materials into their own space,
- * and even that does not choose what arrives: the server derives the set from the
- * space's subject and the student's grade level.
+ * The student's read-only view of their educators' materials. No upload, delete or remove. The only
+ * write is pulling in newly published materials, and the server derives which.
  */
 
 interface ResourcesTabProps {
   spaceId: string;
-  // Retained but unused — kept until the study space container is revisited.
+  // Unused; kept until the study space container is revisited.
   courseConnected: boolean;
   selectedDoc: string | null;
   handleConnectCourse: () => void;
   setSelectedDoc: (doc: string | null) => void;
-  /**
-   * Still unused, and now typed on the full tab union rather than two of the six.
-   * `ANALYTICS_IMPLEMENTATION.md` §12.1 asked that the `as any` this used to
-   * force not be extended before a deep link was built on it; widening the type
-   * is that fix. Deleting the prop outright is a separate cleanup.
-   */
+  /** Unused; typed on the full tab union. */
   setActiveTab: (tab: StudyTab) => void;
   setIsGenerating: (isGenerating: boolean) => void;
   setSelectedSetContent: (id: number | null) => void;
   setFlashcardSets: React.Dispatch<React.SetStateAction<any[]>>;
-  /** A recommendation's destination. Only `materialId` means anything here. */
+  /** A recommendation's destination; only materialId applies here. */
   preselect: StudyIntent | null;
   onPreselectConsumed: () => void;
 }
@@ -73,7 +62,7 @@ interface ChatMessage {
   isStreaming?: boolean;
 }
 
-// Quick action prompt shortcuts
+// Quick-action prompts
 const QUICK_ACTIONS = [
   { icon: BookOpen, label: 'Summarize', prompt: 'Please provide a comprehensive summary of all the key topics and concepts covered in my selected materials.', mode: 'full' as const },
   { icon: Lightbulb, label: 'Explain Simply', prompt: 'Explain the main concepts of my selected materials in simple, easy-to-understand terms as if I\'m a beginner.', mode: 'full' as const },
@@ -81,7 +70,7 @@ const QUICK_ACTIONS = [
   { icon: MessageSquare, label: 'Key Terms', prompt: 'List and briefly explain the most important terms and definitions from my selected materials.', mode: 'full' as const },
 ];
 
-/** Bytes to a short human size. Materials always carry file_size_bytes now. */
+/** Bytes → short human size. */
 function formatFileSize(bytes: number | null): string {
   if (bytes === null || bytes <= 0) return '—';
   if (bytes < 1024) return `${bytes} B`;
@@ -90,14 +79,7 @@ function formatFileSize(bytes: number | null): string {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
-/**
- * Why a material cannot be used, in words a student can act on.
- *
- * A scanned or photographed lesson is read with OCR at upload and is then an
- * ordinary material — `is_scanned` alone says nothing about availability any
- * more. It only matters when processing FAILED, where the likely cause (photos
- * too blurry or dark to read) is one the student can relay to their teacher.
- */
+/** Why a material can't be used, in words a student can act on. Scans matter only when processing failed (likely blurry photos). */
 function unavailableReason(material: SpaceMaterial): string | null {
   if (material.parsed_status === 'completed') return null;
   if (material.parsed_status === 'pending' || material.parsed_status === 'processing') {
@@ -106,19 +88,7 @@ function unavailableReason(material: SpaceMaterial): string | null {
   if (material.is_scanned) {
     return 'The photos of this lesson could not be read clearly. Ask your teacher to retake and upload them again.';
   }
-  /*
-   * ⚠️ `parse_error` IS DELIBERATELY NOT RENDERED HERE. It used to be, verbatim.
-   *
-   * That column holds operator detail — for a Gemini auth failure, the raw Google
-   * JSON body including its `https://` documentation link — and it was being read
-   * by a student, who can act on none of it. It is the same rule already stated in
-   * CLAUDE.md for the status vocabulary: this side says "Being prepared" / "Ready"
-   * / "Not available" rather than "Failed", because a technical cause tells a
-   * student something alarming they cannot do anything about.
-   *
-   * The educator keeps it, on `MaterialDetail` — they are the reader who can act,
-   * and they are the one named below.
-   */
+  // parse_error is never shown here: it's operator detail (possibly raw upstream JSON). The educator sees it on MaterialDetail.
   return 'This document could not be prepared, so the study assistant cannot use it. Your teacher can re-upload it.';
 }
 
@@ -137,19 +107,10 @@ export default function ResourcesTab({
 }: ResourcesTabProps) {
   const subjectNameOf = useSubjectName();
 
-  /*
-   * The intent as it stood at MOUNT.
-   *
-   * A ref rather than the prop, because the load effect below is keyed on
-   * `[spaceId, applyPayload]` and must stay that way: adding `preselect` to its
-   * deps would re-run the whole materials fetch the moment the intent is
-   * consumed and the prop flips to null. A ref initialises once per mount, which
-   * is exactly the lifetime of a preselection — `<main key={activeTab}>` remounts
-   * this tab on every entry, and `StudySpace` clears the intent after the first.
-   */
+  // The intent at mount, held in a ref so the load effect's deps stay [spaceId, applyPayload].
   const preselectRef = useRef(preselect);
 
-  // ─── Materials state ───────────────────────────────────────
+  // Materials state
   const [materials, setMaterials] = useState<SpaceMaterial[]>([]);
   const [subject, setSubject] = useState<string>('');
   const [availableCount, setAvailableCount] = useState(0);
@@ -159,7 +120,7 @@ export default function ResourcesTab({
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
-  // ─── Chat state ────────────────────────────────────────────
+  // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const { celebrate } = useBadges();
@@ -170,26 +131,25 @@ export default function ResourcesTab({
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // ─── Document viewer state ─────────────────────────────────
+  // Document viewer state
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerError, setViewerError] = useState<string | null>(null);
 
-  // ─── Derived state ─────────────────────────────────────────
+  // Derived state
   const activeMaterial = materials.find(m => m.id === selectedId) ?? null;
-  // Only a fully processed material has concepts, and concepts are the only thing
-  // the assistant is allowed to answer from.
+  // Only processed materials have concepts, the assistant's only source.
   const chatMaterial =
     activeMaterial?.parsed_status === 'completed' ? activeMaterial : null;
   const canChat = !!chatMaterial && !isStreaming;
 
-  // ─── Auto-scroll chat ──────────────────────────────────────
+  // Auto-scroll chat
   useEffect(() => {
     if (!isChatOpen) return;
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isStreaming, isChatOpen]);
 
-  // ─── Load the signed view URL whenever the active material changes ──
+  // Load the signed view URL when the active material changes
   const loadViewerUrl = useCallback(async (materialId: string) => {
     setViewerLoading(true);
     setViewerError(null);
@@ -215,18 +175,14 @@ export default function ResourcesTab({
     loadViewerUrl(selectedId);
   }, [selectedId, loadViewerUrl]);
 
-  /** Applies a materials payload from either the load or the sync endpoint. */
+  /** Applies a materials payload from the load or sync endpoint. */
   const applyPayload = useCallback((payload: SpaceMaterialsResponse) => {
     setMaterials(payload.materials ?? []);
     setSubject(payload.space?.subject ?? '');
     setAvailableCount(payload.available_count ?? 0);
   }, []);
 
-  // ─── 1. Load the space's materials once on mount ───────────
-  //
-  // No polling. Materials reach a student already processed — extraction finishes
-  // during the educator's upload — and the "new materials" count is computed
-  // server-side as part of this same request, so there is nothing to watch for.
+  // 1. Load the space's materials on mount. No polling: materials arrive processed and the new-materials count comes with this request.
   useEffect(() => {
     let cancelled = false;
 
@@ -238,25 +194,12 @@ export default function ResourcesTab({
         if (cancelled) return;
         applyPayload(res.data);
 
-        /*
-         * A recommendation asked us to open one lesson.
-         *
-         * Applied here rather than in an effect of its own, because the id can
-         * only be checked once the list exists and a separate effect would race
-         * this one. Validated rather than trusted: an id the list does not carry
-         * would leave `selectedId` pointing at nothing, and the viewer would sit
-         * blank with no lesson highlighted — an educator can archive a material
-         * between the link being made and followed.
-         *
-         * Dropping it silently is right here: the tab's own "pick a lesson"
-         * state already explains itself.
-         */
+        // Open the recommended lesson, applied here (after the list exists) and validated against it; drop it silently otherwise.
         if (preselectRef.current) {
           const wanted = preselectRef.current.materialId;
           const target = wanted ? (res.data.materials ?? []).find((m) => m.id === wanted) : null;
           if (target) setSelectedId(target.id);
-          // Consumed whether or not it resolved: an intent `StudySpace` still
-          // holds would be re-applied on the next remount of this tab.
+          // Consumed either way, or it would re-apply on the next remount.
           onPreselectConsumed();
         }
       } catch (err: any) {
@@ -272,7 +215,7 @@ export default function ResourcesTab({
     return () => { cancelled = true; };
   }, [spaceId, applyPayload]);
 
-  // ─── 2. Load chat history on mount ─────────────────────────
+  // 2. Load chat history on mount
   useEffect(() => {
     async function fetchHistory() {
       try {
@@ -305,7 +248,7 @@ export default function ResourcesTab({
     fetchHistory();
   }, [spaceId]);
 
-  // ─── 3. Pull in newly published materials ──────────────────
+  // 3. Pull in newly published materials
   const handleSync = async () => {
     setIsSyncing(true);
     setMaterialsError(null);
@@ -326,7 +269,7 @@ export default function ResourcesTab({
     }
   };
 
-  // ─── 4. Send message (streaming) ───────────────────────────
+  // 4. Send message (streaming)
   const handleSendMessage = useCallback(async (overrideMessage?: string, overrideMode?: 'rag' | 'full') => {
     const messageText = (overrideMessage ?? input).trim();
     if (!messageText || isStreaming) return;
@@ -350,7 +293,7 @@ export default function ResourcesTab({
     setMessages(prev => [...prev, aiPlaceholder]);
     setIsStreaming(true);
 
-    // Build history from last 4 messages (2 exchanges) excluding welcome msg
+    // History: the last 4 messages, excluding the welcome message
     const recentHistory = messages
       .filter(m => m.id !== 'welcome')
       .slice(-4)
@@ -360,8 +303,7 @@ export default function ResourcesTab({
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token ?? '';
 
-      // Raw fetch rather than the api helper: this endpoint streams Server-Sent
-      // Events, which the JSON wrapper cannot represent.
+      // Raw fetch, not the api helper: this endpoint streams Server-Sent Events.
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -382,7 +324,7 @@ export default function ResourcesTab({
         throw new Error(errJson.message ?? errJson.error ?? 'Chat request failed');
       }
 
-      // Read SSE stream
+      // Read the SSE stream
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -421,16 +363,7 @@ export default function ResourcesTab({
         m.id === aiMsgId ? { ...m, isStreaming: false } : m
       ));
 
-      /*
-       * On the SUCCESS path only, never in `finally`. A failed turn writes no
-       * chatbot_logs row and logs no activity, so checking there would be a
-       * request guaranteed to find nothing.
-       *
-       * Chat awards no first-time badge of its own — it can only carry a streak
-       * over a threshold — but that is exactly the case no other checkpoint can
-       * cover: the server logs this activity AFTER res.end(), so the stream the
-       * student just read could not have carried the answer.
-       */
+      // Badge check on success only. The server logs chat activity after the stream ends, so it can't report badges itself.
       celebrate();
 
     } catch (err: any) {
@@ -440,16 +373,14 @@ export default function ResourcesTab({
           ? { ...m, content: '⚠️ Sorry, something went wrong. Please try again.', isStreaming: false }
           : m
       ));
-      // Every server path now sends student copy in `message` (studentFacingError()
-      // in gemini.ts), so this fallback only covers a network drop with no response
-      // body at all — where "An error occurred" told the student nothing to do.
+      // Servers send student-safe text in `message`; this covers a network drop with no body.
       setChatError(err.message ?? 'The study assistant could not be reached. Check your connection and try again.');
     } finally {
       setIsStreaming(false);
     }
   }, [input, isStreaming, chatMaterial, messages, spaceId, celebrate]);
 
-  // ─── Textarea auto-resize ──────────────────────────────────
+  // Textarea auto-resize
   const handleAutoResize = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 150)}px`;
@@ -458,40 +389,17 @@ export default function ResourcesTab({
   const subjectLabel = subject ? subjectNameOf(subject) : 'course';
 
   return (
-    /*
-     * `h-full`, not `h-[calc(100vh-140px)]`.
-     *
-     * That 140px was a guess at the chrome above this tab, and it was wrong on
-     * every phone: the parent <main> is ALREADY a definite-height flex child
-     * (`flex-1` inside StudySpace's `h-[calc(100vh-4rem)] md:h-screen` column)
-     * and it carries its own `p-4 sm:p-6 md:p-8`, while the mobile header is
-     * taller than the desktop one because the tab bar collapses into a dropdown.
-     * So the panel was measured against a constant that matched no layout.
-     * `h-full` inherits the height main already computed correctly.
-     *
-     * The height must stay DEFINITE rather than becoming `min-h-full`: the chat
-     * drawer and its FAB are positioned `absolute` against this element, so a
-     * content-driven height would stretch the drawer past the viewport.
-     */
+    // h-full inherits <main>'s definite height (a fixed calc() matched no layout). Must stay definite: the
+    // chat drawer and FAB are absolutely positioned against it.
     <div className="relative fade-in duration-500 h-full flex flex-col xl:flex-row gap-4">
 
-      {/* ─── LEFT: Materials ─────────────────────────────────── */}
-      {/*
-        * `max-h-[40vh]` on mobile rather than a fixed `h-[38vh]`.
-        *
-        * A hard height reserved 38% of the screen whether the space held twelve
-        * materials or one — and one is the common case early in a term, so the
-        * panel sat mostly empty while the document below it was squeezed. A max
-        * lets the panel shrink to its content and only cap out when the list is
-        * genuinely long; the inner list keeps its own `overflow-y-auto`, so
-        * scrolling behaviour is unchanged.
-        */}
+      {/* LEFT: materials */}
+      {/* max-h, not a fixed height, so a short list doesn't reserve space; the inner list scrolls. */}
       <aside data-tour="res-list" className="w-full xl:w-[300px] shrink-0 flex flex-col gap-3 max-h-[40vh] xl:max-h-none xl:h-full bg-surface-container-lowest border border-white/5 rounded-2xl shadow-sm p-3">
         {/* Title + count */}
         <div className="flex items-center justify-between gap-2 px-1 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            {/* Same tinted icon chip the dashboard cards use, so the two screens
-                read as one system rather than two. */}
+            {/* Same tinted icon chip as the dashboard cards. */}
             <div className="w-7 h-7 rounded-lg bg-primary-fixed-dim/10 text-primary-fixed-dim flex items-center justify-center shrink-0">
               <BookOpen className="w-4 h-4" />
             </div>
@@ -502,7 +410,7 @@ export default function ResourcesTab({
           </span>
         </div>
 
-        {/* New materials from the teacher. Absent entirely when there is nothing new. */}
+        {/* New materials from the teacher; absent when there are none. */}
         {availableCount > 0 && (
           <div className="shrink-0 rounded-xl border border-primary-fixed-dim/25 bg-primary-fixed-dim/8 p-2.5 space-y-2">
             <div className="flex items-start gap-2">
@@ -551,47 +459,26 @@ export default function ResourcesTab({
               </p>
             </div>
           ) : (
-            /* Wrapped so the list has something to animate — `.map()` returns an
-               array and a class cannot go on an array. `space-y-0.5` moves here
-               from the scroll container: the rows are this div's children now,
-               so the spacing has to follow them or the list loses its gaps.
-               Entrance on the loaded rows, never on the spinner above. */
+            /* A wrapper so the rows can animate (a class can't go on an array); it carries the row spacing. */
             <div className="space-y-0.5 animate-tab-in">
             {materials.map(material => {
               const isSelected = material.id === selectedId;
               const blocked = material.parsed_status !== 'completed';
 
               return (
-                /* A real <button>, not a <div onClick>. The whole materials list
-                   was unreachable by keyboard — no Tab stop and no focus ring —
-                   and this row is the only way to open a document. It contains no
-                   nested interactive element, so a plain button is valid here.
-                   `aria-pressed` carries the selected state, which the border
-                   colour was conveying visually and to nobody else. */
+                /* A real button so the list is keyboard-reachable; aria-pressed carries the selection. */
                 <button
                   key={material.id}
                   type="button"
                   aria-pressed={isSelected}
                   onClick={() => setSelectedId(isSelected ? null : material.id)}
-                  /* ⚠️ THE FOCUS RING MUST BE `ring-inset` HERE. A default ring is
-                     an OUTWARD `box-shadow: 0 0 0 2px`, and this list is
-                     `space-y-0.5` — a 2px gap — so an outward 2px ring exactly
-                     fills the space between rows and butts against its
-                     neighbours. Instead of a crisp outline you get a continuous
-                     cyan bloom, compounded on the selected row by the ring being
-                     the same accent as its `/10` tint and its `border-l-2`.
-                     Inset draws inside the row's own rounded edge: no bleed into
-                     the gap, no collision, same 2px visibility. */
+                  /* ring-inset: an outward 2px ring fills the 2px gap between rows and blurs into neighbours. */
                   className={`w-full text-left flex items-start gap-2.5 pl-2.5 pr-2 py-2.5 rounded-lg cursor-pointer transition-colors border-l-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] ${isSelected
                     ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim'
                     : 'border-transparent hover:bg-white/5'
                     }`}
                 >
-                  {/* A READY document is no longer red. Red is the alarm colour
-                      this list uses for "Not available", so painting the healthy
-                      state red inverted the whole scale. A scanned lesson that
-                      processed is simply ready; the scan icon marks only one
-                      whose pages could not be read. */}
+                  {/* A ready document isn't red (red means unavailable); the scan icon marks only failed scans. */}
                   <div className="shrink-0 opacity-90 mt-0.5">
                     {material.parsed_status === 'failed'
                       ? material.is_scanned
@@ -612,10 +499,7 @@ export default function ResourcesTab({
                       </span>
                     </div>
 
-                    {/* `text-[10.5px]` and `text-[10px]` were below any sensible
-                        floor for a 12-to-16-year-old reader, and this row is where
-                        the status ("Being prepared", "Take the test first") is
-                        stated. Wraps rather than overflowing the 300px panel. */}
+                    {/* Readable status text that wraps instead of overflowing. */}
                     <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px] leading-tight">
                       {(material.parsed_status === 'pending' || material.parsed_status === 'processing') && (
                         <span className="flex items-center gap-1 text-amber-400/90">
@@ -649,7 +533,7 @@ export default function ResourcesTab({
         </div>
       </aside>
 
-      {/* ─── RIGHT: Document Viewer ──────────────────────────── */}
+      {/* RIGHT: document viewer */}
       <PdfViewer
         anchor="res-viewer"
         url={viewerUrl}
@@ -659,7 +543,7 @@ export default function ResourcesTab({
         onRetry={activeMaterial ? () => loadViewerUrl(activeMaterial.id) : undefined}
       />
 
-      {/* ─── Study Assistant drawer ──────────────────────────── */}
+      {/* Study Assistant drawer */}
       {isChatOpen && (
         <div className="absolute z-40 top-3 bottom-3 right-3 lg:top-4 lg:bottom-4 lg:right-4 left-3 sm:left-auto sm:w-[min(400px,calc(100vw-1.5rem))] bg-surface-container-lowest border border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-2xl animate-drawer-in">
           {/* Header */}
@@ -776,11 +660,7 @@ export default function ResourcesTab({
                       ? 'Ask about this material…'
                       : 'Select a material…'
                 }
-                /* `scrollbar-thin` was undefined — same dead family as the
-                   `scrollbar-none` on the study-space tab strip; the real utility
-                   in index.css is `.no-scrollbar`. Dropped rather than swapped,
-                   since `overflow-hidden` beside it means there is no scrollbar
-                   to style in the first place. */
+                /* No scrollbar class needed: overflow-hidden means there's no scrollbar. */
                 className="flex-1 bg-transparent border-none outline-none font-sans text-sm text-white placeholder:text-slate-500 min-h-[36px] max-h-[150px] resize-none py-2 px-1.5 overflow-hidden disabled:opacity-50"
                 rows={1}
               />
@@ -798,7 +678,7 @@ export default function ResourcesTab({
         </div>
       )}
 
-      {/* ─── Chat toggle (FAB) ───────────────────────────────── */}
+      {/* Chat toggle (FAB) */}
       {!isChatOpen && (
         <button
           data-tour="res-chat-fab"

@@ -3,18 +3,8 @@ import { Clock, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import type { ParsedStatus } from '../../data/mockEducator';
 
 /**
- * The four values of the parsed_status enum, in the order a material moves
- * through them: pending -> processing -> completed, or -> failed.
- *
- * ⚠️ THE LABEL IS THE ENUM VALUE, title-cased. It used to be friendlier wording
- * ('Queued', 'Ready'), which meant an educator reporting a problem and a
- * developer reading `materials.parsed_status` were using different vocabularies
- * for the same four states. Keep them identical — if a new status is ever added
- * to the enum, its label is its name.
- *
- * The STUDENT side deliberately does NOT follow this rule: `ResourcesTab` says
- * "Being prepared" / "Ready" / "Not available", because a student seeing
- * "Failed" on their lesson learns something alarming they cannot act on.
+ * parsed_status values in lifecycle order. Educator labels are the enum value, title-cased, so educators
+ * and developers share one vocabulary. The student side uses friendlier wording on purpose.
  */
 const STATUS_STYLE: Record<
   ParsedStatus,
@@ -56,12 +46,7 @@ export default function ParseStatusPill({ status, className = '' }: ParseStatusP
   const style = STATUS_STYLE[status];
   const Icon = style.icon;
 
-  /*
-   * ⚠️ `.tone-chip` + `--tone`, NOT three inline colours — see the twin note in
-   * `SubjectBadge` and the TINTED CHIPS block in `index.css`. This pill was the
-   * worst of the set in light mode: Processing's cyan measured ~1.9:1 on white,
-   * on the label that tells an educator whether their upload is still working.
-   */
+  // .tone-chip + --tone (not inline colours) so the light theme can fix contrast. See index.css TINTED CHIPS.
   return (
     <span
       title={style.hint}

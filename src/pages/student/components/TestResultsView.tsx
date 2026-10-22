@@ -23,25 +23,12 @@ import { materialBand, recommendMaterial } from '../../../lib/recommend';
 import type { StudyIntent } from '../../../lib/studySpace';
 
 /**
- * The result of a test — used both immediately after finishing and when
- * reopening a past one from the list. One layout, two entry points.
- *
- * The ring says **Test Score**, never "Mastery". Mastery is the per-concept
- * probability in `bkt_mastery`, owned by the backend and moved only by the BKT
- * update; a percentage of questions answered correctly in one sitting is a
- * different quantity, and using one word for both invites a reader to mistake
- * this figure for the paper's.
- *
- * Unlike Free Recall's coverage ratio, this percentage IS comparable across
- * materials — it is correct-out-of-asked — so `scoreTone()`'s absolute
- * thresholds are appropriate here.
+ * Test result screen, after finishing or when reopening a past test. The ring says "Test Score", never
+ * "Mastery" (a different quantity). Unlike Free Recall coverage, this % is comparable across
+ * materials, so scoreTone() applies.
  */
 
-/**
- * Local depth on top of the shared `CARD`, which stays flat because the session
- * view and the cognitive tabs reuse it. Same arrangement as the dashboard and the
- * Analytics tab. Every colour here is one `[data-theme="white"]` already patches.
- */
+/** Local depth on top of the shared flat CARD. */
 const PANEL = `${CARD} border border-white/5 shadow-lg shadow-black/20`;
 
 interface TestResultsViewProps {
@@ -51,23 +38,9 @@ interface TestResultsViewProps {
   onRetake: () => void;
   /** Immediately after finishing, versus reopening from the list. */
   justFinished: boolean;
-  /**
-   * Current mastery for the lesson this test was built from, or null while it is
-   * still loading.
-   *
-   * ⚠️ CURRENT, NOT AS-OF-THIS-TEST, AND THAT IS WHAT LETS THE ADVICE SURVIVE A
-   * REVISIT. A student reopening a test a week later has done flashcards since;
-   * the advice must reflect where they are now, not where this test left them.
-   */
+  /** Current mastery for this test's lesson (null while loading); current, so advice stays right on a revisit. */
   materialMastery: MaterialMasteryDetail | null;
-  /**
-   * Follow the recommendation.
-   *
-   * ⚠️ A CALLBACK, NOT A `<Link>`. This component renders inside `StudySpace`,
-   * so a link carrying `?tab=feynman` would be a same-route navigation:
-   * `location.search` would change, `StudySpace` would not unmount, and its tab
-   * was seeded once at mount — the URL would move and the screen would not.
-   */
+  /** Follow a recommendation. A callback, not a <Link>: a same-route link inside StudySpace does nothing. */
   onNavigate: (intent: StudyIntent) => void;
 }
 
@@ -82,18 +55,7 @@ export default function TestResultsView({
 }: TestResultsViewProps) {
   const [filter, setFilter] = useState<'all' | 'incorrect'>('all');
 
-  /**
-   * What this submission did to the student's mastery.
-   *
-   * ⚠️ GATED ON `justFinished`, AND THAT IS NOT COSMETIC. This same screen is
-   * reopened from the past-tests list, where `mastery_changes` is absent anyway
-   * (`GET /:id/result` re-grades and reports no movement) — but a double-submit
-   * also reaches `complete()` and gets nothing back, so the gate states the rule
-   * rather than relying on the field being missing.
-   *
-   * ⚠️ AND SORTED WEAKEST-AFTER FIRST, NOT BIGGEST-MOVE FIRST. The student is
-   * looking for what still needs work, not for the largest number on the screen.
-   */
+  // What this submission did to mastery: only right after finishing, sorted by weakest after-value.
   const masteryChanges: MasteryChange[] = useMemo(() => {
     if (!justFinished || !result.mastery_changes) return [];
     return [...result.mastery_changes].sort(
@@ -101,65 +63,15 @@ export default function TestResultsView({
     );
   }, [justFinished, result.mastery_changes]);
 
-  /**
-   * The one thing to do next, for the weakest concept this test asked about.
-   *
-   * ⚠️ NOT GATED ON `justFinished`. The mastery BLOCK above is a fact about one
-   * submission and cannot be rebuilt later; this is advice about a concept, and
-   * it is just as true — arguably more useful — when a student reopens the test
-   * to review. Gating both together was a convenience, not a reason.
-   *
-   * Keyed on mastery rather than on `missed_concepts`, which counts wrong
-   * answers in this one sitting: a concept missed once but sitting at 70% needs
-   * less attention than one answered correctly by luck and still at 25%. Mastery
-   * is the quantity the recommendation is about.
-   *
-   * ⚠️ TWO SOURCES, AND THE ORDER BETWEEN THEM MATTERS. `conceptMastery` is the
-   * live read and is the base. `mastery_changes` overrides it where present,
-   * because `refreshList()` is fired without being awaited when a test finishes
-   * — so on the first render after submitting, the live map can still hold the
-   * PRE-test values and would advise against a number the screen above has
-   * already superseded. The two agree once the fetch lands.
-   *
-   * ⚠️ ASSESSED ONLY, so P(L₀) can never drive a recommendation. Plain ascending
-   * mastery is correct here for the same reason it is on "Focus next" — every
-   * candidate is a real measurement, so `rankOf()`'s unknown-in-the-middle rule
-   * has nothing to do.
-   */
-  /**
-   * What to do next about THIS LESSON.
-   *
-   * ⚠️ LESSON-SCOPED, NOT ONE CONCEPT, AND THE REASON IS ARITHMETIC RATHER THAN
-   * TASTE. It used to promote the single weakest concept — but BKT's
-   * all-incorrect posterior depends only on the question's FORMAT
-   * (`GUESS_KEY_BY_FORMAT`, five P(G) values), so a test the student got wrong
-   * throughout yields at most five distinct mastery values across every concept
-   * in it. The comparator then fell through to `localeCompare`, and the screen
-   * promoted whichever term happened to sort first alphabetically. Reported from
-   * a real 34-concept test, where it picked "ADVANCED SYSTEM INTEGRATION" for no
-   * reason a student could see, while listing 33 other problems directly above.
-   *
-   * ⚠️ NOT GATED ON `justFinished`. The mastery block above is a fact about one
-   * submission and cannot be rebuilt later; this is advice about a lesson, and it
-   * is just as true — more useful, even — when a student reopens the test to
-   * review. That is why it reads CURRENT mastery rather than this test's deltas.
-   *
-   * ⚠️ AND NOTHING RENDERS WHILE THAT READ IS STALE. `refreshList()` is fired
-   * un-awaited when a test finishes, so for a beat afterwards the material row
-   * can still say `assessed_concept_count === 0` — which `materialBand()`
-   * correctly calls `unassessed`, producing "Nothing in X has been measured yet"
-   * immediately after a test measured it. A card that arrives a moment late
-   * beats one that is briefly wrong. There is no `mastery_changes` override
-   * available here the way there is per concept: this needs a document mean, and
-   * `documentMastery()` on the server is the only place that may compute one.
-   */
+  // Advice for this lesson (not the single weakest concept: an all-wrong test yields few distinct
+  // mastery values). Not gated on justFinished. Renders nothing until the material row shows assessed
+  // concepts, which can lag just after finishing.
   const nextUp = useMemo(() => {
     if (!materialMastery) return null;
     if (materialMastery.assessed_concept_count === 0) return null;
 
     const band = materialBand(materialMastery);
-    // Nothing urgent to say — and "take a test on it" would be absurd on the
-    // screen reporting the test they just took.
+    // Nothing to add for advanced (and "take a test" would be absurd here).
     if (band === 'advanced') return null;
 
     return {
@@ -168,8 +80,7 @@ export default function TestResultsView({
         band,
         m_doc: materialMastery.m_doc,
       }),
-      // Exactly the chips listed in "Concepts to revisit" directly above, so the
-      // Feynman step ticks precisely what the screen has just named.
+      // The same chips listed in "Concepts to revisit".
       missedIds: result.missed_concepts.map((c) => c.concept_id),
     };
   }, [materialMastery, result.missed_concepts]);
@@ -199,8 +110,7 @@ export default function TestResultsView({
 
   return (
     <div className="fade-in duration-300 max-w-3xl mx-auto space-y-5 pb-10">
-      {/* Leaving must not require scrolling past 29 review cards to reach the
-          footer. Same placement and styling as the session view's exit. */}
+      {/* Exit at the top so leaving needs no scrolling. */}
       <button
         onClick={onBack}
         className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 font-sans font-semibold text-xs sm:text-sm uppercase tracking-widest rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]"
@@ -208,10 +118,8 @@ export default function TestResultsView({
         <ArrowLeft className="w-4 h-4" /> Exit
       </button>
 
-      {/* ── Score ─────────────────────────────────────────────────────────── */}
-      {/* The hero card, so it gets the one theme-glow lift on this screen —
-          `--theme-glow` is the token the design system defines for exactly this
-          and the dashboard's mastery card is its other consumer. */}
+      {/* Score */}
+      {/* The hero card gets the theme-glow lift. */}
       <div
         className={`${PANEL} p-6 sm:p-8 text-center relative overflow-hidden shadow-[0_10px_25px_-8px_rgba(0,0,0,0.35),0_0_45px_-12px_var(--theme-glow)]`}
       >
@@ -259,7 +167,7 @@ export default function TestResultsView({
         </div>
       </div>
 
-      {/* ── Section breakdown ─────────────────────────────────────────────── */}
+      {/* Section breakdown */}
       <div className={`${PANEL} p-4 sm:p-5`}>
         <h3 className={`${SECTION} mb-4`}>By section</h3>
         <div className="space-y-3.5">
@@ -282,19 +190,7 @@ export default function TestResultsView({
                     {correct}/{total}
                   </span>
                 </div>
-                {/*
-                 * `MeterBar` rather than the eighth hand-rolled `h-1.5
-                 * rounded-full bg-white/5` track in this codebase — that
-                 * duplication is what the component was extracted to end.
-                 *
-                 * Toned by score, which the header comment on this file already
-                 * licenses: a test percentage is correct-out-of-asked and so
-                 * means the same thing on any material, unlike Free Recall's
-                 * coverage ratio. It replaces a flat `primary-fixed-dim/70`, so
-                 * a weak section is now visible without reading every fraction.
-                 * Small denominators make a single section's tone coarse — 3/5
-                 * is 'mid' — which is why the fraction stays beside it.
-                 */}
+                {/* MeterBar toned by score (a test % means the same on any material). The fraction stays beside it. */}
                 <MeterBar
                   value={pct / 100}
                   tone={scoreTone(pct)}
@@ -306,7 +202,7 @@ export default function TestResultsView({
         </div>
       </div>
 
-      {/* ── Concepts to revisit ───────────────────────────────────────────── */}
+      {/* Concepts to revisit */}
       {result.missed_concepts.length > 0 && (
         <div className={`${PANEL} p-4 sm:p-5`}>
           <h3 className={`${SECTION} mb-1 flex items-center gap-2`}>
@@ -322,12 +218,7 @@ export default function TestResultsView({
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-400/5 border border-amber-400/20"
               >
                 <span className="font-sans text-xs font-semibold text-slate-200">{c.term}</span>
-                {/* ⚠️ ONLY WHEN IT CAN SAY SOMETHING. `allocateConcepts()` deals
-                    each concept to exactly one question and the dealing cursor
-                    never rewinds, so `asked` is 1 on every chip of every test and
-                    this read "1 of 1 wrong" thirty-four times on one screen.
-                    Kept conditional rather than deleted: it costs one comparison
-                    and stays correct if the allocator ever changes. */}
+                {/* Only when asked > 1 (currently every concept is asked once). */}
                 {c.asked > 1 && (
                   <span className="font-sans text-[11px] text-amber-400/70 tabular-nums">
                     {c.wrong} of {c.asked} wrong
@@ -339,12 +230,7 @@ export default function TestResultsView({
         </div>
       )}
 
-      {/* ── Mastery updated ───────────────────────────────────────────────
-          The one screen in the app that shows mastery MOVING. The server has
-          always computed the pair and always threw it away; `mastery_changes`
-          is it, and it rides only on the request that actually completed the
-          test. Kept visually separate from the score ring above, which says
-          "Test Score" and means a different quantity. */}
+      {/* Mastery updated: shown only on the request that completed the test, separate from the score ring. */}
       {masteryChanges.length > 0 && (
         <div className={`${PANEL} p-4 sm:p-5`}>
           <h3 className={`${SECTION} mb-1 flex items-center gap-2`}>
@@ -355,9 +241,7 @@ export default function TestResultsView({
             up across every test and flashcard you do.
           </p>
           <div className="flex flex-col gap-1">
-            {/* Keyed on a Fragment, not on MasteryRow — same reason as the
-                review rows below: no `@types/react`, so a locally-declared
-                component's props are enforced exactly and `key` is not one. */}
+            {/* Keyed on a Fragment: without @types/react, `key` isn't an accepted prop of a local component. */}
             {masteryChanges.map((c) => (
               <Fragment key={c.concept_id}>
                 <MasteryRow change={c} />
@@ -367,7 +251,7 @@ export default function TestResultsView({
         </div>
       )}
 
-      {/* ── What to do next ──────────────────────────────────────────────── */}
+      {/* What to do next */}
       {nextUp && (
         <div className={`${PANEL} p-4 sm:p-5`}>
           <h3 className={`${SECTION} mb-1 flex items-center gap-2`}>
@@ -375,29 +259,10 @@ export default function TestResultsView({
           </h3>
           <p className="font-sans text-xs text-slate-500 mb-4">{nextUp.rec.steps[0].why}</p>
 
-          {/* ⚠️ EVERY STEP LOOKS THE SAME. The first used to be accented, which
-              read as "you are on this one" — a progress marker for progress
-              nothing tracks. There is no record of whether a student read the
-              lesson or wrote an explanation, so on a revisit the accent would
-              still sit on step one however much they had done. The ORDER is the
-              recommendation, and the sentence above already says which comes
-              first; do not reintroduce an active state without something that
-              actually observes it. */}
+          {/* No step is accented: nothing tracks progress through the steps, so the order is the recommendation. */}
           <div className="flex flex-col gap-2">
             {nextUp.rec.steps.map((s) => {
-              /*
-               * Two steps carry the missed concepts — every chip in "Concepts to
-               * revisit" above. Feynman TICKS them for explaining; Flashcards
-               * MARKS the matching cards in the deck and offers to drill them.
-               * The other two open on the lesson and ignore them.
-               *
-               * The count is shown because it is consequential in both places:
-               * ticking 34 concepts opens 34 text boxes, and marking 34 cards
-               * reorders a deck. On a test with nothing missed — reachable, since
-               * a first all-correct test still leaves a lesson `foundational` —
-               * "Explain what you missed" would be a lie, so it falls back to
-               * neutral wording and carries nothing.
-               */
+              /* Feynman and Flashcards steps carry the missed concepts (with a count); with none missed, neutral wording. */
               const carriesIds = s.action === 'feynman' || s.action === 'flashcards';
               const carries = carriesIds ? nextUp.missedIds : [];
               const label =
@@ -434,16 +299,14 @@ export default function TestResultsView({
             })}
           </div>
 
-          {/* ⚠️ ONCE PER CARD, NEVER PER ROW — see `Recommendation.honesty`. It
-              is the sentence that stops the app promising that explaining a
-              concept moves a number only flashcards and tests can move. */}
+          {/* Once per card, never per row. */}
           <p className="font-sans text-[11px] text-slate-600 mt-3 leading-relaxed">
             {nextUp.rec.honesty}
           </p>
         </div>
       )}
 
-      {/* ── Question review ───────────────────────────────────────────────── */}
+      {/* Question review */}
       <div>
         <div className="flex items-center justify-between gap-3 mb-4">
           <h3 className={SECTION}>Question review</h3>
@@ -466,9 +329,7 @@ export default function TestResultsView({
           </div>
         ) : (
           <div className="space-y-3">
-            {/* Keyed on a Fragment, not on ReviewRow: this project has no
-                `@types/react`, so a locally-declared component's props are
-                enforced exactly and `key` is not among them. */}
+            {/* Keyed on a Fragment (see above). */}
             {shown.map((r) => (
               <Fragment key={r.index}>
                 <ReviewRow result={r} formats={result.test.formats} />
@@ -478,7 +339,7 @@ export default function TestResultsView({
         )}
       </div>
 
-      {/* ── Footer ────────────────────────────────────────────────────────── */}
+      {/* Footer */}
       <div className="flex flex-col sm:flex-row gap-3 pt-2">
         <button
           onClick={onBack}
@@ -498,18 +359,8 @@ export default function TestResultsView({
 }
 
 /**
- * One concept's before/after.
- *
- * ⚠️ THE `assessed_before` BRANCH IS THE POINT OF THIS COMPONENT. When this test
- * was a concept's first evidence, `before` is exactly P(L₀) = 0.10 — the engine's
- * initialisation constant, not something the app found out about this student.
- * Printing "10% → 33%" states an assumption as a measurement, which is the one
- * thing the whole analytics surface is built to prevent. It reads "Not measured
- * before" instead, and that row is the common case on a first test.
- *
- * A DROP is `mid`/amber, never `poor`/red. Mastery falling after a wrong answer
- * is the model working, and on a two-week study most students will see several;
- * red would read as a punishment for taking the test.
+ * One concept's before/after. When this test was the first evidence, `before` is P(L₀), so the row
+ * reads "Not measured before". A drop is amber, never red.
  */
 function MasteryRow({ change }: { change: MasteryChange }) {
   const after = masteryPercent(change.after);
@@ -545,9 +396,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl bg-white/5 border border-white/10 py-2.5 sm:py-3 px-1">
       <p className="font-display text-base sm:text-lg font-bold text-white tabular-nums">{value}</p>
-      {/* `tracking-wider`, not `tracking-widest`: at 375px these three tiles are
-          ~90px wide and "Correct" at the wider tracking is the first thing to
-          wrap. */}
+      {/* tracking-wider so "Correct" doesn't wrap at 375px. */}
       <p className="font-sans text-[11px] uppercase tracking-wider text-slate-500 font-semibold mt-0.5">
         {label}
       </p>
@@ -559,17 +408,11 @@ function ReviewRow({ result: r, formats }: { result: QuestionResult; formats: Qu
   return (
     <div
       className={`${CARD} p-4 sm:p-5 border shadow-lg shadow-black/20 ${
-        /* Border only, never a background tint: `CARD` already sets a
-           background-color, and a second one on the same element is resolved by
-           CSS source order rather than class order — so which wins would be
-           whatever Tailwind happened to emit first. */
+        /* Border only: CARD already sets a background, and two would resolve by CSS source order. */
         r.is_correct ? 'border-white/5' : 'border-rose-500/25'
       }`}
     >
-      {/* `items-start` and `min-w-0`: the left label carries the concept term,
-          which runs to 45 characters on real data ("SECURE SOFTWARE DEVELOPMENT
-          LIFE CYCLE (SSDLC)") and wraps to two or three lines on a phone. With
-          `items-center` the badge then floated to the middle of that block. */}
+      {/* items-start and min-w-0: long terms wrap, and centring would float the badge. */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <span className="font-sans text-[11px] font-semibold uppercase tracking-wider text-slate-500 min-w-0">
           {sectionLabel(formats, r.format)} · Q{r.index + 1} · {r.concept_term}

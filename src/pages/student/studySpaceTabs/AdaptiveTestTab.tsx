@@ -43,47 +43,22 @@ import {
 import type { StudyIntent } from '../../../lib/studySpace';
 
 /**
- * Test Mode.
- *
- * Five screens, one union — overview, setup, generating, session, results. The
- * session and results screens take over the tab by early return, the same way
- * `FlashcardsTab` hands off to `FlashcardStudyView`.
- *
- * MASTERY IS NOT REPORTED HERE — the Analytics tab owns it, with the per-lesson
- * and per-concept breakdown behind it. A space-wide mastery tile briefly sat in
- * the stat row and was removed as a second readout of a figure that already had
- * a home; two of them can only ever agree or be a bug.
- *
- * What mastery IS still used for in this tab is the sentence on the setup
- * screen, and that is not a duplicate: it states the reading and the tier BEFORE
- * a test is generated, which is what makes the adaptation visible to a human and
- * is exactly the paper's Difficulty Alignment check (p. 98). It is shown only
- * once `assessed_concept_count > 0`, because every unassessed concept counts as
- * the P(L₀) = 0.10 prior inside EQ(4) — so a student who has done nothing still
- * averages 0.10, and printing that as "10%" would tell them they know a tenth of
- * a lesson they have never touched.
+ * Test Mode: overview, setup, generating, session, results (the last two take over the tab).
+ * Mastery itself lives in the Analytics tab. Here it only drives the setup sentence stating the
+ * reading and tier before generation (paper p. 98), shown once something is assessed.
  */
 
 type Screen = 'overview' | 'setup' | 'generating' | 'session' | 'results';
 
-/* `TIER_TONE` and `TIER_LABEL` moved to `src/lib/mastery.ts` when the Analytics
-   tab became a second consumer — mastery is fed by flashcards as well as tests,
-   so it is not a Test Mode concept. The reasoning for `foundational` being
-   NEUTRAL rather than `poor` travelled with them. */
+/* TIER_TONE and TIER_LABEL live in src/lib/mastery.ts. */
 
 interface AdaptiveTestTabProps {
   spaceId: string;
   availableResources: { id: string; title: string; concept_count: number }[];
-  /** A recommendation's destination. Only `materialId` means anything here. */
+  /** A recommendation's destination; only materialId applies here. */
   preselect: StudyIntent | null;
   onPreselectConsumed: () => void;
-  /**
-   * Follow a recommendation from the results screen.
-   *
-   * ⚠️ A CALLBACK, NOT A `<Link>`. This tab renders inside `StudySpace`, so a
-   * link carrying `?tab=feynman` would be a same-route navigation: the URL would
-   * change and the tab would not.
-   */
+  /** Follow a recommendation from the results screen. A callback, not a <Link> (same-route links do nothing). */
   onNavigate: (intent: StudyIntent) => void;
 }
 
@@ -97,19 +72,7 @@ export default function AdaptiveTestTab({
   const { celebrate } = useBadges();
   const [screen, setScreen] = useState<Screen>('overview');
   const [summaries, setSummaries] = useState<TestSummary[]>([]);
-  /*
-   * ⚠️ `detail()`, NOT `space()`, SINCE THE RESULTS SCREEN STARTED RECOMMENDING.
-   * The summary carries no concepts, and the advice on that screen is keyed on
-   * the mastery of the concepts THIS TEST asked about — including when a student
-   * reopens the test days later, where the completion payload is long gone.
-   *
-   * This does not contradict "`/mastery` is Test Mode's hot path — do not widen
-   * it": that rule protects the ENDPOINT's shape for its other callers. Switching
-   * which endpoint this caller uses leaves the lean one lean. `SpaceMasteryDetail`
-   * is a superset of `SpaceMastery`, so the setup screen's tier sentence is
-   * unchanged. Measured 10.7 KB for 57 concepts — the Analytics tab already pays
-   * this on every mount.
-   */
+  // detail(), not space(): the results screen's advice needs per-concept mastery for this test's lesson.
   const [mastery, setMastery] = useState<SpaceMasteryDetail | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [activeTest, setActiveTest] = useState<GeneratedTest | null>(null);
@@ -117,48 +80,25 @@ export default function AdaptiveTestTab({
   const [justFinished, setJustFinished] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Setup form. The student picks a lesson and which sections to include — the
-  // length is not theirs to choose, it is one question per concept.
+  // Setup: lesson and sections only; length is one question per concept.
   const [materialId, setMaterialId] = useState<string | null>(null);
   const [formats, setFormats] = useState<QuestionFormat[]>(['multiple_choice', 'true_or_false']);
 
-  /** Synchronous latch — `disabled` reads state that has not re-rendered yet, so
-   *  a double-click would fire two generations and burn two model calls. */
+  /** Synchronous latch so a double-click can't trigger two generations. */
   const inFlightRef = useRef(false);
 
   const materialTitle = (id: string | undefined | null) =>
     availableResources.find((r) => r.id === id)?.title ?? null;
 
-  /**
-   * Current mastery for whichever lesson the open result belongs to — the
-   * results screen's source for its lesson-scoped recommendation.
-   *
-   * Recomputed whenever `refreshList()` lands, so it is fresh on mount, after a
-   * submission, and on returning to the overview. Null while loading, or if the
-   * mastery read failed, in which case the results screen shows no advice rather
-   * than guessing.
-   */
+  /** Current mastery for the open result's lesson; refreshed with the list. Null while loading or on failure (no advice then). */
   const resultMaterialMastery = useMemo(() => {
     const id = activeResult?.test.material_id;
     if (!id) return null;
     return mastery?.by_material.find((m) => m.material_id === id) ?? null;
   }, [mastery, activeResult]);
 
-  /*
-   * A recommendation sent the student here to be tested on one lesson.
-   *
-   * ⚠️ IT OPENS THE SETUP SCREEN AND STOPS THERE. It deliberately does not
-   * generate: one test is five `gemini-3.6-flash` calls against a bucket that is
-   * ~20/day on a free key and is shared with concept extraction, Feynman grading,
-   * flashcard fronts and every game. A recommender is a quota amplifier by
-   * construction, so the one-click path from advice to five model calls is the
-   * one it must not have.
-   *
-   * `openSetup()` already existed and already takes a preset lesson — this is a
-   * new caller, not new behaviour. The id is validated first for the same reason
-   * the other tabs validate theirs: `SingleSelectDropdown` resolves by `.find`,
-   * so an unknown id would show the placeholder while `materialId` was set.
-   */
+  // A recommendation opens setup on its lesson and stops: generating is five model calls, so it must
+  // never be one click from advice. The id is validated first.
   useEffect(() => {
     if (!preselect) return;
     if (preselect.materialId && availableResources.some((r) => r.id === preselect.materialId)) {
@@ -170,15 +110,7 @@ export default function AdaptiveTestTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselect, availableResources, onPreselectConsumed]);
 
-  /*
-   * Mastery is refreshed HERE rather than on its own, so it reloads at every
-   * point the list already does — including straight after a test is submitted,
-   * which is the one moment the number has just changed and the student is
-   * looking at it. A separate fetch would go stale exactly then.
-   *
-   * A mastery failure must not blank the past-tests list, so it has its own
-   * catch: the list is real data the student can still use.
-   */
+  // Refresh mastery with the list (including right after a submission); its own catch so a failure can't blank the list.
   const refreshList = async () => {
     setIsLoadingList(true);
     try {
@@ -200,23 +132,20 @@ export default function AdaptiveTestTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spaceId]);
 
-  // ── Derived setup values ──────────────────────────────────────────────────
+  // Derived setup values
 
   const chosenFormats = useMemo(() => orderedFormats(formats), [formats]);
   const material = availableResources.find((r) => r.id === materialId) ?? null;
   const conceptCount = material?.concept_count ?? 0;
   const selectedMastery = mastery?.by_material.find((m) => m.material_id === materialId) ?? null;
 
-  /** Matching needs six definitions for its option pool, so six concepts minimum. */
+  /** Matching needs six definitions, so six concepts minimum. */
   const matchingTooSmall =
     chosenFormats.includes('matching_type') &&
     conceptCount > 0 &&
     conceptCount < MATCH_OPTIONS_PER_BLOCK;
 
-  /**
-   * The preview. Recomputed server-side in Phase 2 from the real concept count —
-   * this only tells the student what they are about to sit.
-   */
+  /** Preview only; the server derives the real allocation. */
   const allocation = useMemo(
     () =>
       allocateConcepts(
@@ -226,7 +155,7 @@ export default function AdaptiveTestTab({
     [conceptCount, chosenFormats, matchingTooSmall]
   );
   const total = allocation.covered;
-  /** Matching-only rounds down to whole blocks, so a few concepts get no question. */
+  /** Matching-only rounds down to whole blocks. */
   const uncovered = conceptCount - total;
   const canGenerate = Boolean(materialId) && total > 0;
 
@@ -237,7 +166,7 @@ export default function AdaptiveTestTab({
     });
   };
 
-  // ── Actions ───────────────────────────────────────────────────────────────
+  // Actions
 
   const openSetup = (presetMaterialId?: string) => {
     setError(null);
@@ -253,8 +182,7 @@ export default function AdaptiveTestTab({
     setError(null);
     setScreen('generating');
     try {
-      // Formats only. The server counts concepts and re-derives the length —
-      // `allocation` here is the preview, not the instruction.
+      // Formats only; the server derives the length.
       const test = await testApi.generate({
         space_id: spaceId,
         material_id: materialId,
@@ -293,7 +221,7 @@ export default function AdaptiveTestTab({
     void refreshList();
   };
 
-  // ── Takeover screens ──────────────────────────────────────────────────────
+  // Takeover screens
 
   if (screen === 'session' && activeTest) {
     return (
@@ -307,11 +235,7 @@ export default function AdaptiveTestTab({
           setJustFinished(true);
           setScreen('results');
           void refreshList();
-          // Here and not on the results screen itself: `openSummary` also lands
-          // there when a student opens a PAST test, and re-celebrating a badge
-          // every time they review an old score would be nonsense. `onFinish`
-          // runs only after PUT /complete resolved, which is also the point the
-          // badge has certainly been written.
+          // Badge check here, not on the results screen (which also shows past tests); runs after PUT /complete resolved.
           celebrate();
         }}
       />
@@ -336,7 +260,7 @@ export default function AdaptiveTestTab({
     );
   }
 
-  // ── Generating ────────────────────────────────────────────────────────────
+  // Generating
 
   if (screen === 'generating') {
     return (
@@ -345,8 +269,7 @@ export default function AdaptiveTestTab({
           <Spinner className="w-6 h-6 text-primary-fixed-dim" />
         </div>
         <h2 className="font-display text-xl font-semibold text-white mb-2">Writing your test…</h2>
-        {/* Measured 1.6s for a 29-question test across all five sections. The
-            earlier 17-21s readings were Groq's rate-limit backoff, not writing. */}
+        {/* Typically a couple of seconds. */}
         <p className="font-sans text-sm text-slate-500 leading-relaxed">
           This usually takes a few seconds. The questions are being written from{' '}
           <span className="text-slate-300">{materialTitle(materialId)}</span>, so they only cover what
@@ -356,7 +279,7 @@ export default function AdaptiveTestTab({
     );
   }
 
-  // ── Setup ─────────────────────────────────────────────────────────────────
+  // Setup
 
   if (screen === 'setup') {
     return (
@@ -381,11 +304,7 @@ export default function AdaptiveTestTab({
                 {conceptCount} concept{conceptCount === 1 ? '' : 's'} available in this lesson.
               </p>
             )}
-            {/* The one place the adaptivity is visible to a human, and precisely
-                what the paper's Difficulty Alignment check (p. 98) is about:
-                the mastery reading, and the tier it produces, BEFORE the prompt
-                is written. Shown only once there is evidence — at a cold start
-                the tier is foundational for everyone, which says nothing. */}
+            {/* The mastery reading and tier before generation (Difficulty Alignment, p. 98), once there's evidence. */}
             {selectedMastery && selectedMastery.assessed_concept_count > 0 && (
               <p className="font-sans text-xs text-slate-400 mt-2">
                 Your mastery here is{' '}
@@ -411,10 +330,7 @@ export default function AdaptiveTestTab({
                   <button
                     key={format}
                     onClick={() => toggleFormat(format)}
-                    /* These are toggles, and the on/off state was carried only by
-                       background colour — nothing announced it, and there was no
-                       focus ring, so the setup screen's main control could not be
-                       operated or understood without sight. */
+                    /* Toggles: state is announced (aria) and focusable, not colour alone. */
                     aria-pressed={on}
                     className={`flex items-start gap-3 text-left p-3.5 rounded-xl border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                       on
@@ -445,8 +361,7 @@ export default function AdaptiveTestTab({
             </div>
           </Step>
 
-          {/* Read-only on purpose. The length is one question per concept — see
-              allocateConcepts(). A picker meant repeating concepts to fill it. */}
+          {/* Read-only: one question per concept. */}
           <Step n={3} title="Your test">
             {!material ? (
               <p className="font-sans text-sm text-slate-500">Pick a lesson to see your test.</p>
@@ -536,7 +451,7 @@ export default function AdaptiveTestTab({
     );
   }
 
-  // ── Overview ──────────────────────────────────────────────────────────────
+  // Overview
 
   const completed = summaries.filter((s) => s.status === 'completed');
   const avgScore =
@@ -559,19 +474,14 @@ export default function AdaptiveTestTab({
             <h2 className="font-display text-xl font-semibold text-white tracking-tight truncate">
               Test Mode
             </h2>
-            {/* PAST TENSE, deliberately. Difficulty is chosen once, when the
-                test is BUILT, from a mastery snapshot taken at that moment —
-                paper p. 81 calls it session-based adaptation. An older version
-                of this copy claimed the test adapted mid-session, which it has
-                never done. */}
+            {/* Past tense: difficulty is chosen once, when the test is built (paper p. 81). */}
             <p className="font-sans text-xs text-slate-500 mt-0.5 truncate">
               Practice tests built from your lesson materials, set to what you have already mastered.
             </p>
           </div>
         </div>
 
-        {/* `w-full` on mobile: the header stacks below `sm`, and at its natural
-            width this sat left-aligned and orphaned under the subtitle. */}
+        {/* w-full on mobile so it doesn't sit orphaned under the subtitle. */}
         <button
           data-tour="at-new-test"
           onClick={() => openSetup()}
@@ -588,13 +498,7 @@ export default function AdaptiveTestTab({
         </div>
       )}
 
-      {/* Three tiles, all of them about TESTS. A space-wide mastery figure used
-          to sit here as a fourth; it moved to the Analytics tab, which shows the
-          same number with the per-lesson and per-concept breakdown behind it.
-          Two readouts of one figure invite them to disagree. What stays in this
-          tab is the mastery sentence on the setup screen, which is not a
-          duplicate — it explains why the test about to be generated is the
-          difficulty it is. */}
+      {/* Three test tiles; space mastery lives in the Analytics tab. */}
       <div data-tour="at-stats" className="grid grid-cols-3 gap-2.5 sm:gap-3 mt-6">
         <Stat icon={ClipboardList} label="Tests taken" value={String(completed.length)} />
         <Stat
@@ -626,14 +530,9 @@ export default function AdaptiveTestTab({
             </p>
           </div>
         ) : (
-          /* Entrance on the loaded list, not on the spinner above it — the
-             spinner is what is on screen while `animate-page-fade` would be
-             running, so an entrance up there is over before a single past test
-             arrives. Same rule everywhere in the app. */
+          /* Entrance on the loaded list, not the spinner. */
           <div className="space-y-2 animate-tab-in">
-            {/* Keyed on a Fragment, not on SummaryRow: this project has no
-                `@types/react`, so a locally-declared component's props are
-                enforced exactly and `key` is not among them. */}
+            {/* Keyed on a Fragment: without @types/react, `key` isn't an accepted prop of a local component. */}
             {summaries.map((s) => (
               <Fragment key={s.id}>
                 <SummaryRow
@@ -649,8 +548,6 @@ export default function AdaptiveTestTab({
     </div>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
@@ -679,13 +576,7 @@ function Note({ tone, children }: { tone: 'mid' | 'poor'; children: ReactNode })
   );
 }
 
-/**
- * `p-3` on phones, not `p-4`. Three tiles across a 320px screen leave ~88px each,
- * and `p-4` cut that to 56px of content — narrower than "ANSWERED" renders at 10px
- * with `tracking-widest`. The tinted icon is what stops the row reading as three
- * interchangeable numbers; only Average score was ever coloured, and only then
- * because it happens to carry a tone.
- */
+/** p-3 on phones so three tiles fit 320px. The tinted icon distinguishes the numbers. */
 function Stat({
   icon: Icon,
   label,

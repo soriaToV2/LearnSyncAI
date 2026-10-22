@@ -1,22 +1,10 @@
 /**
- * Synthesized game sound effects.
- *
- * Every sound is generated at runtime with the Web Audio API (oscillators +
- * gain envelopes), so there are NO audio files, no network requests, and no
- * licensing. A single module-level AudioContext is shared across all games.
- *
- * Signal graph:
- *   oscillators ─> sfxGain ─> masterGain ─> destination
- * Muting ramps masterGain to 0.
- *
- * (Background music was intentionally removed — only interaction/feedback
- * effects remain.)
+ * Game sound effects synthesised with the Web Audio API (no audio files), sharing one AudioContext.
+ * Graph: oscillators → sfxGain → masterGain → destination; muting ramps masterGain to 0.
  */
 import { useSyncExternalStore } from 'react';
 
-/* ---------------------------------------------------------------
-   Context + gain graph (lazily created on first use / gesture)
-   --------------------------------------------------------------- */
+// Context and gain graph (created lazily)
 
 let ctx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
@@ -35,8 +23,7 @@ function readMutedPref(): boolean {
 
 let muted = readMutedPref();
 
-/** Ensures the shared AudioContext + gain nodes exist. Returns null if the
- *  browser has no Web Audio support (audio simply becomes a no-op). */
+/** Ensures the shared AudioContext and gain nodes exist; null without Web Audio (audio becomes a no-op). */
 function ensureContext(): AudioContext | null {
   if (ctx) return ctx;
 
@@ -61,8 +48,7 @@ function resume(): void {
   if (ctx && ctx.state === 'suspended') void ctx.resume();
 }
 
-// One-time global gesture listener so audio unlocks on the first interaction
-// even if the initial navigation didn't count as one.
+// One-time gesture listener so audio unlocks on the first interaction.
 if (typeof window !== 'undefined') {
   const unlock = () => {
     ensureContext();
@@ -72,9 +58,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', unlock, { once: true });
 }
 
-/* ---------------------------------------------------------------
-   Mute state (persisted + observable for the header toggle)
-   --------------------------------------------------------------- */
+// Mute state (persisted, observable by the header toggle)
 
 const muteListeners = new Set<() => void>();
 
@@ -97,16 +81,14 @@ export function setMuted(next: boolean): void {
     /* ignore storage failures (private mode etc.) */
   }
   if (masterGain && ctx) {
-    // Short ramp avoids a click when toggling.
+    // A short ramp avoids a click.
     masterGain.gain.cancelScheduledValues(ctx.currentTime);
     masterGain.gain.setTargetAtTime(next ? 0 : 1, ctx.currentTime, 0.02);
   }
   muteListeners.forEach((cb) => cb());
 }
 
-/* ---------------------------------------------------------------
-   Sound effects
-   --------------------------------------------------------------- */
+// Sound effects
 
 export type SfxName = 'correct' | 'wrong' | 'click' | 'tick' | 'hint' | 'victory';
 
@@ -145,10 +127,7 @@ function sweep(from: number, to: number, start: number, duration: number, type: 
 
 const SEMITONE = Math.pow(2, 1 / 12);
 
-/**
- * Triggers a sound effect. `step` (optional) shifts pitch up by that many
- * semitones — used to make a combo/streak climb. No-op without Web Audio.
- */
+/** Plays a sound effect; `step` raises the pitch by semitones (for combos). No-op without Web Audio. */
 export function play(name: SfxName, step = 0): void {
   const context = ensureContext();
   if (!context) return;
@@ -194,9 +173,7 @@ export function play(name: SfxName, step = 0): void {
   }
 }
 
-/* ---------------------------------------------------------------
-   React bindings
-   --------------------------------------------------------------- */
+// React bindings
 
 /** Returns `play` for triggering sound effects. */
 export function useGameAudio(): { play: (name: SfxName, step?: number) => void } {

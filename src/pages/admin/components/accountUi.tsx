@@ -7,15 +7,9 @@ import {
   type AdminAccount,
 } from '../../../lib/adminAccounts';
 
-/**
- * The small display pieces the admin pages share.
- *
- * Kept beside the pages rather than in `src/components/ui/` because every one of
- * them encodes an *account* concept — a status, a role, an account that cannot
- * sign in. None of it is general-purpose UI.
- */
+/** Display pieces the admin pages share; kept here because each encodes an account concept. */
 
-/** An error banner, matching the inline rose pill used across the educator portal. */
+/** An error banner, matching the educator portal's inline rose pill. */
 export function ErrorBanner({ message }: { message: string }) {
   return (
     <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 mb-6">
@@ -42,19 +36,9 @@ export function RolePill({ role }: { role: AccountRole }) {
 }
 
 /**
- * ⚠️ `disabled` IS NOT AN ERROR STATE, AND IS NOT STYLED AS ONE.
- *
- * It is the deliberate, reversible act this portal offers instead of deletion —
- * a student who left the school, an account parked between terms. Rose would
- * read as a fault, and would put the most ordinary administrative action on the
- * page in the same colour as a failure.
- *
- * `not_activated` is amber for the same reason inverted: it is not a fault
- * either, but it IS something to act on — the account is out in the world with a
- * password the administrator also knows.
- *
- * Takes the whole account rather than a status, because the state shown here is
- * derived from two columns. See `accountState()`.
+ * Account state pill. `disabled` is a reversible admin action, not an error, so it isn't rose;
+ * `not_activated` is amber because it needs acting on. Takes the account because the state is
+ * derived from two columns (see accountState()).
  */
 const STATE_STYLE: Record<AccountState, string> = {
   active: 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400',
@@ -80,15 +64,7 @@ export function StatusPill({ account }: { account: AdminAccount }) {
   );
 }
 
-/**
- * Flags `username === null`.
- *
- * `handle_new_user()` degrades a malformed or already-taken username to NULL
- * rather than raising, because an exception in that trigger would abort the
- * account creation itself. The result is an account that exists, looks entirely
- * healthy in a list, and **cannot sign in** — so it has to be called out
- * explicitly or it is invisible until a student reports it.
- */
+/** Flags a NULL username: handle_new_user() degrades a bad one to NULL, leaving an account that can't sign in. */
 export function CannotSignInPill() {
   return (
     <span

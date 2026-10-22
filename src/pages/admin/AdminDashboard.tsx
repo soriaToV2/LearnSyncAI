@@ -9,53 +9,21 @@ import { adminApi, type AdminOverview } from '../../lib/adminAccounts';
 import { ErrorBanner } from './components/accountUi';
 
 /**
- * The admin's landing page.
- *
- * ⚠️ EVERY FIGURE ON THIS PAGE IS A COUNT OF ACCOUNTS. There is no mastery here,
- * no test scores, no material counts and no class performance — this role "does
- * not interact with learning content, study activities, or analytics"
- * (ARCHITECTURE.md:14, README.md:191, CLAUDE.md:14, schema.sql:13), and a
- * dashboard is the easiest place in an application to cross that line by
- * accident.
- *
- * `GET /api/admin/overview` accepts nothing at all — no body, no query, no path
- * parameter — so it cannot be pointed at anyone else's data. That is the same bar
- * `GET /api/dashboard` and `GET /api/educator/overview` are held to, and any
- * future global read should meet it too.
+ * The admin's landing page. Every figure is a count of accounts: this role doesn't touch learning
+ * content or analytics. GET /api/admin/overview takes no input, so it can't be pointed at other data.
  */
 
-/**
- * ⚠️ TWO TOKENS, SAME SPLIT AS `EducatorDashboard`. `CARD` is a surface you look
- * at; `PANEL` is a row inside a list. Giving one constant a shadow would put a
- * drop shadow under every attention row, which reads as a stack of floating
- * cards rather than a list.
- */
+/** CARD is a surface; PANEL is a row in a list (no shadow, or the list reads as floating cards). */
 const PANEL = 'rounded-2xl bg-white/[0.02] border border-white/5';
 const CARD = `${PANEL} shadow-lg shadow-black/20`;
 
-/**
- * ⚠️ `ring-inset`, matching both other dashboards. The grade tiles sit in a
- * `gap-4` grid so an outward ring would survive there, but the attention rows
- * are `gap-3` and every one of these is a `<Link>` with a rounded border — an
- * inset ring reads as the card itself lighting up rather than as a halo around
- * it, and it cannot bleed into a neighbour at any width.
- */
+/** ring-inset, matching the other dashboards: the rows are close-set rounded links. */
 const FOCUS =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
 /**
- * A headline count.
- *
- * ⚠️ THE ICON IS TINTED PER CARD, VIA `.tone-chip`. All four were the same
- * `text-slate-500` glyph at the same size, so the strip read as four identical
- * grey boxes and the only way to tell students from educators was to read the
- * 10px label. The colours are decorative — nothing here encodes a value — but
- * they make the strip scannable, which is the entire job of a summary row.
- *
- * `.tone-chip` rather than `bg-emerald-400/10 text-emerald-400` and friends: the
- * light theme's overrides cover tone TEXT and deliberately not tone FILLS, so a
- * hand-rolled chip would come out as a near-invisible tint behind text that had
- * been darkened independently. See the TINTED CHIPS block in `index.css`.
+ * A headline count. Icons are tinted per card (decorative) via .tone-chip, because the light theme
+ * overrides tone text but not tone fills; see TINTED CHIPS in index.css.
  */
 function StatCard({
   icon: Icon,
@@ -68,7 +36,7 @@ function StatCard({
   label: string;
   value: number | string;
   hint?: string;
-  /** Hex for the icon chip. Decorative — it never encodes a count. */
+/** Hex for the icon chip; decorative. */
   tone: string;
 }) {
   return (
@@ -116,19 +84,7 @@ export default function AdminDashboard() {
     };
   }, []);
 
-  /*
-   * The operational signals, mirroring the educator dashboard's `attention`:
-   * rendered only when something actually needs attention. A permanent "all
-   * clear" card is a widget that reports nothing, every day, forever.
-   *
-   * ⚠️ THE "UNKNOWN" BRANCH IS GONE, AND SO IS THE PARAGRAPH THAT EXPLAINED IT.
-   * It described `never_signed_in`, which needed a paged sweep of `auth.users`
-   * and could therefore fail and come back null. That field no longer exists —
-   * `not_activated` replaced it and is a plain column read — so all three counts
-   * on `AdminOverview.attention` are typed `number`. The null checks below were
-   * unreachable, and the fallback sentence ("the sign-in records could not be
-   * read just now") described a request the page no longer makes.
-   */
+  /* Operational signals, rendered only when something needs attention. */
   const attentionItems = overview
     ? [
         {
@@ -163,9 +119,7 @@ export default function AdminDashboard() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      {/* `sm:` steps on both axes and the entrance the other two portals now
-          use — see `EducatorDashboard` for why it is `animate-page-fade` rather
-          than a bare `fade-in`. */}
+      {/* Same page entrance as the other portals. */}
       <div className="max-w-[1100px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
         <header className="mb-8">
           <h1 className="font-display text-3xl md:text-4xl font-bold text-on-surface tracking-tight">
@@ -185,15 +139,10 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* ⚠️ `animate-tab-in` ON THE LOADED BODY, NOT ON THE PAGE WRAPPER. The
-            wrapper's entrance fires while the spinner is the only thing on
-            screen, so it is over before a single count arrives. Same rule as
-            every other fetching screen in the app. */}
+        {/* animate-tab-in on the loaded body, not the wrapper (which fades in around the spinner). */}
         {overview && (
           <div className="flex flex-col gap-8 animate-tab-in">
-            {/* 4-across from `md:`, not `lg:`. At 768px two tiles were ~350px
-                wide each, carrying a 14px icon and one number — the widest
-                things on the page holding the least. */}
+            {/* Four across from md:. */}
             <section className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
               <StatCard
                 icon={Users}
@@ -243,19 +192,13 @@ export default function AdminDashboard() {
                         className={`w-4 h-4 shrink-0 mt-0.5 ${tone === 'amber' ? 'text-amber-400' : 'text-slate-400'}`}
                       />
                       <div className="min-w-0 flex-1">
-                        {/* The count leads and is `tabular-nums` so the three
-                            rows' titles line up when the numbers differ in
-                            width. */}
+                        {/* tabular-nums so the titles line up. */}
                         <p className="font-display text-sm font-bold text-white">
                           <span className="tabular-nums">{count}</span> · {title}
                         </p>
                         <p className="font-sans text-xs text-slate-400 mt-1 leading-relaxed">{body}</p>
                       </div>
-                      {/* Hidden below `sm:`: at 375px the row has ~280px for two
-                          lines of body copy, and a decorative chevron is the
-                          first thing that should give that width back. The whole
-                          row is the link, so nothing is lost — it was never the
-                          hit target. */}
+                      {/* Chevron hidden below sm: to give the text room; the whole row is the link. */}
                       <ArrowRight className="hidden sm:block w-4 h-4 text-slate-600 group-hover:text-slate-400 shrink-0 mt-0.5 transition-colors" />
                     </Link>
                   ))}
@@ -267,9 +210,7 @@ export default function AdminDashboard() {
               <h2 className="font-sans text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">
                 Students by grade
               </h2>
-              {/* Four JHS grades, so `md:grid-cols-4` lands them on one row
-                  exactly — matching the summary strip above rather than
-                  reflowing at a different width to it. */}
+              {/* Four grades, four columns from md:, matching the strip above. */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
                 {overview.by_grade.map(({ grade, count }) => (
                   <Link

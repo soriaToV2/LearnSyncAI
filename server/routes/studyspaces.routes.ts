@@ -19,17 +19,9 @@ import type { SpaceMaterial } from '../types/database';
 const router = Router();
 router.use(authenticate);
 
-// ── Study space contents ──────────────────────────────────
-//
-// A space's materials live in study_space_materials, not in a query run fresh on
-// every page load. That is deliberate: the stored list is what lets the Resources
-// tab say "2 new materials are available" — you cannot diff against a set that is
-// recomputed each time. Nothing is added to the list without the student asking.
-//
-// Reads still filter the stored list against the live rules (not archived, still
-// published to the student's grade, still this space's subject), so an educator
-// archiving a material removes it from every student's view immediately while the
-// link row survives — un-archive and it comes back on its own.
+// Study space contents. A space's materials are a stored list (study_space_materials), which is what
+// makes "N new materials available" possible. Reads filter it against live rules, so archiving hides
+// a material without deleting the link row.
 
 /** Columns the student side is allowed to see. No educator_id, no storage_path. */
 const SPACE_MATERIAL_COLUMNS =
@@ -47,12 +39,8 @@ async function linkedMaterialIds(spaceId: string): Promise<string[]> {
 }
 
 /**
- * The space's visible materials plus the count of published ones it does not have
- * yet — everything the Resources tab renders, in one round trip.
- *
- * `available_count` is a set subtraction: everything published to
- * (space.subject, student's grade) that is not archived, minus everything already
- * linked. Zero means no "new materials" notice at all.
+ * The space's visible materials plus `available_count`: published to (subject, grade), not archived,
+ * minus already linked.
  */
 async function buildSpaceMaterials(space: SpaceOwner): Promise<{
   space: { id: string; title: string; subject: string };
@@ -63,8 +51,7 @@ async function buildSpaceMaterials(space: SpaceOwner): Promise<{
   const linked = await linkedMaterialIds(space.id);
   const linkedSet = new Set(linked);
 
-  // Linked AND still published — the filter that hides archived / regraded
-  // materials without deleting the link row.
+  // Linked and still published.
   const visibleIds = linked.filter((id) => published.includes(id));
   const availableCount = published.filter((id) => !linkedSet.has(id)).length;
 
@@ -98,7 +85,7 @@ async function buildSpaceMaterials(space: SpaceOwner): Promise<{
 
   const byId = new Map((rows ?? []).map((row) => [row.id as string, row]));
 
-  // visibleIds is already in added_at order, so the list reads oldest-first.
+  // Already in added_at order.
   const materials = visibleIds
     .map((id) => byId.get(id))
     .filter((row): row is NonNullable<typeof row> => Boolean(row))
@@ -115,11 +102,7 @@ async function buildSpaceMaterials(space: SpaceOwner): Promise<{
   };
 }
 
-/**
- * Links every material published to (subject, grade) that the space is missing.
- * `ignoreDuplicates` on the composite primary key makes this idempotent, so
- * running it twice never produces a second copy of anything.
- */
+/** Links every published material the space is missing. Idempotent via ignoreDuplicates. */
 async function attachPublishedMaterials(
   spaceId: string,
   subject: string,
@@ -143,12 +126,9 @@ async function attachPublishedMaterials(
   return missing.length;
 }
 
-// ── Study Spaces ──────────────────────────────────────────
+// Study spaces
 
-/**
- * GET /api/spaces
- * Returns all study spaces owned by the authenticated student.
- */
+/** GET /api/spaces: the caller's spaces. */
 router.get('/', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('study_spaces')
@@ -164,16 +144,7 @@ router.get('/', requireRole('student'), async (req: Request, res: Response): Pro
   res.json({ data });
 });
 
-/**
- * POST /api/spaces
- * Creates a study space for one subject and immediately fills it with every
- * material published to that subject at the student's grade level. Students only.
- *
- * The auto-fill is the point: the paper's ingestion core "makes the processed
- * content available to students within the educator's selected grade level", so a
- * new Science space should already hold the student's Science materials rather
- * than sending them hunting.
- */
+/** POST /api/spaces: creates a one-subject space and fills it with that subject's published materials. */
 router.post('/', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateStudySpaceSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -183,8 +154,7 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
 
   const { title, description, subject } = parsed.data;
 
-  // Check the subject up front so an unknown code is a readable 400 rather than a
-  // foreign-key 500 after the row is half-built. Same pattern as material upload.
+  // Check the subject first so an unknown code is a 400, not an FK 500.
   const { data: subjectRow } = await supabaseAdmin
     .from('subjects')
     .select('code')
@@ -230,8 +200,7 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
     return;
   }
 
-  // Pre-fill. A failure here leaves a usable (empty) space rather than losing it —
-  // the student can pull the same materials in from the Resources tab.
+  // Pre-fill. On failure the space still exists and the student can sync later.
   let attached = 0;
   try {
     attached = await attachPublishedMaterials(newSpace.id, subject, gradeLevel);
@@ -245,17 +214,7 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
   });
 });
 
-/**
- * GET /api/spaces/:id
- * Returns a single study space. Owner only — study spaces are private, and
- * migration 0003 removed peer sharing entirely.
- *
- * ⚠️ This was the ONE space route without `requireRole('student')`, running on
- * bare `authenticate` and scoping by `student_id` alone. Ownership made it safe
- * against other students, but it read no account state — so a disabled account,
- * and later an un-activated one, could still open a space. `requireRole` is the
- * only middleware that reads `profiles`, so both gates live or die with it.
- */
+/** GET /api/spaces/:id. Owner only. requireRole is what rejects disabled and un-activated accounts. */
 router.get('/:id', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('study_spaces')
@@ -272,11 +231,7 @@ router.get('/:id', requireRole('student'), async (req: Request, res: Response): 
   res.json({ data });
 });
 
-/**
- * GET /api/spaces/:id/materials
- * The space's materials plus a count of newly published ones it does not hold yet.
- * Owner only.
- */
+/** GET /api/spaces/:id/materials: materials plus a count of newly published ones. Owner only. */
 router.get('/:id/materials', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const space = await loadOwnedSpace(req.params.id, req.user!.id);
   if (!space) {
@@ -291,14 +246,7 @@ router.get('/:id/materials', requireRole('student'), async (req: Request, res: R
   }
 });
 
-/**
- * POST /api/spaces/:id/materials/sync
- * Pulls every newly published material for this space's subject and the student's
- * grade level into the space. Owner only.
- *
- * The client does not choose what to attach — the set is derived server-side — so
- * there is nothing a student could pass to reach another subject or grade.
- */
+/** POST /api/spaces/:id/materials/sync: links newly published materials. The set is derived server-side. */
 router.post(
   '/:id/materials/sync',
   requireRole('student'),
@@ -327,11 +275,7 @@ router.post(
   }
 );
 
-/**
- * PUT /api/spaces/:id
- * Renames a study space or edits its description. Owner only.
- * The subject cannot be changed — see UpdateStudySpaceSchema.
- */
+/** PUT /api/spaces/:id: rename or edit description. The subject is immutable. */
 router.put('/:id', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = UpdateStudySpaceSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -355,10 +299,7 @@ router.put('/:id', requireRole('student'), async (req: Request, res: Response): 
   res.json({ data, message: 'Study space updated' });
 });
 
-/**
- * DELETE /api/spaces/:id
- * Deletes a study space. Owner only.
- */
+/** DELETE /api/spaces/:id. Owner only. */
 router.delete('/:id', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const { error } = await supabaseAdmin
     .from('study_spaces')
@@ -374,27 +315,12 @@ router.delete('/:id', requireRole('student'), async (req: Request, res: Response
   res.json({ message: 'Study space deleted' });
 });
 
-// ── Flashcard Decks ───────────────────────────────────────
-//
-// A deck is an empty folder the student owns: they create it, rename it and
-// delete it to organise their lessons however they like. What goes INSIDE it is
-// not theirs to write. Every flashcard assesses a concept an educator uploaded
-// and vetted, so cards arrive by generation against a selected material and by
-// no other route — the create / update / delete card endpoints are gone. A
-// hand-written card would have no concept to attach mastery to, or would inject
-// unvetted text into the knowledge base that Free Recall, Feynman, the chatbot
-// and adaptive tests all read from.
+// Flashcard decks. Students own decks but not cards: cards arrive only by generation against a
+// material, so every card has a vetted concept to attach mastery to.
 
 /**
- * GET /api/spaces/:id/decks
- * Returns all flashcard decks in a study space. Owner only.
- *
- * Reading is guarded as tightly as writing. A space id is visible in the browser
- * address bar (/student/space/:spaceId), so a screenshot or a shared link is
- * enough for another student to hold one — and a deck carries its owner's
- * ease_rating and next_review_at, which is a direct readout of the concepts they
- * are struggling with. Migration 0003 removed peer sharing to guarantee data
- * isolation between students; leaving this open contradicted that.
+ * GET /api/spaces/:id/decks. Owner only; reads are guarded like writes because decks expose
+ * ease_rating and next_review_at.
  */
 router.get('/:id/decks', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const space = await loadOwnedSpace(req.params.id, req.user!.id);
@@ -417,14 +343,7 @@ router.get('/:id/decks', requireRole('student'), async (req: Request, res: Respo
   res.json({ data });
 });
 
-/**
- * POST /api/spaces/:id/decks
- * Creates an empty deck. Owner only — 404 for anyone else, matching every other
- * space route, so a student cannot probe which space ids exist.
- *
- * The deck starts empty by design: cards arrive when the student generates
- * against a material from POST /api/materials/generate-flashcards.
- */
+/** POST /api/spaces/:id/decks: creates an empty deck. Owner only (404 otherwise). */
 router.post('/:id/decks', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateDeckSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -457,21 +376,8 @@ router.post('/:id/decks', requireRole('student'), async (req: Request, res: Resp
 });
 
 /**
- * PUT /api/spaces/:id/decks/:deckId
- * Renames a deck, edits its description, or sets which face it opens on.
- * Owner only.
- *
- * Those three are the only fields a student may set — the update is built key by
- * key from the parsed schema, never spread from req.body, so an extra field in
- * the payload cannot reach the table.
- *
- * ⚠️ IT IS A PARTIAL WRITE, AND THAT IS A FIX RATHER THAN A CONVENIENCE. It used
- * to send `description: parsed.data.description ?? null` unconditionally, so any
- * update that did not carry a description wiped it. Unnoticed while the rename
- * modal was the only caller and always sent both fields; a real bug the moment
- * the display toggle started sending `answer_first` on its own, because the next
- * rename would have reset the student's choice. `UpdateDeckSchema` guarantees at
- * least one key is present, so this can never build an empty update.
+ * PUT /api/spaces/:id/decks/:deckId: title, description, answer_first. A partial write built key by
+ * key, so an omitted field is never wiped.
  */
 router.put('/:id/decks/:deckId', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = UpdateDeckSchema.safeParse(req.body);
@@ -486,8 +392,7 @@ router.put('/:id/decks/:deckId', requireRole('student'), async (req: Request, re
     return;
   }
 
-  // Absent means "leave it alone". For `description` an explicit null still
-  // means "clear it", which is why the test is against undefined and not falsy.
+  // Test against undefined: null description means "clear it".
   const patch: Record<string, unknown> = {};
   if (parsed.data.title !== undefined) patch.title = parsed.data.title;
   if (parsed.data.description !== undefined) patch.description = parsed.data.description;
@@ -514,13 +419,7 @@ router.put('/:id/decks/:deckId', requireRole('student'), async (req: Request, re
   res.json({ data, message: 'Deck updated' });
 });
 
-/**
- * DELETE /api/spaces/:id/decks/:deckId
- * Deletes a deck and the cards filed in it. Owner only.
- *
- * Deleting generated cards is safe — they are this student's copies. The
- * concepts they were generated from are the educator's and are untouched.
- */
+/** DELETE /api/spaces/:id/decks/:deckId: deletes the deck and its cards (concepts are untouched). */
 router.delete('/:id/decks/:deckId', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const space = await loadOwnedSpace(req.params.id, req.user!.id);
   if (!space) {
@@ -528,8 +427,7 @@ router.delete('/:id/decks/:deckId', requireRole('student'), async (req: Request,
     return;
   }
 
-  // Confirm the deck is in this space before deleting anything, so a deck id
-  // from another student's space cannot have its cards wiped.
+  // Confirm the deck is in this space before deleting anything.
   const { data: deck } = await supabaseAdmin
     .from('flashcard_decks')
     .select('id')
@@ -554,16 +452,9 @@ router.delete('/:id/decks/:deckId', requireRole('student'), async (req: Request,
   res.json({ message: 'Deck deleted' });
 });
 
-// ── Flashcards ────────────────────────────────────────────
+// Flashcards
 
-/**
- * GET /api/spaces/:id/decks/:deckId/flashcards
- * Returns all flashcards in a deck. Owner only.
- *
- * The deck must be confirmed to sit in the owned space before its cards are
- * read — checking the space alone would let any deck id be paired with a space
- * the caller happens to own.
- */
+/** GET /api/spaces/:id/decks/:deckId/flashcards. Confirms the deck is in the owned space first. */
 router.get(
   '/:id/decks/:deckId/flashcards',
   requireRole('student'),
@@ -602,21 +493,9 @@ router.get(
 );
 
 /**
- * POST /api/spaces/:id/decks/:deckId/generate
- *
- * Fills a deck with one card per concept of the selected material.
- *
- * The BACK of every card is the educator's stored definition, verbatim, in both
- * formats — a model never writes the answer, so a student never studies a fact
- * nobody vetted. Only the front varies:
- *
- *   format: 'term'     -> the concept's term. No model in the path at all.
- *   format: 'question' -> an AI-written question whose answer is that definition.
- *
- * Every card carries its concept_id either way, which is the link BKT needs and
- * the reason the model is asked to echo indices rather than return loose pairs.
- *
- * Body: { material_id: UUID, replace?: boolean, format?: 'term' | 'question' }
+ * POST /api/spaces/:id/decks/:deckId/generate: one card per concept of a material.
+ * The back is always the educator's definition; only the front varies ('term', or a model-written
+ * 'question'). Every card carries its concept_id.
  */
 router.post(
   '/:id/decks/:deckId/generate',
@@ -648,13 +527,10 @@ router.post(
       return;
     }
 
-    // Grade level / archive rule first.
+    // Grade/archive rule first.
     if (!(await rejectInaccessibleMaterials(req, res, [material_id]))) return;
 
-    // Then space membership. Passing the grade check is not enough — the
-    // material must also be one this space actually holds, or a student could
-    // pull another subject's content into this space's deck and corrupt the
-    // mastery picture the space is supposed to represent.
+    // Then space membership: the material must be one this space holds.
     const published = await publishedMaterialIds(space.subject, space.gradeLevel);
     const linked = await linkedMaterialIds(space.id);
     if (!published.includes(material_id) || !linked.includes(material_id)) {
@@ -695,44 +571,10 @@ router.post(
 
     const existingCards = existing ?? [];
 
-    /*
-     * ⚠️ ONE LESSON LIVES IN ONE DECK PER SPACE, AND THIS IS A BKT INTEGRITY
-     * GUARD RATHER THAN TIDINESS.
-     *
-     * The anti-farming mechanism is the due-check on `flashcards.next_review_at`
-     * in `POST /api/flashcards/rate`. But mastery is stored per CONCEPT —
-     * `bkt_mastery` is `UNIQUE (student_id, concept_id)` with no reference to a
-     * card, a deck or a space — while a freshly generated card is born due
-     * (`next_review_at DEFAULT now()`; the inserts below never set it). So a
-     * second deck built from the same lesson produces new card rows that are all
-     * instantly due, and every one yields another observation on a concept that
-     * was already assessed.
-     *
-     * Measured against the real engine with `g_easy = 0.05`: one Easy rating
-     * takes a concept to 0.7231 and a second to 0.9824 — past the 0.85
-     * `advanced` threshold. Honestly that takes EIGHT DAYS, because Easy pushes
-     * a card seven days out. Through a second deck it takes about two minutes.
-     *
-     * It is also a plain correctness bug, not only an exploit: nothing told a
-     * student a lesson was already carded elsewhere, so an innocent duplicate
-     * double-counted every concept in it.
-     *
-     * ⚠️ IT FIRES REGARDLESS OF `replace`. That flag means "refresh THIS deck",
-     * which reconciles in place and is safe; it must never become a bypass for
-     * putting a second copy of a lesson somewhere new.
-     *
-     * ⚠️ BUT ONLY WHEN THIS DECK DOES NOT ALREADY HOLD THE MATERIAL. Decks
-     * duplicated before this guard existed are real data, and refreshing either
-     * of them reconciles by `concept_id` in place — creating no rows and
-     * resetting no schedules. Blocking that would strand them with no way to
-     * update. So: already in this deck → the existing path below; only
-     * elsewhere → 409.
-     *
-     * The remaining path is deleting a deck and regenerating, which resets the
-     * schedules because `bkt_mastery` has no FK to `flashcards`. Left open by
-     * decision — it destroys the student's own rating history — and detectable
-     * with certainty from `bkt_update_logs`; see BKT_IMPLEMENTATION.md §4.3.
-     */
+    // One lesson per deck per space (409 MATERIAL_IN_ANOTHER_DECK): a BKT integrity guard. New cards
+    // are born due, so a second deck would add observations on already-assessed concepts.
+    // Fires regardless of `replace`, but not when this deck already holds the material.
+    // See CLAUDE.md § Important Rules.
     if (existingCards.length === 0) {
       const { data: siblingDecks, error: siblingError } = await supabaseAdmin
         .from('flashcard_decks')
@@ -762,8 +604,7 @@ router.post(
 
         const found = elsewhere ?? [];
         if (found.length > 0) {
-          // Name the deck holding the most of it, so a pre-existing duplicate
-          // spanning several still points at the obvious one.
+          // Name the deck holding the most of it.
           const byDeck = new Map<string, number>();
           for (const row of found) {
             const id = row.deck_id as string;
@@ -782,12 +623,7 @@ router.post(
 
           res.status(409).json({
             error: 'Already in another deck',
-            // ⚠️ A `code`, because the client MUST tell this 409 apart from the
-            // per-deck "Already generated" one below. That one is answered with a
-            // Refresh prompt; this one must not be, since a refresh here would be
-            // refused again by the very same guard. `api.ts` exists to make
-            // callers branch on a code rather than match the message — and these
-            // two messages are deliberately near-identical prose.
+            // A code, so the client can tell this 409 from the per-deck "Already generated" one.
             code: 'MATERIAL_IN_ANOTHER_DECK',
             message: `This material is already in "${ownerTitle}" (${ownerCount} card${ownerCount === 1 ? '' : 's'}). A lesson lives in one deck at a time, so its review dates stay in one place.`,
             data: { deck_id: ownerId, deck_title: ownerTitle, existing_count: ownerCount },
@@ -797,9 +633,7 @@ router.post(
       }
     }
 
-    // Already here and no explicit go-ahead: say so and write nothing, rather
-    // than silently doubling the deck. `current_format` comes back so the client
-    // can offer a Refresh that keeps the deck's existing style.
+    // Already here without `replace`: write nothing. current_format lets the client offer a Refresh.
     if (existingCards.length > 0 && !replace) {
       const currentFormat = existingCards.some((c) => c.is_ai_generated) ? 'question' : 'term';
       res.status(409).json({
@@ -814,13 +648,7 @@ router.post(
       return;
     }
 
-    // ── Fronts.
-    //
-    // 'question' asks Gemini for one question per concept. A concept the model
-    // omits or mis-numbers falls back to its term, so a card is never lost and
-    // never left without a concept_id. A call that throws aborts the whole
-    // request before anything is written — a deck half in one style and half in
-    // another is worse than a clean retry.
+    // Fronts. A concept the model skips falls back to its term. A thrown call aborts before any write.
     let questions = new Map<string, string>();
     if (format === 'question') {
       try {
@@ -828,20 +656,14 @@ router.post(
           concepts.map((c) => ({ id: c.id as string, term: c.term, definition: c.definition }))
         );
       } catch (err) {
-        // Logged, because this catch used to discard the cause entirely — which
-        // left a failed deck with no server-side trace of WHY.
+        // Log the cause.
         console.error('[Decks] question generation failed:', err);
 
-        // A typed Gemini failure carries its own status and its own true
-        // sentence: 429 when the key's daily allowance is spent, 503 for an
-        // outage. Answering a flat 502 to both tells a student "please try
-        // again" on a day when retrying cannot possibly work — the same split
-        // failGeneration() makes for adaptive tests. Nothing has been written in
-        // either case, which is the guarantee that actually matters here.
+        // Typed Gemini failures keep their status (429 quota / 503 outage). Nothing has been written.
         if (err instanceof GeminiUnavailableError) {
           res.status(err.status).json({
             error: 'Question generation failed',
-            // `userMessage`, never `err.message` — see studentFacingError() in gemini.ts.
+            // userMessage, never err.message.
             message:
               `${studentFacingError(err)} Nothing was added to this deck — ` +
               'you can add these cards as terms and definitions instead.',
@@ -861,11 +683,11 @@ router.post(
     const frontFor = (concept: { id: string; term: string }): string =>
       (format === 'question' ? questions.get(concept.id)?.trim() : '') || concept.term;
 
-    /** True only where the model actually wrote the front. Drives current_format. */
+    /** True only where the model wrote the front; drives current_format. */
     const aiWrote = (concept: { id: string }): boolean =>
       format === 'question' && Boolean(questions.get(concept.id)?.trim());
 
-    /** How many fell back to the term because the model skipped them. */
+    /** Cards that fell back to the term. */
     const fallbackCount =
       format === 'question'
         ? concepts.filter((c) => !questions.get(c.id as string)?.trim()).length
@@ -876,8 +698,7 @@ router.post(
         ? ` ${fallbackCount} card${fallbackCount === 1 ? '' : 's'} show the term instead — no question could be written for ${fallbackCount === 1 ? 'it' : 'them'}.`
         : '';
 
-    // ── First run: one insert, so it either all lands or none of it does and
-    // the student is never left with a half-filled deck.
+    // First run: one insert, all or nothing.
     if (existingCards.length === 0) {
       const { error: insertError } = await supabaseAdmin.from('flashcards').insert(
         concepts.map((c) => ({
@@ -902,13 +723,8 @@ router.post(
       return;
     }
 
-    // ── Refresh: reconcile against the current concepts by concept_id.
-    //
-    // Deliberately NOT delete-then-reinsert. spaced_repetition_logs.flashcard_id
-    // is ON DELETE CASCADE, so wiping the cards would take the student's whole
-    // rating history with it and reset every next_review_at. Updating in place
-    // keeps both. bkt_mastery is keyed on (student, concept) and is untouched
-    // either way.
+    // Refresh: reconcile by concept_id in place. Never delete-then-reinsert: rating logs cascade on
+    // delete and every schedule would reset.
     const cardByConcept = new Map(
       existingCards
         .filter((c) => c.concept_id)
@@ -918,8 +734,7 @@ router.post(
 
     const toInsert = concepts.filter((c) => !cardByConcept.has(c.id as string));
     const toUpdate = concepts.filter((c) => cardByConcept.has(c.id as string));
-    // Cards whose concept the educator has since deleted, plus any legacy card
-    // with no concept_id at all — neither can be reconciled, so both go.
+    // Cards whose concept is gone, or with no concept_id, can't be reconciled.
     const staleIds = existingCards
       .filter((c) => !c.concept_id || !liveConceptIds.has(c.concept_id as string))
       .map((c) => c.id as string);

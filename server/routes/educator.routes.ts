@@ -1,55 +1,12 @@
 /**
- * Educator analytics — the class-level mastery dashboard, read-only.
- *
- * Paper p. 61 gives the educator "a class-level analytics dashboard"; Sprint 3
- * (p. 90) is "aggregate student mastery data at the concept and document level
- * into a real-time grade-level monitoring interface"; p. 98 names "the class-level
- * mastery analytics dashboard" as a black-box test case. This file is that
- * interface, in two shapes: `GET /overview` is the portal's landing page, across
- * every material the educator has published, and the `/materials/:materialId/*`
- * routes are the per-material drill-down reached through Materials → a material →
- * Class Performance.
- *
- * The two are the same arithmetic at different scopes and MUST agree — see the
- * consistency invariant on `GET /overview`.
- *
- * ⚠️ THIS FILE IS PERMANENTLY READ-ONLY. Mastery has exactly two writers, both in
- * `server/lib/bkt.ts` and both on the student side (paper p. 58). An educator
- * looking at a number must never move it. Nothing here imports `bkt.ts`.
- *
- * ── Why the numbers are computed here and not selected from the view ──────────
- *
- * `v_grade_level_mastery` (schema.sql) was built for exactly this screen and its
- * arithmetic is right. It is still not used, for three reasons:
- *
- *  1. It is `WITH (security_invoker = on)`, and Express talks to Postgres with the
- *     SERVICE ROLE, which bypasses Row-Level Security entirely. Selected from
- *     here it returns every educator's rows for every student, and `auth.uid()`
- *     inside `private.auth_assigned_grades()` is NULL. Its scoping is real only
- *     for a browser holding an anon key.
- *  2. Its `JOIN profiles` has no `p.status = 'active'` filter, so a disabled
- *     account still appears in it. `rosterFor()` fixes that.
- *  3. EQ(4) is required to exist in exactly one place, `documentMastery()`.
- *     Same refusal already recorded on the student mastery route.
- *
- * ── The three means on this screen are NOT the same computation ───────────────
- *
- * Only `students[].m_doc` is EQ(4) — a mean over CONCEPTS for one student, where
- * an unassessed concept correctly enters at P(L₀). That one goes through
- * `documentMastery()`.
- *
- * `class.m_doc` and `concepts[].avg_mastery` are means over STUDENTS, a different
- * axis, and must NOT. Filling an absent student with P(L₀) there would invent a
- * measurement for someone who never opened the lesson, and drag the class average
- * toward the prior in proportion to how many students have not started — which is
- * the one number an educator would most reasonably act on.
- *
- * ── Never print P(L₀) ────────────────────────────────────────────────────────
- *
- * A student with no `bkt_mastery` row is at 0.10 by assumption, not measurement.
- * Every figure below is `number | null`, null meaning "nothing measured", and
- * every count that would let a caller tell the two apart is shipped alongside it.
- * Gate on `assessed_concept_count` / `assessed_students`, never on `m_doc === 0.1`.
+ * Educator analytics: class-level mastery, read-only (educators never write mastery; no bkt.ts import).
+ * `GET /overview` spans every material; `/materials/:materialId/*` is the per-material drill-down.
+ * The two must agree.
+ * Computed here rather than from v_grade_level_mastery: its RLS scoping is inert under the service
+ * role and it has no active-status filter.
+ * Only per-student means are EQ(4) (documentMastery, unassessed = P(L₀)). Means over students never
+ * fill an absent student with the prior.
+ * Never print P(L₀): figures are null when nothing is measured. Gate on the counts, never `=== 0.1`.
  */
 
 import { Router, Request, Response } from 'express';
@@ -87,12 +44,7 @@ const STRUGGLING = 0.5;
 /** Supabase serialises `.in()` into the query string; same bound as testDifficulty.ts. */
 const IN_CHUNK = 200;
 
-/**
- * Same 4dp rounding `documentMastery()` applies, for the two means that are over
- * students rather than concepts and so cannot use it. Kept identical on purpose:
- * a class average and a student average rendering at different precisions on one
- * card reads as two metrics.
- */
+/** 4dp rounding matching documentMastery(), for means over students. */
 function round4(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }
@@ -124,12 +76,7 @@ async function conceptsFor(materialId: string): Promise<ConceptRow[]> {
   }));
 }
 
-/**
- * The same, across MANY materials, carrying `material_id` so the caller can group.
- *
- * Chunked because `.in()` goes into the query string — see `IN_CHUNK`. An educator
- * with a large library is one list of material ids, not one query per material.
- */
+/** Concepts across many materials, with material_id. Chunked: `.in()` goes into the query string. */
 async function conceptsForMaterials(
   materialIds: string[]
 ): Promise<(ConceptRow & { material_id: string })[]> {
@@ -156,9 +103,7 @@ async function conceptsForMaterials(
   return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/educator/overview — the educator dashboard
-// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/educator/overview
 
 /** Newest uploads on the dashboard's side column. */
 const RECENT_UPLOADS = 5;
@@ -166,11 +111,7 @@ const RECENT_UPLOADS = 5;
 /** Weakest concepts shipped across the whole library. See `overview.concepts`. */
 const WEAKEST_CONCEPTS = 20;
 
-/**
- * Why a material is on the "needs a look" strip. One reason per material, in the
- * priority below — a failed parse also has no concepts, and reporting both would
- * describe one problem twice.
- */
+/** One reason per material, most blocking first (a failed parse also has no concepts). */
 type AttentionReason =
   | 'parse_failed'
   | 'parse_pending'
@@ -287,57 +228,16 @@ function emptyOverview(
 }
 
 /**
- * Everything the educator dashboard renders, in one request.
- *
- * ══ IT ACCEPTS NOTHING ══
- * No body, no query string, no path parameter. Every set below is derived from
- * `req.user!.id`, so the route has NO IDOR SURFACE AT ALL — it cannot be pointed at
- * another educator's material, another grade's roster or another student's mastery,
- * because there is nothing to point with. That is the same guarantee
- * `GET /api/dashboard` gives on the student side and the same reason there is no Zod
- * schema here: there is no input to validate. If a parameter is ever added,
- * `safeParse(req.query)` it.
- *
- * ══ READ-ONLY, PERMANENTLY ══
- * Educators read mastery and never write it (paper p. 58). Nothing in this file
- * imports `server/lib/bkt.ts`; `bkt_source` stays a two-value enum.
- *
- * ══ FOUR ROUND TRIPS, WHATEVER THE LIBRARY SIZE ══
- * materials → concepts (chunked) ‖ roster (ONE query over the union of grades) →
- * `classMasteryRows()` (chunks both id lists). `rosterFor()` is deliberately NOT
- * called per material — that is one query each for a result the union already
- * contains, so the per-material class is partitioned in memory instead.
- *
- * ══ LIVE MATERIALS ONLY ══
- * Archived materials are excluded from every figure and surface only as a count.
- * An archived lesson is deliberately out of students' hands, so averaging it into
- * "how are my classes doing" would be wrong — and their concepts must be excluded
- * from the mastery intersection too, because `bkt_mastery` rows SURVIVE archiving
- * and counting them would quietly inflate every denominator here. Class Performance
- * stays archive-blind, which is not a contradiction: an archived material simply is
- * not on this page.
- *
- * ══ ⚠️ FIVE FIGURES, TWO COMPUTATIONS — ONLY ONE IS EQ(4) ══
- * Over CONCEPTS, via `documentMastery()`, where an unassessed concept correctly
- * enters at P(L₀):
- *   • `students[].m_doc`               — one student, the union of concepts they can see
- *   • `students[].by_material[].m_doc` — one student, one material
- * Over STUDENTS, via `meanOrNull()`, where an absent student must NOT be filled with
- * the prior — that would invent a measurement for someone who never opened the lesson:
- *   • `materials[].m_doc`  • `concepts[].avg_mastery`  • `class.m_doc`  • `grades[].m_doc`
- *
- * ══ THE CONSISTENCY INVARIANT ══
- * `materials[].m_doc` here is the SAME EXPRESSION over the SAME POPULATION as
- * `class.m_doc` on that material's Class Performance tab — mean over started students
- * of their EQ(4) for it. The two screens therefore show ONE NUMBER, not two
- * computations that happen to agree. If they ever differ, the roster or the
- * started-filter has drifted.
+ * The educator dashboard in one request. Accepts no input, so no IDOR surface and no schema.
+ * Four round trips whatever the library size; never call rosterFor() per material.
+ * Live materials only: mastery rows survive archiving and would inflate denominators.
+ * Invariant: materials[].m_doc equals class.m_doc on that material's Class Performance tab.
  */
 router.get('/overview', async (req: Request, res: Response): Promise<void> => {
   const educatorId = req.user!.id;
 
   try {
-    // ── 1. Identity + materials ─────────────────────────────────────────────
+    // 1. Identity + materials
     const [{ data: profile }, { data: materialRows }] = await Promise.all([
       supabaseAdmin
         .from('profiles')
@@ -376,7 +276,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // ── 2. Concepts ‖ roster ────────────────────────────────────────────────
+    // 2. Concepts ‖ roster
     const grades = [...new Set(live.flatMap((m) => m.gradeLevels))].sort((a, b) => a - b);
 
     const [conceptRows, roster] = await Promise.all([
@@ -396,11 +296,10 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
 
     const conceptIds = conceptRows.map((c) => c.id);
 
-    // ── 3. Mastery ──────────────────────────────────────────────────────────
+    // 3. Mastery
     const rows = await classMasteryRows(roster.map((s) => s.id), conceptIds);
 
-    // Which students form the class for each material. The union roster
-    // partitioned in memory — identical to N calls to `rosterFor()`, one query.
+    // Partition the union roster per material in memory.
     const rosterByMaterial = new Map<string, RosterStudent[]>();
     for (const m of live) {
       rosterByMaterial.set(
@@ -409,7 +308,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
       );
     }
 
-    // ── 4. Per concept: mean across the students assessed on it ─────────────
+    // 4. Per concept: mean across assessed students
     const titleOf = new Map(live.map((m) => [m.id, m.title]));
     const assessedConceptIds = new Set<string>();
     const conceptDtos: ConceptOverviewDto[] = [];
@@ -455,7 +354,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
 
     conceptDtos.sort((a, b) => a.avg_mastery - b.avg_mastery || a.term.localeCompare(b.term));
 
-    // ── 5. Per material: mean across the students who have started it ───────
+    // 5. Per material: mean across started students
     const materials: MaterialOverviewDto[] = live.map((m) => {
       const concepts = conceptsByMaterial.get(m.id) ?? [];
       const ids = concepts.map((c) => c.id);
@@ -496,10 +395,9 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
       };
     });
 
-    // ── 6. Per student: EQ(4) across every material they can see ────────────
+    // 6. Per student: EQ(4) across every visible material
     const students: StudentOverviewDto[] = roster.map((student) => {
-      // A concept belongs to exactly one material, so concatenating the materials
-      // visible to this student cannot produce a duplicate concept id.
+      // A concept belongs to one material, so concatenating can't duplicate ids.
       const visible = live.filter((m) => m.gradeLevels.includes(student.gradeLevel));
       const ids = visible.flatMap((m) => (conceptsByMaterial.get(m.id) ?? []).map((c) => c.id));
 
@@ -519,8 +417,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
 
       const mDoc = documentMastery(ids, byConcept);
 
-      // Only materials they have actually started. A not-started student gets an
-      // empty array rather than a row per material reporting the prior.
+      // Started materials only.
       const byMaterial: StudentMaterialSliceDto[] = [];
       if (byConcept.size > 0) {
         for (const m of visible) {
@@ -553,13 +450,8 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
       };
     });
 
-    /*
-     * Partition before sorting, everywhere. A null `m_doc` in a numeric comparator
-     * yields NaN, and a comparator returning NaN produces an arbitrary order. It
-     * also matters semantically: the transition step floors every assessed posterior
-     * at P(T) = 0.20, so ranking a not-started student at 0.10 would put everyone who
-     * has done nothing ABOVE everyone measurably struggling.
-     */
+    // Partition before sorting: a null in a comparator gives NaN (arbitrary order), and
+    // not-started students must not rank above struggling ones.
     const started = students.filter((s) => s.m_doc !== null);
     const notStarted = students.filter((s) => s.m_doc === null);
     started.sort((a, b) => (a.m_doc as number) - (b.m_doc as number));
@@ -569,7 +461,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
     startedMaterials.sort((a, b) => (a.m_doc as number) - (b.m_doc as number));
     quietMaterials.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
-    // ── 7. Class, grades, attention ─────────────────────────────────────────
+    // 7. Class, grades, attention
     const byTier: Record<DifficultyTier, number> = {
       foundational: 0,
       intermediate: 0,
@@ -596,8 +488,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
       const source = live.find((l) => l.id === m.material_id)!;
       let reason: AttentionReason | null = null;
 
-      // One reason per material, most blocking first. A failed parse also leaves
-      // the material with no concepts; reporting both would say one thing twice.
+      // One reason per material, most blocking first.
       if (m.parsed_status === 'failed') reason = 'parse_failed';
       else if (m.parsed_status === 'pending' || m.parsed_status === 'processing') reason = 'parse_pending';
       else if (m.concept_count === 0) reason = 'no_concepts';
@@ -630,8 +521,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
           concepts_assessed: assessedConceptIds.size,
           grades,
         },
-        // Shaped identically to `MaterialPerformance['class']` so the client can
-        // reuse one caption helper for both screens.
+        // Same shape as MaterialPerformance['class'] so the client shares one caption helper.
         class: {
           size: roster.length,
           started: started.length,
@@ -642,8 +532,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
         attention,
         materials: [...startedMaterials, ...quietMaterials],
         students: [...started, ...notStarted],
-        // Capped: a 500-concept library must not ship 500 rows nobody scrolls.
-        // `counts.concepts_assessed` is the real total behind this list.
+        // Capped; counts.concepts_assessed is the real total.
         concepts: conceptDtos.slice(0, WEAKEST_CONCEPTS),
         grades: gradeDtos,
         recent_uploads: live.slice(0, RECENT_UPLOADS).map((m) => ({
@@ -663,9 +552,7 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/educator/materials/:materialId/performance
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface StudentPerformanceDto {
   student_id: string;
@@ -694,16 +581,8 @@ interface ConceptPerformanceDto {
 }
 
 /**
- * How a material's class is doing, at the document and the concept level.
- *
- * "The class" is every ACTIVE student in a grade this material is published to —
- * the paper's grade-level monitoring interface, and the same population
- * `v_grade_level_mastery` defines. A student who has never opened it is included
- * and reported as not started, because "nineteen of twenty have not touched this"
- * is precisely what an educator needs to see and a filtered list would hide.
- *
- * Four round trips regardless of class or lesson size: material → (concepts ‖
- * roster) → `bkt_mastery`.
+ * A material's class performance at document and concept level. The class is every active student
+ * in its grades; those who never opened it are included as not started.
  */
 router.get(
   '/materials/:materialId/performance',
@@ -722,7 +601,7 @@ router.get(
       conceptIds
     );
 
-    // ── Per student: EQ(4) over this material's concepts ──────────────────
+    // Per student: EQ(4) over this material's concepts
     const students: StudentPerformanceDto[] = roster.map((student) => {
       const byConcept = new Map<string, number>();
       let mastered = 0;
@@ -754,23 +633,13 @@ router.get(
       };
     });
 
-    /*
-     * Weakest-first, which is the whole point of the list — but ONLY among
-     * students who have started. Partition before sorting rather than sorting a
-     * mixed array: a null `m_doc` in a numeric comparator yields NaN, and a
-     * comparator returning NaN silently produces an arbitrary order.
-     *
-     * Not-started students keep `rosterFor()`'s name order and sit at the bottom.
-     * They have no position on a scale nobody has measured them on, and ranking
-     * them at 0.10 would put every student who has done nothing ABOVE every
-     * student who is measurably struggling — the transition step floors every
-     * assessed posterior at P(T) = 0.20.
-     */
+    // Weakest-first among started students only (partition, then sort). Not-started students keep
+    // name order at the bottom.
     const started = students.filter((s) => s.m_doc !== null);
     const notStarted = students.filter((s) => s.m_doc === null);
     started.sort((a, b) => (a.m_doc as number) - (b.m_doc as number));
 
-    // ── Per concept: mean across the students who have been assessed on it ──
+    // Per concept: mean across assessed students
     const conceptDtos: ConceptPerformanceDto[] = concepts.map((concept) => {
       const values: number[] = [];
       let mastered = 0;
@@ -808,9 +677,7 @@ router.get(
       intermediate: 0,
       advanced: 0,
     };
-    // Started students only — an untouched student is not "foundational", they
-    // are unmeasured, and counting them would make the distribution a headcount
-    // of who has logged in.
+    // Started students only: an untouched student is unmeasured, not foundational.
     for (const s of started) byTier[s.tier] += 1;
 
     res.json({
@@ -838,28 +705,11 @@ router.get(
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/educator/materials/:materialId/students/:studentId/concepts
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * One student's concept-by-concept mastery for one material — the drill-down
- * behind an expanded row in Class Performance.
- *
- * A SEPARATE ROUTE rather than fields on the summary above, purely on size: fifty
- * students against a fifty-seven-concept lesson is ~256 KB of concept vectors on
- * every page load, against ~5 KB when the educator actually expands someone. The
- * class dimension is what makes this different from
- * `GET /api/practice/space/:spaceId/mastery/concepts`, which ships everything in
- * one request because there is only ever one student in it.
- *
- * ⚠️ `:studentId` is the only user id an educator can put in a URL anywhere in
- * this application. `rosterStudent()` re-derives role, status AND grade
- * membership rather than trusting any of them — an educator holding an id from a
- * grade they do not publish to, or a disabled account, gets a 404.
- *
- * The concept shape is deliberately identical to the student-side
- * `ConceptMastery` so one concept is described one way on both portals.
+ * One student's per-concept mastery for one material (an expanded Class Performance row).
+ * A separate route for payload size. `:studentId` is re-derived via rosterStudent(); misses 404.
  */
 router.get(
   '/materials/:materialId/students/:studentId/concepts',
@@ -896,8 +746,7 @@ router.get(
       };
     });
 
-    // Weakest assessed first, unassessed last alphabetically — the same ordering
-    // the student's own Analytics tab uses, so the two lists read alike.
+    // Weakest assessed first, unassessed last alphabetically (matches the student Analytics tab).
     detail.sort((a, b) => {
       if (a.assessed !== b.assessed) return a.assessed ? -1 : 1;
       if (a.assessed && a.mastery !== b.mastery) return a.mastery - b.mastery;
@@ -924,32 +773,11 @@ router.get(
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/educator/materials/:materialId/concepts/:conceptId/students
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Who stands where on ONE concept — the drill-down behind an expanded row in the
- * By concept view.
- *
- * This is the TRANSPOSE of the route above, and the pair is the point. The two
- * summaries are the rows and the column totals of one (student × concept)
- * matrix: "By student" expands to a row, "By concept" expands to a column. Before
- * this route the column was the one thing the screen collected the data for and
- * could not show — "3 struggling" with no way to learn which three except
- * expanding every student in turn and reading down.
- *
- * Cheap for the same reason its sibling is: one concept over a class is ~50 rows,
- * against the ~256 KB the full matrix would cost inline at study scale.
- *
- * ⚠️ The concept must belong to THIS material. `requireOwnedMaterial()` only
- * proves the caller owns the material in the path — it says nothing about a
- * concept id pasted in beside it, which could name a row in another educator's
- * lesson. Mismatch is a 404, never a 403.
- *
- * Every student in the class appears, including those never assessed on this
- * concept. "Nobody has been asked about this yet" is a finding about the lesson,
- * and it is invisible if the list only shows students who have data.
+ * Every student in the class on one concept (the transpose of the route above).
+ * The concept must belong to this material, or 404. Unassessed students are included.
  */
 router.get(
   '/materials/:materialId/concepts/:conceptId/students',
@@ -986,8 +814,7 @@ router.get(
       };
     });
 
-    // Weakest assessed first — the same partition-then-sort rule as everywhere
-    // else here, because an unassessed student has no position on this scale.
+    // Weakest assessed first; unassessed students have no position on this scale.
     const assessed = students.filter((s) => s.assessed);
     const untouched = students.filter((s) => !s.assessed);
     assessed.sort((a, b) => a.mastery - b.mastery);
@@ -1013,22 +840,11 @@ router.get(
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/educator/materials/:materialId/mastery-evidence
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * One (student, concept) cell of the evidence matrix — the rows every summary
- * figure is a mean OVER.
- *
- * Emitted for concepts that have a `bkt_mastery` row, which is exactly the
- * "assessed" set. A concept nobody has been asked about has no row here and no
- * row in the file: it enters EQ(4) at P(L₀) as a constant, and listing it would
- * put 0.10 in a column of measurements.
- *
- * ⚠️ `first_posterior` is null when the audit trail lost the row. That row is
- * excluded from start AND end (see `concepts_without_trail`), and a blank cell
- * is what makes AVERAGEIFS reproduce that exclusion on its own.
+ * One (student, concept) evidence row, for assessed concepts only. `first_posterior` is null when
+ * the audit row was lost; that concept is then excluded from both start and end.
  */
 interface EvidenceConceptDto {
   student_id: string;
@@ -1075,57 +891,13 @@ interface EvidenceStudentDto {
 }
 
 /**
- * The study's learning-progress evidence, per student, for one material.
- *
- * ⚠️ THIS REPLACED THE PRE-TEST / POST-TEST INSTRUMENT and exists for the paper's
- * RQ4. The pre/post design was withdrawn on advice: the student-usage window is
- * one week, which is too short for a pre/post delta to be attributable to the
- * platform. What the platform *does* have across that week is BKT mastery, so the
- * evidence is a per-student paired difference over the concepts the student was
- * actually assessed on.
- *
- * ══ THE BEFORE/AFTER PAIR, AND WHY IT IS THIS PAIR ══
- * Three obvious candidates for "before" are all P(L₀) = 0.10 and therefore
- * forbidden: `p_l_prior` of the oldest log row, EQ(4) at t = 0, and a backward
- * reconstruction to the start of the window. All three are the model's
- * initialisation, identical for every student, and printing one would be printing
- * an assumption as a measurement.
- *
- * So:
- *   S(student)    = this material's concepts that have a `bkt_mastery` row
- *   start_mastery = mean over S of `p_l_posterior` of that concept's OLDEST log row
- *   end_mastery   = mean over S of `bkt_mastery.latent_mastery`
- *   growth        = end − start
- *
- * Both ends are real evidence, and both are means over the SAME SET — which is
- * what makes `growth` a paired per-student difference rather than a comparison of
- * two populations. Unassessed concepts are excluded BY CONSTRUCTION (no mastery
- * row ⇒ no log row ⇒ no key in either map), not filtered afterwards.
- *
- * ⚠️ `start_mastery` IS "AFTER THE FIRST OPPORTUNITY", NEVER "BASELINE" OR
- * "PRE-TEST". The first answer's outcome is already inside it. A student assessed
- * exactly once per concept therefore has `start == end` and `growth == 0` — which
- * is correct, not a bug, and is why `opportunity_count` ships beside it.
- *
- * ══ NEVER PRINT P(L₀) ══
- * `start`/`end`/`growth`/`m_doc` are all null when `assessed_concept_count === 0`,
- * and the class figures use `meanOrNull()` over STARTED students only. Gate on the
- * counts, never on `=== 0.1`. Not-started students are still LISTED — "nineteen of
- * twenty never opened this" is a finding, and filtering them would hide it.
- *
- * ══ ARCHIVE-BLIND, LIKE THE REST OF THIS DRILL-DOWN ══
- * `requireOwnedMaterial()` deliberately returns archived materials to their owner,
- * and an educator archiving a lesson at the end of the study must still be able to
- * export its evidence. `GET /overview`'s live-only rule is about not averaging an
- * out-of-hands lesson into "how are my classes doing", which this is not.
- * `is_archived` ships so the file's provenance is visible.
- *
- * ══ ORDER IS THE ROSTER'S, NOT WEAKEST-FIRST ══
- * The partition-then-sort rule everywhere else here is for RANKED UI lists. This
- * is a table destined for a statistics package, where a stable name order is what
- * a researcher can join against a class list — and keeping it sidesteps the
- * null-in-a-numeric-comparator NaN hazard entirely rather than defending against
- * it.
+ * Per-student learning-progress evidence for one material (replaces the removed pre/post test).
+ *   S      = this material's concepts with a bkt_mastery row
+ *   start  = mean over S of the oldest log row's p_l_posterior ("after the first opportunity", never a baseline)
+ *   end    = mean over S of latent_mastery
+ *   growth = end − start
+ * Never print P(L₀): figures are null when nothing is assessed. Archive-blind. Roster order, not
+ * weakest-first, so it joins against a class list.
  */
 router.get(
   '/materials/:materialId/mastery-evidence',
@@ -1146,27 +918,10 @@ router.get(
       classFirstObservations(studentIds, conceptIds),
     ]);
 
-    /*
-     * Re-verifies the property the whole paper rests on, at zero extra query
-     * cost: the newest log row's posterior should equal the stored mastery. Same
-     * idiom as `warnOnLogGaps()` on the student dashboard — a console line for the
-     * operator, never a field in the response and never a row dropped.
-     */
+    // Integrity check: the newest log posterior should equal stored mastery. Logged, never returned.
     let mismatches = 0;
 
-    /*
-     * ⚠️ THE PER-CONCEPT ROWS EXIST SO THE DOWNLOAD CAN SHOW ITS WORKING.
-     *
-     * `students[]` below is five means and a difference. A reader cannot check a
-     * mean against nothing, so the .xlsx the educator downloads carries these
-     * rows on their own sheet and rebuilds every summary column as a live
-     * AVERAGEIFS / COUNTIFS over them. Strip this and the workbook degrades to
-     * the same opaque numbers the CSV already had.
-     *
-     * No new query: both maps are already in hand. It is serialisation only.
-     * ~2,850 rows for 50 students × 57 concepts, on a route that is fetched
-     * lazily on a button press and never on a tab render.
-     */
+    // Per-concept rows let the .xlsx export rebuild every summary with live formulas. No extra query.
     const termById = new Map(concepts.map((c) => [c.id, c.term]));
     const conceptRows: EvidenceConceptDto[] = [];
 
@@ -1187,21 +942,15 @@ router.get(
         const row = mastery.get(key);
         if (!row) continue;
 
-        // EQ(4) is over every concept, so this map feeds `documentMastery()`
-        // whether or not the concept has a surviving audit trail.
+        // EQ(4) covers every concept, with or without an audit trail.
         byConcept.set(conceptId, row.mastery);
         opportunities += row.opportunityCount;
 
         const trail = observations.rows.get(key);
         if (!trail) {
-          // A tolerated `logWriteError`. Drop it from BOTH sides — filling the
-          // start with P(L₀) would invent a measurement, and dropping it only
-          // from the start would break the pairing and inflate `growth`.
+          // Lost audit row: drop it from both start and end so the pairing holds.
           withoutTrail += 1;
-          // Still emitted, with a null start. The workbook's AVERAGEIFS skips a
-          // blank cell, which reproduces "excluded from both sides" exactly —
-          // and the row being visible is what makes the exclusion auditable
-          // rather than an unexplained gap in a count.
+          // Still emitted with a null start; AVERAGEIFS skips the blank the same way.
           conceptRows.push({
             student_id: student.id,
             last_name: student.lastName,
@@ -1260,8 +1009,7 @@ router.get(
         test_observations: testObs,
         start_mastery: start,
         end_mastery: end,
-        // Rounded operands, so a reviewer recomputing this column from the two
-        // beside it gets the same number to the last digit.
+        // Rounded operands so the column recomputes exactly.
         growth: start === null || end === null ? null : round4(end - start),
         // null, not the 0.10 `documentMastery()` returns for an untouched lesson.
         m_doc: byConcept.size === 0 ? null : mDoc,

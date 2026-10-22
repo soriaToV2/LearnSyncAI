@@ -7,20 +7,8 @@ import AccountForms from '../../components/common/AccountForms';
 import AppearanceCard from '../../components/common/AppearanceCard';
 
 /**
- * The educator's own account.
- *
- * ⚠️ THE EMAIL SHOWN HERE IS THE REAL ONE, FROM `auth.users`, AND THAT IS A
- * NARROW EXCEPTION TO A RULE WORTH RESTATING. The Settings page this replaces
- * printed "liza.mendoza@pca.edu.ph" — a constant in `mockEducator.EDUCATOR` — to
- * every educator, which is why `profiles` having no email column became "no email
- * anywhere". The rule was against INVENTING one. `auth.users.email` is genuine,
- * the user owns it, and after migration 0021 it is contact information rather
- * than a credential. Nothing fabricated has come back.
- *
- * The publishing explainer moved across from the deleted Settings page verbatim.
- * It is the one thing on that page worth keeping: an educator is assigned nothing
- * in advance, so "which grades am I responsible for?" has no answer until they
- * upload something, and this is where that is said.
+ * The educator's own account. The email shown is the real one from auth.users (contact info, not a
+ * credential); never print an invented one. Also carries the publishing explainer.
  */
 export default function EducatorProfile() {
   const { theme, mode, setMode } = useEducatorTheme();
@@ -68,12 +56,7 @@ export default function EducatorProfile() {
         )}
 
         <div
-          /* ⚠️ NO `animate-tab-in` HERE, DELIBERATELY. This page has no
-             loading→content swap: the forms render immediately and are merely
-             DIMMED while the profile loads, so the wrapper's `animate-page-fade`
-             already covers everything a reader sees arrive. Adding the panel
-             entrance too would nest an 8px rise inside a fade and make the body
-             travel while the heading above it stayed put. */
+          /* No animate-tab-in: the forms render immediately (dimmed while loading), so the page fade covers it. */
           className={`flex flex-col gap-6 ${isLoading ? 'opacity-60 transition-opacity' : 'transition-opacity'}`}
         >
           <ProfileCard

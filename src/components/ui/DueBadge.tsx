@@ -1,14 +1,4 @@
-/**
- * The count of cards waiting for review, as a small superscript badge.
- *
- * One component for all three call sites — the Flashcards tab on desktop, the
- * same row in the mobile tab menu, and each deck tile — so they cannot drift
- * apart in colour, size or rounding.
- *
- * Cyan rather than a red alert colour: a due card is an invitation to study,
- * not an error the student has to clear. Red would make an ordinary Tuesday
- * look like something has gone wrong.
- */
+/** Due-card count badge, shared by all three call sites. Cyan, not red: due cards are an invitation, not an error. */
 export default function DueBadge({
   count,
   className = '',
@@ -16,13 +6,10 @@ export default function DueBadge({
   count: number;
   className?: string;
 }) {
-  // Every caller can pass a raw count and let this decide — no `count > 0 &&`
-  // guards scattered across three files, each able to forget.
+  // Callers pass a raw count; zero renders nothing.
   if (count <= 0) return null;
 
-  // A freshly generated deck is entirely due (next_review_at defaults to now()),
-  // so this can legitimately be 200. Cap the label, keep the real number in the
-  // accessible name.
+  // New decks are entirely due, so cap the label but keep the real number in the accessible name.
   const label = count > 99 ? '99+' : String(count);
 
   return (

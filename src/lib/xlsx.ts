@@ -1,34 +1,12 @@
 /**
- * A minimal .xlsx writer — enough SpreadsheetML to emit a multi-sheet workbook
- * whose cells carry LIVE FORMULAS.
- *
- * ══ WHY THIS EXISTS RATHER THAN A LIBRARY ══
- * An .xlsx is a ZIP of XML parts, and `jszip` is already a dependency (declared,
- * and until now imported by nothing). ExcelJS and SheetJS are both an order of
- * magnitude larger than the handful of parts actually needed here, for one
- * educator-only research export. The whole module is dynamically imported by its
- * single caller, so none of it — nor jszip — reaches the main bundle.
- *
- * ══ ⚠️ A FORMULA CELL CARRIES BOTH THE FORMULA AND A CACHED RESULT ══
- * `fullCalcOnLoad="1"` on `<calcPr>` makes Excel and LibreOffice recompute every
- * formula on open, so a spreadsheet reader never needs the cache. **Headless
- * readers do.** pandas' `read_excel`, R's `readxl` and every other non-Excel
- * consumer read the cached `<v>` and never evaluate `<f>` — so a formula-only
- * workbook lands in a statistics package as a sheet of blanks. That would make
- * this export useless for exactly the analysis it exists to feed.
- *
- * So `cached` is supplied by the caller and written as `<v>`. It must be
- * computed from the SAME inputs the formula references, never from a second
- * source — the two agreeing is what makes the cache safe, and Excel overwrites
- * it on open anyway. A formula whose result is text also needs `t="str"`, which
- * is derived from the type of `cached`.
- *
- * Scope: inline strings (no sharedStrings table), one style table, column
- * widths, frozen panes, an autofilter, and workbook-level defined names. No
- * charts, no images, no merged cells, no conditional formatting.
+ * Minimal .xlsx writer (SpreadsheetML over jszip) with live formulas. Dynamically imported, so it
+ * stays out of the main bundle.
+ * Formula cells carry a cached `<v>` too: headless readers (pandas, readxl) don't evaluate formulas.
+ * `cached` must come from the same inputs as the formula.
+ * Scope: inline strings, one style table, widths, frozen panes, autofilter, defined names.
  */
 
-/** Style slots. The index into `cellXfs` below is an implementation detail. */
+/** Style slots. */
 export type XlsxStyle =
   | 'default'
   | 'header'
@@ -68,10 +46,7 @@ export type XlsxCell =
   | null
   | string
   | number
-  /**
-   * `cached` is the formula's own answer, computed from the same inputs. See the
-   * module header: omit it and headless readers (pandas, readxl) get a blank.
-   */
+  /** The formula's own result, from the same inputs; required for headless readers. */
   | { formula: string; cached?: string | number | null; style?: XlsxStyle }
   | { value: string | number | null; style?: XlsxStyle };
 
@@ -160,7 +135,7 @@ function workbookXml(sheets: XlsxSheet[], definedNames: Record<string, string>):
     `${XML_HEADER}<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ` +
     `xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
     `<sheets>${sheetTags}</sheets>${nameTags}` +
-    // See the module header: this is what makes formula-only cells compute.
+    // Makes formula-only cells compute on open.
     `<calcPr calcId="0" fullCalcOnLoad="1"/>` +
     `</workbook>`
   );
@@ -262,9 +237,7 @@ function cellXml(cell: XlsxCell, ref: string): string {
     if (typeof cached === 'string' && cached !== '') {
       return `<c r="${ref}"${style} t="str">${f}<v>${esc(cached)}</v></c>`;
     }
-    // Genuinely empty (a blank-by-design cell, e.g. a student who never
-    // started). fullCalcOnLoad still evaluates it; there is simply nothing to
-    // cache, and a 0 here would read as a measurement.
+    // Blank by design (e.g. not started): nothing to cache, and 0 would look like a measurement.
     return `<c r="${ref}"${style}>${f}</c>`;
   }
 
@@ -320,11 +293,7 @@ function sheetXml(sheet: XlsxSheet): string {
   );
 }
 
-/**
- * Assemble the workbook. `definedNames` maps a name to an absolute target such
- * as `Parameters!$B$5`, so formulas elsewhere can read `P_L0` instead of a
- * coordinate nobody can check at a glance.
- */
+/** Assembles the workbook. `definedNames` maps names (e.g. P_L0) to targets like `Parameters!$B$5`. */
 export async function buildXlsxBlob(
   sheets: XlsxSheet[],
   definedNames: Record<string, string> = {}
@@ -348,7 +317,7 @@ export async function buildXlsxBlob(
   });
 }
 
-/** Hand the assembled workbook to the browser as a download. */
+/** Downloads the workbook. */
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

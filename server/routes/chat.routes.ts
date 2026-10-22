@@ -16,101 +16,29 @@ import { logActivity } from '../lib/activity';
 
 const router = Router();
 
-/*
- * ⚠️ `requireRole('student')` WAS MISSING FROM THIS FILE ENTIRELY.
- *
- * Both routes ran on `authenticate` alone, which proves only that the caller
- * holds a valid token — so an educator or admin could drive the student chatbot,
- * and neither route checked `profiles.status`. `POST /` was partially covered by
- * `rejectInaccessibleMaterials()` (which loads the caller and rejects a disabled
- * account), but `GET /history/:spaceId` scoped by `student_id` alone and read no
- * account state at all.
- *
- * It became load-bearing when the first-login gate landed: `requireRole` is the
- * only middleware that reads `profiles`, so a route without it is a hole in that
- * gate as well — an un-activated account could have used the chatbot.
- */
+// requireRole('student') is what applies the account-status and activation gates here.
 router.use(authenticate, requireRole('student'));
 
 /**
- * Minimum cosine similarity a retrieved concept must clear for a RAG query to be
- * considered "on-topic" for the selected material(s).
- *
- * Calibrated empirically against a cybersecurity material: off-topic queries
- * (e.g. a K-drama plot, a cookie recipe) top out around ~0.48 similarity, while
- * genuinely on-topic questions land at ~0.70+. A 0.60 gate cleanly separates the
- * two with comfortable margin on both sides. If the best match falls below this,
- * the query is treated as out-of-scope and we refuse instead of calling the model
- * (which otherwise happily answers from its own world knowledge, ignoring the
- * "use ONLY this context" instruction — measured on llama-3.1-8b-instant, and not
- * a habit any model here is trusted to be free of).
- *
- * ⚠️ BOTH THRESHOLDS SURVIVED THE MOVE TO GEMINI UNCHANGED, and that is not an
- * oversight. They gate cosine similarity between EMBEDDINGS, and the embedding
- * model is fixed at `gemini-embedding-001` — changing which model writes the reply
- * cannot move them. Re-calibrate only if the embedding model ever changes, which
- * CLAUDE.md forbids for unrelated reasons.
+ * Minimum cosine similarity for a RAG query to count as on-topic (off-topic ~0.48, on-topic ~0.70+).
+ * Below it, refuse rather than let the model answer from its own knowledge.
+ * Thresholds gate embedding similarity, so only an embedding-model change would need re-calibration.
  */
 const RAG_MATCH_THRESHOLD = 0.60;
 
 /**
- * Lower relevance gate applied to document-level requests (see below).
- *
- * A generic "summarize this file" has no topical keywords, so its best concept
- * match lands around ~0.53–0.60 — below RAG_MATCH_THRESHOLD but still clearly
- * anchored to the material. An off-topic request that merely *looks* like a
- * summary ("summarize the life lessons from Reply 1988") scores ~0.46–0.50,
- * because its real subject is external. This threshold sits in the gap: clear it
- * and the request is treated as a genuine whole-document summary; fall below and
- * it is refused. Set slightly below the legit-request floor so borderline real
- * summaries are never wrongly refused — the off-topic cases the gate might miss
- * are still caught by the strict grounding rules in the system prompt.
+ * Lower gate for document-level requests ("summarize this file"), which score ~0.53–0.60 against
+ * individual concepts, while off-topic look-alikes score ~0.46–0.50.
  */
 const DOC_LEVEL_MATCH_THRESHOLD = 0.51;
 
-/**
- * Ceiling on the knowledge base injected into one reply, in characters.
- *
- * ⚠️ THIS REPLACES A LIMIT THAT WAS NEVER IN THE CODE. Groq refused a request
- * past roughly 6,000 tokens with an HTTP 413, and the codebase recorded that
- * number in prose — CLAUDE.md, and `conceptExtraction.ts`'s reason for capping a
- * merged definition — while nothing here enforced it. What actually kept full
- * mode inside the ceiling was the client sending exactly one material.
- *
- * Gemini's window makes the old figure meaningless (`gemini-3.5-flash-lite` takes
- * ~1M input tokens), but "no limit" is not the lesson: an unbounded context is an
- * unbounded bill and an unbounded latency. 32,000 characters is ~8,000 tokens —
- * about five times what Groq would accept, and comfortably above the worst case
- * real data can produce, since a material tops out near 42 concepts and
- * `MAX_MERGED_DEFINITION_CHARS` caps each definition at 800 (≈33,600 characters,
- * and only if every single definition were at its cap).
- *
- * So this is a runaway guard, not a working constraint: on today's data nothing
- * reaches it. If it ever starts firing, that is the signal that full mode is
- * being pointed at more than one material.
- */
+/** Runaway guard on injected context (~8k tokens); nothing reaches it today. If it fires, full mode is getting more than one material. */
 const MAX_CONTEXT_CHARS = 32_000;
 
-/**
- * Output ceiling for one reply.
- *
- * DOUBLED from Groq's 2048, for the reason every migrated call was: MINIMAL
- * thinking is not *no* thinking and Gemini 3 thinking tokens draw on the same
- * budget. Truncation is worse here than anywhere else in the app — it throws
- * nothing and parses nothing, it simply stops the answer mid-sentence in front of
- * the student. `streamContent()` logs a MAX_TOKENS finish for that reason.
- */
+/** Output ceiling. Generous because thinking tokens share it, and a truncated stream just stops mid-sentence. */
 const MAX_REPLY_TOKENS = 4096;
 
-/**
- * Trims the knowledge base to `MAX_CONTEXT_CHARS`.
- *
- * Drops WHOLE concepts from the end — never mid-definition, and never reordering
- * — so what survives is the front of the document, matching how
- * `conceptExtraction.ts` truncates a merged definition. It trims the concept list
- * itself rather than the rendered string, so `source_concept_ids` records what
- * genuinely grounded the answer instead of what was fetched.
- */
+/** Trims to MAX_CONTEXT_CHARS by dropping whole concepts from the end, so source_concept_ids stays accurate. */
 function fitContext<T extends { term: string; definition: string }>(
   concepts: T[]
 ): { kept: T[]; dropped: number } {
@@ -129,17 +57,8 @@ function fitContext<T extends { term: string; definition: string }>(
 }
 
 /**
- * Detects "document-level" requests — ones that ask about the material as a whole
- * (summarize, explain the file, overview, key points, TL;DR, …) rather than about
- * a specific concept.
- *
- * These phrases carry no topical keywords, so their embeddings are generic and
- * score poorly against individual concept vectors — they'd be wrongly refused by
- * the strict RAG gate. But they ARE on-topic and, like the Summarize / Explain /
- * Key Terms quick-action buttons, belong in 'full' mode (whole document) rather
- * than RAG top-k — provided they actually clear DOC_LEVEL_MATCH_THRESHOLD against
- * the material. We route them there so a typed "summarize this file" behaves the
- * same as clicking the Summarize button.
+ * Detects document-level requests (summarize, overview, key points…). They are routed to full mode,
+ * provided they clear DOC_LEVEL_MATCH_THRESHOLD.
  */
 function isDocumentLevelRequest(message: string): boolean {
   const m = message.toLowerCase();
@@ -159,24 +78,11 @@ function isDocumentLevelRequest(message: string): boolean {
 }
 
 /**
- * POST /api/chat
- *
- * Study Assistant chatbot endpoint.
- *
- * Supports two modes:
- *  - 'rag':  Embeds the student query and retrieves the top 8 most relevant
- *            concepts via pgvector cosine similarity (match_concepts RPC).
- *            Best for specific questions.
- *  - 'full': Fetches ALL concepts for the selected materials and feeds them
- *            to the AI. Best for summarise / explain-simply quick actions.
- *
- * Streams the AI response back using Server-Sent Events (text/event-stream).
- * Saves the completed exchange to the chatbot_logs table for persistence.
- *
- * Body: ChatRequestInput (see server/types/api.ts)
+ * POST /api/chat. Modes: 'rag' (top 8 concepts via match_concepts) or 'full' (every concept, for
+ * summaries). Streams SSE and saves the exchange to chatbot_logs.
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
-  // ── 1. Validate request body ──────────────────────────────────────────────
+  // 1. Validate
   const parsed = ChatRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
@@ -186,10 +92,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   const { space_id, message, material_ids, history, mode } = parsed.data;
   const userId = req.user?.id;
 
-  // ── 1a. Ownership and access ──────────────────────────────────────────────
-  // The reply streams back the text of the selected materials, so this is a read
-  // of those materials and is gated the same way. Without it, a student could
-  // pass any material id and have the assistant recite another grade's content.
+  // 1a. Ownership and material access (the reply streams material content).
   if (!userId) {
     res.status(401).json({ error: 'Unauthorized', message: 'Not authenticated' });
     return;
@@ -209,12 +112,10 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
-  // A typed "summarize this file" arrives as mode 'rag' but is really a
-  // whole-document request. We still verify it is anchored to the material below.
+  // A typed "summarize this file" arrives as 'rag'; still verified against the material below.
   const docLevel = mode === 'rag' && isDocumentLevelRequest(message);
 
-  // ── 2. Retrieve context + decide how to answer ─────────────────────────────
-  // Concepts fed to the LLM, and the ids that informed the answer (for logging).
+  // 2. Retrieve context. Ids are kept for logging.
   let contextConcepts: Array<{ id: string; term: string; definition: string }> = [];
   let useFullMode = mode === 'full'; // answer from the whole document?
   let refuse = false;                // out-of-scope → deterministic refusal
@@ -236,16 +137,14 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       const topSim = rows[0]?.similarity ?? 0;
 
       if (docLevel) {
-        // Whole-document request: answer from the full material only if it is
-        // actually about the material. An external subject ("summarize Reply
-        // 1988") scores below the gate and is refused.
+        // Whole-document request: answer only if it is anchored to the material.
         if (topSim >= DOC_LEVEL_MATCH_THRESHOLD) {
           useFullMode = true;
         } else {
           refuse = true;
         }
       } else {
-        // Specific question: keep only concepts clearing the strict relevance gate.
+        // Specific question: keep concepts clearing the strict gate.
         const hits = rows.filter(r => r.similarity >= RAG_MATCH_THRESHOLD);
         if (hits.length > 0) {
           contextConcepts = hits.map(({ id, term, definition }) => ({ id, term, definition }));
@@ -257,7 +156,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     }
 
     if (useFullMode) {
-      // FULL MODE: fetch ALL concepts for the selected material (for summaries).
+      // Full mode: every concept for the selected material.
       const { data, error } = await supabaseAdmin
         .from('concepts')
         .select('id, term, definition')
@@ -270,18 +169,13 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     }
   } catch (err: any) {
     console.error('[Chat] Context retrieval error:', err.message);
-    // Mirrors the streaming handler below: a typed Gemini failure keeps its own
-    // status, so a spent quota answers 429 rather than being flattened to 500.
-    // This branch hardcoded 500 and leaked `err.message` to the student.
+    // Typed Gemini failures keep their status (e.g. 429), with the student-safe message.
     const status = err instanceof GeminiUnavailableError ? err.status : 500;
     res.status(status).json({ error: 'Failed to retrieve context', message: studentFacingError(err) });
     return;
   }
 
-  // ── 2b. Off-topic guard ────────────────────────────────────────────────────
-  // The query matched nothing relevant in the selected materials — the student is
-  // asking about something they don't cover. Refuse deterministically instead of
-  // letting the LLM answer from its own world knowledge.
+  // 2b. Off-topic guard: refuse deterministically rather than let the model answer.
   if (refuse) {
     console.log('[Chat] Query below relevance threshold — refusing (off-topic).');
     const refusal =
@@ -310,7 +204,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // ── 3. Build the prompt ────────────────────────────────────────────────────
+  // 3. Build the prompt
   const fitted = fitContext(contextConcepts);
   if (fitted.dropped > 0) {
     console.warn(
@@ -344,27 +238,15 @@ Guidelines:
 - Do NOT repeat the term/definition format verbatim unless asked. Synthesize the information naturally.
 - Format your answers with markdown (bold, lists, etc.) for readability.`;
 
-  // Keep last 4 messages of history (2 exchanges) to save tokens.
-  // The system prompt is NOT one of them: Gemini has no system role inside
-  // `contents`, so it travels separately as the model's system instruction.
-  //
-  // The identity-looking `.map()` is load-bearing: `tsconfig.json` sets no
-  // `strictNullChecks`, under which Zod 3 infers every field of a parsed object as
-  // OPTIONAL. An object literal's properties are required, so rebuilding each turn
-  // is what makes the array match `StreamContentOptions` without loosening that
-  // contract for every future caller.
+  // Last 4 messages of history. The system prompt travels separately (Gemini has no system role).
+  // The `.map()` rebuild is needed for types: without strictNullChecks, Zod infers fields as optional.
   const trimmedHistory = history.slice(-4).map(m => ({ role: m.role, content: m.content }));
 
-  // ── 4. Stream the response via SSE ────────────────────────────────────────
+  // 4. Stream via SSE
   let fullResponse = '';
 
   try {
-    // ⚠️ THE STREAM IS OPENED BEFORE THE HEADERS ARE FLUSHED, DELIBERATELY.
-    // `streamContent()` awaits the upstream request, so a refusal — a spent daily
-    // quota above all — arrives here while a real HTTP status is still sendable.
-    // This route used to flush first, which made the `!res.headersSent` branch
-    // below unreachable and turned every refusal, whatever its cause, into the
-    // client's generic "something went wrong".
+    // Open the stream before flushing headers, so an upstream refusal can still get a real status.
     const stream = await streamContent({
       model: GEMINI_CHAT_MODEL,
       systemInstruction: systemPrompt,
@@ -379,26 +261,20 @@ Guidelines:
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    // The wire format is the contract with `ResourcesTab.tsx`, which parses it by
-    // hand — the one documented exception to the "never use raw fetch" rule. One
-    // `data: {"token":"…"}` per chunk, then `data: {"done":true}`, then end.
-    //
-    // Gemini writes in larger pieces than llama did — often a sentence at a time
-    // rather than a word — so a short reply can arrive in two or three chunks. That
-    // is the transport being different, not the streaming having stopped working.
+    // Wire format, parsed by hand in ResourcesTab.tsx: `data: {"token":"…"}` per chunk, then
+    // `data: {"done":true}`. Gemini sends larger chunks, so few chunks is normal.
     for await (const token of stream) {
       fullResponse += token;
       res.write(`data: ${JSON.stringify({ token })}\n\n`);
     }
 
-    // Signal stream end
+    // End of stream
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
 
-    // ── 5. Save exchange to chatbot_logs ─────────────────────────────────────
+    // 5. Save to chatbot_logs
     if (userId && fullResponse) {
-      // Record which concepts grounded this answer: the retrieved top-k in RAG
-      // mode, or every loaded concept in full mode.
+      // The concepts that grounded this answer.
       const sourceConceptIds = contextConcepts.length > 0 ? contextConcepts.map(c => c.id) : null;
       const { error: logError } = await supabaseAdmin.from('chatbot_logs').insert({
         space_id,
@@ -412,38 +288,17 @@ Guidelines:
         console.warn('[Chat] Failed to save chat log:', logError.message);
       }
 
-      /*
-       * Streak + badges. A chat turn counts as study activity because the
-       * `activity_type` enum committed to it, and a student whose only session
-       * that day was the chatbot should not lose their run for it.
-       *
-       * It is also by far the cheapest activity to farm, which is why `chat` has
-       * no first-time badge of its own and awards nothing but streak progress.
-       * Recorded rather than designed around.
-       *
-       * Only THIS path logs. The off-topic refusal above writes a chatbot_logs
-       * row too, but the assistant declined to answer and nothing was studied.
-       */
+      // Counts toward the streak (no badge). Only this path logs; the off-topic refusal doesn't.
       await logActivity({ studentId: userId, type: 'chat', spaceId: space_id });
     }
   } catch (err: any) {
     console.error('[Chat] Streaming error:', err.message);
     if (!res.headersSent) {
-      // Nothing has reached the browser yet, so a real status still can be sent. A
-      // typed Gemini failure carries its own: 429 when the allowance is spent, 503
-      // for an outage. The client reads `message` off a non-OK response and renders
-      // it to the student, so it gets `userMessage`, never `err.message`.
+      // Headers not sent yet: typed failures keep their status, with userMessage, never err.message.
       const status = err instanceof GeminiUnavailableError ? err.status : 500;
       res.status(status).json({ error: 'Streaming failed', message: studentFacingError(err) });
     } else {
-      // Mid-stream: the student is already reading a partial answer, so there is no
-      // status left to send and no safe way to retry — a second attempt would
-      // splice itself into the middle of a sentence.
-      // ⚠️ STUDENT COPY, NOT A STATUS. `ResourcesTab` throws on this field and
-      // renders the string in its error bar, so "Stream interrupted" was jargon
-      // with no action attached. Asking again is the only thing that works here —
-      // the answer cannot be resumed, and retrying server-side would splice a
-      // second attempt into the middle of a sentence.
+      // Mid-stream: no status left to send and no safe retry. This string is shown to the student.
       res.write(
         `data: ${JSON.stringify({
           error: 'The answer stopped partway through. Please ask again.',
@@ -454,14 +309,9 @@ Guidelines:
   }
 });
 
-/**
- * GET /api/chat/history/:spaceId
- * Returns the past chat history for a study space from chatbot_logs.
- * Returns last 20 exchanges ordered by time.
- */
+/** GET /api/chat/history/:spaceId: the last 20 exchanges. */
 router.get('/history/:spaceId', async (req: Request, res: Response): Promise<void> => {
-  // Scoped to the caller as well as the space: without student_id, passing another
-  // student's space id returned their conversation verbatim.
+  // Scoped to the caller as well as the space.
   const { data, error } = await supabaseAdmin
     .from('chatbot_logs')
     .select('id, message, response, created_at')

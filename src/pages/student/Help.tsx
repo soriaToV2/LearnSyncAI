@@ -5,36 +5,14 @@ import { useOnboarding } from '../../context/OnboardingContext';
 import { HELP_SECTIONS } from '../../lib/onboarding';
 
 /**
- * "How to use" — the reference half of the student onboarding.
- *
- * ══ ⚠️ IT WRITES NO COPY OF ITS OWN ══
- * Every section's opening paragraph is imported verbatim from
- * `src/lib/onboarding.ts`, and for the six study tools it is literally the same
- * string the walkthrough inside that tab opens with. A student who saw it there
- * and then came here must find the same sentence, not a second version that has
- * drifted. Only the "how to" steps beneath are unique to this page.
- *
- * ══ WHY A NAV ITEM AND NOT A FOOTER LINK ══
- * It is a destination like Dashboard and Spaces, so it sits with them.
- * `StudentLayout`'s footer holds Logout and the identity card and nothing else —
- * one control that ends the session, above the account it ends.
- *
- * ══ REPLAYING THE TOUR DELETES NOTHING ══
- * The button below calls `replayTour()`, which reopens the overlay on demand. It
- * does not clear `onboarding_seen`, so the six tool walkthroughs stay done — a
- * student asking to see the tour again has not asked to be re-taught every tool
- * they have already been through.
+ * The "How to use" page. Section intros are imported verbatim from src/lib/onboarding.ts (the same
+ * strings the walkthroughs open with); only the steps are unique here. Replaying the tour clears nothing.
  */
 export default function Help() {
   const { theme } = useStudentTheme();
   const { replayTour } = useOnboarding();
 
-  /*
-   * Everything starts closed, and more than one may be open at once. A page of
-   * nine expanded sections is a wall of text nobody scans, and an accordion that
-   * shuts the section you just read to open the next one makes comparing two of
-   * them impossible.
-   */
+  // All sections start closed, and several can be open at once.
   const [open, setOpen] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) =>
@@ -65,8 +43,7 @@ export default function Help() {
           </div>
         </header>
 
-        {/* First on the page, because someone arriving here confused is more
-            likely to want the walkthrough than to want to read nine sections. */}
+        {/* First: someone confused here most likely wants the walkthrough. */}
         <button
           type="button"
           onClick={replayTour}
@@ -138,12 +115,7 @@ export default function Help() {
           })}
         </div>
 
-        {/*
-          The one thing on this page that is not about using a feature. It is
-          here because "who do I ask" is the question a help page cannot answer
-          itself, and a student locked out has no other route — there is no
-          self-service path for an account with no email address on it.
-        */}
+        {/* Who to ask: accounts without an email have no self-service recovery. */}
         <p className="mt-8 text-center font-sans text-xs leading-relaxed text-slate-500">
           Still stuck, or cannot get into your account? Ask your teacher or the
           school administrator.

@@ -16,17 +16,9 @@ import CreateAccountModal from './components/CreateAccountModal';
 import ImportAccountsModal from './components/ImportAccountsModal';
 
 /**
- * Every account in the school, filtered.
- *
- * ⚠️ THERE IS NO DELETE CONTROL HERE OR ANYWHERE IN THIS PORTAL, BY DESIGN.
- * Thirteen tables CASCADE from `profiles` — study spaces, BKT mastery, telemetry,
- * every log — so deleting one student destroys their entire measured history
- * irrecoverably, which for a 50-student study is the research data itself.
- * `schema.sql` states the intended idiom on the column: disable to revoke access
- * without deleting. Disabling is reversible and loses nothing.
- *
- * Filters live in the URL so the dashboard's attention cards can link straight to
- * a filtered view, and so a filtered list can be shared or reloaded.
+ * Every account in the school, filtered. No delete control anywhere in this portal: thirteen tables
+ * cascade from profiles, so deleting a student destroys their study data. Disable instead.
+ * Filters live in the URL so dashboard cards can link to a filtered view.
  */
 
 const ROLES: Array<{ value: AccountRole | 'all'; label: string }> = [
@@ -47,11 +39,7 @@ const GRADES: Array<{ value: string; label: string }> = [
   ...[7, 8, 9, 10].map((g) => ({ value: String(g), label: `Grade ${g}` })),
 ];
 
-/**
- * ⚠️ `ring-inset`. The account rows are spaced `gap-2` — 8px — and each is a
- * full-width `<Link>`, so an outward ring plus an offset reaches into the gap
- * and touches its neighbour. Same token as both other dashboards.
- */
+/** ring-inset: the full-width row links sit 8px apart. */
 const FOCUS =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
@@ -70,7 +58,7 @@ export default function AccountsList() {
   const q = params.get('q') ?? '';
   const pageNumber = Number(params.get('page') ?? '1');
 
-  /** Writes one filter and resets to page 1 — a filtered page 3 is usually empty. */
+  /** Writes one filter and resets to page 1. */
   const setFilter = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value === 'all' || value === '') next.delete(key);
@@ -80,13 +68,8 @@ export default function AccountsList() {
   };
 
   /*
-   * Every keystroke in the search box fires a request, so responses can land out
-   * of order — and the one that lands last wins, not the one asked for last.
-   * `requestId` stamps each call and only the newest is allowed to write state.
-   *
-   * A ref rather than a cancellation flag in the effect: `load()` is also called
-   * directly by the create modal's success path, where there is no effect
-   * teardown to hang a flag on.
+   * Search fires per keystroke, so responses can land out of order; only the newest requestId may write
+   * state. A ref, because load() is also called from the create modal's success path.
    */
   const requestId = useRef(0);
 
@@ -123,7 +106,7 @@ export default function AccountsList() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      {/* `sm:` steps on both axes, plus the entrance the other two portals use. */}
+      {/* Same page entrance as the other portals. */}
       <div className="max-w-[1100px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
         <header className="flex flex-wrap items-start justify-between gap-4 mb-8">
           <div className="min-w-0">
@@ -134,18 +117,7 @@ export default function AccountsList() {
               {page ? `${page.total} account${page.total === 1 ? '' : 's'}` : 'Loading…'}
             </p>
           </div>
-          {/*
-            Two actions, one primary. Creating a single account is the everyday
-            case; a bulk import happens once or twice a term, so it takes the
-            bordered treatment. Wrapped together so they wrap as a pair inside the
-            header's `flex-wrap` rather than the Import button dropping alone.
-
-            ⚠️ FULL WIDTH AND EQUAL HALVES BELOW `sm:`. Once the pair wraps onto
-            its own line on a phone it has the full 343px to sit in, and two
-            content-fitted buttons totalling ~240px left-aligned under a heading
-            reads as a fragment of a row rather than as the page's actions. Equal
-            halves also gives each a ~165px target instead of ~110px.
-          */}
+          {/* Create is primary; import gets the bordered style. Equal full-width halves below sm:. */}
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <button
               onClick={() => setIsCreateOpen(true)}
@@ -167,28 +139,7 @@ export default function AccountsList() {
 
         {error && <ErrorBanner message={error} />}
 
-        {/*
-          ── Filters ──
-          Deliberately the SAME control set and the same reflow as the educator
-          materials library, because they are the same job: one search box that
-          takes the leftover width, then the narrow filters beside it.
-
-          ⚠️ THE THREE NATIVE `<select>`s ARE GONE, AND THAT IS THE SUBSTANTIVE
-          PART. They rendered as OS dropdowns — a different height, a different
-          corner radius and a different font from every other control in the
-          product — and their options were styled with `className="bg-slate-900"`
-          on each `<option>`, a hardcoded dark fill. In light mode that is dark
-          text on a dark panel inside an otherwise white page, and no theme
-          override can reach it: option styling is barely honoured by browsers
-          and not at all on some platforms. `Dropdown` renders real elements, so
-          it themes like everything else and keyboards get the same affordances
-          the rest of the app has.
-
-          The row is `grid-cols-2` on a phone with Status spanning both — three
-          filters do not divide into two columns, and a half-width control with
-          a hole beside it reads as a missing filter. Three across from `sm:`,
-          and only at `lg:` do they sit inline beside the search box.
-        */}
+        {/* Filters: the same layout as the materials library. Dropdown, not native <select> (which can't be themed in light mode). On a phone, two columns with Status spanning both. */}
         <section className="flex flex-col lg:flex-row lg:items-center gap-3 mb-6">
           <div className="relative flex-1 min-w-0">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
@@ -243,15 +194,7 @@ export default function AccountsList() {
         )}
 
         {page && page.accounts.length > 0 && (
-          /*
-            ⚠️ `animate-tab-in` IS KEYED, AND THE KEY IS THE FILTER SET, NOT THE
-            PAGE OBJECT. Every keystroke in the search box refetches, so keying
-            on anything that changes per response would restart the animation
-            mid-type and make the list strobe. Keyed on the four filters plus the
-            page number, it fires when the reader actually changed what they are
-            looking at — and, because the list is absent until the first response,
-            on the initial load too.
-          */
+          /* Keyed on the filters and page, not the response, so the list doesn't strobe while typing. */
           <div
             key={`${role}|${grade}|${status}|${q}|${pageNumber}`}
             className={`flex flex-col gap-2 animate-tab-in ${isLoading ? 'opacity-50 transition-opacity' : 'transition-opacity'}`}
@@ -262,11 +205,7 @@ export default function AccountsList() {
                 to={`/admin/accounts/${account.id}`}
                 className={`flex items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 sm:py-4 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] hover:border-white/10 transition-colors group ${FOCUS}`}
               >
-                {/* The monogram takes the portal accent inline rather than
-                    through `.tone-chip`, and that is correct here: `theme`
-                    already switches with the light/dark toggle (the white theme
-                    carries its own `#0284c7` accent and a matching soft tint),
-                    so both halves are mode-aware without a mix. */}
+                {/* The monogram takes the accent inline; `theme` already switches with light/dark. */}
                 <div
                   className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border border-white/10 font-display text-xs font-bold shrink-0"
                   style={{ backgroundColor: theme.accentSoft, color: theme.accent }}
@@ -283,20 +222,7 @@ export default function AccountsList() {
                     {accountSubtitle(account)}
                   </p>
 
-                  {/*
-                    ⚠️ ON A PHONE THE PILLS STACK UNDER THE NAME; THEY ARE NOT
-                    SQUEEZED IN BESIDE IT. Role and status are the two facts an
-                    administrator scans this list for, so they belong at every
-                    width — but placed on the right at 375px they take ~140px of
-                    a 343px row, leaving under 150px for a name and a username
-                    that are already `truncate`d. "Angelo Soria · @angelo.soria"
-                    would be cut mid-word to make room for a chip that says
-                    "STUDENT".
-
-                    Below the subtitle they get the full column, wrap on their
-                    own, and cost one line of height. `flex-wrap` matters:
-                    "CANNOT SIGN IN" alongside the other two exceeds 343px.
-                  */}
+                  {/* On a phone the pills stack under the name rather than squeeze the truncated name; flex-wrap because three pills can exceed the row. */}
                   <div className="flex sm:hidden flex-wrap items-center gap-1.5 mt-2">
                     {account.username === null && <CannotSignInPill />}
                     <RolePill role={account.role} />
@@ -348,12 +274,7 @@ export default function AccountsList() {
         accent={theme.accent}
       />
 
-      {/*
-        Note that `load()` respects the filters currently in the URL, so importing
-        a class of students while `role=educator` is set refreshes to a list
-        showing none of them. Creating one account behaves the same way; it is the
-        filter working, not the import failing.
-      */}
+      {/* load() respects the URL filters, so new accounts outside them won't appear. That's the filter working. */}
       <ImportAccountsModal
         isOpen={isImportOpen}
         onClose={() => setIsImportOpen(false)}

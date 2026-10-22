@@ -5,33 +5,11 @@ import { badgeStyle } from '../../lib/badges';
 import type { EarnedBadge } from '../../lib/dashboard';
 
 /**
- * The badge-earned celebration.
- *
- * ══ ONE MODAL, EVERY BADGE THAT ACTION EARNED ══
- * Finishing a game on a three-day streak awards Getting Started, First Game and
- * Flawless at once. A queue of three dialogs turns a reward into a chore to
- * click through, and a student clicking fast would never read the third. They
- * stagger in instead, which keeps the ceremony without costing a click.
- *
- * ══ NOTHING IS DESIGNED PER BADGE ══
- * The icon, colour and label all come from `badgeStyle()`, the same lookup the
- * dashboard chips use — the medallion is that icon at size. So a badge added
- * server-side needs no work here, and `badgeStyle()`'s fallback means one this
- * client has never heard of still renders rather than crashing.
- *
- * ══ SILENT ══
- * No audio, deliberately. This modal can appear anywhere in the portal —
- * mid-flashcard-session, after a Feynman submission — and an unexpected fanfare
- * in a classroom is startling. The games are opt-in and self-contained, which is
- * why they may have sound and this may not.
- *
- * Built on `Modal`, which already provides the portal, Escape, backdrop-click,
- * body scroll lock and z-index — so all three dismissal routes are one `onClose`.
- * Its documented max-height defect does not apply: the content is at most a few
- * medallions and never approaches the fold.
+ * The badge-earned celebration: one modal listing every badge an action earned, staggered (never a
+ * queue). Styling comes from badgeStyle(). Silent on purpose: it can appear anywhere, including in class.
  */
 
-/** Stagger between medallions. Enough to read as a sequence, not as a wait. */
+/** Stagger between medallions. */
 const STAGGER_MS = 90;
 
 export default function BadgeEarnedModal({
@@ -51,8 +29,7 @@ export default function BadgeEarnedModal({
       title={many ? `${badges.length} badges earned!` : 'Badge earned!'}
       maxWidth="max-w-sm"
     >
-      {/* `relative` so the confetti, which is `absolute inset-0`, is clipped to
-          the body rather than escaping over the whole page. */}
+      {/* `relative` so the absolute confetti is clipped to the body. */}
       <div className="relative text-center">
         <ConfettiBurst pieces={many ? 28 : 20} />
 
@@ -77,9 +54,7 @@ export default function BadgeEarnedModal({
                   className="relative animate-badge-pop"
                   style={{ animationDelay: delay }}
                 >
-                  {/* The halo. `--badge-glow` is read by `.animate-badge-glow`
-                      in index.css, so the colour comes from the badge's own
-                      palette instead of being hardcoded per family here. */}
+                  {/* The halo; --badge-glow carries the badge's own colour to .animate-badge-glow. */}
                   <span
                     className="animate-badge-glow"
                     style={
@@ -103,8 +78,7 @@ export default function BadgeEarnedModal({
                   {style.label}
                 </p>
 
-                {/* The description only earns its space when there is one badge.
-                    Three of them side by side is a wall of text over confetti. */}
+                {/* The description only when there's a single badge. */}
                 {!many && (
                   <p
                     className="font-sans text-sm text-slate-400 mt-1.5 animate-badge-pop"

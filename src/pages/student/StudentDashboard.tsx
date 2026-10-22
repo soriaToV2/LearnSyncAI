@@ -50,37 +50,9 @@ import {
 } from '../../lib/dashboard';
 
 /**
- * The student dashboard.
- *
- * Rebuilt from a version that made ZERO network calls — every number on it was a
- * literal, the three study-space links pointed at ids `'1'`, `'2'` and `'3'`, and
- * it greeted every student as "Sarah". It was also the only student page outside
- * the design system, which is why it was the one page the theme switcher did not
- * reach.
- *
- * ══ WHAT IS NOT HERE, AND WHY ══
- * The paper (p. 65) lists four things for this screen: mastery curves, study
- * hours, daily streaks and earned badges. Three of the four are now here.
- *
- * STUDY HOURS IS STILL ABSENT, AND MUST STAY ABSENT UNTIL SOMETHING MEASURES IT.
- * `server/lib/activity.ts` writes `duration_ms`, but only a game reports a real
- * one and only a test can derive one; flashcard ratings, both cognitive modes
- * and chat measure nothing at all. `total_study_hours` is therefore a partial
- * sum, and printing it as a total is the same failure as the frozen `day_streak`
- * that kept streaks off this page for months — a stale number that looks real,
- * which is worse than none. The missing piece is real timing, not a widget.
- *
- * There is also no weekly activity chart and no heatmap. Both are buildable from
- * `activity_logs` now, and both were rejected: with a two-week study an honest
- * heatmap renders as an accusation.
- *
- * ══ ONE REQUEST ══
- * `GET /api/dashboard`. Everything below comes from that payload, including the
- * curve — which matters because the curve's last point must equal the headline
- * number, and that is only enforceable inside a single response.
- *
- * No cache and no refresh button: the page is fresh on mount like every other
- * screen, and a button would advertise a staleness the mount already handles.
+ * The student dashboard (paper p. 65): mastery and its curve, streaks, badges, due cards, focus
+ * concepts, recent activity. No study hours: most activities record no duration, so a total would be
+ * misleading. No heatmap or weekly chart either.
  */
 
 type IconType = typeof ClipboardList;
@@ -92,14 +64,7 @@ const FOCUS_ICON_BY_KIND: Record<ActivityItem['kind'], IconType> = {
   game: Gamepad2,
 };
 
-/**
- * Local, presentation-only surfaces layered on top of the shared `CARD` token.
- *
- * Kept in this file rather than in `surfaces.ts` — that token is reused by Test
- * Mode and the cognitive tabs, and giving every card on the app a border/shadow
- * is a decision for those pages to make separately, not a side effect of this
- * one's redesign.
- */
+/** Page-local card surfaces layered on the shared CARD token (other pages keep the plain token). */
 const PANEL = `${CARD} border border-white/5 shadow-lg shadow-black/20`;
 const PANEL_INTERACTIVE = `${PANEL} hover:bg-surface-container-lowest/70 hover:border-white/10 hover:shadow-xl transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface`;
 
@@ -160,35 +125,14 @@ export default function StudentDashboard() {
             <Spinner className="w-5 h-5 text-slate-500" />
           </div>
         ) : !data ? (
-          /*
-           * The ONLY branch that still short-circuits, and it is a fetch
-           * failure, not an empty account. The error banner above already says
-           * what went wrong; this stops the grid below dereferencing a null
-           * payload.
-           */
+          // Only a fetch failure short-circuits; an empty account still renders the full dashboard.
           <EmptyCard
             title="Your dashboard could not be loaded."
             body="Check your connection and reload the page. Your progress is safe. This is only the view."
           />
         ) : (
           <div className="animate-tab-in">
-            {/*
-              ⚠️ THIS USED TO REPLACE THE ENTIRE DASHBOARD, AND THAT WAS THE BUG.
-              A brand-new student has no spaces, so a top-level ternary swapped
-              the whole body for one card — mastery, streak, badges and recent
-              activity were not hidden, they were never drawn. The student could
-              not see what the app was going to do for them, and there was
-              nothing for the first-run tour to point at.
-
-              The server was always right: `emptyDashboard()` ships a fully
-              shaped zero payload and deliberately passes REAL gamification
-              through it, because "an empty dashboard is about materials and
-              mastery, and says nothing about whether the student has a streak".
-              The client was throwing that away.
-
-              So the two states are a notice above a complete dashboard now. Each
-              card owns its own empty state, which five of them already did.
-            */}
+            {/* New students get a notice above the complete dashboard (the server sends a fully shaped zero payload with real gamification); each card renders its own empty state. */}
             {(noSpaces || noMaterials) && (
               <div className="rounded-xl border border-primary-fixed-dim/25 bg-primary-fixed-dim/[0.07] px-4 py-3 mb-6 flex items-start gap-3">
                 <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-primary-fixed-dim" aria-hidden="true" />
@@ -207,7 +151,7 @@ export default function StudentDashboard() {
               </div>
             )}
 
-            {/* ── Summary strip ────────────────────────────────────────────── */}
+            {/* Summary strip */}
             <section className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
               <Stat icon={Layers} label="Study spaces" value={String(data.counts.spaces)} tone="text-primary-fixed-dim" />
               <Stat icon={ClipboardList} label="Lessons" value={String(data.counts.materials)} tone="text-secondary-fixed-dim" />
@@ -225,23 +169,14 @@ export default function StudentDashboard() {
               />
             </section>
 
-            {/*
-              ⚠️ THE ONE THING "3 / 47" DOES NOT SAY IS WHAT THE 47 IS.
-              Read cold it looks like a mark out of 47, so a new student reads
-              their first day as 3/47 = 6% and concludes they are failing. The
-              denominator is the size of the lesson, not a target, and the other
-              44 are simply questions nobody has asked yet.
-
-              Here rather than on the tiles: four captions on four small tiles is
-              noise, and this one sentence covers both of the tiles that need it.
-            */}
+            {/* Explains "3 / 47": the denominator is the lesson size, not a target. One sentence here rather than captions on four tiles. */}
             <p className="-mt-6 mb-8 font-sans text-xs leading-relaxed text-slate-600">
               Assessed counts the concepts you have been asked about in a flashcard
               or a test. It is not a score, and the rest are waiting, not wrong.
             </p>
 
             <div className="grid grid-cols-12 gap-6">
-              {/* ── Main column ────────────────────────────────────────────── */}
+              {/* Main column */}
               <div className="col-span-12 lg:col-span-8 space-y-6">
                 <MasteryCard data={data} />
                 <FocusCard
@@ -252,15 +187,10 @@ export default function StudentDashboard() {
                 <SpacesCard spaces={data.mastery.by_space} />
               </div>
 
-              {/* ── Side column ────────────────────────────────────────────── */}
+              {/* Side column */}
               <div className="col-span-12 lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-6">
                 <StreakCard g={data.gamification} />
-                {/*
-                  DueCard still returns null when nothing is due, deliberately —
-                  a tile permanently announcing "0" is clutter on every
-                  established student's dashboard forever. It is the one section
-                  the first-run tour has no step for.
-                */}
+                {/* DueCard renders nothing when nothing is due (a permanent "0" is clutter). */}
                 <DueCard total={data.flashcards_due} spaces={data.mastery.by_space} />
                 {data.resume_test && <ResumeCard test={data.resume_test} />}
                 <BadgesCard g={data.gamification} />
@@ -274,9 +204,7 @@ export default function StudentDashboard() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** A small tinted box behind a card's header icon — the page's color-coding device. */
+/** Tinted box behind a card's header icon. */
 function IconChip({ icon: Icon, className = '' }: { icon: IconType; className?: string }) {
   return (
     <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${className}`}>
@@ -334,32 +262,22 @@ function EmptyCard({
 }
 
 /**
- * The paper's p. 81 deliverable: EQ(4) document mastery "displayed as a progress
- * bar on the user dashboard" — with its history directly beneath it.
- *
- * The number and the curve live in ONE card on purpose. The curve's last point
- * equals this number by construction, and putting them in separate cards is how
- * someone later sources them differently and the invariant quietly dies.
+ * EQ(4) mastery as a progress bar (paper p. 81) with its history beneath. Kept in one card: the
+ * curve's last point equals this number by construction.
  */
 function MasteryCard({ data }: { data: DashboardData }) {
   const m = data.mastery;
   const realNothingAssessed = m.concepts_assessed === 0;
   const updated = relativeTime(m.last_updated);
 
-  /*
-   * Example content, and ONLY while the tour is spotlighting this card with a
-   * step that asked for it. `&& realNothingAssessed` is the second guard: a
-   * student replaying the tour from Help who already has real mastery must keep
-   * seeing their own number, never have it overwritten by a sample.
-   */
+  // Example content only while the tour spotlights this card, and only if nothing real is assessed.
   const showDemo = useTourDemo('dash-mastery') && realNothingAssessed;
   const nothingAssessed = showDemo ? false : realNothingAssessed;
   const overall = showDemo ? DEMO_MASTERY.overall : m.overall;
   const assessedCount = showDemo ? DEMO_MASTERY.concepts_assessed : m.concepts_assessed;
   const totalCount = showDemo ? DEMO_MASTERY.concepts_total : m.concepts_total;
 
-  // Tier from the ROUNDED value so the colour cannot contradict the number:
-  // 0.849 prints "85%" but tiers as intermediate on the raw value.
+  // Tier from the rounded value so colour matches the number shown.
   const percent = overall === null ? 0 : masteryPercent(overall);
   const tier = masteryTier(percent / 100);
   const tone = TIER_TONE[tier];
@@ -417,9 +335,7 @@ function MasteryCard({ data }: { data: DashboardData }) {
           {data.curve && (
             <div className="mt-6">
               <MasteryCurve points={data.curve.points} toneClass={toneText[tone]} />
-              {/* Wraps rather than overflows: with a stride AND truncation the
-                  right-hand caption runs to ~275px, which does not fit beside
-                  the range on a 375px phone. */}
+              {/* Wraps rather than overflows on a phone. */}
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mt-2">
                 <p className="font-sans text-[11px] text-slate-600">
                   {masteryPercent(data.curve.points[0].m_doc)}% →{' '}
@@ -446,11 +362,7 @@ function MasteryCard({ data }: { data: DashboardData }) {
   );
 }
 
-/**
- * The weakest concepts across EVERY space — the one thing this page can show that
- * no per-space screen can. The Analytics tab is scoped to one space by design, so
- * "what should I work on next, overall" had no home until now.
- */
+/** The weakest concepts across every space; the one view no per-space screen can give. */
 function FocusCard({
   focus,
   assessed,
@@ -460,12 +372,7 @@ function FocusCard({
   assessed: number;
   total: number;
 }) {
-  /*
-   * It used to `return null` here, which is half the reason a new student saw
-   * an empty page. It renders now — but the honesty guard below is replaced,
-   * not merely emptied: "ranked from the 0 concepts you have been tested on" is
-   * a sentence nobody should read.
-   */
+  // Renders even when empty, with its own message instead of the honesty line.
   const nothingAssessed = assessed === 0;
 
   return (
@@ -474,9 +381,7 @@ function FocusCard({
         <IconChip icon={Target} className="bg-primary-fixed-dim/10 text-primary-fixed-dim" />
         <h2 className={SECTION}>Focus next</h2>
       </div>
-      {/* The honesty guard, same wording as the Analytics tab. Without it a student
-          wonders why a concept they know they are weak at is missing — the answer
-          is always "it has not come up yet". */}
+      {/* Same honesty line as the Analytics tab: missing concepts haven't come up yet. */}
       {!nothingAssessed && (
         <p className="font-sans text-[11px] text-slate-600 mt-1.5">
           Ranked from the {assessed} concept{assessed === 1 ? '' : 's'} you have been tested on.
@@ -507,10 +412,7 @@ function FocusCard({
               </Fragment>
             ))}
           </div>
-          {/* ⚠️ ONCE PER CARD, NEVER PER ROW — five rows would print it five
-              times. It is the sentence that stops the app implying that
-              explaining a concept moves a number only flashcards and tests can
-              move. */}
+          {/* Once per card, never per row. */}
           <p className="font-sans text-[11px] text-slate-600 mt-4 leading-relaxed">
             {
               recommendConcept({
@@ -527,30 +429,18 @@ function FocusCard({
   );
 }
 
-/** One assessed concept. Never rendered for an unassessed one — it has no percentage. */
+/** One assessed concept (unassessed ones are never rendered). */
 function FocusRow({ concept }: { concept: FocusConcept }) {
   const percent = masteryPercent(concept.mastery);
   const tone = TIER_TONE[masteryTier(percent / 100)];
 
-  /*
-   * The lead step decides where this row goes.
-   *
-   * ⚠️ IT USED TO LINK AT THE SPACE AND NOTHING MORE, which lands on whatever
-   * tab a space opens on — Learning Resources — regardless of what the concept actually
-   * needs. Naming the tab, the lesson and (for Feynman) the concept is what turns
-   * "here is your weakest idea" into somewhere to go.
-   *
-   * ⚠️ A REAL `<Link>` HERE, unlike every other recommendation in the app. The
-   * dashboard is a different route from the study space, so this is a genuine
-   * navigation and `StudySpace` mounts fresh and reads the params. Inside the
-   * space the same link would be inert — see `studySpaceLink()`.
-   */
+  // The lead step picks the tab, lesson and (for Feynman) concept. A real <Link> is correct here: this
+  // is a different route, so StudySpace mounts fresh and reads the params.
   const lead = recommendConcept({
     term: concept.term,
     band: conceptBand({ assessed: true, mastery: concept.mastery }),
     mastery: concept.mastery,
-    // The dashboard payload carries no page numbers. `recommendConcept` degrades
-    // to "that part of the lesson"; the Analytics tab names the page precisely.
+    // No page numbers in this payload, so the step says "that part of the lesson".
     sourcePages: null,
   }).steps[0];
 
@@ -561,7 +451,7 @@ function FocusRow({ concept }: { concept: FocusConcept }) {
           ? studySpaceLink(concept.space_id, {
               tab: lead.tab,
               materialId: concept.material_id,
-              // One row, one concept. The results screen is the multi-concept caller.
+              // One concept per row.
               conceptIds: lead.action === 'feynman' ? [concept.concept_id] : [],
             })
           : '/student/spaces'
@@ -590,15 +480,7 @@ function FocusRow({ concept }: { concept: FocusConcept }) {
   );
 }
 
-/**
- * ⚠️ THIS CARD CARRIES THE "MAKE YOUR FIRST SPACE" CALL TO ACTION, and it is the
- * right home for it — this is the section *about* study spaces, in the main
- * column, where a student is already looking for them.
- *
- * It used to `return null` on an empty list, which was the other half of the
- * empty-dashboard bug: the one control a brand-new student needs was the one
- * thing not drawn.
- */
+/** Study spaces, including the "make your first space" call to action for new students. */
 function SpacesCard({ spaces }: { spaces: SpaceMasteryRow[] }) {
   return (
     <div data-tour="dash-spaces">
@@ -668,7 +550,7 @@ function SpaceRow({ space }: { space: SpaceMasteryRow }) {
         </div>
       </div>
 
-      {/* null, never 0 — an unmeasured space has no bar to fill. */}
+      {/* null, never 0: an unmeasured space has no bar. */}
       <MeterBar
         value={started ? space.m_doc : null}
         tone={tone}
@@ -685,25 +567,11 @@ function SpaceRow({ space }: { space: SpaceMasteryRow }) {
 }
 
 /**
- * The day streak.
- *
- * ══ IT RENDERS AT ZERO, UNLIKE `DueCard` ══
- * A student with no streak is exactly who the card is for: it is the only thing
- * on the page that says "come back tomorrow", and hiding it until they already
- * have one means it only ever appears to students who did not need telling.
- *
- * ══ BOTH NUMBERS, BECAUSE THE PAIR IS THE MESSAGE ══
- * `day_streak` is the current run and `longest_streak` is the best ever. Showing
- * only the current one makes a broken streak look like lost work; the best-ever
- * line is what says the record survived. Badges are awarded off `longest_streak`
- * for the same reason.
- *
- * A day is an Asia/Manila calendar day, decided by `trigger_update_streak` in
- * the database — never a 48-hour clock, whatever ARCHITECTURE.md used to say.
+ * The day streak. Renders at zero (it's what says "come back tomorrow"). Shows current and best:
+ * badges use the best, so a broken streak doesn't look like lost work. Days are Asia/Manila dates.
  */
 function StreakCard({ g }: { g: GamificationBlock }) {
-  // Example only while the tour is on this card AND the real streak is zero, so
-  // a replay from Help never overwrites a run the student actually has.
+  // Example only while the tour is on this card and the real streak is zero.
   const showDemo = useTourDemo('dash-streak') && g.day_streak === 0;
   const days = showDemo ? DEMO_STREAK_DAYS : g.day_streak;
 
@@ -739,45 +607,21 @@ function StreakCard({ g }: { g: GamificationBlock }) {
 }
 
 /**
- * Earned badges, plus a way in to the full catalogue.
- *
- * ══ THE CARD ITSELF STAYS EARNED-ONLY ══
- * No greyed-out rail: it is on screen every visit, and on a two-week study a wall
- * of locked tiles reads as a list of things you failed to do. `BadgeGalleryModal`
- * is where the unearned ones live, because opening it is the student ASKING what
- * is left — see the header of `src/lib/badges.ts`.
- *
- * ══ IT NO LONGER RETURNS NULL WHEN EMPTY ══
- * It used to, which meant a brand-new account — the common case in week one —
- * rendered no badges section at all and so had nothing to click. Discovering that
- * badges exist was left to earning one by accident.
- *
- * ══ THE NUDGE IS ONE ROW, AND ONLY ONCE IT HAS MOVED ══
- * The closest unearned badge with real progress behind it. Gated on `current > 0`
- * deliberately: "5 of 7 days" is the motivating half, whereas an untouched
- * "0 / 100" is precisely the accusation the earned-only rule exists to avoid.
- *
- * `badgeStyle()` never throws on an unknown name, so the server can award a new
- * badge before this client knows how to label it.
+ * Earned badges plus a link to the full gallery (where locked ones live). Renders even with none.
+ * One "Next" nudge, only once progress has started (current > 0).
  */
 function BadgesCard({ g }: { g: GamificationBlock }) {
   const [galleryOpen, setGalleryOpen] = useState(false);
 
-  /*
-   * ⚠️ THE EXAMPLE BADGES ARE REAL CATALOGUE IDENTITIES, not invented ones. They
-   * go through `badgeStyle()` exactly as an earned badge does, so a student is
-   * shown three badges that genuinely exist and that they can genuinely earn.
-   * Guarded on holding none, so a replay never buries real badges under samples.
-   */
+  // Example badges are real catalogue entries, shown only when none are held.
   const showDemo = useTourDemo('dash-badges') && g.badges.length === 0;
   const badges = showDemo
     ? DEMO_BADGE_NAMES.map((name) => ({ name, awarded_at: new Date().toISOString() }))
     : g.badges;
-  // Deliberately the REAL totals: a fake "3 / 14" is a claim about the student.
+  // Real totals, never the example's.
   const totals = badgeTotals(g.badges);
 
-  // Closest to done, and only if it has actually started. `badge_progress` holds
-  // unearned countable badges only, so nothing here can already be held.
+  // Closest to done, among badges already started.
   const nextUp = [...g.badge_progress]
     .filter((p) => p.current > 0)
     .sort((a, b) => b.current / b.target - a.current / a.target)[0];
@@ -859,10 +703,10 @@ function BadgesCard({ g }: { g: GamificationBlock }) {
 }
 
 function DueCard({ total, spaces }: { total: number; spaces: SpaceMasteryRow[] }) {
-  // Nothing due is not a state worth a card saying "0".
+  // Nothing due: no card.
   if (total <= 0) return null;
 
-  // Link to where the work actually is, rather than to the spaces list.
+  // Link to where the work is.
   const busiest = [...spaces].sort((a, b) => b.due_count - a.due_count)[0];
 
   return (
@@ -926,11 +770,7 @@ function RecentCard({ items }: { items: ActivityItem[] }) {
         {showDemo && <span className="ml-auto"><ExampleChip /></span>}
       </div>
       {showDemo ? (
-        /*
-         * Rendered here rather than through `ActivityRow`: that component takes a
-         * real `ActivityItem`, whose ids and timestamps would have to be
-         * fabricated to satisfy it. Sentences are what a student reads anyway.
-         */
+        // Plain sentences rather than ActivityRow, which would need fabricated ids and timestamps.
         <div className="mt-4 space-y-3.5">
           {DEMO_RECENT.map((row) => {
             const Icon = FOCUS_ICON_BY_KIND[row.kind];
@@ -983,15 +823,7 @@ function ActivityRow({ item }: { item: ActivityItem }) {
   );
 }
 
-/**
- * One sentence per activity.
- *
- * Free Recall and Feynman deliberately carry NO number. Free Recall's score is a
- * coverage ratio whose denominator is however finely that document happened to be
- * split, so it means nothing stripped of its context — and a dashboard is exactly
- * the context that strips context. Printing "31%" beside a test's "80%" invites
- * the comparison the codebase spends a paragraph forbidding.
- */
+/** One sentence per activity. Free Recall and Feynman carry no number (coverage % isn't comparable out of context). */
 function activityText(item: ActivityItem): string {
   switch (item.kind) {
     case 'test':
@@ -1013,7 +845,7 @@ const GAME_LABEL: Record<string, string> = {
   timed_trivia: 'Timed Trivia',
 };
 
-/** "2nd", "3rd", "4th" — for the curve's "showing every Nth point" caption. */
+/** "2nd", "3rd", "4th" for the curve caption. */
 function ordinal(n: number): string {
   const suffix = n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th';
   return `${n}${suffix}`;

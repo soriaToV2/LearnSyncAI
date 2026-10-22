@@ -10,125 +10,58 @@ import {
 } from './gameDifficulty';
 
 /**
- * Game content generation (PlayMe module) — term matching, timed trivia, crossword.
- *
- * Each helper takes pre-extracted concepts and returns strict JSON matching the
- * frontend CourseGameData sub-shapes. `tier` is derived server-side from the
- * student's M_doc (paper p. 83) and reaches the model as prompt text only —
- * nothing here touches mastery scores. See server/lib/gameDifficulty.ts.
- *
- * PLACEMENT IS THE WHOLE POINT OF THE PROMPT STRUCTURE BELOW. These prompts used
- * to carry one bare `DIFFICULTY_GUIDANCE` line buried mid-bullet-list, which is
- * exactly the placement testDifficulty.ts records as measured-failed: with the
- * tier only in a shared header, output came back byte-identical across tiers
- * because the specific imperative rules after it won. So each prompt states the
- * tier three times — the paper's framing as a standalone paragraph, a
- * game-specific focus paragraph, and the operative fields spliced onto the
- * bullets that actually decide the output.
- *
- * ⚠️ THE PROMPT TEXT IS LOAD-BEARING AND WAS TUNED OVER FOUR MEASURED FAILURES.
- * `gameDifficulty.ts` and `GAMES_CALIBRATION_IMPLEMENTATION.md` §7.2 record them:
- * pushing the difficulty into the QUESTION produced invented facts ("What does
- * Cross-Site Scripting *prevent*?" answered "Malicious script execution", which
- * XSS *causes*), then ungrammatical fragments, then subjectless stems naming no
- * concept at all; and stating trivia's reading budget one-sidedly collapsed
- * advanced to "What is XSS?", the EASIEST output of the three tiers. The
- * difficulty lives in the DISTRACTORS. Do not "improve" any of this.
- *
- * GAMES READ MASTERY AND NEVER WRITE IT (paper p. 58). Note what that looks like
- * here: `ConceptInput` carries no `id`, so a generated game has no route back to
- * a `concepts` row at all. `bkt_source` stays a two-value enum and nothing on
- * this path imports `server/lib/bkt.ts`.
- *
- * Lived in `groq.ts` until 2026-08-19, on `llama-3.1-8b-instant` and
- * `llama-3.3-70b-versatile` — both decommissioned 17 June 2026. These moved out
- * rather than merely off Groq because `groq.ts` was itself deleted on the same
- * day, once nothing imported it.
+ * Game content generation: term matching, timed trivia, crossword.
+ * The tier is derived server-side from M_doc (paper p. 83) and reaches the model as prompt text.
+ * Each prompt states the tier three times (framing, focus, operative bullets); the wording was
+ * tuned against measured failures, see GAMES_CALIBRATION_IMPLEMENTATION.md before changing it.
+ * Games never write mastery: ConceptInput has no `id`.
  */
 
-/** A single concept pulled from the concepts table. Deliberately no `id` — see above. */
 export interface ConceptInput {
   term: string;
   definition: string;
 }
 
-/** A term/definition pair for the Term Matching game (matches frontend TermItem). */
+/** Matches frontend TermItem. */
 export interface GeneratedTerm {
   term: string;
   definition: string;
 }
 
-/** A trivia question (matches frontend Question). */
+/** Matches frontend Question. */
 export interface GeneratedTrivia {
   question: string;
   options: string[];
   correct: string;
 }
 
-/** A crossword answer + clue. The grid layout is computed separately in code. */
+/** The grid layout is computed separately in code. */
 export interface GeneratedCrosswordWord {
   answer: string;
   clue: string;
 }
 
-/**
- * Builds the numbered concept list shared by every game prompt.
- *
- * THE ORDER IS MEANINGFUL. `pickConceptsByMastery()` sorts by how much the
- * student needs the practice, and every prompt tells the model to prefer items
- * listed earlier when it has to choose. Do not sort or shuffle this.
- */
+/** Numbered concept list for prompts. Order is meaningful (weakest first); don't sort or shuffle. */
 function conceptListOf(concepts: ConceptInput[]): string {
   return concepts.map((c, i) => `${i + 1}. Term: "${c.term}" — Definition: ${c.definition}`).join('\n');
 }
 
-/** The one line every game prompt uses to spend the surplus in SELECT_BUFFER. */
+/** Spends the SELECT_BUFFER surplus on the concepts the student most needs. */
 const ORDERING_RULE =
   'When two candidates are equally suitable, prefer the one listed EARLIER — the concepts are ' +
   'ordered by what this student most needs to practise.';
 
-/**
- * Nothing here reasons. The model rewrites definitions it has been handed into
- * cards, questions and clues; the tier it must write to is chosen server-side
- * from BKT, the timer is a table lookup, and the crossword grid is solved in
- * code. Measured, `gemini-3.6-flash` runs ~2s at MINIMAL against 5–20s at LOW,
- * and thinking tokens bill at the OUTPUT rate.
- */
+/** Nothing here reasons, so MINIMAL thinking. */
 const THINKING = ThinkingLevel.MINIMAL;
 
-/**
- * Output ceilings, PORTED from the Groq budgets rather than doubled.
- *
- * ⚠️ This deliberately differs from `testGeneration.ts` and `questionGeneration.ts`,
- * which both doubled theirs on the way across. There the model writes twenty dense
- * items per batch and the visible output genuinely approaches the ceiling, so
- * MINIMAL thinking tokens — which draw on the same budget — could tip a call into
- * `finishReason=MAX_TOKENS`. A game is one small payload against a budget Groq
- * already sized generously: 4 term pairs ≈ 150 tokens against 2048, 10 trivia
- * items ≈ 900 against 4096, 12 crossword entries ≈ 350 against 3072. The headroom
- * the doubling buys is already here.
- *
- * If that ever stops being true, `describeEmptyResponse()` in `gemini.ts` names
- * the cause explicitly rather than reporting a bare empty response — raise the
- * one budget that hit it.
- */
+/** Small payloads, so these leave ample headroom. */
 const MAX_OUTPUT_TOKENS = {
   term_matcher: 2048,
   timed_trivia: 4096,
   crossword: 3072,
 } as const;
 
-/**
- * Pins each response shape. STRUCTURE ONLY, and the distinction is load-bearing:
- * a schema cannot express "exactly 4 options", "`correct` is one of them
- * verbatim", "the answer is 3–10 letters of A–Z" or the survivor floors below.
- * Every one of those checks stays exactly as it was written for Groq, which had
- * no schema at all. Pinning the shape removes a failure mode; it removes no
- * validation.
- *
- * The envelope names match what each prompt already asks for — `terms`, `trivia`,
- * `words` — so adding these changed no prompt text.
- */
+/** Response shapes. Structure only; value checks stay in each generator. */
 const TERMS_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -181,24 +114,7 @@ const WORDS_SCHEMA: Schema = {
   required: ['words'],
 };
 
-/**
- * One model call per game, timed.
- *
- * A typed Gemini failure passes through UNTOUCHED, so `games.routes.ts` can tell
- * a spent daily quota (429) from an outage (503). Wrapping it in a plain Error
- * collapses both into a generic 502 and tells a student to retry immediately on a
- * day when retrying cannot possibly work.
- *
- * NO `temperature`. The 0.6 / 0.7 / 0.6 that used to sit at these three call
- * sites are gone: Gemini 3 dropped the sampling parameters and `generateJson()`
- * strips one loudly if passed. Nothing is lost, because temperature was never
- * what made "Play Again" produce a different game — `pickConceptsByMastery()` is.
- * That is Efraimidis–Spirakis A-Res weighted sampling in `gameDifficulty.ts`,
- * which hands the model a genuinely different (and differently ordered) set of
- * concepts on every generation; its own comment records that a deterministic
- * weakest-first sort would rebuild a byte-identical game, which is the failure
- * replay variety actually guards against.
- */
+/** One timed model call. Typed Gemini failures are rethrown unwrapped so the route can answer 429 vs 503. */
 async function askModel<T>(
   prompt: string,
   maxOutputTokens: number,
@@ -221,7 +137,6 @@ async function askModel<T>(
   }
 }
 
-/** One line per generated game — the only place its cost is visible. */
 function logGame(gameType: string, tier: DifficultyTier, count: number, elapsedMs: number): void {
   console.log(
     `[Games] ${gameType} ${tier} — ${count} item${count === 1 ? '' : 's'} in ` +
@@ -229,9 +144,6 @@ function logGame(gameType: string, tier: DifficultyTier, count: number, elapsedM
   );
 }
 
-/**
- * Generates term/definition pairs for the Term Matching game.
- */
 export async function generateTermMatches(
   concepts: ConceptInput[],
   count = 4,
@@ -280,28 +192,12 @@ ${conceptListOf(concepts)}`;
   return terms;
 }
 
-/** Four options per trivia question — the shape TRIVIA_SCHEMA and the client both assume. */
 const OPTIONS_PER_QUESTION = 4;
 
 /**
- * One answer position per question, as an even multiset shuffled end-to-end.
- *
- * Balanced rather than independently random: with plain per-question randomness
- * and 10 questions, roughly 1 game in 13 still lands five or more answers on A,
- * which a student who has just been told this was fixed reads as unfixed. An
- * even multiset gives every position 2 or 3 of the 10, always.
- *
- * Shuffled end-to-end, never dealt one-of-each per block of four — that would
- * let a student who tracked three questions know the fourth by elimination.
- *
- * The random `offset` matters because 10 does not divide by 4: two positions get
- * the extra slot, and starting at 0 every time would hand that surplus to A and
- * B in every game — a smaller version of the bug this fixes.
- *
- * Math.random(), NOT the seededShuffle/hash idiom in testGeneration.ts. The two
- * modules want opposite things: a test must be reproducible, whereas a game must
- * not be, or "Play Again" rebuilds a byte-identical one (see gameDifficulty.ts,
- * which uses Math.random() for exactly that reason).
+ * Answer positions as an even multiset, shuffled end-to-end (never per block of four, which
+ * would allow elimination). Random offset so the surplus slot isn't always A/B. Uses
+ * Math.random() on purpose: games must not be reproducible.
  */
 function balancedSlots(n: number): number[] {
   const offset = Math.floor(Math.random() * OPTIONS_PER_QUESTION);
@@ -314,15 +210,9 @@ function balancedSlots(n: number): number[] {
 }
 
 /**
- * Re-places each question's correct answer, discarding the model's ordering.
- *
- * Exported for the balance check in scripts/, not because anything else calls it.
- *
- * The answer is spliced out BY INDEX, never filtered out by value: nothing
- * validates that the four options are distinct, so filter(o => o !== correct)
- * would drop both copies of a duplicated answer and leave three options. The
- * caller's filter already guarantees options.length === 4 and
- * options.includes(correct), so splice-then-splice always yields exactly four.
+ * Re-places each correct answer, discarding the model's ordering (it favours A).
+ * Splice by index, never filter by value: options aren't guaranteed distinct.
+ * Exported for the balance check in scripts/.
  */
 export function placeAnswers(items: GeneratedTrivia[]): GeneratedTrivia[] {
   const slots = balancedSlots(items.length);
@@ -334,9 +224,6 @@ export function placeAnswers(items: GeneratedTrivia[]): GeneratedTrivia[] {
   });
 }
 
-/**
- * Generates multiple-choice trivia questions for the Timed Trivia game.
- */
 export async function generateTrivia(
   concepts: ConceptInput[],
   count = 6,
@@ -344,12 +231,7 @@ export async function generateTrivia(
 ): Promise<GeneratedTrivia[]> {
   const rules = TRIVIA_TIER_RULES[tier];
   const seconds = Math.round(TRIVIA_QUESTION_MS[tier] / 1000);
-  // A reading budget, stated as a TARGET rather than a ceiling. An earlier
-  // version said only "the student has N seconds, anything they cannot finish
-  // reading measures nothing" — and the model optimised the one thing it could
-  // check, collapsing advanced to 2.5-word questions like "What is XSS?" with
-  // two-word options: the EASIEST output of the three tiers. Time pressure has
-  // to be two-sided or terseness becomes a way to comply with "make it hard".
+  // Word budget stated as a target, not a ceiling; as a ceiling the model wrote trivially short questions.
   const budget = seconds * 4;
 
   const prompt = `You are writing multiple-choice trivia questions for a timed study game.
@@ -409,30 +291,20 @@ ${conceptListOf(concepts)}`;
   if (trivia.length === 0) {
     throw new Error('The game writer did not return any valid trivia questions.');
   }
-  // The model writes the correct option first ~69% of the time (measured over
-  // the 130 questions stored before this landed). Its ordering is discarded
-  // here — see placeAnswers().
   const placed = placeAnswers(trivia);
   logGame('timed_trivia', tier, placed.length, elapsedMs);
   return placed;
 }
 
-/**
- * Generates crossword answer/clue candidates. The grid is laid out separately
- * by buildCrossword() in lib/crossword.ts — the model never assigns coordinates.
- */
+/** Crossword answer/clue candidates. buildCrossword() lays out the grid; the model never assigns coordinates. */
 export async function generateCrosswordWords(
   concepts: ConceptInput[],
   tier: DifficultyTier = 'foundational'
 ): Promise<GeneratedCrosswordWord[]> {
   const rules = CROSSWORD_TIER_RULES[tier];
 
-  // The two hard constraints below stay tier-INDEPENDENT and immediately after
-  // the tier'd "answer" line, because they are what keeps the puzzle buildable:
-  // words outside 3–10 letters are filtered out, buildCrossword() needs at least
-  // two survivors, and the route throws on an empty layout. Advanced answers name
-  // consequences and are the longest, so this is exactly where a 502 would come
-  // from if the length rule got diluted by tier prose.
+  // Keep the A–Z / 3–10 letter and no-abbreviation rules tier-independent and right after
+  // "answer": they keep the puzzle buildable.
   const prompt = `You are creating clues for a crossword puzzle built from study material.
 
 ${TIER_GUIDANCE[tier]}

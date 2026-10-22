@@ -11,29 +11,10 @@ import {
 } from './testAllocation';
 
 /**
- * Writing a practice test from a material's concepts.
- *
- * ONE CALL PER FORMAT, not one call for the whole test. The original reason was
- * that Groq's JSON mode gave no structural guarantee; `responseSchema` now does,
- * so THAT argument is gone — but do not read this as an invitation to merge the
- * five calls, because the decision rests on two reasons a schema does not touch.
- *
- * First, a prompt can be written tightly for ONE question shape in a way it never
- * can for a five-way union: "the clue must NEVER contain the term" is the single
- * most load-bearing line in `writeIdentification`, and it is meaningless to the
- * other four formats. Second, failure stays contained — a fumbled item costs that
- * item a template, not its section.
- *
- * THE MODEL NEVER SEES OR RETURNS A CONCEPT ID. It echoes the item's number
- * within its batch, and that number is range-checked before it is trusted —
- * copied from `generateQuestionsForConcepts()`. The route this replaces asked
- * the model to echo `concept_id` UUIDs and never checked them, which silently
- * attaches a student's mastery to the wrong concept: the single worst failure
- * available to this feature, because nothing downstream can detect it.
- *
- * THE SERVER OWNS EVERYTHING THAT DECIDES A GRADE — the true/false verdict, the
- * position of the correct option, which concepts form a matching block. The
- * model only writes prose.
+ * Writes a practice test from a material's concepts, one model call per format so each prompt
+ * can be tight and a failure stays contained.
+ * The model echoes an item number, never a concept id, and every echo is range-checked.
+ * The server owns everything that decides a grade; the model only writes prose.
  */
 
 export interface ConceptForTest {
@@ -52,17 +33,15 @@ export interface StoredQuestion {
   prompt: string;
   options?: string[];
   blockId?: string;
-  /** The answer key. Stripped before this ever reaches a browser. */
+  /** The answer key. Stripped before reaching a browser. */
   answer: string;
   explanation: string;
 }
 
-/** Concepts per model call, matching the flashcard generator's proven batch size. */
+/** Concepts per model call. */
 const BATCH = 20;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Text helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 function shorten(text: string, max: number): string {
   const clean = text.trim().replace(/\s+/g, ' ');
@@ -71,7 +50,6 @@ function shorten(text: string, max: number): string {
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** The forms of a term worth checking for in generated text. */
 function termForms(term: string): string[] {
   const bare = term.replace(/\s*\([^)]*\)\s*$/, '').trim();
   const acronym = acronymOf(term);
@@ -79,21 +57,14 @@ function termForms(term: string): string[] {
 }
 
 /**
- * Does this text give the answer away by naming the concept?
- *
- * The load-bearing validation for identification, fill-in-the-blank and matching
- * glosses. A clue that contains its own answer is not a question, and the model
- * writes one constantly — it reads as helpful.
- *
- * Leading word boundary only, so "firewalls" is caught by "firewall". Terms
- * shorter than three characters are skipped: too short to test without matching
- * inside unrelated words.
+ * Whether text gives the answer away by naming the concept. Leading word boundary only,
+ * so "firewalls" matches "firewall"; forms under 3 chars are skipped.
  */
 function mentionsTerm(text: string, term: string): boolean {
   return termForms(term).some((form) => new RegExp(`\\b${escapeRe(form)}`, 'i').test(text));
 }
 
-/** Blanks out the term so a fallback built from the definition still hides it. */
+/** Hides the term in a fallback built from the definition. */
 function withoutTerm(text: string, term: string): string {
   let out = text;
   for (const form of termForms(term)) {
@@ -116,25 +87,14 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
   return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Model plumbing
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface EchoItem {
   n?: unknown;
   [key: string]: unknown;
 }
 
-/**
- * Wraps one item shape in the `{ "items": [...] }` envelope every prompt asks for.
- *
- * STRUCTURE ONLY, and the distinction is load-bearing. A schema cannot express
- * "n is inside this batch", "the distractors differ from the correct answer" or
- * "the clue does not contain its own answer" — those stay in the range check
- * below and in each writer's validation loop, exactly as when this ran on Groq
- * with no schema at all. Pinning the shape removes a failure mode; it removes no
- * validation.
- */
+/** Wraps an item shape in `{ items: [...] }`. Structure only; value checks stay in each writer. */
 function itemsSchema(properties: Record<string, Schema>): Schema {
   const keys = Object.keys(properties);
   return {
@@ -164,25 +124,10 @@ const IDENTIFICATION_SCHEMA = itemsSchema({ clue: { type: Type.STRING } });
 const FILL_BLANK_SCHEMA = itemsSchema({ sentence: { type: Type.STRING } });
 const GLOSS_SCHEMA = itemsSchema({ gloss: { type: Type.STRING } });
 
-/**
- * Nothing here reasons. The model writes prose; the server owns every decision
- * that affects a mark — the true/false verdict, where the correct option sits,
- * which concepts form a matching block — and grading is deterministic in
- * `testGrading.ts`. Measured, `gemini-3.6-flash` runs ~2s at MINIMAL against
- * 5–20s at LOW, and thinking tokens bill at the OUTPUT rate.
- */
+/** Nothing here reasons (the server owns every grading decision), so MINIMAL: much faster and cheaper. */
 const THINKING = ThinkingLevel.MINIMAL;
 
-/**
- * Output ceiling per batch of up to `BATCH` items.
- *
- * DOUBLED from the Groq budgets (4096 / 3072 / 2048) rather than ported across.
- * MINIMAL thinking is not *no* thinking, and Gemini 3 thinking tokens draw on
- * `maxOutputTokens` — a budget sized for the visible output alone comes back with
- * `finishReason=MAX_TOKENS` and no text, which `generateJson()` throws on and
- * `failGeneration()` turns into a 502, costing the whole test. A ceiling is not a
- * reservation, so headroom that goes unused is free.
- */
+/** Output ceiling per batch. Generous because thinking tokens count against it. */
 const MAX_OUTPUT_TOKENS: Record<QuestionFormat, number> = {
   multiple_choice: 8192,
   true_or_false: 6144,
@@ -192,23 +137,8 @@ const MAX_OUTPUT_TOKENS: Record<QuestionFormat, number> = {
 };
 
 /**
- * One model call, returning items keyed by their position in `batch`.
- *
- * The range check on `n` is the whole point: an out-of-range or non-integer echo
- * is dropped rather than being allowed to attach this text to a different
- * concept. A dropped item is not an error — the caller falls back.
- *
- * NO `temperature`. Gemini 3 dropped the sampling parameters, and `generateJson()`
- * strips one loudly if it is passed. The 0.2 that used to sit here was justified
- * by the paper's Content Consistency check (p. 98), which expects "core factual
- * content, terminology, and difficulty level" to be stable across generations —
- * so be precise about what still delivers that, now the knob is gone. SHAPE is
- * pinned by `responseSchema`; FACTUAL CONTENT by the prompt's "use only what each
- * definition states" rule, enforced afterwards by `mentionsTerm()`, `looksClean()`
- * and the distinctness checks; DIFFICULTY by `TIER_GUIDANCE`, chosen server-side
- * from BKT rather than by the model. What was never guaranteed — and is slightly
- * less true now — is that two generations phrase a question the same way. The
- * paper's criterion does not ask for that.
+ * One model call, returning items keyed by position in the batch. Out-of-range echoes are
+ * dropped so text can't attach to the wrong concept; the caller falls back.
  */
 async function askBatch<T>(
   prompt: string,
@@ -226,10 +156,7 @@ async function askBatch<T>(
       maxOutputTokens: maxTokens,
     });
   } catch (err) {
-    // A typed Gemini failure passes through UNTOUCHED. `failGeneration()` branches
-    // on `instanceof GeminiUnavailableError` to answer 429-with-Retry-After versus
-    // 503; wrapping it in a plain Error collapses both into a generic 502 and tells
-    // a student to retry immediately when the quota is spent for the day.
+    // Rethrow typed failures unwrapped; failGeneration() needs them to choose 429 vs 503.
     if (err instanceof GeminiUnavailableError) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(`Test generation failed on ${label}: ${reason}`);
@@ -246,34 +173,14 @@ async function askBatch<T>(
 
 const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
-/**
- * The model's own item number, leaked into the sentence it was asked to write.
- *
- * Observed live, twice in one run: "…aim to mitigate through various security
- * measures n1." and "…which is part of n." The model is told to echo the number
- * in a field called `n`, and sometimes writes it into the prose as well.
- *
- * REJECTED, NOT REPAIRED. Stripping the token leaves "…which is part of." —
- * grammatical wreckage that still reaches the student. A rejected item falls
- * back to a template, which is always a complete sentence. Only a TRAILING
- * orphan is matched, so a legitimate "n" elsewhere in a sentence is untouched.
- */
+/** A trailing item number leaked into prose ("…part of n1."). Rejected, not repaired; the item falls back. */
 const ORPHAN_INDEX = /\bn\s*\d*\s*[.!?]?\s*$/i;
 
-/** Text that is safe to show a student. */
 function looksClean(text: string): boolean {
   return text.length > 0 && !ORPHAN_INDEX.test(text);
 }
 
-/**
- * Definitions are trimmed on the way INTO a prompt.
- *
- * Not for readability — for tokens. Five calls go out per test, each carrying its
- * whole concept slice, and input is billed by the token against a per-minute quota
- * shared with concept extraction and Feynman grading on the same model. The
- * 643-character outliers in this corpus are worth clipping; the median definition
- * is 162 characters, so this leaves almost everything untouched.
- */
+/** Clips long definitions in prompts to save input tokens. */
 const PROMPT_DEFINITION_CAP = 400;
 
 function conceptLines(slice: ConceptForTest[]): string {
@@ -306,10 +213,7 @@ async function inBatches<T>(
   return all;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The five writers. Each returns text keyed by position in its concept slice;
-// a missing key means "fall back", never "drop the question".
-// ─────────────────────────────────────────────────────────────────────────────
+// The five writers. Each returns text keyed by position in its slice; a missing key means "fall back".
 
 interface ChoiceDraft {
   question: string;
@@ -565,26 +469,14 @@ ${list}`;
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Assembly
-// ─────────────────────────────────────────────────────────────────────────────
 
-/** The definition is the explanation. Educator text, so it cannot be wrong. */
+/** The educator's definition is the explanation. */
 const explain = (c: ConceptForTest) => `${c.term} — ${c.definition}`;
 
 /**
- * Six option texts for a matching block, guaranteed distinct.
- *
- * Two concepts really do collide: asked for a ≤90-character gloss, both `XSS`
- * and `SQL Injection` came back as "Cyberattack risk", and the block rendered
- * with the same sentence at A and C. That is not cosmetic — an answer is stored
- * as the option's TEXT, so two identical options are one slot as far as both the
- * grader and the exclusive-slot UI are concerned, and whichever the student
- * picks grades the same. The correct answer becomes ambiguous.
- *
- * On a collision, fall back to the concept's own definition, which is unique per
- * row by construction. The last resort appends the term, which is ugly but can
- * never collide — and a slightly clumsy option beats an ungradeable one.
+ * Six distinct option texts for a matching block. Answers are stored as option text, so
+ * duplicate glosses would make the key ambiguous; collisions fall back to the definition, then the term.
  */
 function distinctPool(concepts: ConceptForTest[], glossOf: Map<string, string>): string[] {
   const used = new Set<string>();
@@ -601,15 +493,8 @@ function distinctPool(concepts: ConceptForTest[], glossOf: Map<string, string>):
 }
 
 /**
- * Builds the whole test.
- *
- * Concepts are consumed one per question in the order given, so no concept can
- * appear twice — see `allocateConcepts`. The five format writers run in
- * parallel; batches within a format stay sequential.
- *
- * EVERY FORMAT HAS A DETERMINISTIC FALLBACK. A model that skips an item must not
- * shorten the test, because the test length is "one question per concept" and a
- * short test silently breaks that invariant along with the BKT coverage it buys.
+ * Builds the whole test: one question per concept, formats written in parallel.
+ * Every format has a deterministic fallback so a skipped item never shortens the test.
  */
 export async function generateTestQuestions(params: {
   concepts: ConceptForTest[];
@@ -634,13 +519,10 @@ export async function generateTestQuestions(params: {
   const fib = slices.get('fill_in_the_blank') ?? [];
   const match = slices.get('matching_type') ?? [];
 
-  // The server decides every true/false verdict, alternating, so the mix is
-  // balanced by construction rather than by asking the model to be fair.
+  // The server sets true/false verdicts, alternating, so the mix is balanced.
   const verdicts = tf.map((_, i) => i % 2 === 0);
 
-  // Matching blocks need glosses for their distractors too. Distractors are
-  // drawn from concepts outside the block — reusing one that carries its own
-  // question elsewhere is fine, since a distractor produces no telemetry row.
+  // Decoys come from outside the block; reusing a concept as a decoy emits no telemetry row.
   const blocks: { terms: ConceptForTest[]; decoys: ConceptForTest[] }[] = [];
   for (let start = 0; start + MATCH_TERMS_PER_BLOCK <= match.length; start += MATCH_TERMS_PER_BLOCK) {
     const terms = match.slice(start, start + MATCH_TERMS_PER_BLOCK);
@@ -666,10 +548,7 @@ export async function generateTestQuestions(params: {
     }
   }
 
-  // 2. Write. Five calls at most (one per format, more if a format exceeds
-  //    BATCH concepts), in parallel. Concurrency is what keeps generation near
-  //    single-call latency; a per-minute quota refusal is classified transient
-  //    by gemini.ts and retried, so the failure mode is a pause, not an error.
+  // 2. Write, one call per format in parallel. A per-minute quota refusal is retried as transient.
   const [choiceDrafts, tfDrafts, identDrafts, fibDrafts, glossDrafts] = await Promise.all([
     choice.length ? writeChoice(choice, materialTitle, tier) : new Map<number, ChoiceDraft>(),
     tf.length ? writeTrueFalse(tf, verdicts, materialTitle, tier) : new Map<number, string>(),
@@ -760,11 +639,6 @@ export async function generateTestQuestions(params: {
     }
   }
 
-  // One line per test, not per call. Generation is the slowest thing a student
-  // waits on in the whole app and the only place its cost is visible, so the log
-  // has to state it; measured 47s and 102s on a 42-concept material, against the
-  // ~2s a single small Gemini call takes. The spread is the model's output speed
-  // on the multiple-choice batch, which every other format finishes inside.
   console.log(
     `[TestGen] ${questions.length} questions from ${concepts.length} concepts in ` +
       `${((Date.now() - startedAt) / 1000).toFixed(1)}s (${fallbackCount} fallbacks, tier ${tier})`

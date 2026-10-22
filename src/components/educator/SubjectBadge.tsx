@@ -1,10 +1,7 @@
 import type { CSSProperties } from 'react';
 import { useSubjectName } from '../../context/SubjectsContext';
 
-/**
- * A stable colour per subject code, so the same subject always reads the same
- * across the dashboard, library, and roster. Codes match public.subjects.
- */
+/** A stable colour per subject code. */
 const SUBJECT_COLOR: Record<string, string> = {
   FIL: '#f472b6',
   ENG: '#60a5fa',
@@ -30,14 +27,7 @@ export default function SubjectBadge({ code, full = false, className = '' }: Sub
   const subjectNameOf = useSubjectName();
   const color = SUBJECT_COLOR[code] ?? FALLBACK;
 
-  /*
-   * ⚠️ `.tone-chip` + `--tone`, NOT three inline colours. The inline version
-   * could not be themed at all — an inline style beats every stylesheet rule,
-   * so the light theme's overrides could not reach it and these badges rendered
-   * at ~2:1 contrast on white. See the TINTED CHIPS block in `index.css` for the
-   * measurements and for how the light value is derived. Dark mode is
-   * unchanged: 10% and 20% are exactly what the `1a`/`33` suffixes meant.
-   */
+  // .tone-chip + --tone, not inline colours, so the light theme can fix contrast. See index.css TINTED CHIPS.
   return (
     <span
       title={subjectNameOf(code)}

@@ -1,24 +1,14 @@
 import { api } from './api';
 
 /**
- * The admin portal's data layer — the counterpart of `src/lib/account.ts`, and
- * its deliberate inverse.
- *
- * `account.ts` is what a user may change about THEMSELVES, and it must never
- * grow a `role`, `status` or `grade_level` field because `PATCH /api/auth/me`
- * refuses all three. This module is what an administrator may change about
- * SOMEONE ELSE, so it carries exactly those fields — and the server's
- * `UpdateAccountSchema` is what makes that safe rather than this file.
- *
- * ⚠️ THE ROLES AN ADMIN MAY ASSIGN ARE `student` AND `educator`. Never `admin`:
- * that is the privilege-escalation surface, and `AssignableRole` on the server
- * rejects it regardless of what is sent from here.
+ * Admin portal data layer: what an admin may change about someone else (role, status, grade), the
+ * inverse of src/lib/account.ts. The server's UpdateAccountSchema is what makes it safe.
  */
 
-/** Roles an admin may assign. `admin` is not one — see above. */
+/** Roles an admin may assign; never `admin`. */
 export type AssignableRole = 'student' | 'educator';
 
-/** Roles an account may already have, which is a wider set than the assignable one. */
+/** Roles an account may already have. */
 export type AccountRole = AssignableRole | 'admin';
 
 export type AccountStatus = 'active' | 'disabled';
@@ -26,46 +16,28 @@ export type AccountStatus = 'active' | 'disabled';
 export interface AdminAccount {
   id: string;
   role: AccountRole;
-  /**
-   * ⚠️ NULL MEANS THE ACCOUNT CANNOT SIGN IN. `handle_new_user()` degrades a
-   * malformed or already-taken username to NULL rather than raising, because an
-   * exception in that trigger would abort the account creation entirely. The
-   * portal surfaces these as the "Cannot sign in" attention item — fixing one is
-   * a username edit.
-   */
+  /** NULL means the account can't sign in (handle_new_user() degraded a bad username). Fix by editing it. */
   username: string | null;
   first_name: string;
   last_name: string;
-  /** 7–10 for students; NULL for educators and admins, by DB constraint. */
+  /** 7–10 for students; NULL otherwise. */
   grade_level: number | null;
   status: AccountStatus;
   /**
-   * ⚠️ TRUE MEANS THE ACCOUNT HAS NOT BEEN ACTIVATED — it still holds the password
-   * an administrator set, so more than one person knows it. Every route except
-   * `GET /api/auth/me` and `POST /api/auth/change-password` refuses it.
-   *
-   * This is a SEPARATE FACT from `status`, not a third value of it. An account can
-   * be disabled *and* never activated, and one column could not express both —
-   * see `accountStateLabel()` below for how the two combine on screen.
+   * True until the holder replaces the admin-set password; most routes refuse it until then.
+   * Separate from `status` (an account can be both disabled and never activated).
    */
   must_change_password: boolean;
   created_at: string;
   updated_at: string;
 }
 
-/** One account plus the two facts that live on `auth.users`, not `profiles`. */
+/** One account plus email and last sign-in from auth.users. */
 export interface AdminAccountDetail extends AdminAccount {
   email: string | null;
-  /**
-   * True for a generated `<username>@pca.invalid` address. The UI shows "None"
-   * rather than printing it — a placeholder must never read as a real contact.
-   */
+  /** A generated placeholder; the UI shows "None". */
   email_is_placeholder: boolean;
-  /**
-   * Whether a reset code could actually arrive here. WIDER than the flag above:
-   * that one only catches `@pca.invalid`, while this also rejects the bare words
-   * (`admin`, `educ1`) migration 0021 left in `auth.users.email`. Print by this.
-   */
+  /** Whether a reset code could arrive. Wider than the placeholder flag; print by this. */
   email_can_receive: boolean;
   last_sign_in_at: string | null;
 }
@@ -89,11 +61,7 @@ export interface AdminOverview {
   by_grade: Array<{ grade: number; count: number }>;
   attention: {
     cannot_sign_in: number;
-    /**
-     * Handed out but never taken ownership of. Replaced `never_signed_in`, which
-     * needed a paged sweep of `auth.users` to answer a weaker question — opening
-     * the app is not the same as making the password your own.
-     */
+    /** Still holding the admin-set password. */
     not_activated: number;
     disabled: number;
   };
@@ -103,10 +71,7 @@ export interface NewAccount {
   role: AssignableRole;
   first_name: string;
   last_name: string;
-  /**
-   * Optional ONLY for a bulk-import row, where the server derives one from the
-   * name. The create form always sends it — it has a Generate button.
-   */
+  /** Optional only on import rows (generated from the name). */
   username?: string;
   /** Required for a student, and must be absent for an educator. */
   grade_level?: number | null;
@@ -114,16 +79,16 @@ export interface NewAccount {
   password?: string;
 }
 
-/** A created account, with the one-time password echoed back. */
+/** A created account, with its one-time password. */
 export interface CreatedAccount extends AdminAccount {
   email: string;
   email_is_placeholder: boolean;
-  /** ⚠️ Shown once. Not stored in readable form anywhere and not retrievable. */
+  /** Shown once; never retrievable. */
   password: string;
   password_was_generated: boolean;
 }
 
-/** What `POST /admin/accounts/:id/email` gives back — the address as stored, re-derived. */
+/** The address as stored after POST /admin/accounts/:id/email. */
 export interface AdminAccountEmail {
   id: string;
   email: string;
@@ -142,12 +107,7 @@ export interface AccountFilters {
 export interface ImportRowResult {
   row: number;
   username: string;
-  /**
-   * ⚠️ Carried so the downloaded credentials file can say WHOSE account each row
-   * is. A list of usernames and passwords with no names attached cannot be handed
-   * out — there is no way to tell which child gets which line. Sent by the server
-   * rather than matched back by index, because a row can drop out of the results.
-   */
+  /** Names come from the server so the credentials file never relies on row order. */
   first_name: string;
   last_name: string;
   ok: boolean;
@@ -183,14 +143,7 @@ export const adminApi = {
     return res.data;
   },
 
-  /**
-   * A free username derived from the name — backs the Generate button.
-   *
-   * ⚠️ Admin-only on the server, and that is what makes it acceptable to exist at
-   * all: a username-availability check any visitor could reach would let someone
-   * work through plausible names and learn which children attend this school.
-   * Never call this from an unauthenticated page.
-   */
+  /** A free username for a name. Admin-only (an availability oracle); never call from a public page. */
   async suggestUsername(first_name: string, last_name: string): Promise<string> {
     const res = await api.post<{ username: string }>('/admin/username-suggestion', {
       first_name,
@@ -200,18 +153,8 @@ export const adminApi = {
   },
 
   /**
-   * Which of these usernames and addresses already belong to an account? Backs
-   * the bulk-import review screen, so a collision with an existing account shows
-   * as a row error before anything is written.
-   *
-   * ⚠️ Admin-only on the server, for the same reason as `suggestUsername()`
-   * above: an availability check any visitor could reach is an enumeration oracle
-   * against a roll of children at one named school.
-   *
-   * ⚠️ A COURTESY, NOT A GUARANTEE — an account can appear in the seconds between
-   * this call and the import. The per-row checks inside the import route, the
-   * username unique index and Supabase's own email unique index are still the
-   * real arbiters.
+   * Which usernames/emails already exist, for the import review screen. Admin-only oracle.
+   * A courtesy, not a guarantee; the import's own checks and unique indexes still decide.
    */
   async precheckImport(
     usernames: string[],
@@ -235,48 +178,23 @@ export const adminApi = {
     return res.data;
   },
 
-  /**
-   * The replacement for deletion. Nothing is destroyed — re-enabling restores the
-   * account with every study space and mastery row intact.
-   */
+  /** In place of deletion; re-enabling restores everything. */
   async setStatus(userId: string, status: AccountStatus): Promise<AdminAccount> {
     const res = await api.post<AdminAccount>(`/admin/accounts/${userId}/status`, { status });
     return res.data;
   },
 
   /**
-   * ⚠️ The password-recovery path that always works. `/forgot-password` handles
-   * accounts with a deliverable address; this one handles everybody else, which
-   * after a CSV import is most of them (`@pca.invalid` placeholders reach nothing).
-   *
-   * ⚠️ IT RE-ARMS `must_change_password`, unlike a self-service reset, which
-   * clears it. The rule is who has seen the password: an admin choosing one has,
-   * so the holder must replace it before the account is usable.
-   *
-   * It DOES sign the account out everywhere: measured, Supabase rejects both the
-   * existing access token and its refresh token. That depends on `authenticate`
-   * validating each request against the auth server, so see the route's JSDoc
-   * before optimising that into a local JWT check.
+   * Admin password reset: the recovery path that always works. Re-arms must_change_password, and
+   * signs the account out everywhere (because `authenticate` checks tokens with the auth server).
    */
   async resetPassword(userId: string, newPassword: string): Promise<void> {
     await api.post(`/admin/accounts/${userId}/password`, { new_password: newPassword });
   },
 
   /**
-   * Replace an account's contact address. Its own call, not a field on
-   * `updateAccount()`: the address lives on `auth.users` and the profile row on
-   * `profiles`, so one request writing both could half-apply.
-   *
-   * ⚠️ IT APPLIES IMMEDIATELY — unlike the self-service `changeEmail()` in
-   * `src/lib/account.ts`, which mails a 6-digit code to the new address and applies
-   * nothing until `confirmEmailChange()` redeems it. An admin can prove neither the
-   * account (no password) nor the destination (no mailbox), and the addresses most
-   * in need of fixing are `@pca.invalid` placeholders that can never receive a code
-   * at all. Nothing verifies the address, so the form asks for confirmation before
-   * sending it.
-   *
-   * A 409 means the address already belongs to another account —
-   * `users_email_partial_key`, which is also why siblings cannot share one.
+   * Replace a contact address. Applies immediately, with no code (unlike self-service changeEmail()),
+   * so the form confirms first. A 409 means another account has that address.
    */
   async setEmail(userId: string, email: string): Promise<AdminAccountEmail> {
     const res = await api.post<AdminAccountEmail>(`/admin/accounts/${userId}/email`, { email });
@@ -296,7 +214,7 @@ export const adminApi = {
   },
 };
 
-// ── display helpers ─────────────────────────────────────────────────────────
+// Display helpers
 
 export const ROLE_LABEL: Record<AccountRole, string> = {
   student: 'Student',
@@ -305,16 +223,8 @@ export const ROLE_LABEL: Record<AccountRole, string> = {
 };
 
 /**
- * The one word an admin reads to know where an account stands.
- *
- * ⚠️ THIS IS THE "THIRD STATUS" — DERIVED, NOT STORED. `account_status` remains a
- * two-value enum on purpose: `status` is the access gate, read in roughly nineteen
- * places including every RLS helper, and a third value would mean re-auditing all
- * of them. Keeping activation as its own column also keeps "disabled AND never
- * activated" expressible, which one column could not.
- *
- * Disabled wins over not-activated: an account nobody may use is the more
- * important fact, and its activation state is recoverable when it is re-enabled.
+ * The account's state label, derived rather than stored (account_status stays two values).
+ * Disabled wins over not activated.
  */
 export type AccountState = 'active' | 'not_activated' | 'disabled';
 
@@ -325,8 +235,7 @@ export function accountState(account: AdminAccount): AccountState {
 
 export const ACCOUNT_STATE_LABEL: Record<AccountState, string> = {
   active: 'Active',
-  // "Not activated" rather than "Inactivated", which reads as a synonym for
-  // Disabled and would leave an admin guessing at the difference.
+  // "Not activated", not "Inactivated", which reads like Disabled.
   not_activated: 'Not activated',
   disabled: 'Disabled',
 };
@@ -339,14 +248,7 @@ export function accountSubtitle(account: AdminAccount): string {
   return ROLE_LABEL[account.role];
 }
 
-/**
- * What to print for a contact address.
- *
- * A `<username>@pca.invalid` placeholder is NOT an address and must never be
- * rendered as one — the rule the invented `liza.mendoza@pca.edu.ph` broke was
- * about displaying a fabricated address as genuine, and printing a placeholder
- * would be the same mistake with better intentions.
- */
+/** Display text for a contact address; a placeholder is never shown as an address. */
 export function contactEmail(detail: AdminAccountDetail): string {
   if (!detail.email || !detail.email_can_receive) return 'None set';
   return detail.email;

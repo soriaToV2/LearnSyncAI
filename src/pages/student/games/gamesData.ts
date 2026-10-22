@@ -1,15 +1,6 @@
 import { Brain, FlaskConical, Zap, Code } from 'lucide-react';
 
-/**
- * A trivia question.
- *
- * There is deliberately no per-question `difficulty`. Difficulty is SESSION-based
- * (paper p. 81, "session-based adaptation"): one tier is chosen from the
- * student's mastery when the game is generated and applies to every item in it,
- * which is why `game_content.difficulty` is a single column. The old per-question
- * easy/medium/hard badge was mock-data residue and contradicted the session tier
- * on screen — a "HARD" chip inside a Foundational game.
- */
+/** A trivia question. No per-question difficulty: it's one tier per session (paper p. 81). */
 export interface Question {
   question: string;
   options: string[];
@@ -34,16 +25,9 @@ export interface CrosswordClue {
   clue: string;
 }
 
-/**
- * Per-game knobs the SERVER derived from the student's mastery.
- *
- * Stored inside `game_content.payload` at generation rather than recomputed on
- * read, so a stored game always replays with the clock its questions were written
- * for — change `TRIVIA_QUESTION_MS` later and old games keep their own timing.
- * Written for Timed Trivia only; the untimed games carry no `settings` key.
- */
+/** Server-derived settings stored in the payload, so a stored game replays with its original clock. Timed Trivia only. */
 export interface GameSettings {
-  /** Milliseconds per trivia question. 20s / 15s / 10s by tier — paper p. 83. */
+  /** Milliseconds per question: 20s / 15s / 10s by tier (paper p. 83). */
   questionMs: number;
 }
 
@@ -53,7 +37,7 @@ export interface CourseGameData {
   trivia: Question[];
   crossword: CrosswordCell[];
   crosswordClues: CrosswordClue[];
-  /** Absent in mock mode and on rows generated before calibration existed. */
+  /** Absent in mock mode and on pre-calibration rows. */
   settings?: GameSettings;
 }
 
@@ -269,9 +253,3 @@ export const getCourseResources = (courseId: string): string[] => {
     'Practice_Quiz_Questions.pdf'
   ];
 };
-
-// The mock BADGES array lived here: four hardcoded tiles, three of them with
-// `earned: true` for every student who ever loaded the page. It had zero
-// consumers and was deleted when real badges landed. The catalogue now lives in
-// `server/lib/badges.ts`, its presentation in `src/lib/badges.ts`, and what a
-// student actually holds arrives with `GET /api/dashboard`.

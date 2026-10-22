@@ -23,13 +23,8 @@ import { api } from '../../lib/api';
 type MaterialRow = EducatorMaterial & { concept_count: number };
 
 /**
- * `all` plus exactly the four `parsed_status` enum values, labelled with the enum
- * value itself so the filter, the pill and the database column all use one
- * vocabulary. See `ParseStatusPill` for why the student side does not.
- *
- * "Archived" does not belong here — `is_archived` is an orthogonal boolean with
- * its own toggle, and folding it in would make a material's status ambiguous
- * (an archived material still has a real parse status).
+ * `all` plus the four parsed_status values, labelled with the enum name. Not "Archived": is_archived
+ * is a separate boolean with its own toggle.
  */
 const STATUS_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Any status', value: 'all' },
@@ -39,36 +34,14 @@ const STATUS_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Failed', value: 'failed' },
 ];
 
-/**
- * The focus indicator for this page, matching `EducatorDashboard`.
- *
- * ⚠️ `ring-inset`. The three card actions sit in a `gap-1` cluster — 4px — so an
- * outward `ring-2` plus an offset is 8px of glow bleeding into a 4px gap and
- * over its neighbours. Same reason the dashboard rows use it.
- */
+/** Focus ring, matching EducatorDashboard. ring-inset: the card actions sit 4px apart. */
 const FOCUS =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)]';
 
 /**
- * ⚠️ THE CARD ACTIONS ARE ALWAYS AT FULL OPACITY, AND THAT IS THE FIX, NOT A
- * PREFERENCE. They were transparent until the card was hovered, and a touch
- * screen has no hover — so View, Archive and Delete were permanently invisible
- * AND unreachable on a phone or tablet; the focus-within escape hatch beside it
- * only ever rescued a keyboard.
- * Viewing survives, since tapping the card navigates there anyway, but
- * **archiving and deleting a material were not available on mobile at all**,
- * which is a functional loss rather than a cosmetic one. (iOS synthesises a
- * hover on first tap, but that same tap fires the card's own `onClick` and
- * navigates away before anything is revealed.)
- *
- * This mirrors `StudySpacesList` exactly — same `p-2` target, same `gap-1`, same
- * neutral/rose split, same focus rings — where the identical defect was fixed
- * the same way and for the same reason. Keep the two in step.
- *
- * ⚠️ `p-2`, NOT the `p-1.5` this used to use. A 3.5-unit icon in 1.5 units of
- * padding is a 26px target; 30px still misses the 44px finger floor, but these
- * three sit 4px apart and at 26px a mis-tap on Delete instead of Archive is a
- * cascading delete of every concept and every student's mastery for them.
+ * Card actions are always fully visible: a touch screen has no hover, so hover-revealed actions were
+ * unreachable on mobile. p-2 because the three sit 4px apart and Delete cascades. Keep in step with
+ * StudySpacesList.
  */
 const CARD_ACTION = 'p-2 rounded-lg border transition-all focus-visible:outline-none focus-visible:ring-2';
 const CARD_ACTION_NEUTRAL = `${CARD_ACTION} bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10 hover:border-white/20 focus-visible:ring-[var(--theme-accent)]`;
@@ -91,7 +64,7 @@ export default function MaterialsLibrary() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<MaterialRow | null>(null);
 
-  // ── Data loading ────────────────────────────────────────────
+  // Data loading
   const load = useCallback(async () => {
     try {
       const { data } = await api.get<MaterialRow[]>('/materials');
@@ -106,8 +79,7 @@ export default function MaterialsLibrary() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // While any material is still being processed, poll so the educator watches
-  // Pending → Processing → Completed without a manual refresh.
+  // Poll while anything is still processing, so status updates without a refresh.
   const hasInFlight = materials.some(
     (m) => m.parsed_status === 'pending' || m.parsed_status === 'processing'
   );
@@ -117,11 +89,7 @@ export default function MaterialsLibrary() {
     return () => clearInterval(id);
   }, [hasInFlight, load]);
 
-  /*
-   * The full catalogue and every JHS grade — neither is restricted per educator.
-   * Subjects come from `public.subjects`; while that request is in flight the
-   * filter offers "All subjects" alone, which is the correct default anyway.
-   */
+  /* Full catalogue and every grade; "All subjects" alone while subjects load. */
   const subjectOptions = [
     { label: 'All subjects', value: 'all' },
     ...subjects.map((s) => ({ label: s.name, value: s.code })),
@@ -151,17 +119,9 @@ export default function MaterialsLibrary() {
   const archivedCount = materials.filter((m) => m.is_archived).length;
 
   /**
-   * Archive / restore, persisted.
-   *
-   * This used to be an optimistic local toggle with no endpoint behind it, which
-   * the 3s parse poll above would silently revert. It now writes through
-   * `PATCH /api/materials/:id` and replaces the row from the response, so the
-   * poll and the UI cannot disagree.
-   *
-   * Archiving hides the material from every student's study space at their next
-   * read while keeping its concepts, its `study_space_materials` link rows and
-   * every student's BKT mastery — restoring brings all of it back untouched.
-   * That is what makes it the safe alternative to Delete, which cascades.
+   * Archive / restore via PATCH, replacing the row from the response so the poll can't revert it.
+   * Archiving hides the material from students but keeps concepts, links and mastery, so restore
+   * brings everything back. The safe alternative to Delete, which cascades.
    */
   const [archiving, setArchiving] = useState<string | null>(null);
 
@@ -194,18 +154,14 @@ export default function MaterialsLibrary() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-background">
-      {/* `sm:` steps on both axes, and `animate-page-fade` — the same entrance the
-          educator dashboard now uses. See the note there for why it is not the
-          `fade-in` idiom the student pages write. */}
+      {/* Same page entrance as the educator dashboard. */}
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-10 md:py-12 animate-page-fade">
 
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-end justify-between gap-5 mb-8">
           <div className="min-w-0">
             <div className="flex items-center gap-3 mb-2">
-              {/* `/10` + `/20`, matching the chip on every card below. It was
-                  `/20` + `/30` — a heavier version of the same chip, which made
-                  the page title's mark look like a different component. */}
+              {/* /10 + /20, matching the chip on each card. */}
               <div className="w-10 h-10 rounded-xl bg-primary-fixed-dim/10 flex items-center justify-center border border-primary-fixed-dim/20 shrink-0">
                 <FileText className="text-primary-fixed-dim w-5 h-5" />
               </div>
@@ -216,8 +172,7 @@ export default function MaterialsLibrary() {
             </p>
           </div>
 
-          {/* Full-width on a phone (the column's default stretch), hugging its
-              label from `md:` where it sits beside the title. */}
+          {/* Full width on a phone; hugs its label from md:. */}
           <button
             onClick={() => setIsUploadOpen(true)}
             className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-fixed transition-colors shrink-0 active:scale-98 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-on-primary-fixed"
@@ -247,19 +202,7 @@ export default function MaterialsLibrary() {
             />
           </div>
 
-          {/*
-            ⚠️ THE FOUR CONTROLS WERE FIXED-WIDTH INSIDE A `flex-wrap`, WHICH IS
-            WHAT MADE THIS RAGGED ON A PHONE. At 375px the row has 343px to work
-            with, and `w-44 + w-36` (176 + 144 + a 12px gap) is 332 — so subject
-            and grade landed on one line, status and Archived on a second, each
-            leaving a different amount of dead space on the right. Three
-            different widths on four sibling filters reads as misalignment
-            rather than as a deliberate hierarchy.
-
-            A 2×2 grid at phone width, 4-across from `sm:`, and only at `lg:` —
-            where they sit on one line beside the search box — do the original
-            content-fitted widths come back.
-          */}
+          {/* A 2×2 grid on phones, four across from sm:, content-fitted widths only at lg: beside the search. */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:flex lg:items-center gap-2.5 sm:gap-3">
             <Dropdown value={subjectFilter} onChange={setSubjectFilter} options={subjectOptions} className="w-full lg:w-44" />
             <Dropdown value={gradeFilter} onChange={setGradeFilter} options={gradeOptions} className="w-full lg:w-36" />
@@ -312,47 +255,18 @@ export default function MaterialsLibrary() {
             </p>
           </div>
         ) : (
-          /* Keyed on the archived toggle so the fade re-fires when the list is
-             swapped for a different one. A CSS animation runs once on mount, so
-             without a `key` React reuses the nodes and the class does nothing
-             after the first render — the same reason the dashboard keys its
-             three views. It is deliberately NOT keyed on `search`, which would
-             re-animate the whole grid on every keystroke. */
+          /* Keyed on the archived toggle so the fade re-runs when the list swaps. Not keyed on search (it would re-animate per keystroke). */
           <div key={showArchived ? 'archived' : 'live'} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 animate-tab-in">
             {visible.map((m) => {
               const concepts = m.concept_count;
-              /* The card's mark takes its SUBJECT's colour rather than the one
-                 app accent every card used to share. `SubjectBadge` already
-                 owns this mapping and is rendered three lines down, so the tint
-                 and the badge cannot drift; it just moves the cue to the
-                 largest element on the card, which is what makes a grid of a
-                 dozen lessons scannable by subject at a glance. */
+              /* The mark takes the subject's colour, from the same map as SubjectBadge. */
               const tint = SUBJECT_COLOR[m.subject] ?? '#94a3b8';
 
               return (
                 /*
-                  ⚠️ THE CARD IS NO LONGER A BARE `<article onClick>`. That gave
-                  it no Tab stop, no key handler and no focus ring — the entire
-                  grid was invisible to a keyboard, and to anything driving the
-                  page through the accessibility tree.
-
-                  The fix is `StudySpacesList`'s pattern, not `tabIndex` on the
-                  article: the TITLE is a real button whose `::after` is
-                  stretched over the whole card. A mouse keeps the full surface
-                  clickable, a keyboard gets exactly ONE stop for "open this
-                  material" instead of a stop on a div that announces nothing,
-                  and the browser supplies Enter/Space for free — a hand-rolled
-                  `onKeyDown` on a div gets Space wrong (it scrolls) about as
-                  often as it gets it right.
-
-                  ⚠️ THE ACTION CLUSTER NEEDS `relative z-10`. The stretched
-                  `::after` is painted after the buttons in DOM order, so
-                  without it the overlay swallows all three clicks and every tap
-                  on Delete would silently open the material instead. This is
-                  also why `e.stopPropagation()` is gone from the three
-                  handlers: there is no ancestor click handler left to stop, and
-                  leaving it would imply one exists.
-                */
+                 * The title is a real button whose ::after stretches over the card: one Tab stop, and Enter/Space
+                 * for free. The action cluster needs relative z-10, or the overlay swallows its clicks.
+                 */
                 <article
                   key={m.id}
                   className="group relative flex flex-col rounded-2xl bg-white/[0.02] border border-white/5 p-5 cursor-pointer shadow-lg shadow-black/20 hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5 hover:shadow-xl focus-within:border-white/10 focus-within:-translate-y-0.5 transition-all"

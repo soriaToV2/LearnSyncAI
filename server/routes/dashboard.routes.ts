@@ -13,31 +13,9 @@ import type { DifficultyTier } from '../lib/testAllocation';
 import { badgeProgress } from '../lib/badges';
 
 /**
- * The student dashboard — the one GLOBAL read in the student API.
- *
- * Everything else a student can read is scoped to a single owned space, and
- * `server/index.ts` records that as deliberate. This route is the documented
- * exception, because a dashboard is by definition about all of them: fanned out
- * client-side it would cost 1 + N HTTP requests, each per-space mastery call
- * being ~6 database round trips on its own.
- *
- * ══ IT ACCEPTS NOTHING ══
- * No body, no query string, no path parameter. Every set below is derived from
- * `req.user!.id`, so the route has no IDOR surface at all — it cannot be pointed
- * at another student's space, deck, test or concept, because there is nothing to
- * point with. That is a stronger guarantee than `requireOwnedSpace()` gives, and
- * it is why there is no Zod schema here: there is no input to validate. If a
- * parameter is ever added, `safeParse(req.query)` it.
- *
- * ══ READ-ONLY, PERMANENTLY ══
- * Nothing here writes. In particular it must never call the gamification profile
- * route, which INSERTs a row on a GET.
- *
- * ══ ONE REQUEST, BECAUSE OF THE ANCHOR ══
- * The mastery curve's final point must equal the headline mastery number. That
- * is only enforceable inside a single request — split across two endpoints, a
- * test completing between them leaves the chart ending somewhere other than the
- * number printed beside it. See `buildCurve()`.
+ * The student dashboard: the one global student read (everything else is per-space).
+ * Accepts no input, so no IDOR surface and no schema. Read-only; never call GET /gamification/profile.
+ * One request so the curve's last point provably equals the headline mastery.
  */
 
 const router = Router();
@@ -49,8 +27,7 @@ const IN_CHUNK = 200;
 /** Plotted points. ~5px each in a 320px card — more is noise, not detail. */
 const MAX_CURVE_POINTS = 60;
 
-/** Newest-first window over the audit log. Truncation drops the OLDEST history,
- *  never the anchor, which is what makes backward reconstruction cappable. */
+/** Newest-first audit-log window; truncation drops the oldest history, never the anchor. */
 const CURVE_ROW_CAP = 2000;
 
 const RECENT_LIMIT = 6;
@@ -59,9 +36,7 @@ const FOCUS_COUNT = 5;
 /** Mastery at or above this counts as "mastered" — the `advanced` tier threshold. */
 const MASTERED_AT = 0.85;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Wire types — mirrored field-for-field by src/lib/dashboard.ts
-// ─────────────────────────────────────────────────────────────────────────────
+// Wire types, mirrored by src/lib/dashboard.ts
 
 interface SpaceMasteryRow {
   space_id: string;
@@ -75,16 +50,7 @@ interface SpaceMasteryRow {
   due_count: number;
 }
 
-/**
- * Streaks and badges.
- *
- * `total_study_hours` is deliberately ABSENT. It is written (see
- * `server/lib/activity.ts`) but only games and adaptive tests carry a real
- * duration; flashcards, both cognitive modes and chat measure nothing, so the
- * figure is a partial sum that would read as a total. That is the same failure
- * as the frozen `day_streak` this whole feature exists to fix. If a screen ever
- * wants it, the missing piece is real timing, not a field here.
- */
+/** Streaks and badges. `total_study_hours` is omitted on purpose: most activities record no duration. */
 interface GamificationBlock {
   day_streak: number;
   longest_streak: number;
@@ -92,14 +58,8 @@ interface GamificationBlock {
   last_active_on: string | null;
   badges: { name: string; awarded_at: string }[];
   /**
-   * Distance to every UNEARNED badge whose rule is a countable threshold. Empty
-   * once the student holds all of them, and empty for the rules that have no
-   * partial state at all (`first_*`, `perfect_test`, `flawless_game`).
-   *
-   * ⚠️ `mastery_*` here will NOT agree with `mastery.concepts_mastered` below
-   * whenever a mastered concept sits on an archived or unlinked material. That is
-   * correct, not drift: this figure comes from the badge rule's own source, so
-   * the bar a student sees is the count the evaluator checks.
+   * Progress toward unearned countable badges. `mastery_*` may differ from `mastery.concepts_mastered`
+   * because it uses the badge rule's own source.
    */
   badge_progress: { name: string; current: number; target: number }[];
 }
@@ -133,9 +93,7 @@ type ActivityItem =
       accuracy: number | null;
     };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // The curve
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface LogRow {
   concept_id: string;
@@ -145,54 +103,11 @@ interface LogRow {
 }
 
 /**
- * M_doc over time, reconstructed BACKWARD from the current state.
- *
- * `bkt_update_logs` stores both phases of every update, including `p_l_prior` —
- * the value that concept held *before* the update. So rather than replaying
- * forward from P(L₀), we start from `bkt_mastery` (the authoritative state), walk
- * the log newest-to-oldest, and step each concept back to its prior.
- *
- * ══ WHY BACKWARD, AND WHY IT MATTERS ══
- * The Analytics work rejected reading this table at all, for a good reason:
- * `applyBktObservations()` treats a failed log write as non-fatal by deliberate
- * design (mastery is the state everything reads; the audit trail has no runtime
- * reader). Giving the UI a read on it threatened to turn a tolerated log failure
- * into a visibly wrong chart, which would force that error to become fatal and
- * invert a documented failure-ordering decision.
- *
- * Reconstructing backward dissolves that coupling:
- *
- *   - The chart NEVER sources the current number. `bkt_mastery` does. The last
- *     point equals `overall` BY CONSTRUCTION — there is no reconciliation branch,
- *     so there is no branch to get wrong.
- *   - A missing log row degrades LOCALLY. Forward replay would leave that concept
- *     at a stale value for the rest of the curve *including the end*; backward
- *     simply does not step back at that moment, so one concept reads slightly
- *     too-new in one window — at most 1/N of one BKT step. Reduced resolution in
- *     the history, never a wrong current value.
- *   - It makes the row cap safe. Forward replay REQUIRES the log from t=0 or its
- *     baseline is wrong; backward can start anywhere.
- *   - A concept with mastery but no surviving log rows is invisible to forward
- *     replay (pinned at P(L₀) through the end). Backward holds it flat at its true
- *     value, which is the honest "we don't know when this moved".
- *
- * So `logWriteError` STAYS NON-FATAL. Do not promote it because this reader exists.
- *
- * ══ THE DENOMINATOR IS FIXED AT "NOW" ══
- * Every point is a mean over the current visible concept set, so log rows for
- * concepts outside it are dropped (`total_updates` may therefore be lower than
- * the student's row count — expected, not a bug). Concepts created after an early
- * point did not exist then, so past M_doc renders slightly low. The alternative —
- * a denominator that changes with time — would move the line while the student
- * did nothing, which is worse. The caption says what the line is out of.
- *
- * ══ X IS A LEARNING-OPPORTUNITY INDEX, NOT WALL CLOCK ══
- * Two reasons, and the first is fatal on its own. Every update in a session shares
- * a timestamp to the millisecond, so a real study day plots as a vertical line.
- * And BKT has no forgetting term: a two-week gap is a perfectly flat segment,
- * which reads to a student as "you stalled" when the model is incapable of moving
- * without evidence. The paper's own time index is the learning opportunity `t`.
- * Each point still carries `at` so the UI can print date context.
+ * M_doc over time, reconstructed backward from bkt_mastery through bkt_update_logs priors, so the last
+ * point equals `overall` by construction and a lost log row only blurs history.
+ * logWriteError stays non-fatal; don't promote it because this reader exists.
+ * The denominator is the current visible concept set. X is a learning-opportunity index, not wall
+ * clock (sessions share timestamps, and BKT has no forgetting).
  */
 function buildCurve(
   conceptIds: readonly string[],
@@ -206,8 +121,7 @@ function buildCurve(
   const n = conceptIds.length;
   if (n === 0) return null;
 
-  // Running sum over the SAME set `documentMastery()` averages, so every point
-  // and the anchor share one definition of the mean.
+  // Running sum over the same set documentMastery() averages.
   const values = new Map<string, number>();
   for (const id of conceptIds) values.set(id, byConcept.get(id) ?? P_L0);
   let sum = 0;
@@ -215,7 +129,7 @@ function buildCurve(
 
   const round4 = (x: number) => Math.round(x * 10_000) / 10_000;
 
-  // Newest first. The first emitted point is the anchor itself.
+  // Newest first; the first point is the anchor.
   const reversed: CurvePoint[] = [{ t: inScope.length, at: new Date().toISOString(), m_doc: overall }];
 
   for (let i = 0; i < inScope.length; i++) {
@@ -235,11 +149,7 @@ function buildCurve(
   const ascending = reversed.reverse();
   if (ascending.length < 2) return null;
 
-  // Decimate. Every emitted point remains a real reconstructed mean at a real
-  // event boundary — nothing is interpolated, smoothed or averaged. The usual
-  // objection to decimation (hidden extrema) does not apply here: one event moves
-  // one concept's posterior, so the MEAN moves by at most ~1/N, which makes
-  // single-event spikes structurally impossible. A moving average would be worse.
+  // Decimate without interpolating: each point is a real mean at a real event.
   const stride = Math.max(1, Math.ceil(ascending.length / MAX_CURVE_POINTS));
   const points: CurvePoint[] = [];
   for (let i = 0; i < ascending.length; i += stride) points.push(ascending[i]);
@@ -254,31 +164,13 @@ function buildCurve(
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * GET /api/dashboard
- *
- * Everything the student dashboard renders, in one request. Constant round trips
- * regardless of how many spaces, materials or concepts the student has.
- */
+/** GET /api/dashboard: everything the dashboard renders, in a constant number of round trips. */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const studentId = req.user!.id;
 
   try {
-    // ── 1. Identity + spaces + gamification ─────────────────────────────────
-    /*
-     * Streaks and badges are fetched HERE, not later, because they must survive
-     * the early returns below. A student whose educator archived every material
-     * still holds the streak and badges they earned — zeroing those out on an
-     * otherwise-empty dashboard would look like the app forgetting their work.
-     *
-     * Two plain SELECTs, deliberately NOT `GET /api/gamification/profile` — that
-     * route INSERTs a row on a GET and this endpoint is read-only permanently
-     * (see the header). A missing profile row yields zeros rather than being
-     * created; `handle_new_user()` writes one for every student, so the branch is
-     * nearly dead, and "no activity yet" is the only answer a read may give.
-     */
+    // 1. Identity + spaces + gamification. Gamification is read here so it survives the early returns
+    // below. Plain SELECTs, never GET /gamification/profile.
     const [
       { data: profile },
       { data: spaceRows },
@@ -308,15 +200,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       awarded_at: b.awarded_at as string,
     }));
 
-    /*
-     * Sequential rather than batched above, because it needs the held set to know
-     * which counters to read at all — and that is what keeps it free: an account
-     * holding all seven countable badges issues zero queries here.
-     *
-     * It sits ABOVE both early returns for the same reason the badge read does. A
-     * student whose educator archived every material still holds their badges,
-     * and showing their progress toward the rest is exactly as true then.
-     */
+    // Badge progress: needs the held set; zero queries once every countable badge is held. Above the
+    // early returns for the same reason.
     const gamification: GamificationBlock = {
       day_streak: Number(gamificationRow?.day_streak ?? 0),
       longest_streak: Number(gamificationRow?.longest_streak ?? 0),
@@ -328,8 +213,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     const spaces = (spaceRows ?? []) as { id: string; title: string; subject: string }[];
     const gradeLevel = profile?.grade_level ?? null;
 
-    // No spaces means no materials, no decks and no activity — `practice_tests`,
-    // `cognitive_logs` and `game_content` all require a space to exist.
+    // No spaces: nothing else to read.
     if (spaces.length === 0 || gradeLevel === null) {
       res.json({ data: emptyDashboard(0, gamification) });
       return;
@@ -338,10 +222,9 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     const spaceIds = spaces.map((s) => s.id);
     const subjects = [...new Set(spaces.map((s) => s.subject))];
 
-    // ── 2. Published materials + link rows + the whole mastery vector ───────
+    // 2. Published materials + link rows + mastery
     const [{ data: publishedRows }, { data: linkRows }, masteryByConcept] = await Promise.all([
-      // ONE query over the distinct subjects, replacing N calls to
-      // publishedMaterialIds(). Same filter: not archived, published to this grade.
+      // One query over the distinct subjects (not archived, this grade).
       supabaseAdmin
         .from('materials')
         .select('id, title, subject')
@@ -359,10 +242,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       (publishedRows ?? []).map((m) => [m.id as string, { title: m.title as string, subject: m.subject as string }])
     );
 
-    // A material is visible in a space iff it is LINKED, still PUBLISHED to this
-    // (subject, grade), and its subject matches the space's. That third clause is
-    // `spaceMaterialIds()`'s rule and dropping it would let a stray cross-subject
-    // link row make this page disagree with the Analytics tab for the same space.
+    // Visible = linked, still published to (subject, grade), and subject matches the space.
+    // Must match spaceMaterialIds().
     const materialsBySpace = new Map<string, string[]>();
     for (const space of spaces) materialsBySpace.set(space.id, []);
     const subjectOfSpace = new Map(spaces.map((s) => [s.id, s.subject]));
@@ -376,10 +257,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       materialsBySpace.get(spaceId)?.push(materialId);
     }
 
-    // The GLOBAL set is the union over materials, deduplicated — a material in two
-    // of the student's spaces contributes its concepts once. Each per-space set is
-    // its own, so the per-space rows will NOT average to the global figure. That
-    // is correct: mastery is per (student, concept), not per space.
+    // The global set is the deduplicated union, so per-space figures won't average to it. Correct.
     const visibleMaterialIds = [...new Set([...materialsBySpace.values()].flat())];
 
     if (visibleMaterialIds.length === 0) {
@@ -387,7 +265,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // ── 3. Concepts ─────────────────────────────────────────────────────────
+    // 3. Concepts
     const conceptRows: { id: string; material_id: string; term: string }[] = [];
     for (let i = 0; i < visibleMaterialIds.length; i += IN_CHUNK) {
       const { data } = await supabaseAdmin
@@ -412,8 +290,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
     const globalConceptIds = conceptRows.map((c) => c.id);
 
-    // Intersect the mastery vector with what is actually visible. Rows for
-    // archived or unlinked materials survive in bkt_mastery and must not count.
+    // Intersect with visible concepts; mastery rows survive archiving/unlinking.
     const byConcept = new Map<string, number>();
     const rowsInScope = new Map<string, ConceptMasteryRow>();
     for (const id of globalConceptIds) {
@@ -437,7 +314,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // ── 4. Decks and due cards ──────────────────────────────────────────────
+    // 4. Decks and due cards
     const { data: deckRows } = await supabaseAdmin
       .from('flashcard_decks')
       .select('id, space_id')
@@ -452,8 +329,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       const { data } = await supabaseAdmin
         .from('flashcards')
         .select('deck_id')
-        // The same predicate the rating route uses. `.or(...)` not `.lte(...)`:
-        // a NULL schedule counts as due and NULL never satisfies `<=`.
+        // Same predicate as the rating route. `.or` not `.lte`: a NULL schedule is due.
         .or(`next_review_at.is.null,next_review_at.lte.${new Date().toISOString()}`)
         .in('deck_id', deckIds.slice(i, i + IN_CHUNK));
 
@@ -465,7 +341,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // ── 5. History: logs, tests, cognitive, games ───────────────────────────
+    // 5. History: logs, tests, cognitive, games
     const [
       { data: logRows },
       { data: inProgress },
@@ -491,8 +367,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
         .select('id, title, space_id, score, completed_at')
         .eq('student_id', studentId)
         .eq('status', 'completed')
-        // PostgREST puts NULLs FIRST by default, which would float an anomalous
-        // row to the top of Recent Activity.
+        // PostgREST sorts NULLs first by default.
         .order('completed_at', { ascending: false, nullsFirst: false })
         .limit(RECENT_LIMIT),
       supabaseAdmin
@@ -512,7 +387,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
     const titleOfSpace = new Map(spaces.map((s) => [s.id, s.title]));
 
-    // ── 6. Assemble ─────────────────────────────────────────────────────────
+    // 6. Assemble
     const by_space: SpaceMasteryRow[] = spaces.map((space) => {
       const materialIds = materialsBySpace.get(space.id) ?? [];
       const conceptIds = materialIds.flatMap((id) => conceptsByMaterial.get(id) ?? []);
@@ -531,12 +406,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       };
     });
 
-    // Weakest ASSESSED concepts across every space — impossible per-space, and the
-    // single most actionable thing on the page. Unassessed are excluded by
-    // construction, not filtered afterwards: they sit at P(L₀) = 0.10, BELOW every
-    // genuinely struggling concept (the transition step floors any observed
-    // posterior at P(T) = 0.20), so including them would fill the list with
-    // concepts nobody has ever asked about.
+    // Weakest assessed concepts across every space. Unassessed are excluded (they'd sort below every
+    // struggling concept).
     const spaceOfMaterial = new Map<string, string>();
     for (const [spaceId, materialIds] of materialsBySpace) {
       for (const id of materialIds) if (!spaceOfMaterial.has(id)) spaceOfMaterial.set(id, spaceId);
@@ -571,8 +442,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
             created_at: r.created_at as string,
           })));
 
-    // The anchor invariant, asserted rather than assumed. Costs nothing, survives
-    // future refactors, and matches the reconciliation idiom used for telemetry.
+    // Assert the anchor invariant.
     if (curve && Math.abs(curve.points[curve.points.length - 1].m_doc - overall) > 1e-9) {
       console.error(
         `[Dashboard] curve endpoint ${curve.points[curve.points.length - 1].m_doc} != overall ${overall} ` +
@@ -580,8 +450,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       );
     }
 
-    // A gap between the audit trail and stored mastery is a diagnostic, never a
-    // student-visible signal — the chart is already correct at its endpoint.
+    // Audit-trail gaps are logged, never shown.
     warnOnLogGaps(rowsInScope, logRows ?? [], studentId);
 
     const resumeRow = (inProgress ?? [])[0];
@@ -591,8 +460,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
           title: (resumeRow.title as string) ?? 'Practice test',
           space_id: resumeRow.space_id as string,
           space_title: titleOfSpace.get(resumeRow.space_id as string) ?? '',
-          // `questions_payload` carries the ANSWER KEY. It is read here only to
-          // count questions and must never be serialised — same rule as stripKey().
+          // questions_payload holds the answer key: count questions only, never serialise it.
           total: ((resumeRow.questions_payload as { questions?: unknown[] })?.questions ?? []).length,
           answered: Object.keys((resumeRow.student_answers as Record<string, unknown>) ?? {}).length,
           created_at: resumeRow.created_at as string,
@@ -634,8 +502,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     res.json({
       data: {
         mastery: {
-          // null, not 0.10, when nothing has been assessed — the caller must be
-          // able to say "not measured yet" rather than print the prior as a score.
+          // null, not 0.10, when nothing is assessed.
           overall: assessed === 0 ? null : overall,
           tier: masteryTier(overall),
           concepts_total: globalConceptIds.length,
@@ -678,19 +545,13 @@ function emptyDashboard(spaceCount = 0, gamification: GamificationBlock = EMPTY_
     flashcards_due: 0,
     resume_test: null,
     recent: [],
-    // Passed in, never zeroed: an empty dashboard is about materials and
-    // mastery, and says nothing about whether the student has a streak.
+    // Passed through: an empty dashboard says nothing about the streak.
     gamification,
     counts: { spaces: spaceCount, materials: 0 },
   };
 }
 
-/**
- * Logs a warning when a concept's newest audit row disagrees with its stored
- * mastery. Server-side only — the curve is already anchored to `bkt_mastery`, so
- * a gap costs resolution rather than correctness, and there is nothing here for a
- * student to act on.
- */
+/** Warns when a concept's newest audit row disagrees with stored mastery. Server log only. */
 function warnOnLogGaps(
   rowsInScope: Map<string, ConceptMasteryRow>,
   logs: { concept_id: unknown; p_l_posterior: unknown }[],

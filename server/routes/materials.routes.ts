@@ -17,22 +17,13 @@ import multer from 'multer';
 
 const router = Router();
 
-/**
- * Documented ingest limits: 20 MB per material (`materials_file_size_limit` and
- * the bucket's `file_size_limit` both say 20,971,520), and scanned or
- * photographed documents at most 20 pages (`materials_scanned_page_limit`).
- * Both are enforced HERE, before anything reaches storage, so the educator gets
- * a sentence rather than a CHECK-constraint 500 after the file is already up.
- */
+/** Ingest limits (20 MB per material, 20 scanned pages), enforced here before anything reaches storage. */
 const MAX_MATERIAL_BYTES = 20 * 1024 * 1024;
 const MAX_SCANNED_PAGES = 20;
 
 /**
- * One upload is EITHER one PDF (text or scanned) OR up to MAX_SCANNED_PAGES
- * photos of the pages, all under the same `file` field. Photos are assembled
- * into a single PDF server-side (`pdfAssemble.ts`), so from the storage bucket
- * onward there is only ever one shape of material. The mimetype filter is a
- * courtesy; the bytes are sniffed again before they are embedded.
+ * One PDF, or up to MAX_SCANNED_PAGES photos, under the `file` field. Photos become one PDF server-side.
+ * The mimetype filter is a courtesy; bytes are sniffed again before embedding.
  */
 const ACCEPTED_MIMETYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const upload = multer({
@@ -49,19 +40,8 @@ const upload = multer({
 
 router.use(authenticate);
 
-// GET /api/materials/space/:spaceId was removed. It filtered on materials.space_id,
-// which migration 0003 dropped, so it had been failing for every caller. The
-// student read path now goes through GET /api/spaces/:id/materials, which joins
-// study_space_materials and applies the grade-level and subject filters.
-
-/**
- * Every `materials` column EXCEPT `ocr_pages`, for the educator list, detail
- * and upload responses. A 20-page transcript is tens of kilobytes and belongs
- * to one screen; it is served by `GET /:id/ocr-text` on demand, never carried
- * by a list. Add a column here when the table gains one a screen renders.
- */
-// One literal, not a concatenation: supabase-js types the result by parsing the
-// select string, and a `string`-typed expression parses to GenericStringError.
+/** Every materials column except the large `ocr_pages` (served by GET /:id/ocr-text). */
+// Must stay one string literal: supabase-js types the select by parsing it.
 const MATERIAL_COLUMNS =
   'id, educator_id, title, description, subject, grade_levels, storage_path, file_size_bytes, page_count, is_scanned, parsed_status, parse_error, is_archived, created_at, updated_at';
 
@@ -77,19 +57,8 @@ function storageKey(educatorId: string, title: string): string {
 }
 
 /**
- * POST /api/materials
- * Uploads a learning module and inserts a material record. Educators only.
- *
- * Three inputs, one storage shape:
- *   - a text PDF          → stored as-is, concept extraction runs on its text layer;
- *   - a scanned PDF       → stored as-is, OCR (`ocr.ts`) produces the text first;
- *   - JPEG/PNG photos     → assembled into one PDF (`pdfAssemble.ts`), then as a scan.
- *
- * Every branch ends in `processMaterialAsync()`; nothing is marked failed at
- * upload any more. Until 2026-09-19 a scanned PDF was stored `failed` with
- * "OCR is a later phase", which contradicted the paper (p. 60).
- *
- * Form data: file (one PDF, or 1–20 photos), title, subject, description?, grade_levels (JSON array)
+ * POST /api/materials: upload a text PDF, a scanned PDF, or JPEG/PNG photos (assembled into one PDF).
+ * Every kind is processed by processMaterialAsync(); scans go through OCR first.
  */
 router.post(
   '/',
@@ -97,7 +66,7 @@ router.post(
   (req: Request, res: Response, next: import('express').NextFunction) => {
     upload.array('file', MAX_SCANNED_PAGES)(req, res, (err: any) => {
       if (err) {
-        // Multer's own errors (file too large, too many, wrong type) are user-facing 400s.
+        // Multer errors (size, count, type) are user-facing 400s.
         const message =
           err?.code === 'LIMIT_FILE_SIZE'
             ? 'That file is larger than the 20 MB limit.'
@@ -125,8 +94,7 @@ router.post(
     const { title, subject, description, grade_levels } = parsed.data;
     const educatorId = req.user!.id;
 
-    // Validate the subject up front so a bad code returns a readable 400 rather
-    // than a foreign-key 500 after the file is already in storage.
+    // Validate the subject first so a bad code is a 400, not an FK 500 after upload.
     const { data: subjectRow } = await supabaseAdmin
       .from('subjects')
       .select('code')
@@ -140,8 +108,7 @@ router.post(
       return;
     }
 
-    // One PDF, or photos only. A PDF among photos has no sensible page order,
-    // and two PDFs are two materials.
+    // One PDF, or photos only.
     const pdfCount = files.filter((f) => f.mimetype === 'application/pdf').length;
     if (pdfCount > 1 || (pdfCount === 1 && files.length > 1)) {
       res.status(400).json({
@@ -151,8 +118,7 @@ router.post(
       return;
     }
 
-    // The 20 MB limit is on the MATERIAL. Multer only caps each file, so twenty
-    // 3 MB photos would otherwise sail through and fail at the bucket.
+    // The 20 MB limit is per material; multer only caps each file.
     const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
     if (totalBytes > MAX_MATERIAL_BYTES) {
       res.status(400).json({
@@ -162,7 +128,7 @@ router.post(
       return;
     }
 
-    // Whatever arrived, we hold ONE PDF from here on.
+    // From here on there is one PDF.
     let fileBuffer: Buffer;
     if (pdfCount === 1) {
       fileBuffer = files[0].buffer;
@@ -185,9 +151,7 @@ router.post(
       }
     }
 
-    // Read the PDF once: page count, per-page text, and whether it is scanned.
-    // Photos assembled above come back `isScanned` by construction — there is
-    // no text layer to find — which is exactly the branch they need.
+    // Page count, per-page text and scan detection. Assembled photos read as scanned by construction.
     let pdf;
     try {
       pdf = await extractPdfPages(fileBuffer);
@@ -212,8 +176,7 @@ router.post(
       return;
     }
 
-    // Store the file (private bucket). The leading educator folder is what
-    // storage RLS keys on.
+    // Private bucket; storage RLS keys on the leading educator folder.
     const fileName = storageKey(educatorId, title);
     const { error: storageError } = await supabaseAdmin.storage
       .from('materials')
@@ -224,8 +187,7 @@ router.post(
       return;
     }
 
-    // Insert the material row. Every kind starts pending; the scanned branch of
-    // processMaterialAsync() runs OCR before extraction.
+    // Every kind starts pending.
     const { data: material, error: dbError } = await supabaseAdmin
       .from('materials')
       .insert({
@@ -245,14 +207,13 @@ router.post(
       .single();
 
     if (dbError) {
-      // Roll back the orphaned storage object so a failed insert leaves nothing behind.
+      // Roll back the orphaned storage object.
       await supabaseAdmin.storage.from('materials').remove([fileName]);
       res.status(500).json({ error: 'Failed to save material record', message: dbError.message });
       return;
     }
 
-    // Fire-and-forget background processing. A text PDF reuses the pages we
-    // already parsed; a scan carries its bytes along so OCR can read them.
+    // Fire-and-forget processing. A scan carries its bytes for OCR.
     processMaterialAsync(
       material.id,
       pdf.pages,
@@ -268,10 +229,7 @@ router.post(
   }
 );
 
-/**
- * GET /api/materials
- * Lists the calling educator's own materials, each with its concept count.
- */
+/** GET /api/materials: the caller's own materials with concept counts. */
 router.get('/', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const { data: materials, error } = await supabaseAdmin
     .from('materials')
@@ -299,10 +257,7 @@ router.get('/', requireRole('educator'), async (req: Request, res: Response): Pr
   res.json({ data: (materials ?? []).map((m) => ({ ...m, concept_count: counts[m.id] ?? 0 })) });
 });
 
-/**
- * GET /api/materials/:id
- * Returns one of the calling educator's own materials (with its concept count).
- */
+/** GET /api/materials/:id: one of the caller's own materials. */
 router.get('/:id', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const { data: material, error } = await supabaseAdmin
     .from('materials')
@@ -325,46 +280,9 @@ router.get('/:id', requireRole('educator'), async (req: Request, res: Response):
 });
 
 /**
- * PATCH /api/materials/:id
- *
- * The only writer for `is_archived`, `grade_levels`, `title` and `subject`.
- * Archive and grade access existed in
- * the UI as local `useState` toggles that looked functional and persisted
- * nothing, because there was no endpoint behind them — the seven educator routes
- * were upload, list, get, delete and concept CRUD, and none of them mutated the
- * material row.
- *
- * `UpdateMaterialSchema` accepts those four fields and nothing else; the reasons
- * per excluded field are on the schema itself.
- *
- * ── Archiving needs no cascade, and must not have one ────────────────────────
- *
- * Every READ already honours `is_archived`: `accessibleMaterialIds()` and
- * `publishedMaterialIds()` filter it for students (the educator branch is
- * archive-blind on purpose, so an educator keeps access to their own archived
- * lesson), and `spaceMaterialIds()` intersects the stored
- * `study_space_materials` list against the live published set. So archiving
- * removes the material from every student's space at their next read while the
- * LINK ROW SURVIVES — un-archiving brings it back on its own, with no
- * bookkeeping. Deleting `study_space_materials` here would break exactly that.
- *
- * BKT mastery is keyed on (student, concept) and is untouched either way.
- * Archive is reversible; DELETE is not, because it cascades concepts → mastery.
- *
- * ── Changing the grade level is the same mechanism ───────────────────────────
- *
- * Students in the old grade stop seeing it, their link rows and mastery rows
- * survive, and setting the grade back restores everything. Class Performance
- * follows too: `rosterFor()` re-derives the class from `grade_levels`, so the old
- * grade's students disappear and the new grade's appear as "not started".
- *
- * ── So is changing the subject ───────────────────────────────────────────────
- *
- * `spaceMaterialIds()` requires the material's live subject to equal the space's,
- * so it leaves spaces of the old subject and is offered by "N new materials
- * available" in spaces of the new one. Link rows and mastery survive; setting the
- * subject back restores it. Class Performance is unaffected — the roster is
- * grade-based, not subject-based.
+ * PATCH /api/materials/:id: the only writer for is_archived, grade_levels, title and subject.
+ * No cascade, and there must not be one: reads filter live, so link rows and mastery survive and
+ * reverting the change restores everything. Delete is the destructive operation.
  */
 router.patch('/:id', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const parsed = UpdateMaterialSchema.safeParse(req.body);
@@ -373,15 +291,13 @@ router.patch('/:id', requireRole('educator'), async (req: Request, res: Response
     return;
   }
 
-  // 404, never 403 — a 403 confirms the id names a real material, and material
-  // ids are visible in the address bar.
+  // 404, never 403.
   if (!(await loadOwnedMaterial(req.params.id, req.user!.id))) {
     res.status(404).json({ error: 'Material not found' });
     return;
   }
 
-  // Same check as upload, so an unknown code is a readable 400 rather than an
-  // FK violation surfacing as a 500.
+  // Same subject check as upload.
   if (parsed.data.subject !== undefined) {
     const { data: subjectRow } = await supabaseAdmin
       .from('subjects')
@@ -398,8 +314,7 @@ router.patch('/:id', requireRole('educator'), async (req: Request, res: Response
   }
 
   const update: Record<string, unknown> = {
-    // `updated_at` is NOT NULL DEFAULT now() with no trigger behind it, so an
-    // unset value here would leave the row claiming its upload time forever.
+    // No trigger maintains updated_at.
     updated_at: new Date().toISOString(),
   };
   if (parsed.data.is_archived !== undefined) update.is_archived = parsed.data.is_archived;
@@ -420,8 +335,7 @@ router.patch('/:id', requireRole('educator'), async (req: Request, res: Response
     return;
   }
 
-  // Same shape as GET /:id so the client can replace its row wholesale rather
-  // than merging fields and drifting.
+  // Same shape as GET /:id so the client can replace its row wholesale.
   const { count } = await supabaseAdmin
     .from('concepts')
     .select('*', { count: 'exact', head: true })
@@ -430,12 +344,7 @@ router.patch('/:id', requireRole('educator'), async (req: Request, res: Response
   res.json({ data: { ...material, concept_count: count ?? 0 } });
 });
 
-/**
- * DELETE /api/materials/:id
- * Deletes one of the calling educator's own materials and its storage file.
- * Educators only; ownership is checked explicitly because the service role
- * bypasses RLS.
- */
+/** DELETE /api/materials/:id: the caller's own material and its file (concepts cascade). */
 router.delete('/:id', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const { data: material, error: fetchError } = await supabaseAdmin
     .from('materials')
@@ -453,7 +362,7 @@ router.delete('/:id', requireRole('educator'), async (req: Request, res: Respons
     return;
   }
 
-  // Delete from storage (best effort), then the DB record (cascade removes concepts).
+  // Storage first (best effort), then the row.
   await supabaseAdmin.storage.from('materials').remove([material.storage_path]);
 
   const { error } = await supabaseAdmin.from('materials').delete().eq('id', req.params.id);
@@ -466,14 +375,8 @@ router.delete('/:id', requireRole('educator'), async (req: Request, res: Respons
 });
 
 /**
- * GET /api/materials/:id/view
- * Returns a short-lived signed URL for viewing the material's file directly
- * from the private "materials" storage bucket. The file exists in storage from
- * the moment of upload, so this works regardless of parsed_status.
- *
- * Guarded: this hands out a URL to the actual PDF, so a student may only reach a
- * non-archived material published to their own grade level. The educator who owns
- * it, and admins, still pass.
+ * GET /api/materials/:id/view: a short-lived signed URL to the PDF. Guarded by material access;
+ * works whatever the parse status.
  */
 router.get('/:id/view', requireMaterialAccess(), async (req: Request, res: Response): Promise<void> => {
   const { data: material, error: fetchError } = await supabaseAdmin
@@ -500,16 +403,8 @@ router.get('/:id/view', requireMaterialAccess(), async (req: Request, res: Respo
 });
 
 /**
- * GET /api/materials/:id/ocr-text
- * The per-page transcript OCR produced for a scanned or photographed material,
- * `{ pages: [{ page, text }] }`, empty for a text PDF or a scan that has not
- * been read yet. Owner only — 404 otherwise, like every other educator read.
- *
- * Its own route rather than a column on the detail payload because a 20-page
- * transcript is tens of kilobytes that exactly one collapsible panel wants;
- * `MATERIAL_COLUMNS` keeps it out of the list and the detail on purpose. A
- * student never reaches it: they read the pages themselves in the viewer, and
- * the assistant reads the concepts.
+ * GET /api/materials/:id/ocr-text: the OCR transcript `{ pages: [{ page, text }] }`. Owner only;
+ * never reaches students.
  */
 router.get('/:id/ocr-text', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const owned = await loadOwnedMaterial(req.params.id, req.user!.id);
@@ -533,11 +428,7 @@ router.get('/:id/ocr-text', requireRole('educator'), async (req: Request, res: R
   res.json({ data: { pages } });
 });
 
-/**
- * GET /api/materials/:id/concepts
- * Returns all extracted concepts for a material. Guarded — concepts are the
- * material's content in text form, so reading them is reading the material.
- */
+/** GET /api/materials/:id/concepts. Guarded: reading concepts is reading the material. */
 router.get('/:id/concepts', requireMaterialAccess(), async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('concepts')
@@ -553,26 +444,11 @@ router.get('/:id/concepts', requireMaterialAccess(), async (req: Request, res: R
   res.json({ data });
 });
 
-// ── Concept editing (educator-curated knowledge base) ──────────
-//
-// Concepts are the exclusive knowledge base for every AI-assisted feature, so an
-// educator can correct or supplement what the extractor produced. A hand-added or
-// edited definition is embedded the same way an extracted one is, so it works in
-// Free Recall, the chatbot, and generated assessments — otherwise it would be dead
-// weight the similarity search never matches.
+// Concept editing. Educator edits are re-embedded so they behave like extracted concepts.
 
 const CONCEPT_RETURN = 'id, term, definition, parent_concept_id, source_pages, created_at';
 
-// The private `ownedMaterial()` that used to live here is now
-// `loadOwnedMaterial()` in `server/lib/educatorScope.ts`. It moved when
-// `educator.routes.ts` needed the same check: educator material ownership gets
-// one home before it acquires a second copy, which is exactly how
-// `loadOwnedSpace` reached four before `spaceAccess.ts` collected it.
-
-/**
- * POST /api/materials/:id/concepts
- * Adds a concept the extractor missed. Educators only, own materials only.
- */
+/** POST /api/materials/:id/concepts: add a missed concept. Own materials only. */
 router.post('/:id/concepts', requireRole('educator'), async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateConceptSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -613,10 +489,7 @@ router.post('/:id/concepts', requireRole('educator'), async (req: Request, res: 
   res.status(201).json({ data });
 });
 
-/**
- * PUT /api/materials/:materialId/concepts/:conceptId
- * Edits a concept's term and/or definition. Re-embeds when the definition changes.
- */
+/** PUT /api/materials/:materialId/concepts/:conceptId. Re-embeds when the definition changes. */
 router.put(
   '/:materialId/concepts/:conceptId',
   requireRole('educator'),
@@ -666,10 +539,7 @@ router.put(
   }
 );
 
-/**
- * DELETE /api/materials/:materialId/concepts/:conceptId
- * Removes a concept from a material the educator owns.
- */
+/** DELETE /api/materials/:materialId/concepts/:conceptId. */
 router.delete(
   '/:materialId/concepts/:conceptId',
   requireRole('educator'),
@@ -693,20 +563,8 @@ router.delete(
 );
 
 /**
- * POST /api/materials/concepts/batch
- * Returns all extracted concepts for an array of materials.
- *
- * One row per term is guaranteed by extraction (see the ONE ROW PER TERM
- * invariant in `lib/conceptExtraction.ts`), so callers can render these directly
- * without collapsing duplicates.
- *
- * ⚠️ Ran on bare `authenticate` until the first-login gate landed. Its ONLY
- * caller is the student Feynman tab (`FeynmanTab.tsx`), so `requireRole('student')`
- * is the correct set — verified before narrowing it, since a wider guard here
- * would have broken an educator path had one existed. `rejectInaccessibleMaterials()`
- * below already rejected disabled accounts, but that is material access, not
- * account state: `requireRole` is the only middleware that reads `profiles`, and
- * therefore the only place the activation gate can apply.
+ * POST /api/materials/concepts/batch: concepts for several materials (used by the Feynman tab).
+ * requireRole('student') applies the activation gate.
  */
 import { FetchConceptsBatchSchema } from '../types/api';
 
@@ -719,8 +577,7 @@ router.post('/concepts/batch', requireRole('student'), async (req: Request, res:
 
   const { material_ids } = parsed.data;
 
-  // Every id must be one the caller may read — otherwise a single valid id could
-  // be used to smuggle another grade's material into the same batch.
+  // Every id must be readable, so a valid id can't smuggle in a forbidden one.
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
   const { data, error } = await supabaseAdmin
@@ -737,11 +594,7 @@ router.post('/concepts/batch', requireRole('student'), async (req: Request, res:
   res.json({ data });
 });
 
-/**
- * GET /api/materials/:id/status
- * Returns the current parsed_status of a material. Guarded — an unguarded status
- * probe confirms which material ids exist.
- */
+/** GET /api/materials/:id/status. Guarded so it can't confirm which ids exist. */
 router.get('/:id/status', requireMaterialAccess(), async (req: Request, res: Response): Promise<void> => {
   const { data, error } = await supabaseAdmin
     .from('materials')
@@ -757,40 +610,20 @@ router.get('/:id/status', requireMaterialAccess(), async (req: Request, res: Res
   res.json({ data });
 });
 
-// Flashcard generation used to live here: it asked Groq to rewrite every concept
-// into a question/answer pair and handed the result to the browser to save.
-// It is now POST /api/spaces/:id/decks/:deckId/generate, which builds cards from
-// the concept rows verbatim and writes them itself. Three reasons it moved:
-// the educator vets concepts, so a model paraphrase put unvetted text in front of
-// students; the prompt asked for one card per concept but capped at 4096 tokens,
-// which truncates on a real material; and free-form pairs cannot be traced back
-// to a concept_id, which is the one thing BKT needs.
-
-// ── Background Processing ──────────────────────────────────
+// Background processing
 
 /** Insert concepts in modest batches so one large document doesn't send a huge payload. */
 const CONCEPT_INSERT_BATCH = 25;
 
-/**
- * The bytes of a scanned/photographed PDF, carried from the upload handler so
- * OCR can read them without a round trip to storage.
- */
+/** A scan's bytes, carried from upload so OCR needn't re-download them. */
 interface ScanInput {
   buffer: Buffer;
   pageCount: number;
 }
 
 /**
- * Runs windowed concept extraction over the page text, then inserts each
- * concept (with its embedding and source pages). Runs asynchronously after
- * upload. Any failure lands in `parsed_status = 'failed'` with a readable
- * `parse_error`, so the educator sees a reason rather than a document stuck on
- * Processing.
- *
- * For a scan (`scan` present) the page text comes from OCR first. The transcript
- * is written to `ocr_pages` BEFORE extraction runs, so an extraction failure —
- * or a model quota spent halfway — still leaves the educator the text that was
- * read, which is the one thing that tells a blurry photo from a model problem.
+ * Extracts and inserts concepts after upload. Failures set parsed_status = 'failed' with a readable
+ * parse_error. For scans, OCR runs first and its transcript is saved before extraction.
  */
 async function processMaterialAsync(
   materialId: string,
