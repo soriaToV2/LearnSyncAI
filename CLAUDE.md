@@ -341,6 +341,20 @@ pass takes a 5 MB photo to ~400 KB so twenty pages fit the 20 MB material cap, a
 nothing Gemini would have read. Verified: three 4000×3200 orientation-6 photos stored as
 1369×2000 / 1530×2000 / 1397×2000 portrait pages.
 
+**⚠️ THE EDUCATOR SETS THE PAGE ORDER IN THE UPLOAD WINDOW, AND THE TILE ORDER IS EXACTLY WHAT IS SENT.**
+A multi-file pick arrives in an OS-decided order, not click order (Windows puts the last-clicked
+file first), so `UploadMaterialModal` sorts each pick by file name (numeric-aware; phone camera names
+are timestamps), and `PhotoPageGrid` lets the educator drag tiles (`@dnd-kit`: mouse after 8 px,
+touch after a 250 ms hold so a swipe still scrolls) or tap one to open `PhotoPageViewer`, which shows
+the prepared JPEG full size with Move earlier/later. **There is no `KeyboardSensor`**: its
+Esc-to-cancel would also reach `Modal`'s `document` listener and close the upload window; keyboard
+users reorder from the viewer. **The viewer is not a nested `Modal`**: it never touches body
+overflow and takes Esc/arrows on `window` in the capture phase. Each page keeps a stable id and one
+object URL for its lifetime; keying tiles by index or rebuilding URLs per change remounts and
+flickers every tile on every move. Verified end to end on 2026-10-22: a photo dragged from 5th to
+1st was stored as page 1, every stored page's image bytes hashing identically to the photo sent in
+that position.
+
 **Limits are enforced in the route before anything reaches storage:** one PDF **or** up to
 `MAX_SCANNED_PAGES = 20` photos under the same `file` field (multer `.array`), never both; a
 material ≤ `MAX_MATERIAL_BYTES` = 20 MB **summed across photos** (multer only caps each file); a

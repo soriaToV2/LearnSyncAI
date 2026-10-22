@@ -8,6 +8,8 @@ import { formatFileSize, ALL_GRADE_LEVELS } from '../../../data/mockEducator';
 import { useSubjects } from '../../../context/SubjectsContext';
 import { api } from '../../../lib/api';
 import { isPhoto, preparePhoto } from '../../../lib/photoPrep';
+import PhotoPageGrid, { type PhotoPage } from './PhotoPageGrid';
+import PhotoPageViewer from './PhotoPageViewer';
 
 /** Documented platform limit (Scope & Limitations): one material ≤ 20 MB. */
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -36,7 +38,10 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
   const { subjects, error: subjectsError } = useSubjects();
 
   /* Either one PDF or an ordered set of page photos (already upright and downscaled by preparePhoto). */
-  const [files, setFiles] = useState<File[]>([]);
+  const [pdf, setPdf] = useState<File | null>(null);
+  const [pages, setPages] = useState<PhotoPage[]>([]);
+  /* The page open in the full-size viewer, or null. */
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [isPreparing, setIsPreparing] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -63,19 +68,27 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     ...ALL_GRADE_LEVELS.map((g) => ({ value: String(g), label: `Grade ${g}` })),
   ];
 
-  const isPdf = files.length === 1 && files[0].type === 'application/pdf';
-  const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+  const isPdf = pdf !== null;
+  const hasFile = isPdf || pages.length > 0;
+  const totalBytes = pages.reduce((sum, p) => sum + p.file.size, 0);
 
-  /* Thumbnail object URLs, made once per set and revoked on cleanup (one per render would leak). */
-  const [previews, setPreviews] = useState<string[]>([]);
-  useEffect(() => {
-    const urls = isPdf ? [] : files.map((f) => URL.createObjectURL(f));
-    setPreviews(urls);
-    return () => urls.forEach((url) => URL.revokeObjectURL(url));
-  }, [files, isPdf]);
+  /*
+   * Each page's object URL is made once, when it is added, and revoked when it leaves. Rebuilding
+   * them per change would flicker every tile on every reorder. The ref covers unmount.
+   */
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+  useEffect(() => () => pagesRef.current.forEach((p) => URL.revokeObjectURL(p.url)), []);
+
+  const releasePages = () => {
+    pages.forEach((p) => URL.revokeObjectURL(p.url));
+    setPages([]);
+    setViewerIndex(null);
+  };
 
   const reset = () => {
-    setFiles([]);
+    releasePages();
+    setPdf(null);
     setIsPreparing(false);
     setTitle('');
     setDescription('');
@@ -96,7 +109,11 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     if (!title.trim()) setTitle(name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '));
   };
 
-  /** A PDF replaces everything; photos append in order. Text vs scanned is decided on the server. */
+  /**
+   * A PDF replaces everything; photos append. Within one pick they go in file-name order, because the
+   * browser hands them over in an OS-decided order rather than the click order (phone camera names are
+   * timestamps, so this is usually shooting order). Text vs scanned is decided on the server.
+   */
   const acceptFiles = async (candidates: File[]) => {
     if (!candidates.length) return;
     setError(null);
@@ -118,43 +135,69 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
         setError(`That file is ${formatFileSize(pdf.size)}. The limit is 20 MB.`);
         return;
       }
-      setFiles([pdf]);
+      releasePages();
+      setPdf(pdf);
       suggestTitle(pdf.name);
       return;
     }
 
-    const existing = isPdf ? [] : files;
+    const existing = isPdf ? [] : pages;
     if (existing.length + photos.length > MAX_PHOTOS) {
       setError(`A photographed lesson can have at most ${MAX_PHOTOS} pages. Split a longer one into two materials.`);
       return;
     }
 
+    const ordered = [...photos].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
     setIsPreparing(true);
+    const prepared: PhotoPage[] = [];
+    let accepted = false;
     try {
-      const prepared: File[] = [];
-      for (const photo of photos) {
+      for (const photo of ordered) {
+        let file: File;
         try {
-          prepared.push(await preparePhoto(photo));
+          file = await preparePhoto(photo);
         } catch {
           setError(`"${photo.name}" could not be read as an image. Use a JPEG or PNG photo.`);
           return;
         }
+        prepared.push({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) });
       }
       const next = [...existing, ...prepared];
-      const bytes = next.reduce((sum, f) => sum + f.size, 0);
+      const bytes = next.reduce((sum, p) => sum + p.file.size, 0);
       if (bytes > MAX_FILE_BYTES) {
         setError(`These photos add up to ${formatFileSize(bytes)}. The limit is 20 MB per material.`);
         return;
       }
-      setFiles(next);
-      if (!existing.length) suggestTitle(photos[0].name);
+      setPdf(null);
+      setPages(next);
+      accepted = true;
+      if (!existing.length) suggestTitle(ordered[0].name);
     } finally {
+      // A refused batch never reaches state, so its URLs are released here.
+      if (!accepted) prepared.forEach((p) => URL.revokeObjectURL(p.url));
       setIsPreparing(false);
     }
   };
 
-  const removePhoto = (index: number) => {
-    setFiles((current) => current.filter((_, i) => i !== index));
+  /* From the grid's ✕ or the viewer. An open viewer stays on the same slot, clamped, or closes when nothing is left. */
+  const removePage = (index: number) => {
+    const target = pages[index];
+    if (!target) return;
+    URL.revokeObjectURL(target.url);
+    const next = pages.filter((_, i) => i !== index);
+    setPages(next);
+    if (viewerIndex !== null) setViewerIndex(next.length ? Math.min(viewerIndex, next.length - 1) : null);
+  };
+
+  /* Move earlier / Move later in the viewer; the viewer follows the page it moved. */
+  const movePage = (from: number, to: number) => {
+    if (to < 0 || to >= pages.length) return;
+    const next = [...pages];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setPages(next);
+    setViewerIndex(to);
   };
 
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -168,13 +211,14 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
     e.preventDefault();
     if (isUploading) return;
 
-    if (!files.length) return setError('Choose a PDF, or photos of the pages, to upload.');
+    if (!hasFile) return setError('Choose a PDF, or photos of the pages, to upload.');
     if (!title.trim()) return setError('Give the material a title.');
     if (grade === NO_GRADE) return setError('Select the grade level this material is for.');
 
-    // Every file under the same field, in page order. The server takes one PDF or assembles the photos.
+    // Every file under the same field, in page order (the order of the tiles). The server takes one PDF or assembles the photos.
     const formData = new FormData();
-    for (const f of files) formData.append('file', f);
+    if (pdf) formData.append('file', pdf);
+    else for (const p of pages) formData.append('file', p.file);
     formData.append('title', title.trim());
     formData.append('subject', subject);
     if (description.trim()) formData.append('description', description.trim());
@@ -213,18 +257,18 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
         />
 
         {/* Picker: one PDF, a strip of page photos, or the empty drop zone */}
-        {isPdf ? (
+        {pdf ? (
           <div className="flex items-center gap-3 p-4 rounded-xl bg-surface-container border border-white/10">
             <div className="w-10 h-10 rounded-lg bg-primary-fixed-dim/10 border border-primary-fixed-dim/20 flex items-center justify-center shrink-0">
               <FileText className="w-5 h-5 text-primary-fixed-dim" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-sans text-sm font-semibold text-white truncate">{files[0].name}</p>
-              <p className="font-sans text-xs text-slate-400">{formatFileSize(files[0].size)}</p>
+              <p className="font-sans text-sm font-semibold text-white truncate">{pdf.name}</p>
+              <p className="font-sans text-xs text-slate-400">{formatFileSize(pdf.size)}</p>
             </div>
             <button
               type="button"
-              onClick={() => setFiles([])}
+              onClick={() => setPdf(null)}
               disabled={isUploading}
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0 disabled:opacity-40"
               aria-label="Remove file"
@@ -232,15 +276,15 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
               <X className="w-4 h-4" />
             </button>
           </div>
-        ) : files.length ? (
+        ) : pages.length ? (
           <div className="p-4 rounded-xl bg-surface-container border border-white/10">
             <div className="flex items-center justify-between gap-3 mb-3">
               <p className="font-sans text-xs text-slate-400">
-                <span className="text-white font-semibold">{files.length} {files.length === 1 ? 'photo' : 'photos'}</span>
+                <span className="text-white font-semibold">{pages.length} {pages.length === 1 ? 'photo' : 'photos'}</span>
                 {' · '}{formatFileSize(totalBytes)}{' · '}
-                shown in page order
+                drag to reorder, tap to view
               </p>
-              {files.length < MAX_PHOTOS && (
+              {pages.length < MAX_PHOTOS && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -252,26 +296,14 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
                 </button>
               )}
             </div>
-            {/* The number is the page number students will see; tiles keep the photo's aspect so a sideways one shows here. */}
-            <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
-              {files.map((f, i) => (
-                <div key={`${f.name}-${f.lastModified}-${i}`} className="relative aspect-[3/4] rounded-lg overflow-hidden bg-black/30 border border-white/10">
-                  <img src={previews[i]} alt={`Page ${i + 1}`} className="w-full h-full object-cover" />
-                  <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-white font-sans text-[10px] font-bold">
-                    {i + 1}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removePhoto(i)}
-                    disabled={isUploading || isPreparing}
-                    className="absolute top-1 right-1 p-1 rounded-md bg-black/70 text-slate-200 hover:text-white hover:bg-black/90 transition-colors disabled:opacity-40"
-                    aria-label={`Remove page ${i + 1}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
+            {/* The number is the page number students will see, in the order the pages are uploaded. */}
+            <PhotoPageGrid
+              pages={pages}
+              disabled={isUploading || isPreparing}
+              onReorder={setPages}
+              onOpen={setViewerIndex}
+              onRemove={removePage}
+            />
           </div>
         ) : (
           <div
@@ -299,7 +331,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
           </div>
         )}
 
-        {isPreparing && files.length > 0 && (
+        {isPreparing && pages.length > 0 && (
           <p className="flex items-center gap-2 font-sans text-xs text-slate-400 -mt-2">
             <Spinner className="w-3.5 h-3.5" /> Preparing photos…
           </p>
@@ -394,7 +426,7 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
           </button>
           <button
             type="submit"
-            disabled={!files.length || !title.trim() || !subject || grade === NO_GRADE || isUploading || isPreparing}
+            disabled={!hasFile || !title.trim() || !subject || grade === NO_GRADE || isUploading || isPreparing}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary-fixed-dim text-on-primary-fixed font-sans text-sm font-bold hover:bg-primary-fixed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isUploading ? (
@@ -408,6 +440,18 @@ export default function UploadMaterialModal({ isOpen, onClose, onUploaded }: Upl
           </button>
         </div>
       </form>
+
+      {isOpen && viewerIndex !== null && (
+        <PhotoPageViewer
+          pages={pages}
+          index={viewerIndex}
+          disabled={isUploading || isPreparing}
+          onIndexChange={setViewerIndex}
+          onMove={movePage}
+          onRemove={removePage}
+          onClose={() => setViewerIndex(null)}
+        />
+      )}
     </Modal>
   );
 }
