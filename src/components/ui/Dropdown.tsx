@@ -4,6 +4,8 @@ import { ChevronDown } from 'lucide-react';
 interface DropdownOption {
   label: string;
   value: string;
+  /** Shown but not selectable; the label should say why. */
+  disabled?: boolean;
 }
 
 interface DropdownProps {
@@ -73,10 +75,13 @@ export default function Dropdown({ value, onChange, options, className = '', ico
                   key={idx}
                   /* Required: a button defaults to type="submit" and would submit the enclosing form. */
                   type="button"
+                  disabled={option.disabled}
                   onClick={() => handleSelect(option.value)}
-                  className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${isSelected
-                      ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim font-bold'
-                      : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                  className={`flex w-full items-center px-4 py-2.5 text-xs text-left transition-colors ${option.disabled
+                      ? 'text-slate-500 opacity-60 cursor-not-allowed'
+                      : isSelected
+                        ? 'bg-primary-fixed-dim/10 text-primary-fixed-dim font-bold'
+                        : 'text-slate-300 hover:bg-white/5 hover:text-white'
                     }`}
                   role="menuitem"
                 >

@@ -27,6 +27,9 @@ router.use(authenticate);
 const SPACE_MATERIAL_COLUMNS =
   'id, title, description, subject, file_size_bytes, page_count, is_scanned, parsed_status, parse_error';
 
+/** Raised by `ux_study_spaces_student_subject` (one space per student per subject). */
+const UNIQUE_VIOLATION = '23505';
+
 /** Material ids currently linked to a space, in the order they were added. */
 async function linkedMaterialIds(spaceId: string): Promise<string[]> {
   const { data } = await supabaseAdmin
@@ -144,7 +147,12 @@ router.get('/', requireRole('student'), async (req: Request, res: Response): Pro
   res.json({ data });
 });
 
-/** POST /api/spaces: creates a one-subject space and fills it with that subject's published materials. */
+/**
+ * POST /api/spaces: creates a one-subject space and fills it with that subject's published materials.
+ * One space per subject (409 SUBJECT_SPACE_EXISTS): a BKT integrity guard. The "one lesson in one
+ * deck" check on generation is per space, so a second copy of a subject would let a student card a
+ * lesson again with every card born due. See CLAUDE.md § Study Spaces.
+ */
 router.post('/', requireRole('student'), async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateStudySpaceSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -157,7 +165,7 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
   // Check the subject first so an unknown code is a 400, not an FK 500.
   const { data: subjectRow } = await supabaseAdmin
     .from('subjects')
-    .select('code')
+    .select('code, name')
     .eq('code', subject)
     .maybeSingle();
 
@@ -166,6 +174,33 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
       error: 'Unknown subject',
       message: `"${subject}" is not a recognised subject.`,
     });
+    return;
+  }
+
+  const subjectTaken = (existingTitle?: string) =>
+    res.status(409).json({
+      error: 'Subject already has a space',
+      code: 'SUBJECT_SPACE_EXISTS',
+      message: existingTitle
+        ? `You already have a space for ${subjectRow.name} ("${existingTitle}"). Each subject has one space; open that one instead.`
+        : `You already have a space for ${subjectRow.name}. Each subject has one space; open that one instead.`,
+    });
+
+  // A courtesy for a readable message; ux_study_spaces_student_subject is the guarantee.
+  const { data: existingSpace, error: existingError } = await supabaseAdmin
+    .from('study_spaces')
+    .select('id, title')
+    .eq('student_id', req.user!.id)
+    .eq('subject', subject)
+    .maybeSingle();
+
+  if (existingError) {
+    res.status(500).json({ error: 'Failed to read study spaces', message: existingError.message });
+    return;
+  }
+
+  if (existingSpace) {
+    subjectTaken(existingSpace.title as string);
     return;
   }
 
@@ -194,6 +229,12 @@ router.post('/', requireRole('student'), async (req: Request, res: Response): Pr
     })
     .select()
     .single();
+
+  // A double-submit that passed the pre-check above.
+  if (spaceError?.code === UNIQUE_VIOLATION) {
+    subjectTaken();
+    return;
+  }
 
   if (spaceError || !newSpace) {
     res.status(500).json({ error: 'Failed to create study space', message: spaceError?.message });

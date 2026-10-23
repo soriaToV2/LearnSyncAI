@@ -30,6 +30,12 @@ export default function StudySpacesList() {
   const { subjects, error: subjectsError } = useSubjects();
   const subjectNameOf = useSubjectName();
 
+  const [spaces, setSpaces] = useState<StudySpaceData[]>([]);
+
+  // One space per subject; the server enforces it (409 SUBJECT_SPACE_EXISTS), this only greys them out.
+  const takenSubjects = new Set(spaces.map((s) => s.subject));
+  const allTaken = subjects.length > 0 && subjects.every((s) => takenSubjects.has(s.code));
+
   // Subject options led by an empty placeholder: Dropdown shows its first option for an unmatched value,
   // and the subject can't be changed later. The placeholder also carries loading/failure states.
   const subjectOptions = [
@@ -37,14 +43,18 @@ export default function StudySpacesList() {
       value: '',
       label: subjectsError
         ? 'Subjects unavailable'
-        : subjects.length
-          ? 'Choose a subject…'
-          : 'Loading subjects…',
+        : !subjects.length
+          ? 'Loading subjects…'
+          : allTaken
+            ? 'You have a space for every subject'
+            : 'Choose a subject…',
     },
-    ...subjects.map((s) => ({ value: s.code, label: s.name })),
+    ...subjects.map((s) =>
+      takenSubjects.has(s.code)
+        ? { value: s.code, label: `${s.name} · you have a space`, disabled: true }
+        : { value: s.code, label: s.name },
+    ),
   ];
-
-  const [spaces, setSpaces] = useState<StudySpaceData[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
 
@@ -106,6 +116,11 @@ export default function StudySpacesList() {
     } catch (err: any) {
       console.error('Failed to create study space', err);
       setCreateError(err.message ?? 'Could not create the study space. Please try again.');
+      // Made in another tab: refresh so the dropdown greys the subject out.
+      if (err?.code === 'SUBJECT_SPACE_EXISTS') {
+        setNewSpaceSubject('');
+        await fetchSpaces();
+      }
     } finally {
       setIsCreating(false);
     }
@@ -370,7 +385,8 @@ export default function StudySpacesList() {
               ) : (
                 <p className="mt-1.5 font-sans text-[11px] text-slate-500 leading-relaxed">
                   Your space will open with the materials your teachers published for this subject at
-                  your grade level. The subject can't be changed later.
+                  your grade level. You can have one space per subject, and the subject can't be
+                  changed later.
                 </p>
               )}
             </div>

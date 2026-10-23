@@ -1,0 +1,34 @@
+-- ============================================================
+-- 0029 · One study space per (student, subject)
+-- ============================================================
+--
+-- Both student screens already said "One space per subject"; nothing enforced
+-- it, and POST /api/spaces happily created a second Science space.
+--
+-- ══ WHY IT MATTERS: IT IS A BKT INTEGRITY GUARD ══
+-- A second space of the same subject has no legitimate use (every space is
+-- auto-filled with all of that subject's published materials for the student's
+-- grade, so it is an identical copy), but it does reopen a farming route.
+-- The "one lesson lives in one deck" guard on flashcard generation checks the
+-- decks of ONE space. Mastery is keyed on (student, concept) and a generated
+-- card is born due, so a second Science space let a student card a lesson they
+-- had already studied and rate every concept again at once: two Easy ratings
+-- take a concept from 0.10 to 0.98. Each extra space was another round.
+--
+-- ══ DATA ══
+-- Verified 2026-10-23 on production: 56 spaces across 54 students, zero
+-- duplicate (student_id, subject) pairs, so the index builds without touching
+-- any row.
+--
+-- ══ GUARANTEE ══
+-- POST /api/spaces pre-checks and answers 409 SUBJECT_SPACE_EXISTS, which is a
+-- courtesy for a readable message. This index is the guarantee, including for a
+-- double-submit that slips past the pre-check (the route maps its 23505 to the
+-- same 409).
+--
+-- Still open, deliberately out of scope: deleting a deck or a whole space and
+-- making it again has the same born-due effect, because bkt_mastery survives
+-- both.
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_study_spaces_student_subject
+    ON public.study_spaces (student_id, subject);

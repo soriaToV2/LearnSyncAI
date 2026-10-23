@@ -107,6 +107,8 @@ CREATE TRIGGER trg_profiles_updated_at
 -- 4. Study spaces
 -- Private and student-owned. One subject per space, fixed at creation; contents are the materials
 -- published to (subject, owner's grade). The FK to subjects is added in section 5.
+-- One space per (student, subject): a second copy would let the per-space "one lesson in one deck"
+-- guard be bypassed (migration 0029).
 
 CREATE TABLE study_spaces (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -123,6 +125,7 @@ COMMENT ON COLUMN study_spaces.subject IS
 
 CREATE INDEX idx_study_spaces_student ON study_spaces (student_id);
 CREATE INDEX idx_study_spaces_subject ON study_spaces (subject);
+CREATE UNIQUE INDEX ux_study_spaces_student_subject ON study_spaces (student_id, subject);
 
 CREATE TRIGGER trg_study_spaces_updated_at
     BEFORE UPDATE ON study_spaces
