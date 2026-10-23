@@ -417,6 +417,32 @@ COMMENT ON COLUMN practice_tests.mastery_snapshot IS
 CREATE INDEX idx_practice_tests_student ON practice_tests (student_id, created_at DESC);
 CREATE INDEX idx_practice_tests_space   ON practice_tests (space_id);
 
+-- The only writer of student_answers while a test is open (PUT /api/practice/:id/answer).
+-- One UPDATE merges the key with ||, so simultaneous saves (a matching block's four) can't overwrite
+-- each other; the JS read-modify-write it replaced lost them (QA D21-race, migration 0030).
+-- Returns NULL when the test is completed or not the student's. EXECUTE is revoked below.
+CREATE OR REPLACE FUNCTION record_test_answer(
+    p_test_id    UUID,
+    p_student_id UUID,
+    p_index      INT,
+    p_answer     TEXT,
+    p_latency_ms BIGINT
+)
+RETURNS BOOLEAN
+LANGUAGE sql
+SET search_path = public
+AS $$
+    UPDATE practice_tests
+       SET student_answers = COALESCE(student_answers, '{}'::jsonb) || jsonb_build_object(
+               p_index::text, jsonb_build_object(
+                   'answer',     p_answer,
+                   'latency_ms', COALESCE((student_answers -> (p_index::text) ->> 'latency_ms')::bigint, 0) + p_latency_ms))
+     WHERE id = p_test_id
+       AND student_id = p_student_id
+       AND status <> 'completed'
+    RETURNING true;
+$$;
+
 CREATE TABLE practice_telemetry (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id       UUID NOT NULL REFERENCES profiles(id)       ON DELETE CASCADE,
@@ -951,6 +977,11 @@ GRANT EXECUTE ON FUNCTION private.owns_study_space(UUID) TO anon, authenticated;
 REVOKE EXECUTE ON FUNCTION enforce_profile_immutables() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION handle_new_user()            FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION update_study_streak()        FROM PUBLIC, anon, authenticated;
+
+-- Takes the student id as a parameter, so it must stay service-role only: callable from the anon
+-- key, it would let any signed-in student write answers into another student's test.
+REVOKE EXECUTE ON FUNCTION record_test_answer(UUID, UUID, INT, TEXT, BIGINT) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION record_test_answer(UUID, UUID, INT, TEXT, BIGINT) TO service_role;
 
 ALTER TABLE profiles               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subjects               ENABLE ROW LEVEL SECURITY;

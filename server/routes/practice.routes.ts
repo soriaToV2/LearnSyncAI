@@ -632,19 +632,28 @@ router.put('/:id/answer', async (req: Request, res: Response): Promise<void> => 
     return;
   }
 
-  // Read-modify-write on JSONB. Acceptable: one answer at a time, and the client re-sends all before completing.
-  const merged: Record<string, StoredAnswer> = { ...(row.student_answers ?? {}) };
-  const previous = merged[String(question_index)]?.latency_ms ?? 0;
-  merged[String(question_index)] = { answer, latency_ms: previous + latency_ms };
-
-  const { error } = await supabaseAdmin
-    .from('practice_tests')
-    .update({ student_answers: merged })
-    .eq('id', row.id)
-    .eq('student_id', req.user!.id);
+  // One UPDATE in the database, never a read-modify-write here: simultaneous saves (a matching
+  // block's four) each wrote back their own copy of student_answers and the last writer won (QA
+  // D21-race). The function merges this one key and adds the latency to what was stored.
+  const { data: saved, error } = await supabaseAdmin.rpc('record_test_answer', {
+    p_test_id: row.id,
+    p_student_id: req.user!.id,
+    p_index: question_index,
+    p_answer: answer,
+    p_latency_ms: latency_ms,
+  });
 
   if (error) {
     res.status(500).json({ error: 'Failed to record answer', message: error.message });
+    return;
+  }
+
+  // NULL: the test was completed between the check above and this write.
+  if (saved !== true) {
+    res.status(409).json({
+      error: 'Test already submitted',
+      message: 'This test has been submitted and can no longer be changed.',
+    });
     return;
   }
 

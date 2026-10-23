@@ -95,17 +95,20 @@ export default function TestSessionView({
       if (owed.length === 0) return;
 
       owed.forEach(({ index }) => dirtyRef.current.delete(index));
+      // One at a time: a matching block's four saves used to race and overwrite each other (QA
+      // D21-race). record_test_answer() in the database is the guarantee; this stops the burst.
+      let confirmed = 0;
       try {
-        await Promise.all(
-          owed.map(({ index, latency }) =>
-            testApi.saveAnswer(test.id, index, current[index] ?? '', latency)
-          )
-        );
+        for (const { index, latency } of owed) {
+          await testApi.saveAnswer(test.id, index, current[index] ?? '', latency);
+          confirmed++;
+        }
         setSaveError(false);
       } catch {
-        // Non-blocking: the answer stays in state and is resent at Finish.
+        // Non-blocking: the answer stays in state and is resent at Finish. Only the unconfirmed ones,
+        // since the server adds latency and a resent saved answer would count its time twice.
         setSaveError(true);
-        owed.forEach(({ index, latency }) => dirtyRef.current.set(index, latency));
+        owed.slice(confirmed).forEach(({ index, latency }) => dirtyRef.current.set(index, latency));
       }
     },
     [test.id]
