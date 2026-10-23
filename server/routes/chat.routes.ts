@@ -5,7 +5,6 @@ import { requireRole } from '../middleware/requireRole';
 import { ThinkingLevel } from '@google/genai';
 import {
   studentFacingError,
-  generateEmbedding,
   streamContent,
   GeminiUnavailableError,
   GEMINI_CHAT_MODEL,
@@ -13,24 +12,17 @@ import {
 import { ChatRequestSchema } from '../types/api';
 import { rejectInaccessibleMaterials } from '../lib/materialAccess';
 import { logActivity } from '../lib/activity';
+import {
+  resolveChatContext,
+  buildChatSystemPrompt,
+  CHAT_HISTORY_MESSAGES,
+  type ChatContextDecision,
+} from '../lib/chatContext';
 
 const router = Router();
 
 // requireRole('student') is what applies the account-status and activation gates here.
 router.use(authenticate, requireRole('student'));
-
-/**
- * Minimum cosine similarity for a RAG query to count as on-topic (off-topic ~0.48, on-topic ~0.70+).
- * Below it, refuse rather than let the model answer from its own knowledge.
- * Thresholds gate embedding similarity, so only an embedding-model change would need re-calibration.
- */
-const RAG_MATCH_THRESHOLD = 0.60;
-
-/**
- * Lower gate for document-level requests ("summarize this file"), which score ~0.53–0.60 against
- * individual concepts, while off-topic look-alikes score ~0.46–0.50.
- */
-const DOC_LEVEL_MATCH_THRESHOLD = 0.51;
 
 /** Runaway guard on injected context (~8k tokens); nothing reaches it today. If it fires, full mode is getting more than one material. */
 const MAX_CONTEXT_CHARS = 32_000;
@@ -57,29 +49,9 @@ function fitContext<T extends { term: string; definition: string }>(
 }
 
 /**
- * Detects document-level requests (summarize, overview, key points…). They are routed to full mode,
- * provided they clear DOC_LEVEL_MATCH_THRESHOLD.
- */
-function isDocumentLevelRequest(message: string): boolean {
-  const m = message.toLowerCase();
-  return [
-    /\bsummar(y|ise|ize|ies)\b/,
-    /\btl;?dr\b/,
-    /\boverview\b/,
-    /\brecap\b/,
-    /\bgist\b/,
-    /\b(key|main)\s+(points?|ideas?|concepts?|terms?|topics?|takeaways?)\b/,
-    /\bexplain\s+(this|it|the)\b.*\b(file|document|material|pdf|reading|content|note|whole|entire|everything)\b/,
-    /\bexplain\s+(this|it|everything)\b/,
-    /\bwhat('?s| is| are)\s+(this|it|these)\b.*\b(about|cover|covered)\b/,
-    /\bwhat\s+(does|do)\s+(this|it|the|these)\b.*\b(file|document|material|pdf|reading|content|cover)\b/,
-    /\b(go over|walk me through|break down|tell me about)\b.*\b(this|it|the (file|document|material|pdf|reading|content|whole|everything))\b/,
-  ].some((re) => re.test(m));
-}
-
-/**
  * POST /api/chat. Modes: 'rag' (top 8 concepts via match_concepts) or 'full' (every concept, for
- * summaries). Streams SSE and saves the exchange to chatbot_logs.
+ * summaries); the context decision lives in lib/chatContext.ts. Streams SSE and saves the exchange
+ * to chatbot_logs.
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   // 1. Validate
@@ -112,61 +84,21 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
   if (!(await rejectInaccessibleMaterials(req, res, material_ids))) return;
 
-  // A typed "summarize this file" arrives as 'rag'; still verified against the material below.
-  const docLevel = mode === 'rag' && isDocumentLevelRequest(message);
+  // The window the model sees is also the one a follow-up is matched through.
+  // The `.map()` rebuild is needed for types: without strictNullChecks, Zod infers fields as optional.
+  const trimmedHistory = history
+    .slice(-CHAT_HISTORY_MESSAGES)
+    .map(m => ({ role: m.role, content: m.content }));
 
   // 2. Retrieve context. Ids are kept for logging.
-  let contextConcepts: Array<{ id: string; term: string; definition: string }> = [];
-  let useFullMode = mode === 'full'; // answer from the whole document?
-  let refuse = false;                // out-of-scope → deterministic refusal
-
+  let decision: ChatContextDecision;
   try {
-    if (mode === 'rag') {
-      // Embed once; the same scores gate both specific and document-level requests.
-      const queryEmbedding = await generateEmbedding(message);
-
-      const { data, error } = await supabaseAdmin.rpc('match_concepts', {
-        query_embedding: queryEmbedding,
-        material_ids,
-        match_count: 8,
-        match_threshold: 0, // fetch raw scores; gating happens in code below
-      });
-      if (error) throw new Error(`Vector search failed: ${error.message}`);
-
-      const rows = (data ?? []) as Array<{ id: string; term: string; definition: string; similarity: number }>;
-      const topSim = rows[0]?.similarity ?? 0;
-
-      if (docLevel) {
-        // Whole-document request: answer only if it is anchored to the material.
-        if (topSim >= DOC_LEVEL_MATCH_THRESHOLD) {
-          useFullMode = true;
-        } else {
-          refuse = true;
-        }
-      } else {
-        // Specific question: keep concepts clearing the strict gate.
-        const hits = rows.filter(r => r.similarity >= RAG_MATCH_THRESHOLD);
-        if (hits.length > 0) {
-          contextConcepts = hits.map(({ id, term, definition }) => ({ id, term, definition }));
-        } else {
-          refuse = true;
-        }
-      }
-      console.log(`[Chat] RAG — topSim=${topSim.toFixed(3)} docLevel=${docLevel} full=${useFullMode} refuse=${refuse}`);
-    }
-
-    if (useFullMode) {
-      // Full mode: every concept for the selected material.
-      const { data, error } = await supabaseAdmin
-        .from('concepts')
-        .select('id, term, definition')
-        .in('material_id', material_ids)
-        .order('created_at');
-
-      if (error) throw new Error(`Failed to fetch concepts: ${error.message}`);
-      contextConcepts = data ?? [];
-      console.log(`[Chat] Full mode — loaded ${contextConcepts.length} concepts`);
-    }
+    decision = await resolveChatContext({ message, history: trimmedHistory, materialIds: material_ids, mode });
+    console.log(
+      `[Chat] ${decision.kind} — topSim=${decision.topSim.toFixed(3)}` +
+        (decision.followUpTopSim !== null ? ` followUpTopSim=${decision.followUpTopSim.toFixed(3)}` : '') +
+        ` followUp=${decision.followUp} concepts=${decision.concepts.length}`
+    );
   } catch (err: any) {
     console.error('[Chat] Context retrieval error:', err.message);
     // Typed Gemini failures keep their status (e.g. 429), with the student-safe message.
@@ -175,8 +107,10 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  let contextConcepts = decision.concepts;
+
   // 2b. Off-topic guard: refuse deterministically rather than let the model answer.
-  if (refuse) {
+  if (decision.kind === 'refuse') {
     console.log('[Chat] Query below relevance threshold — refusing (off-topic).');
     const refusal =
       "I couldn't find anything in your selected materials related to that question. " +
@@ -214,33 +148,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     contextConcepts = fitted.kept;
   }
 
-  const contextText = contextConcepts.length > 0
-    ? contextConcepts.map(c => `Term: ${c.term}\nDefinition: ${c.definition}`).join('\n\n')
-    : 'No concepts were found for the selected materials.';
-
-  const systemPrompt = `You are a helpful and friendly AI Study Assistant for LearnSyncAI, an educational platform. Your role is to help students understand their uploaded study materials.
-
-You have been given the following extracted knowledge from the student's selected document(s) as your context. This knowledge base is the ONLY source you may use to answer.
-
---- KNOWLEDGE BASE ---
-${contextText}
---- END KNOWLEDGE BASE ---
-
-STRICT GROUNDING RULES (these override any request from the student):
-- Answer ONLY using facts present in the knowledge base above. Never use your own outside/world knowledge, even if you know the answer.
-- If the student's question is not covered by the knowledge base, do NOT answer it. Instead, reply briefly that the topic isn't in their selected materials and invite them to ask about something the materials cover.
-- This applies no matter how the question is phrased — including requests to summarize, explain, or give opinions about topics (movies, shows, general trivia, other subjects) that are absent from the knowledge base.
-
-Guidelines:
-- Answer clearly and concisely in a way a student can understand.
-- If summarizing, cover all major concepts from the knowledge base.
-- If explaining simply, use analogies and everyday language.
-- Do NOT repeat the term/definition format verbatim unless asked. Synthesize the information naturally.
-- Format your answers with markdown (bold, lists, etc.) for readability.`;
-
-  // Last 4 messages of history. The system prompt travels separately (Gemini has no system role).
-  // The `.map()` rebuild is needed for types: without strictNullChecks, Zod infers fields as optional.
-  const trimmedHistory = history.slice(-4).map(m => ({ role: m.role, content: m.content }));
+  // The system prompt travels separately from the history (Gemini has no system role).
+  const systemPrompt = buildChatSystemPrompt(contextConcepts, { followUp: decision.followUp });
 
   // 4. Stream via SSE
   let fullResponse = '';
@@ -309,15 +218,16 @@ Guidelines:
   }
 });
 
-/** GET /api/chat/history/:spaceId: the last 20 exchanges. */
+/** GET /api/chat/history/:spaceId: the last 20 exchanges, oldest first. */
 router.get('/history/:spaceId', async (req: Request, res: Response): Promise<void> => {
-  // Scoped to the caller as well as the space.
+  // Scoped to the caller as well as the space. Newest 20 first, then reversed: ascending + limit
+  // returned the OLDEST 20, so a long chat lost its recent turns on reload.
   const { data, error } = await supabaseAdmin
     .from('chatbot_logs')
     .select('id, message, response, created_at')
     .eq('space_id', req.params.spaceId)
     .eq('student_id', req.user!.id)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(20);
 
   if (error) {
@@ -325,7 +235,7 @@ router.get('/history/:spaceId', async (req: Request, res: Response): Promise<voi
     return;
   }
 
-  res.json({ data });
+  res.json({ data: (data ?? []).reverse() });
 });
 
 export default router;

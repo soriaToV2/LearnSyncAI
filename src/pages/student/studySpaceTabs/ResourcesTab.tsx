@@ -293,10 +293,11 @@ export default function ResourcesTab({
     setMessages(prev => [...prev, aiPlaceholder]);
     setIsStreaming(true);
 
-    // History: the last 4 messages, excluding the welcome message
+    // History: the last 10 messages, excluding the welcome message. Mirrors CHAT_HISTORY_MESSAGES
+    // in server/lib/chatContext.ts, which also matches follow-ups through it.
     const recentHistory = messages
       .filter(m => m.id !== 'welcome')
-      .slice(-4)
+      .slice(-10)
       .map(m => ({ role: m.role === 'ai' ? 'assistant' as const : 'user' as const, content: m.content }));
 
     try {
