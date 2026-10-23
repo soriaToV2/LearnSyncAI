@@ -10,6 +10,7 @@ import { applyTestCompletion, bktProblems } from '../lib/bkt';
 import { logActivity } from '../lib/activity';
 import {
   documentMastery,
+  formatHistory,
   latestUpdate,
   masteryRows,
   masterySnapshot,
@@ -17,6 +18,7 @@ import {
   P_L0,
 } from '../lib/testDifficulty';
 import { generateTestQuestions, type ConceptForTest } from '../lib/testGeneration';
+import { assignFormats } from '../lib/testAssignment';
 import { gradeAnswer } from '../lib/testGrading';
 import {
   CreatePracticeTestSchema,
@@ -491,8 +493,9 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     .eq('id', material_id)
     .maybeSingle();
 
-  // Document order. Don't reorder weakest-first: every concept gets a question anyway, and it would
-  // give the weakest concepts the highest-P(G) format.
+  // Lesson order: sections keep it, and matching decoys come from neighbours. Which section a concept
+  // lands in is assignFormats()' job below (history, never mastery: weakest-first would hand the
+  // weakest concepts the highest-P(G) format).
   const { data: conceptRows, error: conceptError } = await supabaseAdmin
     .from('concepts')
     .select('id, term, definition')
@@ -532,11 +535,17 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   const { snapshot } = await masterySnapshot(req.user!.id, concepts.map((c) => c.id));
   const tier = masteryTier(snapshot);
 
+  // Each concept gets the format this student has met it in least, so no concept's mastery is
+  // always measured at the same guess rate.
+  const history = await formatHistory(req.user!.id, concepts.map((c) => c.id));
+  const slices = assignFormats({ concepts, allocation: allocation.items, history });
+
   let generated;
   try {
     generated = await generateTestQuestions({
       concepts,
       allocation: allocation.items,
+      slices,
       tier,
       materialTitle: (material?.title as string) ?? 'this lesson',
     });

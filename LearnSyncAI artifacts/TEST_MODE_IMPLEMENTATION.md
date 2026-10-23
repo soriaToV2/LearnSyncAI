@@ -720,6 +720,11 @@ exactly what the p. 98 Difficulty Alignment check is about. All three read
 `masterySnapshot()` — the same function that picks the tier, so the number shown is provably the
 number used.
 
+**Superseded 2026-10-24:** concepts are no longer dealt to sections in lesson order. That gave each
+concept the same format, and so the same P(G), in every test (2,015 of 2,015 repeat observations on
+production). `assignFormats()` (`server/lib/testAssignment.ts`) now gives each concept the format the
+student has met it in least often, still never by mastery, for the reason below; see CLAUDE.md.
+
 **Not built, and why:** lowest-mastery concept ordering. `allocateConcepts()` emits one question per
 concept for *every* concept, so ordering cannot change which concepts appear — only which format each
 lands in. And the sign is wrong: `orderedFormats()` puts `multiple_choice` first, so weakest-first
@@ -820,7 +825,7 @@ FILL IN THE BLANK — RA 10173 – Data Privacy Act of 2012
 | **P(L₀)** | 0.10. Prior probability a student already knows a concept with no evidence. |
 | **P(G)** | Guess probability, per question format. MCQ 0.25, T/F 0.50, ID 0.05, FIB 0.05, Matching 0.17. |
 | **Block** | One matching screen: 4 terms, 6 definitions. Emits 4 telemetry rows. |
-| **Allocation** | Which concept goes to which section. `allocateConcepts()`. |
+| **Allocation** | How many questions each section gets, `allocateConcepts()`; which concept goes to which section, `assignFormats()` (rotated by the student's history). |
 | **Fallback** | A template question used when the model skipped an item or failed validation. Counted in `fallback_count`. |
 | **Orphan index** | The model's `n` field leaked into the question prose. Rejected. |
 | **`stripKey()`** | The only function permitted to serialise a question toward a browser. |

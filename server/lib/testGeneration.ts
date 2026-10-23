@@ -484,21 +484,19 @@ function distinctPool(concepts: ConceptForTest[], glossOf: Map<string, string>):
  * Every format has a deterministic fallback so a skipped item never shortens the test.
  */
 export async function generateTestQuestions(params: {
+  /** The whole lesson, in lesson order: matching decoys and fallback distractors are its neighbours. */
   concepts: ConceptForTest[];
   allocation: AllocationItem[];
+  /** Which concepts each section asks about, from assignFormats() (testAssignment.ts). */
+  slices: Map<QuestionFormat, ConceptForTest[]>;
   tier: DifficultyTier;
   materialTitle: string;
 }): Promise<{ questions: StoredQuestion[]; fallbackCount: number }> {
-  const { concepts, allocation, tier, materialTitle } = params;
+  const { concepts, allocation, slices, tier, materialTitle } = params;
   const startedAt = Date.now();
 
-  // 1. Deal concepts to sections. One pass, cursor never rewinds.
-  const slices = new Map<QuestionFormat, ConceptForTest[]>();
-  let cursor = 0;
-  for (const { format, count } of allocation) {
-    slices.set(format, concepts.slice(cursor, cursor + count));
-    cursor += count;
-  }
+  // 1. Sections were dealt by assignFormats(), which rotates each concept across formats. Dealing
+  // in lesson order here gave a concept the same format, and so the same P(G), in every test.
 
   const choice = slices.get('multiple_choice') ?? [];
   const tf = slices.get('true_or_false') ?? [];

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from './supabase';
-import type { DifficultyTier } from './testAllocation';
+import type { DifficultyTier, QuestionFormat } from './testAllocation';
+import type { FormatHistory } from './testAssignment';
 
 /**
  * Practice-test difficulty calibration (paper p. 81). One tier per test, not per question;
@@ -61,6 +62,56 @@ export async function masteryRows(
   }
 
   return rows;
+}
+
+/**
+ * Per concept, how often this student met it in each question format and the most recent format,
+ * from `practice_telemetry` (written at completion, so only finished tests count; matching decoys
+ * emit no row and are correctly absent). Feeds `assignFormats()`. A failed read degrades to less
+ * history rather than blocking the test.
+ */
+export async function formatHistory(
+  studentId: string,
+  conceptIds: string[]
+): Promise<Map<string, FormatHistory>> {
+  const history = new Map<string, FormatHistory>();
+  if (conceptIds.length === 0) return history;
+
+  for (let i = 0; i < conceptIds.length; i += IN_CHUNK) {
+    const chunk = conceptIds.slice(i, i + IN_CHUNK);
+
+    // Paged and ordered: PostgREST silently caps responses at 1000 rows. Oldest first, so each
+    // concept's `last` ends on its newest test.
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await supabaseAdmin
+        .from('practice_telemetry')
+        .select('concept_id, question_type, created_at')
+        .eq('student_id', studentId)
+        .in('concept_id', chunk)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, offset + PAGE - 1);
+
+      if (error) {
+        console.error('[TestGen] Format history read failed; assigning with what was read:', error.message);
+        break;
+      }
+
+      const page = data ?? [];
+      for (const row of page) {
+        const conceptId = row.concept_id as string;
+        const format = row.question_type as QuestionFormat;
+        const entry = history.get(conceptId) ?? { counts: new Map<QuestionFormat, number>(), last: null };
+        entry.counts.set(format, (entry.counts.get(format) ?? 0) + 1);
+        entry.last = format;
+        history.set(conceptId, entry);
+      }
+
+      if (page.length < PAGE) break;
+    }
+  }
+
+  return history;
 }
 
 /**
