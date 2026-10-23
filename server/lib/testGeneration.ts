@@ -2,6 +2,7 @@ import { Type, ThinkingLevel, type Schema } from '@google/genai';
 import { generateJson, GeminiUnavailableError, GEMINI_CONTENT_MODEL } from './gemini';
 import { acronymOf } from './conceptExtraction';
 import { TIER_GUIDANCE, FORMAT_TIER_GUIDANCE, TF_TIER_RULES } from './testDifficulty';
+import { balancedSlots, shuffled } from './answerPlacement';
 import {
   MATCH_OPTIONS_PER_BLOCK,
   MATCH_TERMS_PER_BLOCK,
@@ -71,20 +72,6 @@ function withoutTerm(text: string, term: string): string {
     out = out.replace(new RegExp(`\\b${escapeRe(form)}\\w*`, 'gi'), 'this concept');
   }
   return out.replace(/\s+/g, ' ').trim();
-}
-
-/** Knuth multiplicative hash. Deterministic placement without an obvious cycle. */
-const hash = (n: number) => (Math.imul(n, 2654435761) >>> 0);
-
-function seededShuffle<T>(items: T[], seed: number): T[] {
-  const out = [...items];
-  let state = hash(seed) || 1;
-  for (let i = out.length - 1; i > 0; i--) {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    const j = state % (i + 1);
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
 }
 
 // Model plumbing
@@ -519,8 +506,9 @@ export async function generateTestQuestions(params: {
   const fib = slices.get('fill_in_the_blank') ?? [];
   const match = slices.get('matching_type') ?? [];
 
-  // The server sets true/false verdicts, alternating, so the mix is balanced.
-  const verdicts = tf.map((_, i) => i % 2 === 0);
+  // The server sets true/false verdicts: half each, in random order. They used to alternate
+  // (True, False, True…) in every stored test, which a student could answer without reading.
+  const verdicts = balancedSlots(tf.length, 2).map((s) => s === 0);
 
   // Decoys come from outside the block; reusing a concept as a decoy emits no telemetry row.
   const blocks: { terms: ConceptForTest[]; decoys: ConceptForTest[] }[] = [];
@@ -579,6 +567,10 @@ export async function generateTestQuestions(params: {
     explanation: explain(c),
   });
 
+  // Each of A–D holds about a quarter of the correct answers, in random order. The old
+  // hash(index) % 4 equalled index % 4 (the multiplier is 1 mod 4), so every test ran A,B,C,D,A…
+  const choiceSlots = balancedSlots(choice.length, 4);
+
   for (const { format } of allocation) {
     if (format === 'multiple_choice') {
       choice.forEach((c, i) => {
@@ -591,7 +583,7 @@ export async function generateTestQuestions(params: {
           [1, 2, 3].map((k) => shorten(withoutTerm(other(c, k).definition, other(c, k).term), 120));
         const b = base(c, format);
         const options = [...distractors];
-        options.splice(hash(b.index) % 4, 0, correct);
+        options.splice(choiceSlots[i], 0, correct);
         push({ ...b, prompt: question, options, answer: correct });
       });
     } else if (format === 'true_or_false') {
@@ -630,7 +622,8 @@ export async function generateTestQuestions(params: {
       for (const block of blocks) {
         const pool = distinctPool([...block.terms, ...block.decoys], glossOf);
         const blockIndex = questions.length;
-        const options = seededShuffle(pool, blockIndex);
+        // Random per test; a seed of blockIndex repeated the same arrangement in every test of a lesson.
+        const options = shuffled(pool);
         const blockId = `block-${blockIndex}`;
         block.terms.forEach((c, i) => {
           push({ ...base(c, format), prompt: c.term, options, blockId, answer: pool[i] });

@@ -370,8 +370,8 @@ identically. p. 98 does not ask for that.
 
 | Format | Model returns | Server owns | Validation → fallback |
 |---|---|---|---|
-| `multiple_choice` | `{ n, question, correct, distractors[3] }` | **Shuffles the four options** (deterministic by index) so position never leaks the key | 3 distinct non-empty distractors, none equal to `correct` → else definition-as-correct + 3 other concepts' definitions |
-| `true_or_false` | `{ n, statement }` | **Decides the verdict itself**, alternating by index | non-empty and clean → else `"{term} means: {another concept's definition}"`, reliably false |
+| `multiple_choice` | `{ n, question, correct, distractors[3] }` | **Places the correct option itself**, balanced across A–D and shuffled per test (`balancedSlots`, `answerPlacement.ts`). Until 2026-10-23 this was "deterministic by index" and ran A,B,C,D… in every test | 3 distinct non-empty distractors, none equal to `correct` → else definition-as-correct + 3 other concepts' definitions |
+| `true_or_false` | `{ n, statement }` | **Decides the verdict itself**, half True and half False in random order (until 2026-10-23: alternating by index) | non-empty and clean → else `"{term} means: {another concept's definition}"`, reliably false |
 | `identification` | `{ n, clue }` | key = the concept's `term` | clean **and must not contain the term** → else the raw definition with the term blanked |
 | `fill_in_the_blank` | `{ n, sentence }` with one `____` | key = the concept's `term` | exactly one `____`, term absent elsewhere → else a template |
 | `matching_type` | `{ n, gloss }` ≤90 chars | Assembles blocks, picks distractors, shuffles, **dedupes the pool** | clean, term absent → else the truncated definition |
@@ -785,7 +785,7 @@ student on a 42-concept material and confirmed:
 failure mode. On a 42-concept material at `intermediate`: **1 fallback in 42 (2.4%)**, and
 
 - multiple-choice distractors drawn from the lesson's own neighbouring concepts, **no invented facts**
-- true/false verdicts alternating as the server dictated, every FALSE built by substituting another
+- true/false verdicts as the server dictated (alternating at the time — a predictable cycle, replaced 2026-10-23 by a balanced shuffle), every FALSE built by substituting another
   concept's definition rather than by inserting "not"
 - **no identification clue contained its own answer**; no matching gloss named its term
 - two matching blocks, each 4 terms against 6 distinct options, correct answer present

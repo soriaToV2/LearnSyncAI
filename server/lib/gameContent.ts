@@ -2,6 +2,7 @@ import { Type, ThinkingLevel, type Schema } from '@google/genai';
 import { generateJson, GeminiUnavailableError, GEMINI_CONTENT_MODEL } from './gemini';
 import type { DifficultyTier } from './testAllocation';
 import { TIER_GUIDANCE } from './testDifficulty';
+import { balancedSlots } from './answerPlacement';
 import {
   CROSSWORD_TIER_RULES,
   MATCH_TIER_RULES,
@@ -195,27 +196,13 @@ ${conceptListOf(concepts)}`;
 const OPTIONS_PER_QUESTION = 4;
 
 /**
- * Answer positions as an even multiset, shuffled end-to-end (never per block of four, which
- * would allow elimination). Random offset so the surplus slot isn't always A/B. Uses
- * Math.random() on purpose: games must not be reproducible.
- */
-function balancedSlots(n: number): number[] {
-  const offset = Math.floor(Math.random() * OPTIONS_PER_QUESTION);
-  const slots = Array.from({ length: n }, (_, i) => (i + offset) % OPTIONS_PER_QUESTION);
-  for (let i = slots.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [slots[i], slots[j]] = [slots[j], slots[i]];
-  }
-  return slots;
-}
-
-/**
  * Re-places each correct answer, discarding the model's ordering (it favours A).
  * Splice by index, never filter by value: options aren't guaranteed distinct.
  * Exported for the balance check in scripts/.
  */
 export function placeAnswers(items: GeneratedTrivia[]): GeneratedTrivia[] {
-  const slots = balancedSlots(items.length);
+  // Balanced, shuffled, Math.random(): games must not be reproducible (see answerPlacement.ts).
+  const slots = balancedSlots(items.length, OPTIONS_PER_QUESTION);
   return items.map((q, i) => {
     const options = [...q.options];
     options.splice(options.indexOf(q.correct), 1);
