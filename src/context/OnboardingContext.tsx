@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { TOURS, type OnboardingKey } from '../lib/onboarding';
 import TourOverlay from '../components/onboarding/TourOverlay';
+import { useBadges } from './BadgeContext';
 
 /**
  * Which first-run steps this student has seen. Its own context, not part of AuthContext.
@@ -55,6 +56,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const [replayPending, setReplayPending] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  // BadgeProvider is an ancestor; while it checks for or shows a badge, the tour waits.
+  const { isCelebrating } = useBadges();
 
   // Auto-start fires at most once per mount.
   const autoStarted = useRef(false);
@@ -181,9 +184,11 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
       }}
     >
       {children}
-      {/* A sibling of children, as BadgeProvider mounts its modal. */}
+      {/* A sibling of children, as BadgeProvider mounts its modal. Held back (not dropped) while a
+          badge is being checked or shown: two overlays would fight over Escape, and the spotlight
+          would frame the badge window instead of the score it explains. It opens once that closes. */}
       <TourOverlay
-        isOpen={running !== null}
+        isOpen={running !== null && !isCelebrating}
         steps={running ? TOURS[running] ?? [] : []}
         onClose={closeTour}
         onDemoChange={setActiveDemo}

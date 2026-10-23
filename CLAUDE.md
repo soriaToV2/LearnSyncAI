@@ -972,6 +972,8 @@ would be thirty requests to answer a question that only changes at the end.
 streak awards three at once; three dialogs in a row turn a reward into a chore, and a student clicking
 fast would never read the third.
 
+**⚠️ A TOUR NEVER OPENS OVER IT.** A result screen calls `celebrate()` and starts its result tour (`tool_free_recall_result`, `tool_feynman_result`) in the same moment, and a first Free Recall is also the moment `first_recall` is earned — so every new student got both overlays at once, the spotlight framing the badge window instead of the score. `BadgeContext` now exposes `isCelebrating` (from the `celebrate()` call until its check finds nothing, or until the modal closes) and `OnboardingProvider` renders `TourOverlay` with `isOpen={running !== null && !isCelebrating}`: the tour is **held, not dropped**, and opens once Continue is pressed. Verified in the browser with the writes mocked: badge alone for 4 s, tour after Continue on the score card; with no badge, the tour opens ~1 s after the result.
+
 **It is SILENT, deliberately.** `play('victory')` and a mute toggle already exist in `gameAudio.ts`
 and are not used here: this modal can appear anywhere in the portal, and an unexpected fanfare in a
 classroom is startling. The games are opt-in and self-contained, which is why they may have sound and

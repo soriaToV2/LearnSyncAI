@@ -12,15 +12,23 @@ import BadgeEarnedModal from '../components/student/BadgeEarnedModal';
 interface BadgeValue {
   /** Check for new badges and open the modal. A no-op until the baseline has loaded. */
   celebrate: () => void;
+  /**
+   * True from a celebrate() call until its check finds nothing new, or until the modal is closed.
+   * OnboardingProvider holds a tour back on it: a result screen calls celebrate() and starts its tour
+   * in the same moment, and the two overlays used to open on top of each other.
+   */
+  isCelebrating: boolean;
 }
 
-const BadgeContext = createContext<BadgeValue>({ celebrate: () => {} });
+const BadgeContext = createContext<BadgeValue>({ celebrate: () => {}, isCelebrating: false });
 
 /** Delay before fetching, so the results screen settles and the last un-awaited rating can land. */
 const REVEAL_DELAY_MS = 600;
 
 export function BadgeProvider({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<EarnedBadge[]>([]);
+  // State (not the inFlight ref) because a tour re-renders on it.
+  const [checking, setChecking] = useState(false);
 
   // Refs, not state, so `celebrate` keeps a stable identity.
   const seen = useRef<Set<string> | null>(null);
@@ -53,6 +61,7 @@ export function BadgeProvider({ children }: { children: React.ReactNode }) {
     // No baseline yet: do nothing rather than treat everything as new.
     if (seen.current === null || inFlight.current) return;
     inFlight.current = true;
+    setChecking(true);
 
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -70,12 +79,14 @@ export function BadgeProvider({ children }: { children: React.ReactNode }) {
         })
         .finally(() => {
           inFlight.current = false;
+          // After setPending above, so isCelebrating never dips between the check and the modal.
+          setChecking(false);
         });
     }, REVEAL_DELAY_MS);
   }, [fetchBadges]);
 
   return (
-    <BadgeContext.Provider value={{ celebrate }}>
+    <BadgeContext.Provider value={{ celebrate, isCelebrating: checking || pending.length > 0 }}>
       {children}
       <BadgeEarnedModal badges={pending} onClose={() => setPending([])} />
     </BadgeContext.Provider>
