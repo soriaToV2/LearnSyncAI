@@ -14,6 +14,19 @@ import { adminApi, type AssignableRole, type CreatedAccount } from '../../../lib
 
 const GRADES = [7, 8, 9, 10];
 
+/*
+ * Modal centres its panel with no max-height and locks page scroll, so on a short window the form ran
+ * off both edges (title above, Create account below) with nothing to scroll. Each screen scrolls its
+ * own body and keeps its buttons outside it, pinned. Same fix as ImportAccountsModal; don't fix this
+ * in Modal.tsx. Cap = the full window minus the fixed chrome (header, padding, action row, Modal's
+ * outer padding; measured ~14.6rem, rounded down so a 2px error eats Modal's margin rather than
+ * scrolling a form that fits), not 85vh: the form only just misses fitting a laptop window, and an
+ * 85vh cap scrolled it at heights where it fits. no-scrollbar: scrolling is a fallback for
+ * genuinely short windows, not something to advertise. -m-1 p-1 keeps the role/grade buttons' focus
+ * outline from being clipped by the scroll box.
+ */
+const SCROLL_BODY = 'max-h-[calc(100dvh-14.5rem)] overflow-y-auto no-scrollbar -m-1 p-1';
+
 export default function CreateAccountModal({
   isOpen,
   onClose,
@@ -133,56 +146,58 @@ export default function CreateAccountModal({
     >
       {created ? (
         <div className="flex flex-col gap-5">
-          <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-3">
-            <p className="font-sans text-sm text-emerald-300">
-              {created.first_name} {created.last_name} can now sign in.
-            </p>
-          </div>
+          <div className={`${SCROLL_BODY} flex flex-col gap-5`}>
+            <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-3">
+              <p className="font-sans text-sm text-emerald-300">
+                {created.first_name} {created.last_name} can now sign in.
+              </p>
+            </div>
 
-          {/* Says the address is missing without printing the placeholder, and states the consequence: no self-service password recovery. */}
-          {created.email_is_placeholder && (
-            <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3">
+            {/* Says the address is missing without printing the placeholder, and states the consequence: no self-service password recovery. */}
+            {created.email_is_placeholder && (
+              <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3">
+                <p className="font-sans text-xs text-slate-400 leading-relaxed">
+                  No email address was given, which is fine — they sign in with the username. Until
+                  one is added from the account page, they cannot reset their own password; you will
+                  have to do it for them.
+                </p>
+              </div>
+            )}
+
+            <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 flex flex-col gap-3">
+              <div>
+                <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">
+                  Username
+                </p>
+                <p className="font-mono text-sm text-white break-all">{created.username}</p>
+              </div>
+              <div>
+                <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">
+                  Password
+                </p>
+                <p className="font-mono text-sm text-white break-all">{created.password}</p>
+              </div>
+              <button
+                type="button"
+                onClick={copyCredentials}
+                className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] self-start flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors font-sans text-xs"
+              >
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? 'Copied' : 'Copy both'}
+              </button>
+            </div>
+
+            {/* Both sentences matter: the password can't be retrieved, and the student will be asked to change it at first login. */}
+            <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/20 px-4 py-3 flex flex-col gap-1.5">
+              <p className="font-sans text-xs text-amber-300/90 leading-relaxed">
+                Save this password now — it is not stored anywhere and cannot be looked up later. If
+                it is lost, reset it from the account's page.
+              </p>
               <p className="font-sans text-xs text-slate-400 leading-relaxed">
-                No email address was given, which is fine — they sign in with the username. Until
-                one is added from the account page, they cannot reset their own password; you will
-                have to do it for them.
+                They will be asked to choose their own password the first time they sign in. Until
+                they do, this one is not private — you know it too.
               </p>
             </div>
-          )}
-
-          <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 flex flex-col gap-3">
-            <div>
-              <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">
-                Username
-              </p>
-              <p className="font-mono text-sm text-white break-all">{created.username}</p>
-            </div>
-            <div>
-              <p className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">
-                Password
-              </p>
-              <p className="font-mono text-sm text-white break-all">{created.password}</p>
-            </div>
-            <button
-              type="button"
-              onClick={copyCredentials}
-              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--theme-accent)] self-start flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors font-sans text-xs"
-            >
-              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied ? 'Copied' : 'Copy both'}
-            </button>
-          </div>
-
-          {/* Both sentences matter: the password can't be retrieved, and the student will be asked to change it at first login. */}
-          <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/20 px-4 py-3 flex flex-col gap-1.5">
-            <p className="font-sans text-xs text-amber-300/90 leading-relaxed">
-              Save this password now — it is not stored anywhere and cannot be looked up later. If
-              it is lost, reset it from the account's page.
-            </p>
-            <p className="font-sans text-xs text-slate-400 leading-relaxed">
-              They will be asked to choose their own password the first time they sign in. Until
-              they do, this one is not private — you know it too.
-            </p>
           </div>
 
           <div className="flex gap-3">
@@ -205,130 +220,132 @@ export default function CreateAccountModal({
         </div>
       ) : (
         <form onSubmit={submit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <span className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
-              Role
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              {(['student', 'educator'] as const).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => {
-                    setRole(r);
-                    // An educator carries no grade; clear it rather than send a value the server rejects.
-                    if (r === 'educator') setGrade(null);
-                  }}
-                  style={role === r ? { borderColor: accent, color: accent } : undefined}
-                  className={`px-4 py-2.5 rounded-xl border font-display text-xs font-bold capitalize transition-colors ${
-                    role === r ? 'bg-white/[0.06]' : 'border-white/10 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-            {/* Say why admin isn't offered. */}
-            <p className="font-sans text-[11px] text-slate-500">
-              Administrator accounts are not created here.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field
-              label="First name"
-              value={first}
-              onChange={(e) => setFirst(e.target.value)}
-              maxLength={60}
-              autoComplete="off"
-            />
-            <Field
-              label="Last name"
-              value={last}
-              onChange={(e) => setLast(e.target.value)}
-              maxLength={60}
-              autoComplete="off"
-            />
-          </div>
-
-          {/* Inside the field so it reads as an action on the username; disabled until both names are present. */}
-          <div className="relative">
-            <Field
-              label="Username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              maxLength={30}
-              autoComplete="off"
-              spellCheck={false}
-              hint={
-                suggestError ??
-                usernameError ??
-                `What they sign in with. ${USERNAME_HINT}`
-              }
-            />
-            <button
-              type="button"
-              onClick={generateUsername}
-              disabled={!canGenerate}
-              title={
-                canGenerate
-                  ? 'Build a username from the name above'
-                  : 'Enter a first and last name first'
-              }
-              className={`absolute right-2 top-[26px] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-sans text-[11px] font-semibold transition-colors ${
-                canGenerate
-                  ? 'text-slate-300 bg-white/5 hover:bg-white/10 hover:text-white'
-                  : 'text-slate-600 cursor-not-allowed'
-              }`}
-            >
-              {isSuggesting ? (
-                <Spinner className="w-3.5 h-3.5" />
-              ) : (
-                <Wand2 className="w-3.5 h-3.5" />
-              )}
-              Generate
-            </button>
-          </div>
-
-          {role === 'student' && (
+          <div className={`${SCROLL_BODY} flex flex-col gap-4`}>
             <div className="flex flex-col gap-1.5">
               <span className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
-                Grade level
+                Role
               </span>
-              <div className="grid grid-cols-4 gap-2">
-                {GRADES.map((g) => (
+              <div className="grid grid-cols-2 gap-2">
+                {(['student', 'educator'] as const).map((r) => (
                   <button
-                    key={g}
+                    key={r}
                     type="button"
-                    onClick={() => setGrade(g)}
-                    style={grade === g ? { borderColor: accent, color: accent } : undefined}
-                    className={`px-3 py-2.5 rounded-xl border font-display text-xs font-bold transition-colors ${
-                      grade === g ? 'bg-white/[0.06]' : 'border-white/10 text-slate-400 hover:text-slate-200'
+                    onClick={() => {
+                      setRole(r);
+                      // An educator carries no grade; clear it rather than send a value the server rejects.
+                      if (r === 'educator') setGrade(null);
+                    }}
+                    style={role === r ? { borderColor: accent, color: accent } : undefined}
+                    className={`px-4 py-2.5 rounded-xl border font-display text-xs font-bold capitalize transition-colors ${
+                      role === r ? 'bg-white/[0.06]' : 'border-white/10 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {g}
+                    {r}
                   </button>
                 ))}
               </div>
-              <p className="font-sans text-[11px] text-slate-500 leading-relaxed">
-                Decides which materials this student can open. There is no default — choose one.
+              {/* Say why admin isn't offered. */}
+              <p className="font-sans text-[11px] text-slate-500">
+                Administrator accounts are not created here.
               </p>
             </div>
-          )}
 
-          {/* "(optional)" in the label itself. */}
-          <Field
-            label="Email (optional)"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="off"
-            placeholder="name@example.com"
-            hint={
-              emailError ??
-              'Contact information only — they sign in with their username, never this. Leave it blank if you do not have it yet; you can add it later from the account page. Each account needs its own address; two people cannot share one.'
-            }
-          />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field
+                label="First name"
+                value={first}
+                onChange={(e) => setFirst(e.target.value)}
+                maxLength={60}
+                autoComplete="off"
+              />
+              <Field
+                label="Last name"
+                value={last}
+                onChange={(e) => setLast(e.target.value)}
+                maxLength={60}
+                autoComplete="off"
+              />
+            </div>
+
+            {/* Inside the field so it reads as an action on the username; disabled until both names are present. */}
+            <div className="relative">
+              <Field
+                label="Username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                maxLength={30}
+                autoComplete="off"
+                spellCheck={false}
+                hint={
+                  suggestError ??
+                  usernameError ??
+                  `What they sign in with. ${USERNAME_HINT}`
+                }
+              />
+              <button
+                type="button"
+                onClick={generateUsername}
+                disabled={!canGenerate}
+                title={
+                  canGenerate
+                    ? 'Build a username from the name above'
+                    : 'Enter a first and last name first'
+                }
+                className={`absolute right-2 top-[26px] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-sans text-[11px] font-semibold transition-colors ${
+                  canGenerate
+                    ? 'text-slate-300 bg-white/5 hover:bg-white/10 hover:text-white'
+                    : 'text-slate-600 cursor-not-allowed'
+                }`}
+              >
+                {isSuggesting ? (
+                  <Spinner className="w-3.5 h-3.5" />
+                ) : (
+                  <Wand2 className="w-3.5 h-3.5" />
+                )}
+                Generate
+              </button>
+            </div>
+
+            {role === 'student' && (
+              <div className="flex flex-col gap-1.5">
+                <span className="font-sans text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                  Grade level
+                </span>
+                <div className="grid grid-cols-4 gap-2">
+                  {GRADES.map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => setGrade(g)}
+                      style={grade === g ? { borderColor: accent, color: accent } : undefined}
+                      className={`px-3 py-2.5 rounded-xl border font-display text-xs font-bold transition-colors ${
+                        grade === g ? 'bg-white/[0.06]' : 'border-white/10 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+                <p className="font-sans text-[11px] text-slate-500 leading-relaxed">
+                  Decides which materials this student can open. There is no default — choose one.
+                </p>
+              </div>
+            )}
+
+            {/* "(optional)" in the label itself. */}
+            <Field
+              label="Email (optional)"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="off"
+              placeholder="name@example.com"
+              hint={
+                emailError ??
+                'Contact information only — they sign in with their username, never this. Leave it blank if you do not have it yet; you can add it later from the account page. Each account needs its own address; two people cannot share one.'
+              }
+            />
+          </div>
 
           <div className="flex items-center gap-4 flex-wrap pt-1">
             <SaveButton accent={accent} disabled={!canSave} busy={busy} label="Create account" />
